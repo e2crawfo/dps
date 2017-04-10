@@ -59,6 +59,14 @@ class AdditionRegSpec(RegisterSpec):
     def namedtuple(self):
         return addition_nt
 
+    @property
+    def input_names(self):
+        return self.names
+
+    @property
+    def output_names(self):
+        return self.names
+
 
 reg_spec = AdditionRegSpec()
 
