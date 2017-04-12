@@ -33,6 +33,14 @@ class RegisterSpec(with_metaclass(abc.ABCMeta, object)):
     def namedtuple(self):
         raise NotImplementedError()
 
+    @abc.abstractproperty
+    def input_names(self):
+        raise NotImplementedError()
+
+    @abc.abstractproperty
+    def output_names(self):
+        raise NotImplementedError()
+
     @property
     def names(self):
         return self.namedtuple._fields
@@ -71,7 +79,42 @@ class RegisterSpec(with_metaclass(abc.ABCMeta, object)):
         shapes = self.shapes()
         return self.wrap(*[tf.placeholder(dtype, shape=s, name=n) for n, s in zip(self.names, shapes)])
 
-    def as_obs(self, registers, visible_only=False):
+    def get_register_values(self, registers, *names, as_obs=True, axis=1):
+        values = []
+        names = names or self.names
+        for name in names:
+            try:
+                value = getattr(registers, name)
+            except AttributeError:
+                try:
+                    value = registers[name]
+                except (TypeError, KeyError):
+                    try:
+                        value = registers[self.names.index(name)]
+                        if isinstance(value, tuple):
+                            value = value[0]
+                    except (TypeError, IndexError):
+                        raise Exception(
+                            "{} could not be interpreted as an instance of {}, "
+                            "it is missing a key/attribute named {}.".format(
+                                registers, self, name))
+            values.append(value)
+
+        if as_obs:
+            if len(values) > 1:
+                if isinstance(values[0], np.ndarray):
+                    obs = np.concatenate(values, axis=axis)
+                elif isinstance(values[0], (tf.Tensor, tf.TensorArray)):
+                    obs = tf.concat(values, axis=axis)
+                else:
+                    raise Exception("Register value 0 is not recognized datatype: {}.".format(values[0]))
+            else:
+                obs = values[0]
+        else:
+            obs = tuple(values)
+        return obs
+
+    def as_obs(self, registers, visible_only=False, axis=1):
         """ Concatenate values of registers, giving a single ndarray or Tensor representing the entire register.
 
         Parameters
@@ -83,30 +126,13 @@ class RegisterSpec(with_metaclass(abc.ABCMeta, object)):
             If True, will only include visible register in the returned array.
 
         """
-        values = []
-        for name, visible in zip(self.names, self.visible):
-            if visible or not visible_only:
-                try:
-                    value = getattr(registers, name)
-                except AttributeError:
-                    try:
-                        value = registers[name]
-                    except (TypeError, KeyError):
-                        raise Exception(
-                            "{} could not be interpreted as an instance of {}, "
-                            "it is missing a key/attribute named {}.".format(
-                                registers, self, name))
-                values.append(value)
-
-        if isinstance(registers[0], np.ndarray):
-            obs = np.concatenate(values, axis=1)
-        elif isinstance(registers[0], tf.Tensor):
-            obs = tf.concat(values, axis=1)
+        if visible_only:
+            names = [n for n, v in zip(self.names, self.visible) if v]
         else:
-            raise Exception("Register value 0 is not recognized datatype: {}.".format(registers[0]))
-        return obs
+            names = self.names
+        return self.get_register_values(registers, *names, as_obs=1, axis=axis)
 
-    def from_obs(self, obs, tf=False):
+    def from_obs(self, obs, axis=1):
         """ Unpack on observation as a register.
 
         Parameters
@@ -123,11 +149,12 @@ class RegisterSpec(with_metaclass(abc.ABCMeta, object)):
 
         """
         split_locs = np.cumsum([shape[1] for shape in self.shapes()])
-
-        if tf:
-            values = tf.split(obs, split_locs[:-1], axis=1)
+        if isinstance(obs, np.ndarray):
+            values = np.split(obs, split_locs[:-1], axis=axis)
+        elif isinstance(obs, tf.Tensor):
+            values = tf.split(obs, split_locs[:-1], axis=axis)
         else:
-            values = np.split(obs, split_locs[:-1], axis=1)
+            raise Exception("``obs`` is not recognized datatype, should be either ndarray or Tensor but got: {}.".format(obs))
         return self.wrap(*values)
 
     def state_size(self):

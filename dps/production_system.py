@@ -1,7 +1,5 @@
 import numpy as np
 from collections import namedtuple
-import abc
-from future.utils import with_metaclass
 
 import tensorflow as tf
 from tensorflow.python.ops.rnn import dynamic_rnn
@@ -11,8 +9,7 @@ from gym import Env
 from gym import spaces
 from gym.utils import seeding
 
-from dps.utils import training, default_config
-from dps.environment import DifferentiableEnv
+from dps.environment import BatchBox
 
 
 params = 'core_network controller action_selection use_act T'
@@ -249,26 +246,8 @@ class ProductionSystemFunction(object):
         return inputs, initial_state, ps_cell, states, final_state
 
     def get_register_values(self, *names, as_obs=True):
-        if not names:
-            names = self.core_network.register_spec.names
-
-        values = []
-        for name in names:
-            registers = self.states[1] if isinstance(self.controller, RNNCell) else self.states
-            try:
-                r = getattr(registers, name)
-            except AttributeError:
-                r = registers[self.core_network.register_spec.names.index(name)]
-                if isinstance(r, tuple):
-                    r = r[0]
-            values.append(r)
-
-        if as_obs:
-            if len(values) > 1:
-                return tf.concat(values, axis=2)
-            return values[0]
-        else:
-            return tuple(values)
+        registers = self.states[1] if isinstance(self.controller, RNNCell) else self.states
+        return self.core_network.register_spec.get_register_values(registers, *names, as_obs=as_obs, axis=2)
 
     def __str__(self):
         return ("<ProductionSystemFunction - core_network={}, controller={}, "
@@ -299,17 +278,16 @@ class ProductionSystemEnv(Env):
     metadata = {"render.modes": ["human", "ansi"]}
 
     def __init__(self, psystem, env):
-        self.core_network, _, _, self.use_act, self.T = psystem.core_network
+        self.core_network, _, _, self.use_act, self.T = psystem
         self.env = env
 
         # Extra action is for stopping. If T is not 0, this action will be effectively ignored.
         self.n_actions = self.core_network.n_actions + 1
 
-        # TODO: define a more specific space for this
-        self.action_space = spaces.Box(low=0.0, high=1.0, shape=(self.n_actions,))
+        self.action_space = BatchBox(low=0.0, high=1.0, shape=(None, self.n_actions))
 
-        obs_dim = sum(self.core_network.register_spec.get_register_dims(visible_only=True))
-        self.observation_space = spaces.Box(low=-10.0, high=10.0, shape=(obs_dim,))
+        obs_dim = sum(shape[1] for shape in self.core_network.register_spec.shapes(visible_only=True))
+        self.observation_space = spaces.Box(low=-10.0, high=10.0, shape=(None, obs_dim))
 
         self.reward_range = env.reward_range
 
@@ -337,10 +315,8 @@ class ProductionSystemEnv(Env):
             self.registers.set_input(external_obs)
         else:
             reward, done, info = 0.0, False, {}
-
             action = action[:-1]  # The core network knows nothing about stopping computation, so cut off the stop action.
-            self.registers = self.core_network(action, self.registers)
-
+            self.registers = self.core_network.run(action, self.registers)
         self.t += 1
 
         return self.core_network.register_spec.as_obs(self.registers, visible_only=True), reward, done, info
@@ -363,128 +339,3 @@ class ProductionSystemEnv(Env):
     def _seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
-
-
-class Updater(with_metaclass(abc.ABCMeta, object)):
-    def __init__(self):
-        self._n_experiences = 0
-
-    @property
-    def n_experiences(self):
-        return self._n_experiences
-
-    def update(self, batch_size, summary_op=None):
-        self._n_experiences += batch_size
-        return self._update(batch_size, summary_op)
-
-    @abc.abstractmethod
-    def _update(self, batch_size, summary_op=None):
-        raise NotImplementedError()
-
-
-class DifferentiableUpdater(Updater):
-    """ Update parameters of a production system using vanilla gradient descent.
-
-    All components of ``psystem`` (core network, controller, action selection) must be
-    differentiable to apply this updater.
-
-    Parameters
-    ----------
-    env: gym Env
-        The environment we're trying to learn about.
-    psystem: ProductionSystem
-        The production system to use to learn about the problem.
-    exploration: scalar Tensor
-        A scalar giving the amount of exploration to use at any point in time.
-        Is passed to the action selection function.
-    rl_alg: ReinforcementLearningAlgorithm (required iff env is not differentiable)
-        The reinforcement learning algorithm to use for optimizing parameters
-        of psystem when the environment is not fully differentiable (in this case,
-        the differentiable function obtained by merging the core network, controller
-        and action selection method is used as a parameterized policy whose
-        parameters are learned by this RL algorithm.
-
-    """
-    def __init__(self, env, psystem, exploration, global_step, rl_alg=None):
-        # This call has to take place in the context of both a default session and a default graph
-        super(DifferentiableUpdater, self).__init__()
-        self.env = env
-        self.psystem = psystem
-
-        self.exploration = exploration
-        self.rl_alg = rl_alg
-
-        self.ps_func = ProductionSystemFunction(psystem, exploration=exploration)
-        self.loss, self.target_placeholders = env.loss(self.ps_func.get_register_values()[-1, :, :])
-        tf.summary.scalar('loss', self.loss)
-
-        self.train_op = training(self.loss, global_step)
-
-    def _update(self, batch_size, summary_op=None):
-        # This call has to take place in the context of both a default session and a default graph
-        config = default_config()
-        if isinstance(self.env, DifferentiableEnv):
-            env, loss = self.env, self.loss
-            train_op, ps_func, targets = self.train_op, self.ps_func, self.target_placeholders
-            sess = tf.get_default_session()
-
-            batch_x, batch_y = env.train.next_batch(batch_size)
-            if config.debug:
-                print("x", batch_x)
-                print("y", batch_y)
-
-            feed_dict = ps_func.build_feeddict(batch_x, self.psystem.T)
-            feed_dict[targets] = batch_y
-
-            if summary_op is not None:
-                train_summary, train_loss, _ = sess.run([summary_op, loss, train_op], feed_dict=feed_dict)
-
-                val_x, val_y = env.val.next_batch()
-                val_feed_dict = ps_func.build_feeddict(val_x, self.psystem.T)
-                val_feed_dict[targets] = val_y
-
-                val_summary, val_loss = sess.run([summary_op, loss], feed_dict=val_feed_dict)
-                return train_summary, train_loss, val_summary, val_loss
-            else:
-                train_loss, _ = sess.run([loss, train_op], feed_dict=feed_dict)
-                return train_loss
-        else:
-            pass
-
-        self._n_experiences += batch_size
-
-    def checkpoint(self, path, saver):
-        pass
-
-
-class ReinforcementLearningUpdater(Updater):
-    """ Update parameters of a production system using reinforcement learning.
-
-    There are no restrictions on ``psystem`` for using this method.
-
-    Parameters
-    ----------
-    env: gym Env
-        The environment we're trying to learn about.
-    psystem: ProductionSystem
-        The production system to use to learn about the problem.
-    exploration: scalar Tensor
-        A scalar giving the amount of exploration to use at any point in time.
-        Is passed to the action selection function.
-    rl_alg: ReinforcementLearningAlgorithm
-        The reinforcement learning algorithm to use for optimizing parameters
-        of the controller.
-
-    """
-    def __init__(self, env, psystem, exploration, rl_alg):
-        super(ReinforcementLearningUpdater, self).__init__()
-
-        self.env = env
-        self.psystem = psystem
-        self.ps_env = ProductionSystemEnv(psystem, env)
-
-        self.exploration = exploration
-        self.rl_alg = rl_alg
-
-    def _update(self, batch_size, summary_op=None):
-        pass

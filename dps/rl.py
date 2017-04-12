@@ -1,3 +1,6 @@
+import tensorflow as tf
+import numpy as np
+
 class Qnetwork():
     def __init__(self,h_size,rnn_cell,myScope):
         #The network recieves a frame from the game, flattened into an array.
@@ -21,16 +24,18 @@ class Qnetwork():
             kernel_size=[7,7],stride=[1,1],padding='VALID', \
             biases_initializer=None,scope=myScope+'_conv4')
 
-        self.trainLength = tf.placeholder(dtype=tf.int32)
+        self.train_length = tf.placeholder(dtype=tf.int32)
+
         #We take the output from the final convolutional layer and send it to a recurrent layer.
         #The input must be reshaped into [batch x trace x units] for rnn processing,
         #and then returned to [batch x units] when sent through the upper levles.
         self.batch_size = tf.placeholder(dtype=tf.int32)
-        self.convFlat = tf.reshape(slim.flatten(self.conv4),[self.batch_size,self.trainLength,h_size])
+        self.convFlat = tf.reshape(slim.flatten(self.conv4),[self.batch_size,self.train_length,h_size])
         self.state_in = cell.zero_state(self.batch_size, tf.float32)
-        self.rnn,self.rnn_state = tf.nn.dynamic_rnn(\
+        self.rnn,self.rnn_state = tf.nn.dynamic_rnn(
                 inputs=self.convFlat,cell=rnn_cell,dtype=tf.float32,initial_state=self.state_in,scope=myScope+'_rnn')
         self.rnn = tf.reshape(self.rnn,shape=[-1,h_size])
+
         #The output from the recurrent player is then split into separate Value and Advantage streams
         self.streamA,self.streamV = tf.split(self.rnn,2,1)
         self.AW = tf.Variable(tf.random_normal([h_size//2,4]))
@@ -54,8 +59,8 @@ class Qnetwork():
 
         #In order to only propogate accurate gradients through the network, we will mask the first
         #half of the losses for each trace as per Lample & Chatlot 2016
-        self.maskA = tf.zeros([self.batch_size,self.trainLength//2])
-        self.maskB = tf.ones([self.batch_size,self.trainLength//2])
+        self.maskA = tf.zeros([self.batch_size,self.train_length//2])
+        self.maskB = tf.ones([self.batch_size,self.train_length//2])
         self.mask = tf.concat([self.maskA,self.maskB],1)
         self.mask = tf.reshape(self.mask,[-1])
         self.loss = tf.reduce_mean(self.td_error * self.mask)
@@ -92,7 +97,7 @@ y = .99 #Discount factor on the target Q-values
 startE = 1 #Starting chance of random action
 endE = 0.1 #Final chance of random action
 anneling_steps = 10000 #How many steps of training to reduce startE to endE.
-num_episodes = 10000 #How many episodes of game environment to train network with.
+n_episodes = 10000 #How many episodes of game environment to train network with.
 pre_train_steps = 10000 #How many steps of random actions before training begins.
 load_model = False #Whether to load a saved model.
 path = "./drqn" #The path to save our model to.
@@ -146,7 +151,7 @@ with tf.Session() as sess:
     sess.run(init)
 
     updateTarget(targetOps,sess) #Set the target network to be equal to the primary network.
-    for i in range(num_episodes):
+    for i in range(n_episodes):
         episodeBuffer = []
         #Reset environment and get first new observation
         sP = env.reset()
@@ -155,17 +160,18 @@ with tf.Session() as sess:
         rAll = 0
         j = 0
         state = (np.zeros([1,h_size]),np.zeros([1,h_size])) #Reset the recurrent layer's hidden state
+
         #The Q-Network
         while j < max_epLength:
             j+=1
             #Choose an action by greedily (with e chance of random action) from the Q-network
             if np.random.rand(1) < e or total_steps < pre_train_steps:
                 state1 = sess.run(mainQN.rnn_state,\
-                    feed_dict={mainQN.scalarInput:[s/255.0],mainQN.trainLength:1,mainQN.state_in:state,mainQN.batch_size:1})
+                    feed_dict={mainQN.scalarInput:[s/255.0],mainQN.train_length:1,mainQN.state_in:state,mainQN.batch_size:1})
                 a = np.random.randint(0,4)
             else:
                 a, state1 = sess.run([mainQN.predict,mainQN.rnn_state],\
-                    feed_dict={mainQN.scalarInput:[s/255.0],mainQN.trainLength:1,mainQN.state_in:state,mainQN.batch_size:1})
+                    feed_dict={mainQN.scalarInput:[s/255.0],mainQN.train_length:1,mainQN.state_in:state,mainQN.batch_size:1})
                 a = a[0]
             s1P,r,d = env.step(a)
             s1 = processState(s1P)
@@ -184,17 +190,17 @@ with tf.Session() as sess:
                     #Below we perform the Double-DQN update to the target Q-values
                     Q1 = sess.run(mainQN.predict,feed_dict={\
                         mainQN.scalarInput:np.vstack(trainBatch[:,3]/255.0),\
-                        mainQN.trainLength:trace_length,mainQN.state_in:state_train,mainQN.batch_size:batch_size})
+                        mainQN.train_length:trace_length,mainQN.state_in:state_train,mainQN.batch_size:batch_size})
                     Q2 = sess.run(targetQN.Qout,feed_dict={\
                         targetQN.scalarInput:np.vstack(trainBatch[:,3]/255.0),\
-                        targetQN.trainLength:trace_length,targetQN.state_in:state_train,targetQN.batch_size:batch_size})
+                        targetQN.train_length:trace_length,targetQN.state_in:state_train,targetQN.batch_size:batch_size})
                     end_multiplier = -(trainBatch[:,4] - 1)
                     doubleQ = Q2[range(batch_size*trace_length),Q1]
                     targetQ = trainBatch[:,2] + (y*doubleQ * end_multiplier)
                     #Update the network with our target values.
                     sess.run(mainQN.updateModel, \
                         feed_dict={mainQN.scalarInput:np.vstack(trainBatch[:,0]/255.0),mainQN.targetQ:targetQ,\
-                        mainQN.actions:trainBatch[:,1],mainQN.trainLength:trace_length,\
+                        mainQN.actions:trainBatch[:,1],mainQN.train_length:trace_length,\
                         mainQN.state_in:state_train,mainQN.batch_size:batch_size})
             rAll += r
             s = s1
@@ -211,20 +217,9 @@ with tf.Session() as sess:
         jList.append(j)
         rList.append(rAll)
 
-        #Periodically save the model.
-        if i % 1000 == 0 and i != 0:
-            saver.save(sess,path+'/model-'+str(i)+'.cptk')
-            print ("Saved Model")
-        if len(rList) % summaryLength == 0 and len(rList) != 0:
-            print (total_steps,np.mean(rList[-summaryLength:]), e)
-            saveToCenter(i,rList,jList,np.reshape(np.array(episodeBuffer),[len(episodeBuffer),5]),\
-                summaryLength,h_size,sess,mainQN,time_per_step)
-    saver.save(sess,path+'/model-'+str(i)+'.cptk')
 
 e = 0.01 #The chance of chosing a random action
-num_episodes = 10000 #How many episodes of game environment to train network with.
-load_model = True #Whether to load a saved model.
-path = "./drqn" #The path to save/load our model to/from.
+n_episodes = 10000 #How many episodes of game environment to train network with.
 h_size = 512 #The size of the final convolutional layer before splitting it into Advantage and Value streams.
 h_size = 512 #The size of the final convolutional layer before splitting it into Advantage and Value streams.
 max_epLength = 50 #The max allowed length of our episode.
@@ -247,16 +242,6 @@ jList = []
 rList = []
 total_steps = 0
 
-#Make a path for our model to be saved in.
-if not os.path.exists(path):
-    os.makedirs(path)
-
-##Write the first line of the master log-file for the Control Center
-with open('./Center/log.csv', 'w') as myfile:
-    wr = csv.writer(myfile, quoting=csv.QUOTE_ALL)
-    wr.writerow(['Episode','Length','Reward','IMG','LOG','SAL'])
-
-    #wr = csv.writer(open('./Center/log.csv', 'a'), quoting=csv.QUOTE_ALL)
 with tf.Session() as sess:
     if load_model == True:
         print ('Loading Model...')
@@ -265,8 +250,7 @@ with tf.Session() as sess:
     else:
         sess.run(init)
 
-
-    for i in range(num_episodes):
+    for i in range(n_episodes):
         episodeBuffer = []
         #Reset environment and get first new observation
         sP = env.reset()
@@ -281,11 +265,11 @@ with tf.Session() as sess:
             #Choose an action by greedily (with e chance of random action) from the Q-network
             if np.random.rand(1) < e:
                 state1 = sess.run(mainQN.rnn_state,\
-                    feed_dict={mainQN.scalarInput:[s/255.0],mainQN.trainLength:1,mainQN.state_in:state,mainQN.batch_size:1})
+                    feed_dict={mainQN.scalarInput:[s/255.0],mainQN.train_length:1,mainQN.state_in:state,mainQN.batch_size:1})
                 a = np.random.randint(0,4)
             else:
                 a, state1 = sess.run([mainQN.predict,mainQN.rnn_state],\
-                    feed_dict={mainQN.scalarInput:[s/255.0],mainQN.trainLength:1,\
+                    feed_dict={mainQN.scalarInput:[s/255.0],mainQN.train_length:1,\
                     mainQN.state_in:state,mainQN.batch_size:1})
                 a = a[0]
             s1P,r,d = env.step(a)
@@ -309,4 +293,4 @@ with tf.Session() as sess:
             print (total_steps,np.mean(rList[-summaryLength:]), e)
             saveToCenter(i,rList,jList,np.reshape(np.array(episodeBuffer),[len(episodeBuffer),5]),\
                 summaryLength,h_size,sess,mainQN,time_per_step)
-print ("Percent of succesful episodes: " + str(sum(rList)/num_episodes) + "%")
+print ("Percent of succesful episodes: " + str(sum(rList)/n_episodes) + "%")

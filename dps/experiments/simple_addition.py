@@ -141,7 +141,7 @@ class DefaultConfig(Config):
         relu_selection][1])
 
     # start, decay_steps, decay_rate, staircase
-    lr_schedule = (0.1, 100, 0.96, False)
+    lr_schedule = (0.1, 1000, 0.96, False)
     noise_schedule = (0.0, 10, 0.96, False)
     exploration_schedule = (10.0, 100, 0.96, False)
 

@@ -5,7 +5,7 @@ import numpy as np
 import tensorflow as tf
 
 import gym
-from gym import Env
+from gym import Env as GymEnv
 from gym.utils import seeding
 from gym.spaces import prng
 
@@ -56,6 +56,12 @@ class BatchBox(gym.Space):
 
     def __eq__(self, other):
         return np.allclose(self.low, other.low) and np.allclose(self.high, other.high)
+
+
+class Env(with_metaclass(abc.ABCMeta, GymEnv)):
+    @abc.abstractproperty
+    def accepts_batches(self):
+        raise NotImplementedError()
 
 
 class DifferentiableEnv(with_metaclass(abc.ABCMeta, Env)):
@@ -168,6 +174,10 @@ class RegressionEnv(DifferentiableEnv):
 
     def __str__(self):
         return "<RegressionEnv train={} val={} test={}>".format(self.train, self.val, self.test)
+
+    @property
+    def accepts_batches(self):
+        return True
 
     @property
     def completion(self):
