@@ -1,5 +1,8 @@
 from .production_system import (
     ProductionSystem, CoreNetwork, ProductionSystemEnv, ProductionSystemFunction)
-from .updater import DifferentiableUpdater, ReinforcementLearningUpdater
+from .updater import DifferentiableUpdater
+from .rl import ReinforcementLearningUpdater
 from .register import RegisterSpec
-from .action_selection import softmax_selection, gumbel_softmax_selection, relu_selection
+from .policy import (
+    Policy, ActionSelection, ReluSelect, SoftmaxSelect, GumbelSoftmaxSelect,
+    EpsilonGreedySelect, sample_action)

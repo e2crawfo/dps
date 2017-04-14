@@ -45,18 +45,20 @@ class RegisterSpec(with_metaclass(abc.ABCMeta, object)):
     def names(self):
         return self.namedtuple._fields
 
-    def get_initial_values(self, np_random=None, **kwargs):
+    def get_initial_values(self, batch_size=1, np_random=None, **kwargs):
         """ Returns a list of ndarray's giving initial values for each of the registers. """
         init = []
         for name, t in zip(self.names, self.initial_values):
             if name in kwargs:
-                init_value = kwargs[name].copy()
+                _t = kwargs[name].copy()
+                init_value = np.tile(np.expand_dims(_t, 0), (batch_size,) + tuple(np.ones(t.ndim, dtype='i')))
             elif isinstance(t, np.ndarray):
-                init_value = t.copy()
+                init_value = np.tile(np.expand_dims(t, 0), (batch_size,) + tuple(np.ones(t.ndim, dtype='i')))
             else:
                 shape = t[0]
                 f = t[1]
-                init_value = f(shape, np_random)
+                ivs = [f(shape, np_random) for i in batch_size]
+                init_value = np.stack(ivs, axis=0)
             init.append(init_value)
         return init
 
@@ -67,9 +69,7 @@ class RegisterSpec(with_metaclass(abc.ABCMeta, object)):
             if v or not visible_only]
 
     def instantiate(self, batch_size=1, np_random=None, **kwargs):
-        values = [self.get_initial_values(np_random, **kwargs) for i in range(batch_size)]
-        values = [np.concatenate(v, axis=0) for v in zip(*values)]
-        return self.wrap(*values)
+        return self.wrap(*self.get_initial_values(batch_size=batch_size))
 
     def wrap(self, *args, **kwargs):
         return self.namedtuple(*args, **kwargs)
@@ -78,6 +78,49 @@ class RegisterSpec(with_metaclass(abc.ABCMeta, object)):
         """ Get a list of tensorflow placeholders suitable for feeding as input to this RegisterSpec. """
         shapes = self.shapes()
         return self.wrap(*[tf.placeholder(dtype, shape=s, name=n) for n, s in zip(self.names, shapes)])
+
+    def set_input(self, registers, inp, from_obs=True):
+        self.set_register_values(registers, inp, *self.input_names, from_obs=from_obs)
+
+    def get_output(self, registers, as_obs=True):
+        return self.get_register_values(registers, *self.output_names, as_obs=as_obs)
+
+    def set_register_values(self, registers, obs, *names, from_obs=True, axis=1):
+        """ If from_obs is True, then ``obs`` has already been split up, and we can ignore the axis argument. """
+        values_to_fill = []
+        names = names or self.names
+        for name in names:
+            try:
+                vtf = getattr(registers, name)
+            except AttributeError:
+                try:
+                    vtf = registers[name]
+                except (TypeError, KeyError):
+                    try:
+                        vtf = registers[self.names.index(name)]
+                        if isinstance(vtf, tuple):
+                            vtf = vtf[0]
+                    except (TypeError, IndexError):
+                        raise Exception(
+                            "{} could not be interpreted as an instance of {}, "
+                            "it is missing a key/attribute named {}.".format(
+                                registers, self, name))
+            values_to_fill.append(vtf)
+
+        if not from_obs:
+            for vtf, o in zip(values_to_fill, obs):
+                vtf[:] = o
+        else:
+            split_locs = np.cumsum([vtf.shape[axis] for vtf in values_to_fill])
+            if isinstance(obs, np.ndarray):
+                values = np.split(obs, split_locs[:-1], axis=axis)
+            elif isinstance(obs, tf.Tensor):
+                values = tf.split(obs, split_locs[:-1], axis=axis)
+            else:
+                raise Exception(
+                    "``obs`` is not recognized datatype, should be either ndarray or Tensor but got: {}.".format(obs))
+            for vtf, v in zip(values_to_fill, values):
+                vtf[:] = v
 
     def get_register_values(self, registers, *names, as_obs=True, axis=1):
         values = []
@@ -148,7 +191,7 @@ class RegisterSpec(with_metaclass(abc.ABCMeta, object)):
         instance of self.namedtuple
 
         """
-        split_locs = np.cumsum([shape[1] for shape in self.shapes()])
+        split_locs = np.cumsum([shape[axis] for shape in self.shapes()])
         if isinstance(obs, np.ndarray):
             values = np.split(obs, split_locs[:-1], axis=axis)
         elif isinstance(obs, tf.Tensor):

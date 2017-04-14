@@ -2,20 +2,19 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 from collections import namedtuple
-import time
-from contextlib import ExitStack
 
 import tensorflow as tf
+from tensorflow.contrib.slim import fully_connected
 import numpy as np
 
-from spectral_dagger.utils.experiment import ExperimentStore
-
-from dps import ProductionSystem, CoreNetwork, RegisterSpec, DifferentiableUpdater
+from dps import (
+    ProductionSystem, ProductionSystemFunction, ProductionSystemEnv,
+    CoreNetwork, RegisterSpec, DifferentiableUpdater)
 from dps.environment import RegressionDataset, RegressionEnv
-from dps.action_selection import (
-    softmax_selection, gumbel_softmax_selection, relu_selection)
-from dps.utils import (
-    restart_tensorboard, Config, EarlyStopHook, default_config)
+from dps.utils import Config, default_config, CompositeCell
+from dps.train import training_loop
+from dps.rl import REINFORCE
+from dps.policy import Policy, ReluSelect, SoftmaxSelect, GumbelSoftmaxSelect
 
 
 class AdditionDataset(RegressionDataset):
@@ -43,7 +42,7 @@ class AdditionEnv(RegressionEnv):
 
 
 # Define at top-level to enable pickling
-addition_nt = namedtuple('AdditionRegSpec', 'r0 r1 r2'.split())
+addition_nt = namedtuple('_AdditionRegister', 'r0 r1 r2'.split())
 
 
 class AdditionRegSpec(RegisterSpec):
@@ -68,49 +67,56 @@ class AdditionRegSpec(RegisterSpec):
         return self.names
 
 
-reg_spec = AdditionRegSpec()
+class Addition(CoreNetwork):
+    _register_spec = AdditionRegSpec()
+    _n_actions = 3
 
+    @property
+    def n_actions(self):
+        return self._n_actions
 
-def _inference(global_step):
-    n_actions = 3
-    config = default_config()
+    @property
+    def register_spec(self):
+        return self._register_spec
 
-    def addition(action_activations, r):
+    def __call__(self, action_activations, r):
         """ Action 0: add the variables in the registers, store in r0.
             Action 1: multiply the variables in the registers, store in r1.
             Action 2: no-op """
-        if config.debug:
+        debug = default_config().debug
+        if debug:
             action_activations = tf.Print(action_activations, [r], "registers", summarize=20)
             action_activations = tf.Print(
                 action_activations, [action_activations], "action activations", summarize=20)
 
-        a0, a1, a2 = tf.split(action_activations, n_actions, axis=1)
+        a0, a1, a2 = tf.split(action_activations, self.n_actions, axis=1)
         r0 = a0 * (r.r0 + r.r1) + (1 - a0) * r.r0
         r1 = a1 * (r.r0 * r.r1) + (1 - a1) * r.r1
 
-        if config.debug:
+        if debug:
             r0 = tf.Print(r0, [r0], "r0", summarize=20)
             r1 = tf.Print(r1, [r1], "r1", summarize=20)
-        new_registers = reg_spec.wrap(r0=r0, r1=r1, r2=r.r2+0)
+        new_registers = self.register_spec.wrap(r0=r0, r1=r1, r2=r.r2+0)
 
-        return action_activations, new_registers
+        return new_registers
 
-    adder = CoreNetwork(n_actions=n_actions,
-                        body=addition,
-                        register_spec=reg_spec,
-                        name="Addition")
 
-    controller = tf.contrib.rnn.LSTMCell(num_units=config.lstm_size, num_proj=n_actions)
+def _build_psystem(global_step):
+    config = default_config()
+
+    adder = Addition()
 
     start, decay_steps, decay_rate, staircase = config.exploration_schedule
     exploration = tf.train.exponential_decay(
         start, global_step, decay_steps, decay_rate, staircase=staircase)
     tf.summary.scalar('exploration', exploration)
 
-    # ps_func = ProductionSystemFunction(psystem, exploration=exploration)
-    # return ps_func
-    psystem = ProductionSystem(adder, controller, config.action_selection, False, config.T)
-    return psystem, exploration
+    policy = Policy(
+        config.controller, config.action_selection, exploration,
+        adder.n_actions+1, adder.obs_dim, name="addition_lstm")
+
+    psystem = ProductionSystem(adder, policy, False, config.T)
+    return psystem
 
 
 class DefaultConfig(Config):
@@ -119,7 +125,6 @@ class DefaultConfig(Config):
     T = 4
     order = [0, 0, 0, 1]
 
-    lstm_size = 64
     optimizer_class = tf.train.RMSPropOptimizer
 
     max_steps = 10000
@@ -135,10 +140,17 @@ class DefaultConfig(Config):
     eval_step = 10
     checkpoint_step = 1000
 
+    controller = CompositeCell(
+        tf.contrib.rnn.LSTMCell(num_units=64),
+        fully_connected,
+        Addition._n_actions+1)
+
     action_selection = staticmethod([
-        softmax_selection,
-        gumbel_softmax_selection(hard=0),
-        relu_selection][1])
+        SoftmaxSelect(),
+        GumbelSoftmaxSelect(hard=0),
+        ReluSelect()][1])
+
+    use_rl = False
 
     # start, decay_steps, decay_rate, staircase
     lr_schedule = (0.1, 1000, 0.96, False)
@@ -146,6 +158,8 @@ class DefaultConfig(Config):
     exploration_schedule = (10.0, 100, 0.96, False)
 
     max_grad_norm = 0.0
+    l2_norm_param = 0.0
+    gamma = 1.0
 
     debug = False
 
@@ -153,7 +167,7 @@ class DefaultConfig(Config):
 class DebugConfig(DefaultConfig):
     debug = True
 
-    max_steps = 4
+    max_steps = 100
     n_train = 2
     batch_size = 2
     eval_step = 1
@@ -162,111 +176,57 @@ class DebugConfig(DefaultConfig):
     exploration_schedule = (0.5, 100, 0.96, False)
 
 
+class RLConfig(DefaultConfig):
+    use_rl = True
+    threshold = 1e-2
+
+
+class RLDebugConfig(DebugConfig, RLConfig):
+    pass
+
+
 def get_config(name):
     try:
         return dict(
             default=DefaultConfig(),
-            debug=DebugConfig()
+            rl=RLConfig(),
+            debug=DebugConfig(),
+            rl_debug=RLDebugConfig(),
         )[name]
     except KeyError:
         raise KeyError("Unknown config name {}.".format(name))
 
 
-def train(log_dir, config="default", max_experiments=5):
-    es = ExperimentStore(log_dir, max_experiments=max_experiments, delete_old=1)
-    exp_dir = es.new_experiment('', use_time=1, force_fresh=1)
-
+def train_addition(log_dir, config="default"):
     config = get_config(config)
-    print(config)
     np.random.seed(config.seed)
-
-    with open(exp_dir.path_for('config'), 'w') as f:
-        f.write(str(config))
 
     env = AdditionEnv(config.order, config.n_train, config.n_val, config.n_test)
 
-    batches_per_epoch = int(np.ceil(config.n_train / config.batch_size))
-    max_epochs = int(np.ceil(config.max_steps / batches_per_epoch))
-
-    early_stop = EarlyStopHook(patience=config.patience)
-    val_loss = np.inf
-
-    graph = tf.Graph()
-    sess = tf.Session()
-    with ExitStack() as stack:
-        stack.enter_context(graph.as_default())
-        stack.enter_context(sess)
-        stack.enter_context(sess.as_default())
-        stack.enter_context(config.as_default())
-
+    def build_diff_updater():
         global_step = tf.contrib.framework.get_or_create_global_step()
-        psystem, exploration = _inference(global_step)
-        updater = DifferentiableUpdater(env, psystem, exploration, global_step)
+        psystem = _build_psystem(global_step)
+        ps_func = ProductionSystemFunction(psystem)
+        return DifferentiableUpdater(
+            env, ps_func, global_step, config.optimizer_class,
+            config.lr_schedule, config.noise_schedule, config.max_grad_norm)
 
-        summary_op = tf.summary.merge_all()
-        init = tf.global_variables_initializer()
-        saver = tf.train.Saver()
+    def build_reinforce_updater():
+        global_step = tf.contrib.framework.get_or_create_global_step()
+        psystem = _build_psystem(global_step)
+        ps_env = ProductionSystemEnv(psystem, env)
+        return REINFORCE(
+            ps_env, psystem.policy, global_step, config.optimizer_class,
+            config.lr_schedule, config.noise_schedule, config.max_grad_norm,
+            config.gamma, config.l2_norm_param)
 
-        train_writer = tf.summary.FileWriter(exp_dir.path_for('train'), sess.graph)
-        val_writer = tf.summary.FileWriter(exp_dir.path_for('val'))
-        print("Writing session summaries to {}.".format(exp_dir.path))
-
-        sess.run(init)
-        step = 1
-
-        while True:
-            n_epochs = updater.n_experiences / config.n_train
-            if n_epochs >= max_epochs:
-                print("Optimization complete, maximum number of epochs reached.")
-                break
-            if val_loss < config.threshold:
-                print("Optimization complete, validation loss threshold reached.")
-                break
-
-            evaluate = step % config.eval_step == 0 or (step + 1) == config.max_steps
-            display = step % config.display_step == 0 or (step + 1) == config.max_steps
-
-            if evaluate or display:
-                start_time = time.time()
-                train_summary, train_loss, val_summary, val_loss = updater.update(
-                    config.batch_size, summary_op if evaluate else None)
-                duration = time.time() - start_time
-
-                if evaluate:
-                    train_writer.add_summary(train_summary, step)
-                    val_writer.add_summary(val_summary, step)
-
-                if display:
-                    print("Step({}): Minibatch Loss={:06.4f}, Validation Loss={:06.4f}, "
-                          "Minibatch Duration={:06.4f} seconds, Epoch={:04.2f}.".format(
-                              step, train_loss, val_loss, duration, env.completion))
-
-                new_best, stop = early_stop.check(val_loss)
-
-                if new_best:
-                    print("Storing new best on step {} with validation loss of {}.".format(step, val_loss))
-                    checkpoint_file = exp_dir.path_for('best.checkpoint')
-                    saver.save(sess, checkpoint_file, global_step=step)
-
-                if stop:
-                    print("Optimization complete, early stopping triggered.")
-                    break
-            else:
-                updater.update(config.batch_size)
-
-            if step % config.checkpoint_step == 0:
-                print("Checkpointing on step {}.".format(step))
-                checkpoint_file = exp_dir.path_for('model.checkpoint')
-                saver.save(sess, checkpoint_file, global_step=step)
-
-            step += 1
-
-    restart_tensorboard(log_dir)
+    build_updater = build_reinforce_updater if config.use_rl else build_diff_updater
+    training_loop(env, build_updater, log_dir, config)
 
 
 def main(argv=None):
     from clify import command_line
-    command_line(train)(log_dir='/tmp/dps/addition')
+    command_line(train_addition)(log_dir='/tmp/dps/addition')
 
 
 if __name__ == '__main__':

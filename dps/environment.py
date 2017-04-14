@@ -13,11 +13,11 @@ from dps.utils import MSE
 
 
 class BatchBox(gym.Space):
-    """
-    A box that allows some dimensions to be unspecified at instance-creation time.
+    """ A box that allows some dimensions to be unspecified at instance-creation time.
 
     Example usage:
     self.action_space = BatchBox(low=-10, high=10, shape=(None, 1))
+
     """
     def __init__(self, low, high, shape=None):
         """
@@ -59,9 +59,12 @@ class BatchBox(gym.Space):
 
 
 class Env(with_metaclass(abc.ABCMeta, GymEnv)):
-    @abc.abstractproperty
-    def accepts_batches(self):
-        raise NotImplementedError()
+    def set_mode(self, kind, batch_size):
+        # It would be preferable to have these be passed to ``reset``, but
+        # the gym interface makes no affordances for extra args to ``reset``.
+        assert kind in ['train', 'val', 'test'], "Unknown kind {}.".format(kind)
+        self._kind = kind
+        self._batch_size = batch_size
 
 
 class DifferentiableEnv(with_metaclass(abc.ABCMeta, Env)):
@@ -97,7 +100,7 @@ class RegressionDataset(object):
 
     @property
     def completion(self):
-        return self.epochs_completed + self.index_in_epoch / self.epochs_completed
+        return self.epochs_completed + self.index_in_epoch / self.n_examples
 
     def next_batch(self, batch_size=None):
         """ Return the next ``batch_size`` examples from this data set.
@@ -144,13 +147,14 @@ class RegressionDataset(object):
                 end = self._index_in_epoch
                 x_new_part = self._x[start:end]
                 y_new_part = self._y[start:end]
-                return (
-                    np.concatenate((x_rest_part, x_new_part), axis=0),
-                    np.concatenate((y_rest_part, y_new_part), axis=0))
+                x = np.concatenate((x_rest_part, x_new_part), axis=0)
+                y = np.concatenate((y_rest_part, y_new_part), axis=0)
         else:
             self._index_in_epoch += batch_size
             end = self._index_in_epoch
-            return self._x[start:end], self._y[start:end]
+            x, y = self._x[start:end], self._y[start:end]
+
+        return x, y
 
 
 class RegressionEnv(DifferentiableEnv):
@@ -160,15 +164,15 @@ class RegressionEnv(DifferentiableEnv):
         self.train, self.val, self.test = train, val, test
 
         action_dim = self.train.y.shape[1]
-        self.action_space = BatchBox(low=0.0, high=1.0, shape=(None, action_dim))
+        self.action_space = BatchBox(low=-np.inf, high=np.inf, shape=(None, action_dim))
 
         obs_dim = self.train.x.shape[1]
         self.observation_space = BatchBox(low=-10.0, high=10.0, shape=(None, obs_dim))
 
         self.reward_range = (-np.inf, 0)
 
-        self._batch_size = None
         self._kind = 'train'
+        self._batch_size = None
 
         self.reset()
 
@@ -176,25 +180,13 @@ class RegressionEnv(DifferentiableEnv):
         return "<RegressionEnv train={} val={} test={}>".format(self.train, self.val, self.test)
 
     @property
-    def accepts_batches(self):
-        return True
-
-    @property
     def completion(self):
         return self.train.completion
 
     def loss(self, policy_output):
-        with tf.name_scope('loss'):
-            target_ph = tf.placeholder(tf.float32, shape=[None, 3], name='target')
-            loss = MSE(policy_output, target_ph)
+        target_ph = tf.placeholder(tf.float32, shape=[None, 3], name='target')
+        loss = MSE(policy_output, target_ph)
         return loss, target_ph
-
-    def set_mode(self, kind, batch_size):
-        # It would be preferable to have these be passed to ``reset``, but
-        # the gym interface makes no affordances for extra args to ``reset``.
-        assert kind in ['train', 'val', 'test'], "Unknown kind {}.".format(kind)
-        self._kind = kind
-        self._batch_size = batch_size
 
     def _step(self, action):
         assert self.action_space.contains(action), (

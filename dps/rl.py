@@ -1,296 +1,236 @@
 import tensorflow as tf
+from tensorflow.python.ops.rnn import dynamic_rnn
+from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 import numpy as np
 
-class Qnetwork():
-    def __init__(self,h_size,rnn_cell,myScope):
-        #The network recieves a frame from the game, flattened into an array.
-        #It then resizes it and processes it through four convolutional layers.
-        self.scalarInput =  tf.placeholder(shape=[None,21168],dtype=tf.float32)
-        self.imageIn = tf.reshape(self.scalarInput,shape=[-1,84,84,3])
-        self.conv1 = slim.convolution2d( \
-            inputs=self.imageIn,num_outputs=32,\
-            kernel_size=[8,8],stride=[4,4],padding='VALID', \
-            biases_initializer=None,scope=myScope+'_conv1')
-        self.conv2 = slim.convolution2d( \
-            inputs=self.conv1,num_outputs=64,\
-            kernel_size=[4,4],stride=[2,2],padding='VALID', \
-            biases_initializer=None,scope=myScope+'_conv2')
-        self.conv3 = slim.convolution2d( \
-            inputs=self.conv2,num_outputs=64,\
-            kernel_size=[3,3],stride=[1,1],padding='VALID', \
-            biases_initializer=None,scope=myScope+'_conv3')
-        self.conv4 = slim.convolution2d( \
-            inputs=self.conv3,num_outputs=h_size,\
-            kernel_size=[7,7],stride=[1,1],padding='VALID', \
-            biases_initializer=None,scope=myScope+'_conv4')
-
-        self.train_length = tf.placeholder(dtype=tf.int32)
-
-        #We take the output from the final convolutional layer and send it to a recurrent layer.
-        #The input must be reshaped into [batch x trace x units] for rnn processing,
-        #and then returned to [batch x units] when sent through the upper levles.
-        self.batch_size = tf.placeholder(dtype=tf.int32)
-        self.convFlat = tf.reshape(slim.flatten(self.conv4),[self.batch_size,self.train_length,h_size])
-        self.state_in = cell.zero_state(self.batch_size, tf.float32)
-        self.rnn,self.rnn_state = tf.nn.dynamic_rnn(
-                inputs=self.convFlat,cell=rnn_cell,dtype=tf.float32,initial_state=self.state_in,scope=myScope+'_rnn')
-        self.rnn = tf.reshape(self.rnn,shape=[-1,h_size])
-
-        #The output from the recurrent player is then split into separate Value and Advantage streams
-        self.streamA,self.streamV = tf.split(self.rnn,2,1)
-        self.AW = tf.Variable(tf.random_normal([h_size//2,4]))
-        self.VW = tf.Variable(tf.random_normal([h_size//2,1]))
-        self.Advantage = tf.matmul(self.streamA,self.AW)
-        self.Value = tf.matmul(self.streamV,self.VW)
-
-        self.salience = tf.gradients(self.Advantage,self.imageIn)
-        #Then combine them together to get our final Q-values.
-        self.Qout = self.Value + tf.subtract(self.Advantage,tf.reduce_mean(self.Advantage,axis=1,keep_dims=True))
-        self.predict = tf.argmax(self.Qout,1)
-
-        #Below we obtain the loss by taking the sum of squares difference between the target and prediction Q values.
-        self.targetQ = tf.placeholder(shape=[None],dtype=tf.float32)
-        self.actions = tf.placeholder(shape=[None],dtype=tf.int32)
-        self.actions_onehot = tf.one_hot(self.actions,4,dtype=tf.float32)
-
-        self.Q = tf.reduce_sum(tf.multiply(self.Qout, self.actions_onehot), axis=1)
-
-        self.td_error = tf.square(self.targetQ - self.Q)
-
-        #In order to only propogate accurate gradients through the network, we will mask the first
-        #half of the losses for each trace as per Lample & Chatlot 2016
-        self.maskA = tf.zeros([self.batch_size,self.train_length//2])
-        self.maskB = tf.ones([self.batch_size,self.train_length//2])
-        self.mask = tf.concat([self.maskA,self.maskB],1)
-        self.mask = tf.reshape(self.mask,[-1])
-        self.loss = tf.reduce_mean(self.td_error * self.mask)
-
-        self.trainer = tf.train.AdamOptimizer(learning_rate=0.0001)
-        self.updateModel = self.trainer.minimize(self.loss)
+from dps.updater import Updater
 
 
-class experience_buffer():
-    def __init__(self, buffer_size = 1000):
-        self.buffer = []
-        self.buffer_size = buffer_size
+class ReinforcementLearningUpdater(Updater):
+    """ Update parameters of a policy using reinforcement learning.
 
-    def add(self,experience):
-        if len(self.buffer) + 1 >= self.buffer_size:
-            self.buffer[0:(1+len(self.buffer))-self.buffer_size] = []
-        self.buffer.append(experience)
+    Should be used in the context of both a default session, default graph and default context.
 
-    def sample(self,batch_size,trace_length):
-        sampled_episodes = random.sample(self.buffer,batch_size)
-        sampledTraces = []
-        for episode in sampled_episodes:
-            point = np.random.randint(0,len(episode)+1-trace_length)
-            sampledTraces.append(episode[point:point+trace_length])
-        sampledTraces = np.array(sampledTraces)
-        return np.reshape(sampledTraces,[batch_size*trace_length,5])
+    Parameters
+    ----------
+    env: gym Env
+        The environment we're trying to learn about.
+    policy: callable object
+        Needs to provide member functions ``build_feeddict`` and ``get_output``.
+    global_step: Tensor
+        Created by calling ``tf.contrib.learn.get_or_create_global_step``.
+
+    """
+    def __init__(self,
+                 env,
+                 policy,
+                 global_step,
+                 optimizer_class,
+                 lr_schedule,
+                 noise_schedule,
+                 max_grad_norm,
+                 gamma,
+                 l2_norm_param):
+
+        super(ReinforcementLearningUpdater, self).__init__()
+        self.env = env
+        assert policy.action_selection.can_sample, (
+            "Cannot sample when using action selection method {}".format(policy.action_selection))
+        self.policy = policy
+        self.global_step = global_step
+        self.optimizer_class = optimizer_class
+        self.lr_schedule = lr_schedule
+        self.noise_schedule = noise_schedule
+        self.max_grad_norm = max_grad_norm
+        self.gamma = gamma
+        self.l2_norm_param = l2_norm_param
+
+        self.obs_dim = env.observation_space.shape[1]
+        self.n_actions = env.action_space.shape[1]
+
+        self._build_graph()
+
+    def start_episode(self):
+        pass
+
+    def end_episode(self):
+        pass
+
+    def remember(self, obs, action, reward, behaviour_policy=None):
+        """ Supply the RL algorithm with a unit of experience.
+
+        If behaviour_policy==None, assumes that data was generated by self.policy.
+
+        """
+        # Note to self: Make it so every argument can be a batch.
+        if not self.policy:
+            raise ValueError("Policy has not been set using ``set_policy``.")
+
+    def _update(self, batch_size, summary_op=None):
+        raise NotImplementedError()
+
+    def _build_graph(self):
+        raise NotImplementedError()
+
+    def do_rollouts(self, mode, n_rollouts=None):
+        self.env.set_mode(mode, n_rollouts)
+        obs = self.env.reset()
+        batch_size = obs.shape[0]
+
+        self.start_episode()
+        policy_state = self.policy.zero_state(batch_size, tf.float32)
+        policy_state = tf.get_default_session().run(policy_state)
+
+        done = False
+        while not done:
+            action, policy_state = self.policy.act(obs, policy_state, sample=True)
+            new_obs, reward, done, info = self.env.step(action)
+
+            self.remember(obs, action, reward)
+            obs = new_obs
+
+        self.end_episode()
 
 
-#Setting the training parameters
-batch_size = 4 #How many experience traces to use for each training step.
-trace_length = 8 #How long each experience trace will be when training
-update_freq = 5 #How often to perform a training step.
-y = .99 #Discount factor on the target Q-values
-startE = 1 #Starting chance of random action
-endE = 0.1 #Final chance of random action
-anneling_steps = 10000 #How many steps of training to reduce startE to endE.
-n_episodes = 10000 #How many episodes of game environment to train network with.
-pre_train_steps = 10000 #How many steps of random actions before training begins.
-load_model = False #Whether to load a saved model.
-path = "./drqn" #The path to save our model to.
-h_size = 512 #The size of the final convolutional layer before splitting it into Advantage and Value streams.
-max_epLength = 50 #The max allowed length of our episode.
-time_per_step = 1 #Length of each step used in gif creation
-summaryLength = 100 #Number of epidoes to periodically save for analysis
-tau = 0.001
+class REINFORCE(ReinforcementLearningUpdater):
+    def __init__(self, *args, **kwargs):
+        super(REINFORCE, self).__init__(*args, **kwargs)
+        self.clear_buffers()
 
-tf.reset_default_graph()
-#We define the cells for the primary and target q-networks
-cell = tf.contrib.rnn.BasicLSTMCell(num_units=h_size,state_is_tuple=True)
-cellT = tf.contrib.rnn.BasicLSTMCell(num_units=h_size,state_is_tuple=True)
-mainQN = Qnetwork(h_size,cell,'main')
-targetQN = Qnetwork(h_size,cellT,'target')
+    def _update(self, batch_size, summary_op=None):
+        # reduce gradient variance by normalization
+        # self.all_rewards += discounted_rewards.tolist()
+        # self.all_rewards = self.all_rewards[:self.max_reward_length]
+        # discounted_rewards -= np.mean(self.all_rewards)
+        # discounted_rewards /= np.std(self.all_rewards)
+        self.clear_buffers()
+        self.do_rollouts('train', batch_size)
+        feed_dict = self.build_feeddict()
+        sess = tf.get_default_session()
 
-init = tf.global_variables_initializer()
+        if summary_op is not None:
+            # sess.run(self.train_op, feed_dict=feed_dict)
+            # train_summary, train_loss = sess.run([summary_op, self.loss], feed_dict=feed_dict)
+            train_summary, train_loss, train_reward, _ = sess.run(
+                [summary_op, self.loss, self.reward_per_ep, self.train_op], feed_dict=feed_dict)
 
-saver = tf.train.Saver(max_to_keep=5)
+            # Run some validation rollouts
+            self.clear_buffers()
+            self.do_rollouts('val')
+            feed_dict = self.build_feeddict()
 
-trainables = tf.trainable_variables()
+            val_summary, val_loss, val_reward = sess.run(
+                [summary_op, self.loss, self.reward_per_ep], feed_dict=feed_dict)
 
-targetOps = updateTargetGraph(trainables,tau)
+            return train_summary, -train_reward, val_summary, -val_reward
+            # return train_summary, -train_loss, val_summary, val_loss
+        else:
+            train_loss, _ = sess.run([self.loss, self.train_op], feed_dict=feed_dict)
+            return train_loss
 
-myBuffer = experience_buffer()
+    def build_feeddict(self):
+        obs = np.array(self.obs_buffer)
+        actions = np.array(self.action_buffer)
 
-#Set the rate of random action decrease.
-e = startE
-stepDrop = (startE - endE)/anneling_steps
+        T = len(self.reward_buffer)
+        discounts = np.logspace(0, T-1, T, base=self.gamma).reshape(-1, 1)
+        true_rewards = np.array(self.reward_buffer)
+        discounted_rewards = true_rewards * discounts
+        sum_discounted_rewards = np.flipud(np.cumsum(np.flipud(discounted_rewards), axis=0))
+        baselines = sum_discounted_rewards.mean(1, keepdims=True)
+        rewards = sum_discounted_rewards - baselines
+        rewards = np.expand_dims(rewards, -1)
 
-#create lists to contain total rewards and steps per episode
-jList = []
-rList = []
-total_steps = 0
+        feed_dict = {
+            self.obs: obs,
+            self.actions: actions,
+            self.cumulative_rewards: rewards,
+            self.true_rewards: np.expand_dims(true_rewards, -1)}
+        return feed_dict
 
-#Make a path for our model to be saved in.
-if not os.path.exists(path):
-    os.makedirs(path)
+    def start_episode(self):
+        pass
 
-##Write the first line of the master log-file for the Control Center
-with open('./Center/log.csv', 'w') as myfile:
-    wr = csv.writer(myfile, quoting=csv.QUOTE_ALL)
-    wr.writerow(['Episode','Length','Reward','IMG','LOG','SAL'])
+    def clear_buffers(self):
+        self.obs_buffer = []
+        self.reward_buffer = []
+        self.action_buffer = []
 
+    def remember(self, obs, action, reward, behaviour_policy=None):
+        super(REINFORCE, self).remember(obs, action, reward, behaviour_policy)
 
-with tf.Session() as sess:
-    if load_model == True:
-        print ('Loading Model...')
-        ckpt = tf.train.get_checkpoint_state(path)
-        saver.restore(sess,ckpt.model_checkpoint_path)
-    sess.run(init)
+        self.obs_buffer.append(obs)
+        self.action_buffer.append(action)
+        self.reward_buffer.append(reward)
 
-    updateTarget(targetOps,sess) #Set the target network to be equal to the primary network.
-    for i in range(n_episodes):
-        episodeBuffer = []
-        #Reset environment and get first new observation
-        sP = env.reset()
-        s = processState(sP)
-        d = False
-        rAll = 0
-        j = 0
-        state = (np.zeros([1,h_size]),np.zeros([1,h_size])) #Reset the recurrent layer's hidden state
+    def _build_graph(self):
+        with tf.name_scope("loss"):
+            self.obs = tf.placeholder(tf.float32, shape=(None, None, self.obs_dim), name="obs")
+            self.actions = tf.placeholder(tf.float32, shape=(None, None, self.n_actions), name="actions")
+            self.cumulative_rewards = tf.placeholder(
+                tf.float32, shape=(None, None, 1), name="cumulative_rewards")
+            self.true_rewards = tf.placeholder(tf.float32, shape=(None, None, 1), name="true_rewards")
+            self.reward_per_ep = tf.reduce_sum(
+                tf.reduce_mean(tf.squeeze(self.true_rewards), axis=1), axis=0, name="reward_per_ep")
 
-        #The Q-Network
-        while j < max_epLength:
-            j+=1
-            #Choose an action by greedily (with e chance of random action) from the Q-network
-            if np.random.rand(1) < e or total_steps < pre_train_steps:
-                state1 = sess.run(mainQN.rnn_state,\
-                    feed_dict={mainQN.scalarInput:[s/255.0],mainQN.train_length:1,mainQN.state_in:state,mainQN.batch_size:1})
-                a = np.random.randint(0,4)
+            inp = (self.obs, self.actions, self.cumulative_rewards)
+
+            reinforce_cell = ReinforceCell(self.policy)
+            batch_size = tf.shape(self.obs)[1]
+            initial_state = reinforce_cell.zero_state(batch_size, tf.float32)
+
+            _, (surrogate_objective, controller_state) = dynamic_rnn(
+                reinforce_cell, inp, initial_state=initial_state,
+                parallel_iterations=1, swap_memory=False,
+                time_major=True)
+
+            self.pg_loss = -tf.reduce_mean(surrogate_objective)
+
+            if self.l2_norm_param > 0:
+                policy_network_variables = tf.get_collection(
+                    tf.GraphKeys.TRAINABLE_VARIABLES, scope=self.policy.scope)
+                self.reg_loss = tf.reduce_sum([tf.reduce_sum(tf.square(x)) for x in policy_network_variables])
+                self.loss = self.pg_loss + self.l2_norm_param * self.reg_loss
             else:
-                a, state1 = sess.run([mainQN.predict,mainQN.rnn_state],\
-                    feed_dict={mainQN.scalarInput:[s/255.0],mainQN.train_length:1,mainQN.state_in:state,mainQN.batch_size:1})
-                a = a[0]
-            s1P,r,d = env.step(a)
-            s1 = processState(s1P)
-            total_steps += 1
-            episodeBuffer.append(np.reshape(np.array([s,a,r,s1,d]),[1,5]))
-            if total_steps > pre_train_steps:
-                if e > endE:
-                    e -= stepDrop
+                self.reg_loss = None
+                self.loss = self.pg_loss
 
-                if total_steps % (update_freq) == 0:
-                    updateTarget(targetOps,sess)
-                    #Reset the recurrent layer's hidden state
-                    state_train = (np.zeros([batch_size,h_size]),np.zeros([batch_size,h_size]))
+            tf.summary.scalar("policy_loss", self.pg_loss)
+            tf.summary.scalar("reward_per_ep", self.reward_per_ep)
+            if self.l2_norm_param > 0:
+                tf.summary.scalar("reg_loss", self.reg_loss)
+            tf.summary.scalar("total_loss", self.loss)
 
-                    trainBatch = myBuffer.sample(batch_size,trace_length) #Get a random batch of experiences.
-                    #Below we perform the Double-DQN update to the target Q-values
-                    Q1 = sess.run(mainQN.predict,feed_dict={\
-                        mainQN.scalarInput:np.vstack(trainBatch[:,3]/255.0),\
-                        mainQN.train_length:trace_length,mainQN.state_in:state_train,mainQN.batch_size:batch_size})
-                    Q2 = sess.run(targetQN.Qout,feed_dict={\
-                        targetQN.scalarInput:np.vstack(trainBatch[:,3]/255.0),\
-                        targetQN.train_length:trace_length,targetQN.state_in:state_train,targetQN.batch_size:batch_size})
-                    end_multiplier = -(trainBatch[:,4] - 1)
-                    doubleQ = Q2[range(batch_size*trace_length),Q1]
-                    targetQ = trainBatch[:,2] + (y*doubleQ * end_multiplier)
-                    #Update the network with our target values.
-                    sess.run(mainQN.updateModel, \
-                        feed_dict={mainQN.scalarInput:np.vstack(trainBatch[:,0]/255.0),mainQN.targetQ:targetQ,\
-                        mainQN.actions:trainBatch[:,1],mainQN.train_length:trace_length,\
-                        mainQN.state_in:state_train,mainQN.batch_size:batch_size})
-            rAll += r
-            s = s1
-            sP = s1P
-            state = state1
-            if d == True:
-
-                break
-
-        #Add the episode to the experience buffer
-        bufferArray = np.array(episodeBuffer)
-        episodeBuffer = zip(bufferArray)
-        myBuffer.add(episodeBuffer)
-        jList.append(j)
-        rList.append(rAll)
+        self._build_train()
 
 
-e = 0.01 #The chance of chosing a random action
-n_episodes = 10000 #How many episodes of game environment to train network with.
-h_size = 512 #The size of the final convolutional layer before splitting it into Advantage and Value streams.
-h_size = 512 #The size of the final convolutional layer before splitting it into Advantage and Value streams.
-max_epLength = 50 #The max allowed length of our episode.
-time_per_step = 1 #Length of each step used in gif creation
-summaryLength = 100 #Number of epidoes to periodically save for analysis
+class ReinforceCell(RNNCell):
+    def __init__(self, policy):
+        self.policy = policy
 
+    def __call__(self, inp, state, scope=None):
+        with tf.name_scope(scope or 'reinforce_cell'):
+            observations, actions, cumulative_rewards = inp
+            accumulator, policy_state = state
 
-tf.reset_default_graph()
-cell = tf.contrib.rnn.BasicLSTMCell(num_units=h_size,state_is_tuple=True)
-cellT = tf.contrib.rnn.BasicLSTMCell(num_units=h_size,state_is_tuple=True)
-mainQN = Qnetwork(h_size,cell,'main')
-targetQN = Qnetwork(h_size,cellT,'target')
+            _, action_probs, _, new_policy_state = self.policy.build(observations, policy_state)
 
-init = tf.global_variables_initializer()
+            new_term = tf.log(tf.reduce_sum(action_probs * actions, axis=1, keep_dims=True)) * cumulative_rewards
+            new_accumulator = accumulator + new_term
+            new_state = (new_accumulator, new_policy_state)
 
-saver = tf.train.Saver(max_to_keep=2)
+            return new_accumulator, new_state
 
-#create lists to contain total rewards and steps per episode
-jList = []
-rList = []
-total_steps = 0
+    @property
+    def state_size(self):
+        return (1, self.policy.state_size)
 
-with tf.Session() as sess:
-    if load_model == True:
-        print ('Loading Model...')
-        ckpt = tf.train.get_checkpoint_state(path)
-        saver.restore(sess,ckpt.model_checkpoint_path)
-    else:
-        sess.run(init)
+    @property
+    def output_size(self):
+        return 1
 
-    for i in range(n_episodes):
-        episodeBuffer = []
-        #Reset environment and get first new observation
-        sP = env.reset()
-        s = processState(sP)
-        d = False
-        rAll = 0
-        j = 0
-        state = (np.zeros([1,h_size]),np.zeros([1,h_size]))
-        #The Q-Network
-        while j < max_epLength: #If the agent takes longer than 200 moves to reach either of the blocks, end the trial.
-            j+=1
-            #Choose an action by greedily (with e chance of random action) from the Q-network
-            if np.random.rand(1) < e:
-                state1 = sess.run(mainQN.rnn_state,\
-                    feed_dict={mainQN.scalarInput:[s/255.0],mainQN.train_length:1,mainQN.state_in:state,mainQN.batch_size:1})
-                a = np.random.randint(0,4)
-            else:
-                a, state1 = sess.run([mainQN.predict,mainQN.rnn_state],\
-                    feed_dict={mainQN.scalarInput:[s/255.0],mainQN.train_length:1,\
-                    mainQN.state_in:state,mainQN.batch_size:1})
-                a = a[0]
-            s1P,r,d = env.step(a)
-            s1 = processState(s1P)
-            total_steps += 1
-            episodeBuffer.append(np.reshape(np.array([s,a,r,s1,d]),[1,5])) #Save the experience to our episode buffer.
-            rAll += r
-            s = s1
-            sP = s1P
-            state = state1
-            if d == True:
-
-                break
-
-        bufferArray = np.array(episodeBuffer)
-        jList.append(j)
-        rList.append(rAll)
-
-        #Periodically save the model.
-        if len(rList) % summaryLength == 0 and len(rList) != 0:
-            print (total_steps,np.mean(rList[-summaryLength:]), e)
-            saveToCenter(i,rList,jList,np.reshape(np.array(episodeBuffer),[len(episodeBuffer),5]),\
-                summaryLength,h_size,sess,mainQN,time_per_step)
-print ("Percent of succesful episodes: " + str(sum(rList)/n_episodes) + "%")
+    def zero_state(self, batch_size, dtype):
+        initial_state = (
+            tf.fill((batch_size, 1), 0.0),
+            self.policy.zero_state(batch_size, dtype))
+        return initial_state

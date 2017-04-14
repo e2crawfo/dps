@@ -1,10 +1,67 @@
 import subprocess as sp
 from pprint import pformat
 from contextlib import contextmanager
+import numpy as np
 
 import tensorflow as tf
 from tensorflow.python.ops import random_ops, math_ops
 from tensorflow.python.framework import ops, constant_op
+from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
+
+
+class CompositeCell(RNNCell):
+    def __init__(self, cell, output, output_size):
+        """ A wrapper around a cell that adds an additional transformation of the output.
+
+        Parameters
+        ----------
+        output: callable (Tensor, int) -> Tensor
+            Maps from an input tensor and an output size to an output tensor.
+
+        """
+        self.cell = cell
+        self.output = output
+        self._output_size = output_size
+
+    def __call__(self, inp, state):
+        output, new_state = self.cell(inp, state)
+        return self.output(output, self._output_size), new_state
+
+    @property
+    def state_size(self):
+        return self.cell.state_size
+
+    @property
+    def output_size(self):
+        return self._output_size
+
+    def zero_state(self, batch_size, dtype):
+        return self.cell.zero_state(batch_size, dtype)
+
+
+class FeedforwardCell(RNNCell):
+    def __init__(self, ff, output_size):
+        self.ff = ff
+        self._output_size = output_size
+
+    def __call__(self, inp, state):
+        output = self.ff(inp, self._output_size)
+        return output, tf.zeros((tf.shape(inp)[0], 1))
+
+    @property
+    def state_size(self):
+        return 1
+
+    @property
+    def output_size(self):
+        return self._output_size
+
+    def zero_state(self, batch_size, dtype):
+        return tf.zeros((batch_size, 1))
+
+
+def gen_seed():
+    return np.random.randint(np.iinfo(np.int32).max)
 
 
 # class EarlyStopHook(SessionRunHook):
@@ -59,34 +116,6 @@ def restart_tensorboard(logdir):
     print("Restarting tensorboard process...")
     sp.Popen("tensorboard --logdir={}".format(logdir).split(), stdout=sp.DEVNULL, stderr=sp.DEVNULL)
     print("Done restarting tensorboard.")
-
-
-def training(loss, global_step, config=None):
-    config = config or default_config()
-    with tf.name_scope('train'):
-        start, decay_steps, decay_rate, staircase = config.lr_schedule
-        lr = tf.train.exponential_decay(
-            start, global_step, decay_steps, decay_rate, staircase=staircase)
-        tf.summary.scalar('learning_rate', lr)
-
-        opt = config.optimizer_class(lr)
-
-        tvars = tf.trainable_variables()
-        if hasattr(config, 'max_grad_norm') and config.max_grad_norm > 0.0:
-            grads, _ = tf.clip_by_global_norm(tf.gradients(loss, tvars), config.max_grad_norm)
-        else:
-            grads = tf.gradients(loss, tvars)
-
-        grads_and_vars = zip(grads, tvars)
-        if hasattr(config, 'noise_schedule'):
-            start, decay_steps, decay_rate, staircase = config.noise_schedule
-            noise = inverse_time_decay(
-                start, global_step, decay_steps, decay_rate, staircase=staircase, gamma=0.55)
-            tf.summary.scalar('noise', noise)
-            grads_and_vars = add_scaled_noise_to_gradients(grads_and_vars, noise)
-
-        train_op = opt.apply_gradients(grads_and_vars, global_step=global_step)
-        return train_op
 
 
 def MSE(outputs, targets):

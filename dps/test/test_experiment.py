@@ -1,5 +1,7 @@
-from dps.experiments import simple_addition
+import pytest
+from dps.experiments.simple_addition import train_addition
 
 
-def test_simple_addition():
-    simple_addition.main()
+@pytest.mark.parametrize('config', ['rl', 'default'])
+def test_simple_addition(config):
+    train_addition(log_dir='/tmp/dps/addition', config=config)

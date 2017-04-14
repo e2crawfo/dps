@@ -5,14 +5,12 @@ import tensorflow as tf
 from tensorflow.python.ops.rnn import dynamic_rnn
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 
-from gym import Env
-from gym import spaces
 from gym.utils import seeding
 
-from dps.environment import BatchBox
+from dps.environment import BatchBox, Env
 
 
-params = 'core_network controller action_selection use_act T'
+params = 'core_network policy use_act T'
 
 
 class ProductionSystem(namedtuple('ProductionSystem', params.split())):
@@ -23,13 +21,13 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
 class CoreNetwork(object):
     """ A core network inside a production system.
 
-    A specification of the functionality of the core network; any state must be maintained externally.
+    A specification of the functionality of the core network; state must be maintained externally.
 
     Parameters
     ----------
     n_actions: int > 0
-        The number of actions recognized by the core network.
-    body: callable
+        The number of actions recognized by the core network. Doesn't include a stopping actions.
+    __call__:
         Accepts a tensor representing action activations and an object
         created by calling ``instantiate`` on ``register_spec``
         (which stores tensors representing register values) and outputs tensors
@@ -39,98 +37,73 @@ class CoreNetwork(object):
         Provides information about the registers operated on by this core network.
 
     """
-    def __init__(self, n_actions, body, register_spec, name):
-        self.n_actions = n_actions
-        self.body = body
-        self.register_spec = register_spec
-        self.name = name
-
+    def __init__(self):
         self._graph = None
-        self._register_placeholders = None
+        self._action_activations_ph = None
+        self._register_ph = None
+
+    @property
+    def n_actions(self):
+        """ Should not include the stopping action, that is handled externally. """
+        raise NotImplementedError()
+
+    @property
+    def obs_dim(self):
+        return sum(shape[1] for shape in self.register_spec.shapes(visible_only=True))
+
+    @property
+    def register_spec(self):
+        raise NotImplementedError()
+
+    def __call__(self, action_activations, registers):
+        """ Returns: Tensors representing action_activations, new_registers. """
+        raise NotImplementedError()
 
     def _build_graph(self):
-        with tf.namescope('core_network'):
-            aa_placeholders = tf.placeholder(tf.float32, shape=[None, self.n_actions], name='action_activations')
-            self._register_placeholders = self.register_spec.build_placeholders()
-            self._graph = self.body(aa_placeholders, self.register_placeholders)
-
-    @property
-    def graph(self):
-        if self._graph is None:
-            self._build_graph()
-        return self._graph
-
-    @property
-    def register_placeholders(self):
-        if self._register_placeholders is None:
-            self._build_graph()
-        return self._register_placeholders
+        with tf.name_scope('core_network'):
+            self._action_activations_ph = tf.placeholder(
+                tf.float32, shape=[None, self.n_actions], name='action_activations')
+            self._register_ph = self.register_spec.build_placeholders()
+            self._graph = self(self._action_activations_ph, self._register_ph)
 
     def run(self, action_activations, registers):
-        feed_dict = {ph: v for ph, v in zip(self.register_placeholders, registers)}
-        feed_dict['action_activations'] = action_activations
+        if self._graph is None:
+            self._build_graph()
+
+        feed_dict = {ph: v for ph, v in zip(self._register_ph, registers)}
+        feed_dict[self._action_activations_ph] = action_activations
 
         with tf.Session() as sess:
-            sess.run(tf.global_variables_initializer(), feed_dict=feed_dict)
-            output = sess.run(self.graph)
+            output = sess.run(self._graph, feed_dict=feed_dict)
         return output
 
 
 class ProductionSystemCell(RNNCell):
-    def __init__(self, psystem, exploration, reuse=None):
-        """ ``controller`` may be an RNN cell (if it has internal state) or a tensorflow function. """
-        self.core_network, self.controller, self.action_selection, _, _ = psystem
-        self.exploration = exploration
+    def __init__(self, psystem, reuse=None):
+        self.core_network, self.policy, _, _ = psystem
 
-        if isinstance(self.controller, RNNCell):
-            self._state_size = (
-                self.controller.state_size,
-                self.core_network.register_spec.state_size())
-        else:
-            self._state_size = self.core_network.register_spec.state_size()
+        self._state_size = (
+            self.policy.state_size,
+            self.core_network.register_spec.state_size())
+
         self._reuse = reuse
 
     def __call__(self, inputs, state, scope=None):
-        """ Run the production system for one step.
-
-        Has no proper inputs or outputs, everything is contained in the registers.
-
-        Args:
-            inputs: noise, passed to the core network and the action selection mechanism for doing reparamaterization trick
-            state: if `self.state_size` is an integer, this should be a `2-D Tensor`
-                with shape `[batch_size x (self.state_size]`.  Otherwise, if
-                `self.state_size` is a tuple of integers, this should be a tuple
-                with shapes `[batch_size x s] for s in self.state_size`.
-            scope: VariableScope for the created subgraph; defaults to class name.
-        Returns:
-            A pair containing:
-            - Output: A `2-D` tensor with shape `[batch_size x self.output_size]`.
-            - New state: Either a single `2-D` tensor, or a tuple of tensors matching
-              the arity and shapes of `state`.
-        """
         with tf.name_scope(scope or 'production_system_cell'):
-            controller_state = None
+            policy_state = None
 
-            if isinstance(self.controller, RNNCell):
-                controller_state = state[0]
-                registers = state[1]
-            else:
-                registers = state
+            policy_state = state[0]
+            registers = state[1]
 
-            with tf.name_scope('controller'):
+            with tf.name_scope('policy'):
                 obs = self.core_network.register_spec.as_obs(registers, visible_only=1)
-                utilities, new_controller_state = self.controller(obs, controller_state)
-
-            with tf.name_scope('action_selection'):
-                action_activations = self.action_selection(utilities, self.exploration)
+                action_activations, new_policy_state = self.policy(obs, policy_state)
 
             with tf.name_scope('core_network'):
-                _, new_registers = self.core_network.body(action_activations, registers)
+                # Strip off the last action, which is the stopping action.
+                new_registers = self.core_network(action_activations[:, :-1], registers)
 
-            if isinstance(self.controller, RNNCell):
-                new_state = (new_controller_state, new_registers)
-            else:
-                new_state = new_registers
+            new_state = (new_policy_state, new_registers)
 
             # Return state as output since ProductionSystemCell has no other meaningful output,
             # and this has benefit of making all intermediate states accessible when using
@@ -146,12 +119,9 @@ class ProductionSystemCell(RNNCell):
         return self._state_size
 
     def zero_state(self, batch_size, dtype):
-        if isinstance(self.controller, RNNCell):
-            initial_state = (
-                self.controller.zero_state(batch_size, dtype),
-                self.core_network.register_spec.build_placeholders(dtype))
-        else:
-            initial_state = self.core_network.register_spec.build_placeholders(dtype)
+        initial_state = (
+            self.policy.zero_state(batch_size, dtype),
+            self.core_network.register_spec.build_placeholders(dtype))
         return initial_state
 
 
@@ -160,20 +130,16 @@ class ProductionSystemFunction(object):
 
     Parameters
     ----------
-    pystem: ProductionSystem
+    psystem: ProductionSystem
         The production system that we want to turn into a tensorflow function.
-    exploration: scalar Tensor
-        A scalar, passed to the action selection function, giving the amount
-        of exploration to use at any point in time
 
     """
-    def __init__(self, psystem, exploration, scope=None):
+    def __init__(self, psystem, scope=None):
 
-        self.core_network, self.controller, self.action_selection, self.use_act, self.T = psystem
-        self.exploration = exploration
+        self.core_network, self.policy, self.use_act, self.T = psystem
 
         self.inputs, self.initial_state, self.ps_cell, self.states, self.final_state = (
-            self._build_ps_function(psystem, exploration, scope))
+            self._build_ps_function(psystem, scope))
 
     def build_feeddict(self, registers, T=None):
         fd = {}
@@ -183,21 +149,22 @@ class ProductionSystemFunction(object):
 
         batch_size = registers[0].shape[0]
 
-        if not self.use_act and T is None:
-            raise Exception("Number of steps ``T`` must be supplied when not using ACT.")
+        T = T or self.T
         if not self.use_act:
             # The first dim of this dummy input determines the number of time steps.
             fd[self.inputs] = np.zeros((T, batch_size, 1))
 
-        initial_registers = (
-            self.initial_state[1] if isinstance(self.controller, RNNCell) else self.initial_state)
+        initial_registers = self.initial_state[1]
         for placeholder, value in zip(initial_registers, registers):
             fd[placeholder] = value
 
         return fd
 
+    def get_output(self):
+        return self.get_register_values()[-1, :, :]
+
     @staticmethod
-    def _build_ps_function(psystem, exploration, scope=None):
+    def _build_ps_function(psystem, scope=None):
         if psystem.use_act:
             raise NotImplemented()
             # Code for doing Adaptive Computation Time
@@ -230,7 +197,7 @@ class ProductionSystemFunction(object):
                 # (max_time, batch_size, 1)
                 inputs = tf.placeholder(tf.float32, shape=(None, None, 1), name="inputs")
 
-                ps_cell = ProductionSystemCell(psystem, exploration)
+                ps_cell = ProductionSystemCell(psystem)
 
                 batch_size = tf.shape(inputs)[1]
                 initial_state = ps_cell.zero_state(batch_size, tf.float32)
@@ -246,13 +213,12 @@ class ProductionSystemFunction(object):
         return inputs, initial_state, ps_cell, states, final_state
 
     def get_register_values(self, *names, as_obs=True):
-        registers = self.states[1] if isinstance(self.controller, RNNCell) else self.states
+        registers = self.states[1]
         return self.core_network.register_spec.get_register_values(registers, *names, as_obs=as_obs, axis=2)
 
     def __str__(self):
-        return ("<ProductionSystemFunction - core_network={}, controller={}, "
-                "action_selection={}, use_act={}>".format(
-                    self.core_network, self.controller, self.action_selection, self.use_act))
+        return ("<ProductionSystemFunction - core_network={}, policy={}, use_act={}>".format(
+            self.core_network, self.policy, self.policy, self.use_act))
 
     def __call__(self, inputs, T=None):
         # The compiled function should act like this: if it was built with act=True,
@@ -278,7 +244,7 @@ class ProductionSystemEnv(Env):
     metadata = {"render.modes": ["human", "ansi"]}
 
     def __init__(self, psystem, env):
-        self.core_network, _, _, self.use_act, self.T = psystem
+        self.core_network, _, self.use_act, self.T = psystem
         self.env = env
 
         # Extra action is for stopping. If T is not 0, this action will be effectively ignored.
@@ -287,11 +253,15 @@ class ProductionSystemEnv(Env):
         self.action_space = BatchBox(low=0.0, high=1.0, shape=(None, self.n_actions))
 
         obs_dim = sum(shape[1] for shape in self.core_network.register_spec.shapes(visible_only=True))
-        self.observation_space = spaces.Box(low=-10.0, high=10.0, shape=(None, obs_dim))
+        self.observation_space = BatchBox(low=-10.0, high=10.0, shape=(None, obs_dim))
 
         self.reward_range = env.reward_range
 
+        self._seed()
         self.reset()
+
+    def set_mode(self, kind, batch_size):
+        self.env.set_mode(kind, batch_size)
 
     def __str__(self):
         return "<ProductionSystemEnv, core_network={}, env={}, T={}>".format(self.core_network, self.env, self.T)
@@ -305,17 +275,16 @@ class ProductionSystemEnv(Env):
         # from which we then sample. Definitely something like this.
         step_external = (
             (not self.T and action == self.core_network.n_actions) or
-            (self.T and self.t % self.T == 0))
+            (self.T and self.t != 0 and self.t % self.T == 0))
 
         # Either update external or internal environment, never both.
         if step_external:
-            external_action = self.registers.get_output()
-
+            external_action = self.core_network.register_spec.get_output(self.registers)
             external_obs, reward, done, info = self.env.step(external_action)
-            self.registers.set_input(external_obs)
+            self.core_network.register_spec.set_input(self.registers, external_obs)
         else:
-            reward, done, info = 0.0, False, {}
-            action = action[:-1]  # The core network knows nothing about stopping computation, so cut off the stop action.
+            reward, done, info = np.zeros(action.shape[0]), False, {}
+            action = action[:, :-1]  # The core network knows nothing about stopping computation, so cut off the stop action.
             self.registers = self.core_network.run(action, self.registers)
         self.t += 1
 
@@ -327,11 +296,13 @@ class ProductionSystemEnv(Env):
         external_obs = self.env.reset()
 
         self.registers = self.core_network.register_spec.instantiate(
-            batch_size=1, np_random=self.np_random, input=external_obs)
+            batch_size=external_obs.shape[0], np_random=self.np_random)
+        self.core_network.register_spec.set_input(self.registers, external_obs)
         return self.core_network.register_spec.as_obs(self.registers, visible_only=True)
 
     def _render(self, mode='human', close=False):
-        raise NotImplementedError()
+        if not close:
+            raise NotImplementedError()
 
     def _close(self):
         pass
