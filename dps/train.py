@@ -11,9 +11,12 @@ from spectral_dagger.utils.experiment import ExperimentStore
 from dps.utils import restart_tensorboard, EarlyStopHook, gen_seed
 
 
-def training_loop(env, build_updater, log_dir, config, max_experiments=5, start_tensorboard=True):
+def training_loop(
+        env, build_updater, log_dir, config,
+        max_experiments=5, start_tensorboard=True, exp_name=''):
+
     es = ExperimentStore(log_dir, max_experiments=max_experiments, delete_old=1)
-    exp_dir = es.new_experiment('', use_time=1, force_fresh=1)
+    exp_dir = es.new_experiment(exp_name, use_time=1, force_fresh=1)
 
     print(config)
 
@@ -26,6 +29,7 @@ def training_loop(env, build_updater, log_dir, config, max_experiments=5, start_
     early_stop = EarlyStopHook(patience=config.patience)
     val_loss = np.inf
 
+    tf.reset_default_graph()
     graph = tf.Graph()
     sess = tf.Session()
     with ExitStack() as stack:

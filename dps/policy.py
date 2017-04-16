@@ -21,7 +21,7 @@ class Policy(RNNCell):
 
     def __init__(
             self, controller, action_selection, exploration,
-            n_actions, obs_dim, name=None):
+            n_actions, obs_dim, name="policy"):
 
         self.controller = controller
         self.action_selection = action_selection
@@ -29,11 +29,7 @@ class Policy(RNNCell):
 
         self.n_actions = n_actions
         self.obs_dim = obs_dim
-
-        self.name = name or "policy"
-        if self.name in Policy.existing_policies:
-            raise Exception("A policy with that name already exists.")
-        Policy.existing_policies.add(self.name)
+        self.name = name
 
         self.n_builds = 0
 

@@ -148,7 +148,7 @@ class DefaultConfig(Config):
     action_selection = staticmethod([
         SoftmaxSelect(),
         GumbelSoftmaxSelect(hard=0),
-        ReluSelect()][1])
+        ReluSelect()][0])
 
     use_rl = False
 
