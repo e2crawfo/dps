@@ -1,10 +1,8 @@
 import tensorflow as tf
 import numpy as np
-import abc
-from future.utils import with_metaclass
 
 
-class RegisterSpec(with_metaclass(abc.ABCMeta, object)):
+class RegisterSpec(object):
     """ Specification of a set of registers.
 
     Inherit from this class in order to create specific register specifications.
@@ -21,25 +19,41 @@ class RegisterSpec(with_metaclass(abc.ABCMeta, object)):
     """
     dtype = tf.float32
 
-    @abc.abstractproperty
+    _visible = None
+    _initial_values = None
+    _namedtuple = None
+    _input_names = None
+    _output_names = None
+
+    @classmethod
+    def assert_defined(cls, attr):
+        assert getattr(cls, attr) is not None, (
+            "Subclasses of RegisterSpec must specify a value for attr {}.".format(attr))
+
+    @property
     def visible(self):
-        raise NotImplementedError()
+        self.assert_defined('_visible')
+        return self._visible
 
-    @abc.abstractproperty
+    @property
     def initial_values(self):
-        raise NotImplementedError()
+        self.assert_defined('_initial_values')
+        return self._initial_values
 
-    @abc.abstractproperty
+    @property
     def namedtuple(self):
-        raise NotImplementedError()
+        self.assert_defined('_namedtuple')
+        return self._namedtuple
 
-    @abc.abstractproperty
+    @property
     def input_names(self):
-        raise NotImplementedError()
+        self.assert_defined('_input_names')
+        return self._input_names
 
-    @abc.abstractproperty
+    @property
     def output_names(self):
-        raise NotImplementedError()
+        self.assert_defined('_output_names')
+        return self._output_names
 
     @property
     def names(self):

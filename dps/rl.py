@@ -205,6 +205,8 @@ class REINFORCE(ReinforcementLearningUpdater):
 
 
 class ReinforceCell(RNNCell):
+    """ Used in defining the surrogate loss function that we differentiate to perform REINFORCE. """
+
     def __init__(self, policy):
         self.policy = policy
 

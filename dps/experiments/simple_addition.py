@@ -46,38 +46,16 @@ addition_nt = namedtuple('_AdditionRegister', 'r0 r1 r2'.split())
 
 
 class AdditionRegSpec(RegisterSpec):
-    @property
-    def visible(self):
-        return [1, 1, 1]
-
-    @property
-    def initial_values(self):
-        return [np.array([v], dtype='f') for v in [1.0, 0.0, 0.0]]
-
-    @property
-    def namedtuple(self):
-        return addition_nt
-
-    @property
-    def input_names(self):
-        return self.names
-
-    @property
-    def output_names(self):
-        return self.names
+    _visible = [1, 1, 1]
+    _initial_values = [np.array([v], dtype='f') for v in [1.0, 0.0, 0.0]]
+    _namedtuple = addition_nt
+    _input_names = addition_nt._fields
+    _output_names = addition_nt._fields
 
 
 class Addition(CoreNetwork):
     _register_spec = AdditionRegSpec()
     _n_actions = 3
-
-    @property
-    def n_actions(self):
-        return self._n_actions
-
-    @property
-    def register_spec(self):
-        return self._register_spec
 
     def __call__(self, action_activations, r):
         """ Action 0: add the variables in the registers, store in r0.

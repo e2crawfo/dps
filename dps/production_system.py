@@ -37,15 +37,23 @@ class CoreNetwork(object):
         Provides information about the registers operated on by this core network.
 
     """
+    _n_actions = None
+    _register_spec = None
+
     def __init__(self):
         self._graph = None
         self._action_activations_ph = None
         self._register_ph = None
 
+    @classmethod
+    def assert_defined(cls, attr):
+        assert getattr(cls, attr) is not None, (
+            "Subclasses of CoreNetwork must specify a value for attr {}.".format(attr))
+
     @property
     def n_actions(self):
-        """ Should not include the stopping action, that is handled externally. """
-        raise NotImplementedError()
+        self.assert_defined('_n_actions')
+        return self._n_actions
 
     @property
     def obs_dim(self):
@@ -53,7 +61,8 @@ class CoreNetwork(object):
 
     @property
     def register_spec(self):
-        raise NotImplementedError()
+        self.assert_defined('_register_spec')
+        return self._register_spec
 
     def __call__(self, action_activations, registers):
         """ Returns: Tensors representing action_activations, new_registers. """

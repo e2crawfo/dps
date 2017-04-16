@@ -10,15 +10,19 @@ from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 
 
 class CompositeCell(RNNCell):
+    """ A wrapper around a cell that adds an additional transformation of the output.
+
+    Parameters
+    ----------
+    cell: instance of RNNCell
+        The cell to wrap.
+    output: callable (Tensor, int) -> Tensor
+        Maps from an input tensor and an output size to an output tensor.
+    output_size: int
+        The size of the output, passed as the second argument when calling ``output``.
+
+    """
     def __init__(self, cell, output, output_size):
-        """ A wrapper around a cell that adds an additional transformation of the output.
-
-        Parameters
-        ----------
-        output: callable (Tensor, int) -> Tensor
-            Maps from an input tensor and an output size to an output tensor.
-
-        """
         self.cell = cell
         self.output = output
         self._output_size = output_size
@@ -40,6 +44,18 @@ class CompositeCell(RNNCell):
 
 
 class FeedforwardCell(RNNCell):
+    """ A wrapper around a feedforward network that turns it into an RNNCell with a dummy state.
+
+    Parameters
+    ----------
+    ff: callable (Tensor, int) -> Tensor
+        A function that generates the tensorflow ops implementing the
+        feedforward network we want to wrap. Maps from an input tensor
+        and an output size to an output tensor.
+    output_size: int
+        The size of the output, passed as the second argument when calling ``output``.
+
+    """
     def __init__(self, ff, output_size):
         self.ff = ff
         self._output_size = output_size
