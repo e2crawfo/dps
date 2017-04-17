@@ -11,7 +11,7 @@ from spectral_dagger.utils.experiment import ExperimentStore
 from dps.utils import restart_tensorboard, EarlyStopHook, gen_seed
 
 
-def training_loop(
+def _training_loop(
         env, build_updater, log_dir, config,
         max_experiments=5, start_tensorboard=True, exp_name=''):
 
@@ -101,5 +101,15 @@ def training_loop(
 
             step += 1
 
-    if start_tensorboard:
-        restart_tensorboard(log_dir)
+
+def training_loop(
+        env, build_updater, log_dir, config,
+        max_experiments=5, start_tensorboard=True, exp_name=''):
+
+    try:
+        _training_loop(
+            env, build_updater, log_dir, config,
+            max_experiments=5, exp_name='')
+    finally:
+        if start_tensorboard:
+            restart_tensorboard(log_dir)
