@@ -167,7 +167,8 @@ class RegressionEnv(DifferentiableEnv):
         self.action_space = BatchBox(low=-np.inf, high=np.inf, shape=(None, action_dim))
 
         obs_dim = self.train.x.shape[1]
-        self.observation_space = BatchBox(low=-10.0, high=10.0, shape=(None, obs_dim))
+        self.observation_space = BatchBox(
+            low=-np.inf, high=np.inf, shape=(None, obs_dim))
 
         self.reward_range = (-np.inf, 0)
 
@@ -184,7 +185,7 @@ class RegressionEnv(DifferentiableEnv):
         return self.train.completion
 
     def loss(self, policy_output):
-        target_ph = tf.placeholder(tf.float32, shape=[None, 3], name='target')
+        target_ph = tf.placeholder(tf.float32, shape=policy_output.shape, name='target')
         loss = MSE(policy_output, target_ph)
         return loss, target_ph
 

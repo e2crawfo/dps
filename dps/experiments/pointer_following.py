@@ -17,64 +17,71 @@ from dps.rl import REINFORCE
 from dps.policy import Policy, ReluSelect, SoftmaxSelect, GumbelSoftmaxSelect
 
 
-class AdditionDataset(RegressionDataset):
-    def __init__(self, order, n_examples, for_eval=False, shuffle=True):
-        self.order = order
+class PointerDataset(RegressionDataset):
+    def __init__(
+            self, width, n_digits, n_examples, for_eval=False, shuffle=True):
+        self.width = width
+        self.n_digits = n_digits
 
-        x = np.random.randn(n_examples, 2)
-        x = np.concatenate((x.copy(), np.zeros((x.shape[0], 1))), axis=1)
-        y = x.copy()
-        for i in order:
-            if i == 0:
-                y[:, 0] = y[:, 0] + y[:, 1]
-            else:
-                y[:, 1] = y[:, 0] * y[:, 1]
-
-        super(AdditionDataset, self).__init__(x, y, for_eval, shuffle)
+        x = np.random.randint(0, n_digits, size=(n_examples, 2*width+1))
+        x[:, width] = np.random.randint(-width, width+1, size=n_examples)
+        y = x[range(x.shape[0]), x[:, width]+width].reshape(-1, 1)
+        super(PointerDataset, self).__init__(x, y, for_eval, shuffle)
 
 
-class AdditionEnv(RegressionEnv):
-    def __init__(self, order, n_train, n_val, n_test):
-        super(AdditionEnv, self).__init__(
-            train=AdditionDataset(order, n_train, for_eval=False),
-            val=AdditionDataset(order, n_val, for_eval=True),
-            test=AdditionDataset(order, n_test, for_eval=True))
+class PointerEnv(RegressionEnv):
+    def __init__(self, width, n_digits, n_train, n_val, n_test):
+        super(PointerEnv, self).__init__(
+            train=PointerDataset(width, n_digits, n_train, for_eval=False),
+            val=PointerDataset(width, n_digits, n_val, for_eval=True),
+            test=PointerDataset(width, n_digits, n_test, for_eval=True))
 
 
 # Define at top-level to enable pickling
-addition_nt = namedtuple('_AdditionRegister', 'r0 r1 r2'.split())
+pointer_nt = namedtuple('_PointerRegister', 'inp fovea vision wm'.split())
 
 
-class AdditionRegSpec(RegisterSpec):
-    _visible = [1, 1, 1]
-    _initial_values = [np.array([v], dtype='f') for v in [1.0, 0.0, 0.0]]
-    _namedtuple = addition_nt
-    _input_names = addition_nt._fields
-    _output_names = addition_nt._fields
+class PointerRegSpec(RegisterSpec):
+    _visible = [0, 1, 1, 1]
+    _initial_values = None
+    _namedtuple = pointer_nt
+    _input_names = ['inp']
+    _output_names = ['wm']
+
+    def __init__(self, width):
+        self.width = width
+        self._initial_values = (
+            [np.zeros(2*width+1, dtype='f')] +
+            [np.array([v], dtype='f') for v in [width, 0.0, 0.0]])
 
 
-class Addition(CoreNetwork):
-    _register_spec = AdditionRegSpec()
-    _n_actions = 3
+class Pointer(CoreNetwork):
+    _register_spec = None
+    _n_actions = 5
+
+    def __init__(self, width):
+        super(Pointer, self).__init__()
+        self.width = width
+        self._register_spec = PointerRegSpec(width)
 
     def __call__(self, action_activations, r):
-        """ Action 0: add the variables in the registers, store in r0.
-            Action 1: multiply the variables in the registers, store in r1.
-            Action 2: no-op """
-        debug = default_config().debug
-        if debug:
-            action_activations = tf.Print(action_activations, [r], "registers", summarize=20)
-            action_activations = tf.Print(
-                action_activations, [action_activations], "action activations", summarize=20)
+        """ Actions:
+            * +/- fovea
+            * +/- wm
+            * store vision in wm
 
-        a0, a1, a2 = tf.split(action_activations, self.n_actions, axis=1)
-        r0 = a0 * (r.r0 + r.r1) + (1 - a0) * r.r0
-        r1 = a1 * (r.r0 * r.r1) + (1 - a1) * r.r1
+        """
+        a0, a1, a2, a3, a4 = tf.split(action_activations, self.n_actions, axis=1)
+        fovea = (1 - a0 - a1) * r.fovea + a0 * (r.fovea + 1) + a1 * (r.fovea - 1)
+        wm = (1 - a2 - a3 - a4) * r.wm + a2 * (r.wm + 1) + a3 * (r.wm - 1) + a4 * r.vision
 
-        if debug:
-            r0 = tf.Print(r0, [r0], "r0", summarize=20)
-            r1 = tf.Print(r1, [r1], "r1", summarize=20)
-        new_registers = self.register_spec.wrap(r0=r0, r1=r1, r2=r.r2+0)
+        filt = tf.contrib.distributions.Normal(fovea, 0.4)
+        filt = filt.pdf(np.linspace(-self.width, self.width, 2*self.width+1, dtype='f'))
+        l1_norm = tf.reduce_sum(tf.abs(filt), axis=1, keep_dims=True)
+        filt = filt / l1_norm
+        vision = tf.reduce_sum(r.inp * filt, axis=1, keep_dims=True)
+
+        new_registers = self.register_spec.wrap(inp=r.inp, fovea=fovea, vision=vision, wm=wm)
 
         return new_registers
 
@@ -82,7 +89,7 @@ class Addition(CoreNetwork):
 def _build_psystem(global_step):
     config = default_config()
 
-    adder = Addition()
+    pointer = Pointer(config.width)
 
     start, decay_steps, decay_rate, staircase = config.exploration_schedule
     exploration = tf.train.exponential_decay(
@@ -91,17 +98,18 @@ def _build_psystem(global_step):
 
     policy = Policy(
         config.controller, config.action_selection, exploration,
-        adder.n_actions+1, adder.obs_dim, name="addition_lstm")
+        pointer.n_actions+1, pointer.obs_dim, name="pointer_policy")
 
-    psystem = ProductionSystem(adder, policy, False, config.T)
+    psystem = ProductionSystem(pointer, policy, False, config.T)
     return psystem
 
 
 class DefaultConfig(Config):
     seed = 10
 
+    width = 1
+    n_digits = 2
     T = 4
-    order = [0, 0, 0, 1]
 
     optimizer_class = tf.train.RMSPropOptimizer
 
@@ -121,7 +129,7 @@ class DefaultConfig(Config):
     controller = CompositeCell(
         tf.contrib.rnn.LSTMCell(num_units=64),
         fully_connected,
-        Addition._n_actions+1)
+        Pointer._n_actions+1)
 
     action_selection = staticmethod([
         SoftmaxSelect(),
@@ -133,7 +141,7 @@ class DefaultConfig(Config):
 
     # start, decay_steps, decay_rate, staircase
     lr_schedule = (0.1, 1000, 0.96, False)
-    noise_schedule = (0.0, 10, 0.96, False)
+    noise_schedule = (0.0, 100, 0.96, False)
     exploration_schedule = (10.0, 100, 0.96, False)
 
     max_grad_norm = 0.0
@@ -158,7 +166,13 @@ class DebugConfig(DefaultConfig):
 class RLConfig(DefaultConfig):
     use_rl = True
     threshold = 1e-2
+
     action_selection = SoftmaxSelect()
+
+    # start, decay_steps, decay_rate, staircase
+    lr_schedule = (0.1, 1000, 0.96, False)
+    noise_schedule = (0.0, 100, 0.96, False)
+    exploration_schedule = (10.0, 1000, 0.96, False)
 
 
 class RLDebugConfig(DebugConfig, RLConfig):
@@ -177,11 +191,12 @@ def get_config(name):
         raise KeyError("Unknown config name {}.".format(name))
 
 
-def train_addition(log_dir, config="default"):
+def train_pointer(log_dir, config="default", seed=-1):
     config = get_config(config)
+    config.seed = config.seed if seed < 0 else seed
     np.random.seed(config.seed)
 
-    env = AdditionEnv(config.order, config.n_train, config.n_val, config.n_test)
+    env = PointerEnv(config.width, config.n_digits, config.n_train, config.n_val, config.n_test)
 
     def build_diff_updater():
         global_step = tf.contrib.framework.get_or_create_global_step()
@@ -206,4 +221,4 @@ def train_addition(log_dir, config="default"):
 
 if __name__ == '__main__':
     from clify import command_line
-    command_line(train_addition)(log_dir='/tmp/dps/addition')
+    command_line(train_pointer)(log_dir='/tmp/dps/pointer')

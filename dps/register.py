@@ -25,10 +25,10 @@ class RegisterSpec(object):
     _input_names = None
     _output_names = None
 
-    @classmethod
-    def assert_defined(cls, attr):
-        assert getattr(cls, attr) is not None, (
-            "Subclasses of RegisterSpec must specify a value for attr {}.".format(attr))
+    def assert_defined(self, attr):
+        assert getattr(self, attr) is not None, (
+            "Instances of subclasses of RegisterSpec must "
+            "specify a value for attr {}.".format(attr))
 
     @property
     def visible(self):
@@ -59,7 +59,7 @@ class RegisterSpec(object):
     def names(self):
         return self.namedtuple._fields
 
-    def get_initial_values(self, batch_size=1, np_random=None, **kwargs):
+    def get_initial_values(self, batch_size=1, **kwargs):
         """ Returns a list of ndarray's giving initial values for each of the registers. """
         init = []
         for name, t in zip(self.names, self.initial_values):
@@ -71,7 +71,7 @@ class RegisterSpec(object):
             else:
                 shape = t[0]
                 f = t[1]
-                ivs = [f(shape, np_random) for i in batch_size]
+                ivs = [f(shape) for i in batch_size]
                 init_value = np.stack(ivs, axis=0)
             init.append(init_value)
         return init
@@ -82,7 +82,7 @@ class RegisterSpec(object):
             for t, v in zip(self.initial_values, self.visible)
             if v or not visible_only]
 
-    def instantiate(self, batch_size=1, np_random=None, **kwargs):
+    def instantiate(self, batch_size=1, **kwargs):
         return self.wrap(*self.get_initial_values(batch_size=batch_size))
 
     def wrap(self, *args, **kwargs):
@@ -99,8 +99,8 @@ class RegisterSpec(object):
     def get_output(self, registers, as_obs=True):
         return self.get_register_values(registers, *self.output_names, as_obs=as_obs)
 
-    def set_register_values(self, registers, obs, *names, from_obs=True, axis=1):
-        """ If from_obs is True, then ``obs`` has already been split up, and we can ignore the axis argument. """
+    def set_register_values(self, registers, obs, *names, from_obs=True):
+        """ If from_obs is True, then ``obs`` has already been split up. """
         values_to_fill = []
         names = names or self.names
         for name in names:
@@ -125,18 +125,18 @@ class RegisterSpec(object):
             for vtf, o in zip(values_to_fill, obs):
                 vtf[:] = o
         else:
-            split_locs = np.cumsum([vtf.shape[axis] for vtf in values_to_fill])
+            split_locs = np.cumsum([vtf.shape[-1] for vtf in values_to_fill])
             if isinstance(obs, np.ndarray):
-                values = np.split(obs, split_locs[:-1], axis=axis)
+                values = np.split(obs, split_locs[:-1], axis=-1)
             elif isinstance(obs, tf.Tensor):
-                values = tf.split(obs, split_locs[:-1], axis=axis)
+                values = tf.split(obs, split_locs[:-1], axis=-1)
             else:
                 raise Exception(
                     "``obs`` is not recognized datatype, should be either ndarray or Tensor but got: {}.".format(obs))
             for vtf, v in zip(values_to_fill, values):
                 vtf[:] = v
 
-    def get_register_values(self, registers, *names, as_obs=True, axis=1):
+    def get_register_values(self, registers, *names, as_obs=True):
         values = []
         names = names or self.names
         for name in names:
@@ -160,9 +160,9 @@ class RegisterSpec(object):
         if as_obs:
             if len(values) > 1:
                 if isinstance(values[0], np.ndarray):
-                    obs = np.concatenate(values, axis=axis)
+                    obs = np.concatenate(values, axis=-1)
                 elif isinstance(values[0], (tf.Tensor, tf.TensorArray)):
-                    obs = tf.concat(values, axis=axis)
+                    obs = tf.concat(values, axis=-1)
                 else:
                     raise Exception("Register value 0 is not recognized datatype: {}.".format(values[0]))
             else:
@@ -171,7 +171,7 @@ class RegisterSpec(object):
             obs = tuple(values)
         return obs
 
-    def as_obs(self, registers, visible_only=False, axis=1):
+    def as_obs(self, registers, visible_only=False):
         """ Concatenate values of registers, giving a single ndarray or Tensor representing the entire register.
 
         Parameters
@@ -187,9 +187,9 @@ class RegisterSpec(object):
             names = [n for n, v in zip(self.names, self.visible) if v]
         else:
             names = self.names
-        return self.get_register_values(registers, *names, as_obs=1, axis=axis)
+        return self.get_register_values(registers, *names, as_obs=1)
 
-    def from_obs(self, obs, axis=1):
+    def from_obs(self, obs):
         """ Unpack on observation as a register.
 
         Parameters
@@ -205,11 +205,11 @@ class RegisterSpec(object):
         instance of self.namedtuple
 
         """
-        split_locs = np.cumsum([shape[axis] for shape in self.shapes()])
+        split_locs = np.cumsum([shape[-1] for shape in self.shapes()])
         if isinstance(obs, np.ndarray):
-            values = np.split(obs, split_locs[:-1], axis=axis)
+            values = np.split(obs, split_locs[:-1], axis=-1)
         elif isinstance(obs, tf.Tensor):
-            values = tf.split(obs, split_locs[:-1], axis=axis)
+            values = tf.split(obs, split_locs[:-1], axis=-1)
         else:
             raise Exception("``obs`` is not recognized datatype, should be either ndarray or Tensor but got: {}.".format(obs))
         return self.wrap(*values)

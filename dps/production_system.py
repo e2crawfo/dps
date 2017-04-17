@@ -45,10 +45,10 @@ class CoreNetwork(object):
         self._action_activations_ph = None
         self._register_ph = None
 
-    @classmethod
-    def assert_defined(cls, attr):
-        assert getattr(cls, attr) is not None, (
-            "Subclasses of CoreNetwork must specify a value for attr {}.".format(attr))
+    def assert_defined(self, attr):
+        assert getattr(self, attr) is not None, (
+            "Instances of subclasses of CoreNetwork must "
+            "specify a value for attr {}.".format(attr))
 
     @property
     def n_actions(self):
@@ -150,27 +150,28 @@ class ProductionSystemFunction(object):
         self.inputs, self.initial_state, self.ps_cell, self.states, self.final_state = (
             self._build_ps_function(psystem, scope))
 
-    def build_feeddict(self, registers, T=None):
+    def build_feeddict(self, inp, T=None):
+        batch_size = inp.shape[0]
+
+        registers = self.core_network.register_spec.instantiate(batch_size=batch_size)
+        self.core_network.register_spec.set_input(registers, inp)
+
         fd = {}
-
-        if not isinstance(registers, self.core_network.register_spec.namedtuple):
-            registers = self.core_network.register_spec.from_obs(registers)
-
-        batch_size = registers[0].shape[0]
 
         T = T or self.T
         if not self.use_act:
-            # The first dim of this dummy input determines the number of time steps.
+            # first dim of this dummy input determines the number of time steps.
             fd[self.inputs] = np.zeros((T, batch_size, 1))
 
-        initial_registers = self.initial_state[1]
-        for placeholder, value in zip(initial_registers, registers):
-            fd[placeholder] = value
+        register_ph = self.initial_state[1]
+        for ph, value in zip(register_ph, registers):
+            fd[ph] = value
 
         return fd
 
     def get_output(self):
-        return self.get_register_values()[-1, :, :]
+        output = self.core_network.register_spec.get_output(self.states[1])
+        return output[-1, :, :]
 
     @staticmethod
     def _build_ps_function(psystem, scope=None):
@@ -258,11 +259,13 @@ class ProductionSystemEnv(Env):
 
         # Extra action is for stopping. If T is not 0, this action will be effectively ignored.
         self.n_actions = self.core_network.n_actions + 1
-
         self.action_space = BatchBox(low=0.0, high=1.0, shape=(None, self.n_actions))
 
-        obs_dim = sum(shape[1] for shape in self.core_network.register_spec.shapes(visible_only=True))
-        self.observation_space = BatchBox(low=-10.0, high=10.0, shape=(None, obs_dim))
+        obs_dim = sum(
+            shape[1] for shape
+            in self.core_network.register_spec.shapes(visible_only=True))
+        self.observation_space = BatchBox(
+            low=-np.inf, high=np.inf, shape=(None, obs_dim))
 
         self.reward_range = env.reward_range
 

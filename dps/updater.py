@@ -58,9 +58,9 @@ class Updater(with_metaclass(abc.ABCMeta, object)):
 
 
 class DifferentiableUpdater(Updater):
-    """ Update parameters of a policy using vanilla gradient descent.
+    """ Update parameters of a function ``f`` using vanilla gradient descent.
 
-    The policy must be differentiable to apply this updater.
+    The function must be differentiable to apply this updater.
 
     Should be used in the context of a default graph, default session and default config.
 
@@ -68,15 +68,15 @@ class DifferentiableUpdater(Updater):
     ----------
     env: gym Env
         The environment we're trying to learn about.
-    policy: callable object
-        Needs to provide member functions ``build_feeddict`` and ``get_output``.
+    f: callable
+        Also needs to provide member functions ``build_feeddict`` and ``get_output``.
     global_step: Tensor
         Created by calling ``tf.contrib.learn.get_or_create_global_step``.
 
     """
     def __init__(self,
                  env,
-                 policy,
+                 f,
                  global_step,
                  optimizer_class,
                  lr_schedule,
@@ -85,7 +85,7 @@ class DifferentiableUpdater(Updater):
 
         super(DifferentiableUpdater, self).__init__()
         self.env = env
-        self.policy = policy
+        self.f = f
         self.global_step = global_step
         self.optimizer_class = optimizer_class
         self.lr_schedule = lr_schedule
@@ -97,7 +97,7 @@ class DifferentiableUpdater(Updater):
     def _update(self, batch_size, summary_op=None):
 
         env, loss = self.env, self.loss
-        train_op, policy, targets = self.train_op, self.policy, self.target_placeholders
+        train_op, f, targets = self.train_op, self.f, self.target_placeholders
         sess = tf.get_default_session()
 
         train_x, train_y = env.train.next_batch(batch_size)
@@ -105,14 +105,14 @@ class DifferentiableUpdater(Updater):
             print("x", train_x)
             print("y", train_y)
 
-        feed_dict = policy.build_feeddict(train_x)
+        feed_dict = f.build_feeddict(train_x)
         feed_dict[targets] = train_y
 
         if summary_op is not None:
             train_summary, train_loss, _ = sess.run([summary_op, loss, train_op], feed_dict=feed_dict)
 
             val_x, val_y = env.val.next_batch()
-            val_feed_dict = policy.build_feeddict(val_x)
+            val_feed_dict = f.build_feeddict(val_x)
             val_feed_dict[targets] = val_y
 
             val_summary, val_loss = sess.run([summary_op, loss], feed_dict=val_feed_dict)
@@ -123,7 +123,7 @@ class DifferentiableUpdater(Updater):
 
     def _build_graph(self):
         with tf.name_scope('loss'):
-            self.loss, self.target_placeholders = self.env.loss(self.policy.get_output())
+            self.loss, self.target_placeholders = self.env.loss(self.f.get_output())
             tf.summary.scalar('loss', self.loss)
 
         self._build_train()
