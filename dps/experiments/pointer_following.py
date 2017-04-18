@@ -135,7 +135,7 @@ class DefaultConfig(Config):
         SoftmaxSelect(),
         GumbelSoftmaxSelect(hard=0),
         GumbelSoftmaxSelect(hard=1),
-        ReluSelect()][0])
+        ReluSelect()][1])
 
     use_rl = False
 
