@@ -1,7 +1,7 @@
 import abc
 from future.utils import with_metaclass
-import numpy as np
 
+import numpy as np
 import tensorflow as tf
 
 import gym
@@ -39,7 +39,8 @@ class BatchBox(gym.Space):
         return prng.np_random.uniform(low=self.low, high=self.high, size=self.low.shape)
 
     def contains(self, x):
-        return (x >= self.low).all() and (x <= self.high).all()
+        return True
+        # return (x >= self.low).all() and (x <= self.high).all()
 
     def to_jsonable(self, sample_n):
         return np.array(sample_n).tolist()
@@ -191,10 +192,10 @@ class RegressionEnv(DifferentiableEnv):
 
     def _step(self, action):
         assert self.action_space.contains(action), (
-            "{} ({}) is not a valid action for env {}." % (action, type(action), self))
+            "{} ({}) is not a valid action for env {}.".format(action, type(action), self))
         self.t += 1
 
-        assert self.y.shape == action.shape, "Action"
+        assert self.y.shape == action.shape
         obs = np.zeros(self.x.shape)
         reward = -np.mean((action - self.y)**2, axis=1)
         done = True

@@ -2,6 +2,7 @@ import subprocess as sp
 from pprint import pformat
 from contextlib import contextmanager
 import numpy as np
+import inspect
 
 import tensorflow as tf
 from tensorflow.python.ops import random_ops, math_ops
@@ -80,6 +81,14 @@ def gen_seed():
     return np.random.randint(np.iinfo(np.int32).max)
 
 
+def print_variables(collection, scope):
+    g = tf.get_default_graph()
+    variables = g.get_collection(collection, scope=scope)
+    sess = tf.get_default_session()
+    for v in variables:
+        print(sess.run(v))
+
+
 # class EarlyStopHook(SessionRunHook):
 class EarlyStopHook(object):
     def __init__(self, patience, n=1, name=None):
@@ -90,7 +99,8 @@ class EarlyStopHook(object):
         self._best_value_step = None
         self._best_value = None
 
-        self._step = 0
+        self._stage = 0
+        self._history = {}  # stage -> (best_value_step, best_value)
 
     @property
     def early_stopped(self):
@@ -107,19 +117,25 @@ class EarlyStopHook(object):
         """Returns the best early stopping metric value found so far."""
         return self._best_value
 
-    def check(self, validation_loss):
+    def check(self, step, validation_loss):
         new_best = self._best_value is None or validation_loss < self._best_value
         if new_best:
             self._best_value = validation_loss
-            self._best_value_step = self._step
+            self._best_value_step = step
 
-        stop = self._step - self._best_value_step > self.patience
+        stop = step - self._best_value_step > self.patience
         if stop:
             print("Stopping. Best step: {} with loss = {}." .format(
                   self._best_value_step, self._best_value))
             self._early_stopped = True
-        self._step += 1
         return new_best, stop
+
+    def end_stage(self):
+        self._history[self._stage] = (self._best_value_step, self._best_value)
+        self._stage += 1
+        self._best_value = None
+        self._best_value_step = None
+        self._early_stopped = 0
 
 
 def restart_tensorboard(logdir):
@@ -159,8 +175,8 @@ def add_scaled_noise_to_gradients(grads_and_vars, gradient_noise_scale):
     return list(zip(noisy_gradients, variables))
 
 
-def inverse_time_decay(initial, global_step, decay_steps, decay_rate, gamma,
-                       staircase=False, name=None):
+def adj_inverse_time_decay(initial, global_step, decay_steps, decay_rate, gamma,
+                           staircase=False, name=None):
     """Applies inverse time decay to the initial learning rate.
 
     Adapted from tf.train.inverse_time_decay (added `gamma` arg.)
@@ -194,7 +210,7 @@ def inverse_time_decay(initial, global_step, decay_steps, decay_rate, gamma,
 
     """
     if global_step is None:
-        raise ValueError("global_step is required for inverse_time_decay.")
+        raise ValueError("global_step is required for adj_inverse_time_decay.")
 
     with ops.name_scope(name, "InverseTimeDecay",
                         [initial, global_step, decay_rate]) as name:
@@ -211,6 +227,16 @@ def inverse_time_decay(initial, global_step, decay_steps, decay_rate, gamma,
         quotient = math_ops.div(initial, denom)
         gamma = math_ops.cast(gamma, dtype)
         return math_ops.pow(quotient, gamma, name=name)
+
+
+def build_decaying_value(schedule, name=None):
+    global_step = tf.contrib.framework.get_or_create_global_step()
+    start, decay_steps, decay_rate, staircase = schedule
+    decaying_value = tf.train.exponential_decay(
+        start, global_step, decay_steps, decay_rate, staircase=staircase)
+    if name is not None:
+        tf.summary.scalar(name, decaying_value)
+    return decaying_value
 
 
 class Config(object):
@@ -236,3 +262,30 @@ def default_config():
     if not Config._stack:
         raise ValueError("Trying to get default config, but config stack is empty.")
     return Config._stack[-1]
+
+
+def get_config(f, name):
+    """ ``f`` is the name of the file where the relevant configs are defined, usually stored in __file__.
+        name is the lowercase prefix of the config class we want to retrieve and instantiate.
+
+    """
+    config_classes = get_all_subclasses(Config)
+    config_classes = list(set([c for c in config_classes if inspect.getfile(c) == f]))
+    names = [c.__name__ for c in config_classes]
+    assert len(names) == len(set(names)), "Duplicate config names: {}.".format(names)
+    d = {n.split("Config")[0].lower(): c for n, c in zip(names, config_classes)}
+    name = name.lower()
+    try:
+        return d[name]()
+    except KeyError:
+        raise KeyError("Unknown config name {}.".format(name))
+
+
+def get_all_subclasses(cls):
+    all_subclasses = []
+
+    for subclass in cls.__subclasses__():
+        all_subclasses.append(subclass)
+        all_subclasses.extend(get_all_subclasses(subclass))
+
+    return all_subclasses

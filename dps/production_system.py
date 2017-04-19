@@ -1,5 +1,6 @@
 import numpy as np
 from collections import namedtuple
+import os
 
 import tensorflow as tf
 from tensorflow.python.ops.rnn import dynamic_rnn
@@ -8,14 +9,23 @@ from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from gym.utils import seeding
 
 from dps.environment import BatchBox, Env
+from dps.updater import DifferentiableUpdater
+from dps.rl import REINFORCE
+from dps.utils import default_config, build_decaying_value
+from dps.train import Curriculum
 
 
-params = 'core_network policy use_act T'
+params = 'env core_network policy use_act T'
 
 
 class ProductionSystem(namedtuple('ProductionSystem', params.split())):
     """ A production system."""
-    pass
+
+    def build_psystem_env(self):
+        return ProductionSystemEnv(self)
+
+    def build_psystem_func(self):
+        return ProductionSystemFunction(self)
 
 
 class CoreNetwork(object):
@@ -89,7 +99,7 @@ class CoreNetwork(object):
 
 class ProductionSystemCell(RNNCell):
     def __init__(self, psystem, reuse=None):
-        self.core_network, self.policy, _, _ = psystem
+        _, self.core_network, self.policy, _, _ = psystem
 
         self._state_size = (
             self.policy.state_size,
@@ -145,7 +155,7 @@ class ProductionSystemFunction(object):
     """
     def __init__(self, psystem, scope=None):
 
-        self.core_network, self.policy, self.use_act, self.T = psystem
+        _, self.core_network, self.policy, self.use_act, self.T = psystem
 
         self.inputs, self.initial_state, self.ps_cell, self.states, self.final_state = (
             self._build_ps_function(psystem, scope))
@@ -253,9 +263,8 @@ class ProductionSystemEnv(Env):
     """
     metadata = {"render.modes": ["human", "ansi"]}
 
-    def __init__(self, psystem, env):
-        self.core_network, _, self.use_act, self.T = psystem
-        self.env = env
+    def __init__(self, psystem):
+        self.env, self.core_network, _, self.use_act, self.T = psystem
 
         # Extra action is for stopping. If T is not 0, this action will be effectively ignored.
         self.n_actions = self.core_network.n_actions + 1
@@ -267,10 +276,14 @@ class ProductionSystemEnv(Env):
         self.observation_space = BatchBox(
             low=-np.inf, high=np.inf, shape=(None, obs_dim))
 
-        self.reward_range = env.reward_range
+        self.reward_range = self.env.reward_range
 
         self._seed()
         self.reset()
+
+    @property
+    def completion(self):
+        return self.env.completion
 
     def set_mode(self, kind, batch_size):
         self.env.set_mode(kind, batch_size)
@@ -280,7 +293,7 @@ class ProductionSystemEnv(Env):
 
     def _step(self, action):
         assert self.action_space.contains(action), (
-            "{} ({}) is not a valid action for env {}." % (action, type(action), self))
+            "{} ({}) is not a valid action for env {}.".format(action, type(action), self))
 
         # TODO: need to decide how to stop when not using discrete actions. Maybe the
         # activation of the stop action should be interpreted as the probability of stopping,
@@ -322,3 +335,73 @@ class ProductionSystemEnv(Env):
     def _seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
+
+
+def build_diff_updater(psystem):
+    config = default_config()
+    ps_func = psystem.build_psystem_func()
+    updater = DifferentiableUpdater(
+        psystem.env, ps_func, config.optimizer_class,
+        config.lr_schedule, config.noise_schedule, config.max_grad_norm)
+
+    return updater
+
+
+def build_reinforce_updater(psystem):
+    config = default_config()
+    ps_env = psystem.build_psystem_env()
+    updater = REINFORCE(
+        ps_env, psystem.policy, config.optimizer_class,
+        config.lr_schedule, config.noise_schedule, config.max_grad_norm,
+        config.gamma, config.l2_norm_param)
+
+    return updater
+
+
+class ProductionSystemCurriculum(Curriculum):
+    def __init__(self, base_kwargs, curriculum, build_env, build_core_network, build_policy):
+        super(ProductionSystemCurriculum, self).__init__(base_kwargs, curriculum)
+        self.build_env = build_env
+        self.build_core_network = build_core_network
+        self.build_policy = build_policy
+
+    def __call__(self):
+        if self.stage == self.prev_stage:
+            raise Exception("Need to call member function ``end_stage`` before getting next stage.")
+
+        if self.stage == len(self.curriculum):
+            raise StopIteration()
+
+        kw = self.curriculum[self.stage]
+        kw = kw.copy()
+        kw.update(self.base_kwargs)
+
+        config = default_config()
+
+        env = self.build_env(**kw)
+        core_network = self.build_core_network(env)
+        exploration = build_decaying_value(config.exploration_schedule, 'exploration')
+        policy = self.policy = self.build_policy(core_network, exploration)
+
+        if self.stage != 0:
+            g = tf.get_default_graph()
+            policy_variables = g.get_collection('trainable_variables', scope=self.policy.scope.name)
+            saver = tf.train.Saver(policy_variables)
+            saver.restore(tf.get_default_session(), os.path.join(default_config().path, 'policy.chk'))
+
+        psystem = ProductionSystem(env, core_network, policy, False, config.T)
+
+        if config.use_rl:
+            updater = build_reinforce_updater(psystem)
+        else:
+            updater = build_diff_updater(psystem)
+        self.prev_stage = self.stage
+        return updater
+
+    def end_stage(self):
+        # Occurs inside the same default graph, session and config as the previous call to __call__.
+        g = tf.get_default_graph()
+        policy_variables = g.get_collection('trainable_variables', scope=self.policy.scope.name)
+        saver = tf.train.Saver(policy_variables)
+        saver.save(tf.get_default_session(), os.path.join(default_config().path, 'policy.chk'))
+        self.stage += 1

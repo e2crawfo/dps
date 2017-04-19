@@ -1,22 +1,38 @@
 from __future__ import absolute_import
 from __future__ import division
-from __future__ import print_function
 import time
 from contextlib import ExitStack
-
 import tensorflow as tf
 import numpy as np
+import sys
 
 from spectral_dagger.utils.experiment import ExperimentStore
-from dps.utils import restart_tensorboard, EarlyStopHook, gen_seed
+from dps.utils import restart_tensorboard, EarlyStopHook, gen_seed, print_variables
+
+
+def uninitialized_variables_initializer():
+    """ init only uninitialized variables - from
+        http://stackoverflow.com/questions/35164529/
+        in-tensorflow-is-there-any-way-to-just-initialize-uninitialised-variables """
+    uninitialized_vars = []
+    sess = tf.get_default_session()
+    for var in tf.global_variables():
+        try:
+            sess.run(var)
+        except tf.errors.FailedPreconditionError:
+            uninitialized_vars.append(var)
+    uninit_init = tf.variables_initializer(uninitialized_vars)
+    return uninit_init
 
 
 def _training_loop(
-        env, build_updater, log_dir, config,
-        max_experiments=5, start_tensorboard=True, exp_name=''):
+        curriculum, log_dir, config,
+        max_experiments=5, start_tensorboard=True, exp_name='',
+        reset_global_step=False):
 
     es = ExperimentStore(log_dir, max_experiments=max_experiments, delete_old=1)
     exp_dir = es.new_experiment(exp_name, use_time=1, force_fresh=1)
+    config.path = exp_dir.path
 
     print(config)
 
@@ -27,89 +43,152 @@ def _training_loop(
     max_epochs = int(np.ceil(config.max_steps / batches_per_epoch))
 
     early_stop = EarlyStopHook(patience=config.patience)
-    val_loss = np.inf
 
-    tf.reset_default_graph()
-    graph = tf.Graph()
-    sess = tf.Session()
-    with ExitStack() as stack:
-        stack.enter_context(graph.as_default())
-        stack.enter_context(sess)
-        stack.enter_context(sess.as_default())
-        stack.enter_context(config.as_default())
+    train_writer = None
+    val_writer = None
 
-        tf.set_random_seed(gen_seed())
+    threshold_reached = True
+    stage = 0
+    global_step = 0
 
-        updater = build_updater()
+    while True:
+        # tf.reset_default_graph()
+        graph = tf.Graph()
+        sess = tf.Session(graph=graph)
 
-        summary_op = tf.summary.merge_all()
-        init = tf.global_variables_initializer()
-        saver = tf.train.Saver()
+        with ExitStack() as stack:
+            stack.enter_context(graph.as_default())
+            stack.enter_context(sess)
+            stack.enter_context(sess.as_default())
+            stack.enter_context(config.as_default())
 
-        train_writer = tf.summary.FileWriter(exp_dir.path_for('train'), sess.graph)
-        val_writer = tf.summary.FileWriter(exp_dir.path_for('val'))
-        print("Writing session summaries to {}.".format(exp_dir.path))
+            tf_seed = gen_seed()
+            tf.set_random_seed(tf_seed)
 
-        sess.run(init)
-        sess.run(tf.assert_variables_initialized())
-        step = 1
+            if threshold_reached:
+                stage += 1
+                try:
+                    updater = next(curriculum)
 
-        while True:
-            n_epochs = updater.n_experiences / config.n_train
-            if n_epochs >= max_epochs:
-                print("Optimization complete, maximum number of epochs reached.")
-                break
-            if val_loss < config.threshold:
-                print("Optimization complete, validation loss threshold reached.")
-                break
+                    print("\nStarting stage {} of the curriculum. "
+                          "New updater is \n{}\n".format(stage, updater))
 
-            evaluate = step % config.eval_step == 0 or (step + 1) == config.max_steps
-            display = step % config.display_step == 0 or (step + 1) == config.max_steps
-
-            if evaluate or display:
-                start_time = time.time()
-                train_summary, train_loss, val_summary, val_loss = updater.update(
-                    config.batch_size, summary_op if evaluate else None)
-                duration = time.time() - start_time
-
-                if evaluate:
-                    train_writer.add_summary(train_summary, step)
-                    val_writer.add_summary(val_summary, step)
-
-                if display:
-                    print("Step({}): Minibatch Loss={:06.4f}, Validation Loss={:06.4f}, "
-                          "Minibatch Duration={:06.4f} seconds, Epoch={:04.2f}.".format(
-                              step, train_loss, val_loss, duration, env.completion))
-
-                new_best, stop = early_stop.check(val_loss)
-
-                if new_best:
-                    print("Storing new best on step {} with validation loss of {}.".format(step, val_loss))
-                    checkpoint_file = exp_dir.path_for('best.checkpoint')
-                    saver.save(sess, checkpoint_file, global_step=step)
-
-                if stop:
-                    print("Optimization complete, early stopping triggered.")
+                except StopIteration:
+                    print("Curriculum complete after {} stage(s).".format(stage-1))
                     break
+
             else:
-                updater.update(config.batch_size)
+                print("Failed to reach error threshold on stage {} of the curriculum, terminating.".format(stage))
+                break
 
-            if step % config.checkpoint_step == 0:
-                print("Checkpointing on step {}.".format(step))
-                checkpoint_file = exp_dir.path_for('model.checkpoint')
-                saver.save(sess, checkpoint_file, global_step=step)
+            if train_writer is None:
+                train_writer = tf.summary.FileWriter(exp_dir.path_for('train'), graph)
+                val_writer = tf.summary.FileWriter(exp_dir.path_for('val'))
+                print("Writing summaries to {}.".format(exp_dir.path))
 
-            step += 1
+            with tf.name_scope('stage'):
+                tf_stage = tf.constant(stage)
+                tf.summary.scalar('stage', tf_stage)
+
+            saver = tf.train.Saver()
+            summary_op = tf.summary.merge_all()
+            tf.contrib.framework.get_or_create_global_step()
+            sess.run(uninitialized_variables_initializer())
+            sess.run(tf.assert_variables_initialized())
+
+            threshold_reached = False
+            val_loss = np.inf
+            local_step = 0
+
+            while True:
+                n_epochs = updater.n_experiences / config.n_train
+                if n_epochs >= max_epochs:
+                    print("Optimization complete, maximum number of epochs reached.")
+                    break
+                if val_loss < config.threshold:
+                    print("Optimization complete, validation loss threshold reached.")
+                    threshold_reached = True
+                    break
+
+                evaluate = global_step % config.eval_step == 0
+                display = global_step % config.display_step == 0
+
+                if evaluate or display:
+                    start_time = time.time()
+                    train_summary, train_loss, val_summary, val_loss = updater.update(
+                        config.batch_size, summary_op if evaluate else None)
+                    duration = time.time() - start_time
+
+                    if evaluate:
+                        train_writer.add_summary(train_summary, global_step)
+                        val_writer.add_summary(val_summary, global_step)
+
+                    if display:
+                        print("Step(global: {}, local: {}): Minibatch Loss={:06.4f}, Validation Loss={:06.4f}, "
+                              "Minibatch Duration={:06.4f} seconds, Epoch={:04.2f}.".format(
+                                  global_step, local_step, train_loss, val_loss, duration, updater.env.completion))
+
+                    new_best, stop = early_stop.check(local_step, val_loss)
+
+                    if new_best:
+                        print("Storing new best on local step {} (global step {}) "
+                              "with validation loss of {}.".format(local_step, global_step, val_loss))
+                        checkpoint_file = exp_dir.path_for('best_stage={}.checkpoint'.format(stage))
+                        saver.save(sess, checkpoint_file, global_step=local_step)
+
+                    if stop:
+                        print("Optimization complete, early stopping triggered.")
+                        break
+                else:
+                    updater.update(config.batch_size)
+
+                if global_step % config.checkpoint_step == 0:
+                    print("Checkpointing on global step {}.".format(global_step))
+                    checkpoint_file = exp_dir.path_for('model_stage={}.checkpoint'.format(stage))
+                    saver.save(sess, checkpoint_file, global_step=global_step)
+
+                local_step += 1
+                global_step += 1
+
+            early_stop.end_stage()
+            curriculum.end_stage()
 
 
 def training_loop(
-        env, build_updater, log_dir, config,
+        updater_generator, log_dir, config,
         max_experiments=5, start_tensorboard=True, exp_name=''):
 
     try:
         _training_loop(
-            env, build_updater, log_dir, config,
+            updater_generator, log_dir, config,
             max_experiments=5, exp_name='')
-    finally:
+    except KeyboardInterrupt:
         if start_tensorboard:
             restart_tensorboard(log_dir)
+
+        et, ei, tb = sys.exc_info()
+        raise ei.with_traceback(tb)
+
+    if start_tensorboard:
+        restart_tensorboard(log_dir)
+
+
+class Curriculum(object):
+    def __init__(self, base_kwargs, curriculum):
+        self.base_kwargs = base_kwargs
+        self.curriculum = list(curriculum)
+        self.prev_stage = -1
+        self.stage = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return self.__call__()
+
+    def __call__(self):
+        raise NotImplementedError()
+
+    def end_stage(self):
+        # Occurs inside the same default graph, session and config as the previous call to __call__.
+        raise NotImplementedError()

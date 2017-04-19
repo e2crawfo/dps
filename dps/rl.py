@@ -17,14 +17,11 @@ class ReinforcementLearningUpdater(Updater):
         The environment we're trying to learn about.
     policy: callable object
         Needs to provide member functions ``build_feeddict`` and ``get_output``.
-    global_step: Tensor
-        Created by calling ``tf.contrib.learn.get_or_create_global_step``.
 
     """
     def __init__(self,
                  env,
                  policy,
-                 global_step,
                  optimizer_class,
                  lr_schedule,
                  noise_schedule,
@@ -32,12 +29,10 @@ class ReinforcementLearningUpdater(Updater):
                  gamma,
                  l2_norm_param):
 
-        super(ReinforcementLearningUpdater, self).__init__()
-        self.env = env
+        super(ReinforcementLearningUpdater, self).__init__(env)
         assert policy.action_selection.can_sample, (
             "Cannot sample when using action selection method {}".format(policy.action_selection))
         self.policy = policy
-        self.global_step = global_step
         self.optimizer_class = optimizer_class
         self.lr_schedule = lr_schedule
         self.noise_schedule = noise_schedule

@@ -4,12 +4,18 @@ from future.utils import with_metaclass
 import tensorflow as tf
 
 from dps.utils import (
-    default_config, add_scaled_noise_to_gradients, inverse_time_decay)
+    default_config, add_scaled_noise_to_gradients,
+    adj_inverse_time_decay, build_decaying_value)
 
 
 class Updater(with_metaclass(abc.ABCMeta, object)):
-    def __init__(self):
+    def __init__(self, env):
+        self.env = env
         self._n_experiences = 0
+
+    @property
+    def stage(self):
+        return 0
 
     @property
     def n_experiences(self):
@@ -25,11 +31,11 @@ class Updater(with_metaclass(abc.ABCMeta, object)):
 
     def _build_train(self):
         """ Add ops to implement training. ``self.loss`` must already be defined. """
+
         with tf.name_scope('train'):
-            start, decay_steps, decay_rate, staircase = self.lr_schedule
-            lr = tf.train.exponential_decay(
-                start, self.global_step, decay_steps, decay_rate, staircase=staircase)
-            tf.summary.scalar('learning_rate', lr)
+            tf.summary.scalar('loss', self.loss)
+
+            lr = build_decaying_value(self.lr_schedule, 'learning_rate')
 
             self.optimizer = self.optimizer_class(lr)
 
@@ -41,16 +47,18 @@ class Updater(with_metaclass(abc.ABCMeta, object)):
             else:
                 self.clipped_gradients = self.pure_gradients
 
+            global_step = tf.contrib.framework.get_or_create_global_step()
+
             grads_and_vars = zip(self.clipped_gradients, tvars)
             if hasattr(self, 'noise_schedule'):
                 start, decay_steps, decay_rate, staircase = self.noise_schedule
-                noise = inverse_time_decay(
-                    start, self.global_step, decay_steps, decay_rate, staircase=staircase, gamma=0.55)
+                noise = adj_inverse_time_decay(
+                    start, global_step, decay_steps, decay_rate, staircase=staircase, gamma=0.55)
                 tf.summary.scalar('noise', noise)
                 grads_and_vars = add_scaled_noise_to_gradients(grads_and_vars, noise)
 
             self.final_gradients = [g for g, v in grads_and_vars]
-            self.train_op = self.optimizer.apply_gradients(grads_and_vars, global_step=self.global_step)
+            self.train_op = self.optimizer.apply_gradients(grads_and_vars, global_step=global_step)
 
             # if default_config().debug:
             #     for grad, var in self.gradients:
@@ -70,23 +78,18 @@ class DifferentiableUpdater(Updater):
         The environment we're trying to learn about.
     f: callable
         Also needs to provide member functions ``build_feeddict`` and ``get_output``.
-    global_step: Tensor
-        Created by calling ``tf.contrib.learn.get_or_create_global_step``.
 
     """
     def __init__(self,
                  env,
                  f,
-                 global_step,
                  optimizer_class,
                  lr_schedule,
                  noise_schedule,
                  max_grad_norm):
 
-        super(DifferentiableUpdater, self).__init__()
-        self.env = env
+        super(DifferentiableUpdater, self).__init__(env)
         self.f = f
-        self.global_step = global_step
         self.optimizer_class = optimizer_class
         self.lr_schedule = lr_schedule
         self.noise_schedule = noise_schedule
@@ -124,7 +127,6 @@ class DifferentiableUpdater(Updater):
     def _build_graph(self):
         with tf.name_scope('loss'):
             self.loss, self.target_placeholders = self.env.loss(self.f.get_output())
-            tf.summary.scalar('loss', self.loss)
 
         self._build_train()
 
