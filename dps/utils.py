@@ -96,10 +96,11 @@ class EarlyStopHook(object):
         self.name = name
 
         self._early_stopped = 0
-        self._best_value_step = None
+        self._best_value_gstep = None
+        self._best_value_lstep = None
         self._best_value = None
 
-        self._stage = 0
+        self._stage = 1
         self._history = {}  # stage -> (best_value_step, best_value)
 
     @property
@@ -117,25 +118,37 @@ class EarlyStopHook(object):
         """Returns the best early stopping metric value found so far."""
         return self._best_value
 
-    def check(self, step, validation_loss):
+    def check(self, global_step, local_step, validation_loss):
         new_best = self._best_value is None or validation_loss < self._best_value
         if new_best:
             self._best_value = validation_loss
-            self._best_value_step = step
+            self._best_value_gstep = global_step
+            self._best_value_lstep = local_step
 
-        stop = step - self._best_value_step > self.patience
+        stop = local_step - self._best_value_lstep > self.patience
         if stop:
-            print("Stopping. Best step: {} with loss = {}." .format(
-                  self._best_value_step, self._best_value))
+            print("Stopping. Best step: global {}, local {} with loss = {}." .format(
+                  self._best_value_lstep, self._best_value_gstep, self._best_value))
             self._early_stopped = True
         return new_best, stop
 
     def end_stage(self):
-        self._history[self._stage] = (self._best_value_step, self._best_value)
+        self._history[self._stage] = (self._best_value_gstep, self._best_value_lstep, self._best_value)
         self._stage += 1
         self._best_value = None
-        self._best_value_step = None
+        self._best_value_gstep = None
+        self._best_value_lstep = None
         self._early_stopped = 0
+
+    def summarize(self):
+        s = ""
+        for stage in sorted(self._history):
+            bvgs, bvls, bv = self._history[stage]
+            s += "Stage {} ".format(stage) + "*" * 30 + '\n'
+            s += "* best value: {}\n".format(bv)
+            s += "* global step: {}\n".format(bvgs)
+            s += "* local step: {}\n\n".format(bvls)
+        return s
 
 
 def restart_tensorboard(logdir):

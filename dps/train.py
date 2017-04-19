@@ -7,7 +7,7 @@ import numpy as np
 import sys
 
 from spectral_dagger.utils.experiment import ExperimentStore
-from dps.utils import restart_tensorboard, EarlyStopHook, gen_seed, print_variables
+from dps.utils import restart_tensorboard, EarlyStopHook, gen_seed
 
 
 def uninitialized_variables_initializer():
@@ -128,7 +128,7 @@ def _training_loop(
                               "Minibatch Duration={:06.4f} seconds, Epoch={:04.2f}.".format(
                                   global_step, local_step, train_loss, val_loss, duration, updater.env.completion))
 
-                    new_best, stop = early_stop.check(local_step, val_loss)
+                    new_best, stop = early_stop.check(global_step, local_step, val_loss)
 
                     if new_best:
                         print("Storing new best on local step {} (global step {}) "
@@ -152,6 +152,8 @@ def _training_loop(
 
             early_stop.end_stage()
             curriculum.end_stage()
+
+    print(early_stop.summarize())
 
 
 def training_loop(
@@ -191,5 +193,6 @@ class Curriculum(object):
         raise NotImplementedError()
 
     def end_stage(self):
-        # Occurs inside the same default graph, session and config as the previous call to __call__.
+        """ Should be called inside the same default graph, session
+            and config as the previous call to ``__call__``. """
         raise NotImplementedError()
