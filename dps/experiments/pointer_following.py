@@ -90,6 +90,7 @@ class DefaultConfig(Config):
     seed = 12
 
     T = 3
+    curriculum = [dict(width=1, n_digits=2)]
 
     optimizer_class = tf.train.RMSPropOptimizer
 
@@ -119,8 +120,6 @@ class DefaultConfig(Config):
 
     use_rl = False
 
-    curriculum = [dict(width=1, n_digits=2)]
-
     # start, decay_steps, decay_rate, staircase
     lr_schedule = (0.1, 1000, 0.96, False)
     noise_schedule = (0.0, 100, 0.96, False)
@@ -139,37 +138,14 @@ class CurriculumConfig(DefaultConfig):
         dict(width=1, n_digits=3),
         dict(width=1, n_digits=4)]
 
-    # curriculum = [
-    #     dict(width=1, n_digits=4),
-    #     dict(width=2, n_digits=4),
-    #     dict(width=3, n_digits=4)]
-
-
-class DebugConfig(DefaultConfig):
-    debug = True
-
-    max_steps = 100
-    n_train = 2
-    batch_size = 2
-    eval_step = 1
-    display_step = 1
-    checkpoint_step = 1
-    exploration_schedule = (0.5, 100, 0.96, False)
-
 
 class RLConfig(DefaultConfig):
     use_rl = True
     threshold = 1e-2
-
     action_selection = SoftmaxSelect()
 
-    # start, decay_steps, decay_rate, staircase
-    lr_schedule = (0.1, 1000, 0.96, False)
-    noise_schedule = (0.0, 100, 0.96, False)
-    exploration_schedule = (10.0, 1000, 0.96, False)
 
-
-class RLDebugConfig(DebugConfig, RLConfig):
+class RLCurriculumConfig(RLConfig, CurriculumConfig):
     pass
 
 
@@ -195,7 +171,9 @@ def train_pointer(log_dir, config="default", seed=-1):
     curriculum = ProductionSystemCurriculum(
         base_kwargs, config.curriculum, build_env, build_core_network, build_policy)
 
-    training_loop(curriculum, log_dir, config)
+    exp_name = "selection={}_rl={}".format(
+        config.action_selection.__class__.__name__, int(config.use_rl))
+    training_loop(curriculum, log_dir, config, exp_name=exp_name)
 
 
 if __name__ == '__main__':

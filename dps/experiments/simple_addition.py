@@ -7,7 +7,7 @@ import tensorflow as tf
 from tensorflow.contrib.slim import fully_connected
 import numpy as np
 
-from dps import ProductionSystem, CoreNetwork, RegisterSpec
+from dps import CoreNetwork, RegisterSpec
 from dps.environment import RegressionDataset, RegressionEnv
 from dps.utils import Config, default_config, CompositeCell, get_config
 from dps.train import training_loop
@@ -83,6 +83,7 @@ class Addition(CoreNetwork):
 class DefaultConfig(Config):
     seed = 10
 
+    curriculum = [dict(order=[0, 1, 0])]
     T = 3
 
     optimizer_class = tf.train.RMSPropOptimizer
@@ -93,7 +94,7 @@ class DefaultConfig(Config):
     n_val = 100
     n_test = 0
 
-    threshold = 1e-3
+    threshold = 1e-2
     patience = 100
 
     display_step = 100
@@ -113,8 +114,6 @@ class DefaultConfig(Config):
 
     use_rl = False
 
-    curriculum = [dict(order=[0, 0, 1])]
-
     # start, decay_steps, decay_rate, staircase
     lr_schedule = (0.1, 1000, 0.96, False)
     noise_schedule = (0.0, 10, 0.96, False)
@@ -127,16 +126,11 @@ class DefaultConfig(Config):
     debug = False
 
 
-class DebugConfig(DefaultConfig):
-    debug = True
-
-    max_steps = 100
-    n_train = 2
-    batch_size = 2
-    eval_step = 1
-    display_step = 1
-    checkpoint_step = 1
-    exploration_schedule = (0.5, 100, 0.96, False)
+class CurriculumConfig(DefaultConfig):
+    curriculum = [
+        dict(order=[0]),
+        dict(order=[0, 1]),
+        dict(order=[0, 1, 0])]
 
 
 class RLConfig(DefaultConfig):
@@ -145,7 +139,7 @@ class RLConfig(DefaultConfig):
     action_selection = SoftmaxSelect()
 
 
-class RLDebugConfig(DebugConfig, RLConfig):
+class RLCurriculumConfig(RLConfig, CurriculumConfig):
     pass
 
 
@@ -171,7 +165,9 @@ def train_addition(log_dir, config="default", seed=-1):
     curriculum = ProductionSystemCurriculum(
         base_kwargs, config.curriculum, build_env, build_core_network, build_policy)
 
-    training_loop(curriculum, log_dir, config)
+    exp_name = "selection={}_rl={}".format(
+        config.action_selection.__class__.__name__, int(config.use_rl))
+    training_loop(curriculum, log_dir, config, exp_name=exp_name)
 
 
 if __name__ == '__main__':

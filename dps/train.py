@@ -155,13 +155,14 @@ def _training_loop(
 
 
 def training_loop(
-        updater_generator, log_dir, config,
-        max_experiments=5, start_tensorboard=True, exp_name=''):
+        curriculum, log_dir, config,
+        max_experiments=5, start_tensorboard=True, exp_name='',
+        reset_global_step=False):
+
+    kwargs = locals().copy()
 
     try:
-        _training_loop(
-            updater_generator, log_dir, config,
-            max_experiments=5, exp_name='')
+        _training_loop(**kwargs)
     except KeyboardInterrupt:
         if start_tensorboard:
             restart_tensorboard(log_dir)
