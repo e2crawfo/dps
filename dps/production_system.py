@@ -377,6 +377,7 @@ class ProductionSystemCurriculum(Curriculum):
         kw.update(self.base_kwargs)
 
         config = default_config()
+        T = kw.pop('T', config.T)
 
         env = self.build_env(**kw)
         core_network = self.build_core_network(env)
@@ -389,7 +390,7 @@ class ProductionSystemCurriculum(Curriculum):
             saver = tf.train.Saver(policy_variables)
             saver.restore(tf.get_default_session(), os.path.join(default_config().path, 'policy.chk'))
 
-        psystem = ProductionSystem(env, core_network, policy, False, config.T)
+        psystem = ProductionSystem(env, core_network, policy, False, T)
 
         if config.use_rl:
             updater = build_reinforce_updater(psystem)

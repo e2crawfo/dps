@@ -83,9 +83,8 @@ class Addition(CoreNetwork):
 class DefaultConfig(Config):
     seed = 10
 
-    curriculum = [dict(order=[0, 1, 0])]
     T = 3
-
+    curriculum = [dict(order=[0, 1, 0])]
     optimizer_class = tf.train.RMSPropOptimizer
 
     max_steps = 10000
@@ -128,9 +127,9 @@ class DefaultConfig(Config):
 
 class CurriculumConfig(DefaultConfig):
     curriculum = [
-        dict(order=[0]),
-        dict(order=[0, 1]),
-        dict(order=[0, 1, 0])]
+        dict(order=[0], T=1),
+        dict(order=[0, 1], T=2),
+        dict(order=[0, 1, 0], T=3)]
 
 
 class RLConfig(DefaultConfig):
