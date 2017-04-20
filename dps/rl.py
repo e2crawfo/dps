@@ -2,6 +2,7 @@ import tensorflow as tf
 from tensorflow.python.ops.rnn import dynamic_rnn
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 import numpy as np
+import time
 
 from dps.updater import Updater
 
@@ -67,25 +68,6 @@ class ReinforcementLearningUpdater(Updater):
     def _build_graph(self):
         raise NotImplementedError()
 
-    def do_rollouts(self, mode, n_rollouts=None):
-        self.env.set_mode(mode, n_rollouts)
-        obs = self.env.reset()
-        batch_size = obs.shape[0]
-
-        self.start_episode()
-        policy_state = self.policy.zero_state(batch_size, tf.float32)
-        policy_state = tf.get_default_session().run(policy_state)
-
-        done = False
-        while not done:
-            action, policy_state = self.policy.act(obs, policy_state, sample=True)
-            new_obs, reward, done, info = self.env.step(action)
-
-            self.remember(obs, action, reward)
-            obs = new_obs
-
-        self.end_episode()
-
 
 class REINFORCE(ReinforcementLearningUpdater):
     def __init__(self, *args, **kwargs):
@@ -99,10 +81,11 @@ class REINFORCE(ReinforcementLearningUpdater):
         # discounted_rewards -= np.mean(self.all_rewards)
         # discounted_rewards /= np.std(self.all_rewards)
         self.clear_buffers()
-        self.do_rollouts('train', batch_size)
+        self.env.do_rollouts(self, self.policy, 'train', batch_size)
         feed_dict = self.build_feeddict()
         sess = tf.get_default_session()
 
+        start_time = time.time()
         if summary_op is not None:
             # sess.run(self.train_op, feed_dict=feed_dict)
             # train_summary, train_loss = sess.run([summary_op, self.loss], feed_dict=feed_dict)
@@ -111,17 +94,19 @@ class REINFORCE(ReinforcementLearningUpdater):
 
             # Run some validation rollouts
             self.clear_buffers()
-            self.do_rollouts('val')
+            self.env.do_rollouts(self, self.policy, 'val')
             feed_dict = self.build_feeddict()
 
             val_summary, val_loss, val_reward = sess.run(
                 [summary_op, self.loss, self.reward_per_ep], feed_dict=feed_dict)
 
-            return train_summary, -train_reward, val_summary, -val_reward
+            return_value = train_summary, -train_reward, val_summary, -val_reward
             # return train_summary, -train_loss, val_summary, val_loss
         else:
             train_loss, _ = sess.run([self.loss, self.train_op], feed_dict=feed_dict)
-            return train_loss
+            return_value = train_loss
+        print("Took {} seconds to apply gradients.".format(time.time() - start_time))
+        return return_value
 
     def build_feeddict(self):
         obs = np.array(self.obs_buffer)

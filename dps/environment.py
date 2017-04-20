@@ -1,5 +1,6 @@
 import abc
 from future.utils import with_metaclass
+import time
 
 import numpy as np
 import tensorflow as tf
@@ -66,6 +67,28 @@ class Env(with_metaclass(abc.ABCMeta, GymEnv)):
         assert kind in ['train', 'val', 'test'], "Unknown kind {}.".format(kind)
         self._kind = kind
         self._batch_size = batch_size
+
+    def do_rollouts(self, alg, policy, mode, n_rollouts=None):
+        start_time = time.time()
+        self.set_mode(mode, n_rollouts)
+        obs = self.reset()
+        batch_size = obs.shape[0]
+
+        alg.start_episode()
+        policy_state = policy.zero_state(batch_size, tf.float32)
+        policy_state = tf.get_default_session().run(policy_state)
+
+        done = False
+        while not done:
+            action, policy_state = policy.act(obs, policy_state, sample=True)
+            new_obs, reward, done, info = self.step(action)
+
+            alg.remember(obs, action, reward)
+            obs = new_obs
+
+        alg.end_episode()
+
+        print("Took {} seconds to do {} rollouts.".format(time.time() - start_time, n_rollouts))
 
 
 class DifferentiableEnv(with_metaclass(abc.ABCMeta, Env)):
