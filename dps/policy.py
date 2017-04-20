@@ -5,20 +5,27 @@ from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from tensorflow.python.util.nest import flatten_dict_items
 
 
-def placeholder_like(state_size, dtype=tf.float32, name=''):
+def rnn_cell_placeholder(state_size, batch_size=None, dtype=tf.float32, name=''):
     if isinstance(state_size, int):
-        return tf.placeholder(dtype, (None, state_size), name=name)
+        return tf.placeholder(dtype, (batch_size, state_size), name=name)
     elif isinstance(state_size, tf.TensorShape):
-        return tf.placeholder(dtype, (None,) + tuple(state_size), name=name)
+        return tf.placeholder(dtype, (batch_size,) + tuple(state_size), name=name)
     else:
-        ph = [placeholder_like(ss, dtype, name="{}/{}".format(name, i)) for i, ss in enumerate(state_size)]
+        ph = [
+            rnn_cell_placeholder(
+                ss, batch_size=batch_size, dtype=dtype, name="{}/{}".format(name, i))
+            for i, ss in enumerate(state_size)]
         return type(state_size)(*ph)
 
 
 class Policy(RNNCell):
-    """ Each instance of this class can be thought of as owning a set of variables. """
-    existing_policies = set()
+    """ A map from observation-internal state pairs to action activations.
 
+    Each instance of this class can be thought of as owning a set of variables,
+    because whenever ``build`` is called, it will try to use the same set of variables
+    (i.e. use the same scope, with ``reuse=True``) as the first time it was called.
+
+    """
     def __init__(
             self, controller, action_selection, exploration,
             n_actions, obs_dim, name="policy"):
@@ -36,7 +43,7 @@ class Policy(RNNCell):
         with tf.variable_scope(self.name):
             self.scope = tf.get_variable_scope()
 
-            self._policy_state = placeholder_like(self.controller.state_size, name='policy_state')
+            self._policy_state = rnn_cell_placeholder(self.controller.state_size, name='policy_state')
             self._obs = tf.placeholder(tf.float32, (None, self.obs_dim), name='obs')
 
         result = self.build(self._obs, self._policy_state)
@@ -50,8 +57,6 @@ class Policy(RNNCell):
         return action_activations, next_policy_state
 
     def build(self, obs, policy_state):
-        """ Return a Tensor giving the selected actions. """
-
         with tf.variable_scope(self.scope, reuse=self.n_builds > 0):
             utils, next_policy_state = self.controller(obs, policy_state)
             action_activations = self.action_selection(utils, self.exploration)
@@ -71,7 +76,13 @@ class Policy(RNNCell):
         return fd
 
     def act(self, obs, policy_state, sample=False):
-        """ Samples actions. """
+        """ Return action activations given an observation and the current policy state.
+
+        Perform additional step of sampling from activation activations
+        if ``sample`` is True and the activations represent a distribution
+        over actions (so ``self.action_selection.can_sample`` is True).
+
+        """
         sess = tf.get_default_session()
         feed_dict = self.build_feeddict(obs, policy_state)
 
