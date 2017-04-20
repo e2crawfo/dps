@@ -1,7 +1,7 @@
 import numpy as np
 from collections import namedtuple
 import os
-import time
+import copy
 
 import tensorflow as tf
 from tensorflow.python.ops.rnn import dynamic_rnn
@@ -371,8 +371,9 @@ class ProductionSystemEnv(Env):
             if final_registers is None:
                 fd = self.sampler.build_feeddict(inp=obs)
             else:
-                # TODO
-                fd = self.sampler.build_feeddict(registers=final_registers)
+                start_registers = copy.deepcopy(final_registers)
+                self.core_network.register_spec.set_input(start_registers, obs)
+                fd = self.sampler.build_feeddict(registers=start_registers)
 
             sess = tf.get_default_session()
             registers, actions, final_registers = sess.run(
@@ -382,14 +383,10 @@ class ProductionSystemEnv(Env):
                 feed_dict=fd)
 
             external_action = self.core_network.register_spec.get_output(final_registers)
-
-            # final_registers is used as both the external environment action,
-            # and as initial register values for the next call to sampler.
             new_obs, reward, done, info = self.env.step(external_action)
 
-            obs = self.core_network.register_spec.as_obs(registers, visible_only=True)
-
             # record the trajectory
+            obs = self.core_network.register_spec.as_obs(registers, visible_only=True)
             for t, (o, a) in enumerate(zip(obs, actions)):
                 r = np.zeros(reward.shape) if t < obs.shape[0]-1 else reward
                 alg.remember(o, a, r)
