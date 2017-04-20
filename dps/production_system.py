@@ -1,6 +1,7 @@
 import numpy as np
 from collections import namedtuple
 import os
+import time
 
 import tensorflow as tf
 from tensorflow.python.ops.rnn import dynamic_rnn
@@ -24,8 +25,8 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
     def build_psystem_env(self):
         return ProductionSystemEnv(self)
 
-    def build_psystem_func(self):
-        return ProductionSystemFunction(self)
+    def build_psystem_func(self, sample=False):
+        return ProductionSystemFunction(self, sample=sample)
 
 
 class CoreNetwork(object):
@@ -98,36 +99,36 @@ class CoreNetwork(object):
 
 
 class ProductionSystemCell(RNNCell):
-    def __init__(self, psystem, reuse=None):
+    def __init__(self, psystem, reuse=None, sample=False):
         _, self.core_network, self.policy, _, _ = psystem
 
         self._state_size = (
             self.policy.state_size,
             self.core_network.register_spec.state_size())
+        self._output_size = (
+            self.core_network.n_actions+1,
+            self.policy.state_size,
+            self.core_network.register_spec.state_size())
 
         self._reuse = reuse
+        self._sample = sample
 
     def __call__(self, inputs, state, scope=None):
         with tf.name_scope(scope or 'production_system_cell'):
-            policy_state = None
-
-            policy_state = state[0]
-            registers = state[1]
+            policy_state, registers = state
 
             with tf.name_scope('policy'):
                 obs = self.core_network.register_spec.as_obs(registers, visible_only=1)
-                action_activations, new_policy_state = self.policy(obs, policy_state)
+                action_activations, new_policy_state = self.policy(obs, policy_state, sample=self._sample)
 
             with tf.name_scope('core_network'):
                 # Strip off the last action, which is the stopping action.
                 new_registers = self.core_network(action_activations[:, :-1], registers)
 
-            new_state = (new_policy_state, new_registers)
-
             # Return state as output since ProductionSystemCell has no other meaningful output,
             # and this has benefit of making all intermediate states accessible when using
             # used with tf function ``dynamic_rnn``
-            return new_state, new_state
+            return (action_activations, policy_state, registers), (new_policy_state, new_registers)
 
     @property
     def state_size(self):
@@ -135,7 +136,7 @@ class ProductionSystemCell(RNNCell):
 
     @property
     def output_size(self):
-        return self._state_size
+        return self._output_size
 
     def zero_state(self, batch_size, dtype):
         initial_state = (
@@ -153,18 +154,28 @@ class ProductionSystemFunction(object):
         The production system that we want to turn into a tensorflow function.
 
     """
-    def __init__(self, psystem, scope=None):
-
+    def __init__(self, psystem, scope=None, sample=False):
+        self.psystem = psystem
         _, self.core_network, self.policy, self.use_act, self.T = psystem
+        self._sample = sample
 
-        self.inputs, self.initial_state, self.ps_cell, self.states, self.final_state = (
-            self._build_ps_function(psystem, scope))
+        output = self._build_ps_function(psystem, scope, sample)
+        (self.inputs, self.initial_state, self.ps_cell,
+            self.action_activations, self.policy_states, self.registers,
+            self.final_policy_states, self.final_registers) = output
 
-    def build_feeddict(self, inp, T=None):
-        batch_size = inp.shape[0]
+    def build_feeddict(self, inp=None, registers=None, T=None):
+        """ Can either specify just input (inp) or all values for all registers via ``registers``. """
+        if (inp is None) == (registers is None):
+            raise Exception("Must supply exactly one of ``inp``, ``registers``.")
 
-        registers = self.core_network.register_spec.instantiate(batch_size=batch_size)
-        self.core_network.register_spec.set_input(registers, inp)
+        if inp is not None:
+            batch_size = inp.shape[0]
+            registers = self.core_network.register_spec.instantiate(batch_size=batch_size)
+            self.core_network.register_spec.set_input(registers, inp)
+        else:
+            if not isinstance(registers, self.core_network.register_spec._namedtuple):
+                registers = self.core_network.register_spec.from_obs(registers)
 
         fd = {}
 
@@ -180,11 +191,10 @@ class ProductionSystemFunction(object):
         return fd
 
     def get_output(self):
-        output = self.core_network.register_spec.get_output(self.states[1])
-        return output[-1, :, :]
+        return self.core_network.register_spec.get_output(self.final_registers)
 
     @staticmethod
-    def _build_ps_function(psystem, scope=None):
+    def _build_ps_function(psystem, scope=None, sample=False):
         if psystem.use_act:
             raise NotImplemented()
             # Code for doing Adaptive Computation Time
@@ -217,24 +227,30 @@ class ProductionSystemFunction(object):
                 # (max_time, batch_size, 1)
                 inputs = tf.placeholder(tf.float32, shape=(None, None, 1), name="inputs")
 
-                ps_cell = ProductionSystemCell(psystem)
+                ps_cell = ProductionSystemCell(psystem, sample=sample)
 
                 batch_size = tf.shape(inputs)[1]
                 initial_state = ps_cell.zero_state(batch_size, tf.float32)
 
-                # ps_cell is hacked to provide its internal state as output
-                # so that we have access to internal states from every time
+                # ps_cell gives its internal state (at beginning of each time step)
+                # as output so that we have access to internal states from every time
                 # step, instead of just the final time step
-                states, final_state = dynamic_rnn(
+                output = dynamic_rnn(
                     ps_cell, inputs, initial_state=initial_state,
                     parallel_iterations=1, swap_memory=False,
                     time_major=True)
 
-        return inputs, initial_state, ps_cell, states, final_state
+                ((action_activations, policy_states, registers),
+                    (final_policy_states, final_registers)) = output
+
+        return (
+            inputs, initial_state, ps_cell,
+            action_activations, policy_states, registers,
+            final_policy_states, final_registers)
 
     def get_register_values(self, *names, as_obs=True):
-        registers = self.states[1]
-        return self.core_network.register_spec.get_register_values(registers, *names, as_obs=as_obs, axis=2)
+        return self.core_network.register_spec.get_register_values(
+            self.registers, *names, as_obs=as_obs, axis=2)
 
     def __str__(self):
         return ("<ProductionSystemFunction - core_network={}, policy={}, use_act={}>".format(
@@ -264,7 +280,9 @@ class ProductionSystemEnv(Env):
     metadata = {"render.modes": ["human", "ansi"]}
 
     def __init__(self, psystem):
+        self.psystem = psystem
         self.env, self.core_network, _, self.use_act, self.T = psystem
+        self.sampler = None
 
         # Extra action is for stopping. If T is not 0, this action will be effectively ignored.
         self.n_actions = self.core_network.n_actions + 1
@@ -335,6 +353,50 @@ class ProductionSystemEnv(Env):
     def _seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
+
+    def do_rollouts(self, alg, policy, mode, n_rollouts=None):
+        assert policy is self.psystem.policy
+
+        if self.sampler is None:
+            self.sampler = self.psystem.build_psystem_func(sample=True)
+        self.set_mode(mode, n_rollouts)
+
+        obs = self.reset()
+
+        alg.start_episode()
+        final_registers = None
+
+        done = False
+        while not done:
+            if final_registers is None:
+                fd = self.sampler.build_feeddict(inp=obs)
+            else:
+                # TODO
+                fd = self.sampler.build_feeddict(registers=final_registers)
+
+            sess = tf.get_default_session()
+            registers, actions, final_registers = sess.run(
+                [self.sampler.registers,
+                 self.sampler.action_activations,
+                 self.sampler.final_registers],
+                feed_dict=fd)
+
+            external_action = self.core_network.register_spec.get_output(final_registers)
+
+            # final_registers is used as both the external environment action,
+            # and as initial register values for the next call to sampler.
+            new_obs, reward, done, info = self.env.step(external_action)
+
+            obs = self.core_network.register_spec.as_obs(registers, visible_only=True)
+
+            # record the trajectory
+            for t, (o, a) in enumerate(zip(obs, actions)):
+                r = np.zeros(reward.shape) if t < obs.shape[0]-1 else reward
+                alg.remember(o, a, r)
+
+            obs = new_obs
+
+        alg.end_episode()
 
 
 def build_diff_updater(psystem):

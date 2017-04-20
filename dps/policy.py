@@ -52,9 +52,16 @@ class Policy(RNNCell):
     def __str__(self):
         return pformat(self)
 
-    def __call__(self, obs, policy_state):
-        _, action_activations, utils, next_policy_state = self.build(obs, policy_state)
-        return action_activations, next_policy_state
+    def __call__(self, obs, policy_state, sample=False):
+        samples, action_activations, utils, next_policy_state = self.build(obs, policy_state)
+        if sample and not self.action_selection.can_sample:
+            raise ValueError(
+                "Requesting samples from policy, but cannot sample from "
+                "its action selection method: {}.".format(self.action_selection))
+        if sample:
+            return samples, next_policy_state
+        else:
+            return action_activations, next_policy_state
 
     def build(self, obs, policy_state):
         with tf.variable_scope(self.scope, reuse=self.n_builds > 0):
@@ -200,7 +207,8 @@ class EpsilonGreedySelect(ActionSelection):
 
 def sample_action(probs):
     logprobs = tf.log(probs)
-    n_actions = tf.shape(logprobs)[1]
+    n_actions = int(logprobs.shape[1])
     samples = tf.cast(tf.multinomial(logprobs, 1), tf.int32)
-    actions = tf.equal(samples, tf.reshape(tf.range(n_actions), (1, n_actions)))
+    reference = tf.reshape(tf.range(n_actions), (1, n_actions))
+    actions = tf.equal(samples, reference)
     return tf.cast(actions, tf.float32)

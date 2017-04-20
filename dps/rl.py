@@ -85,7 +85,6 @@ class REINFORCE(ReinforcementLearningUpdater):
         feed_dict = self.build_feeddict()
         sess = tf.get_default_session()
 
-        start_time = time.time()
         if summary_op is not None:
             # sess.run(self.train_op, feed_dict=feed_dict)
             # train_summary, train_loss = sess.run([summary_op, self.loss], feed_dict=feed_dict)
@@ -105,7 +104,6 @@ class REINFORCE(ReinforcementLearningUpdater):
         else:
             train_loss, _ = sess.run([self.loss, self.train_op], feed_dict=feed_dict)
             return_value = train_loss
-        print("Took {} seconds to apply gradients.".format(time.time() - start_time))
         return return_value
 
     def build_feeddict(self):
@@ -150,8 +148,8 @@ class REINFORCE(ReinforcementLearningUpdater):
             self.cumulative_rewards = tf.placeholder(
                 tf.float32, shape=(None, None, 1), name="cumulative_rewards")
             self.true_rewards = tf.placeholder(tf.float32, shape=(None, None, 1), name="true_rewards")
-            self.reward_per_ep = tf.reduce_sum(
-                tf.reduce_mean(tf.squeeze(self.true_rewards), axis=1), axis=0, name="reward_per_ep")
+            self.reward_per_ep = tf.squeeze(
+                tf.reduce_sum(tf.reduce_mean(self.true_rewards, axis=1), axis=0, name="reward_per_ep"))
 
             inp = (self.obs, self.actions, self.cumulative_rewards)
 
