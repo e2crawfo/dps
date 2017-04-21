@@ -1,5 +1,6 @@
 from pprint import pformat
 
+import numpy as np
 import tensorflow as tf
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from tensorflow.python.util.nest import flatten_dict_items
@@ -16,6 +17,32 @@ def rnn_cell_placeholder(state_size, batch_size=None, dtype=tf.float32, name='')
                 ss, batch_size=batch_size, dtype=dtype, name="{}/{}".format(name, i))
             for i, ss in enumerate(state_size)]
         return type(state_size)(*ph)
+
+
+class FixedController(RNNCell):
+    def __init__(self, action_sequence, n_actions):
+        """ Action sequence should be a list of integers. """
+        self.action_sequence = np.array(action_sequence)
+        self.n_actions = n_actions
+
+    def __call__(self, inp, state):
+        action_seq = tf.constant(self.action_sequence, tf.int32)
+        int_state = tf.cast(state, tf.int32)
+        action_idx = tf.gather(action_seq, int_state)
+        reference = tf.reshape(tf.range(self.n_actions), (1, self.n_actions))
+        actions = tf.equal(reference, action_idx)
+        return tf.cast(actions, tf.float32), state + 1
+
+    @property
+    def state_size(self):
+        return 1
+
+    @property
+    def output_size(self):
+        return self.n_actions
+
+    def zero_state(self, batch_size, dtype):
+        return tf.cast(tf.fill((batch_size, 1), 0), dtype)
 
 
 class Policy(RNNCell):
@@ -196,13 +223,20 @@ class EpsilonGreedySelect(ActionSelection):
 
     def __call__(q_values, epsilon):
         mx = tf.reduce_max(q_values, axis=1, keep_dims=True)
-        bool_is_max = tf.eq(q_values, mx)
+        bool_is_max = tf.equal(q_values, mx)
         float_is_max = tf.cast(bool_is_max, tf.float32)
         max_count = tf.reduce_sum(float_is_max, axis=1, keep_dims=True)
         _probs = (float_is_max / max_count) * (1 - epsilon)
         n_actions = tf.shape(q_values)[1]
         probs = _probs + epsilon / tf.cast(n_actions, tf.float32)
         return probs
+
+
+class IdentitySelect(ActionSelection):
+    _can_sample = False  # TODO this depends on what it gets as input
+
+    def __call__(self, inp, epsilon):
+        return tf.identity(inp, name="IdentitySelect")
 
 
 def sample_action(probs):

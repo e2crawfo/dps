@@ -52,8 +52,9 @@ class AdditionRegSpec(RegisterSpec):
 
 
 class Addition(CoreNetwork):
-    _register_spec = AdditionRegSpec()
     _n_actions = 3
+    _action_names = ['r0 = r0 + r1', 'r1 = r0 * r1', 'no-op']
+    _register_spec = AdditionRegSpec()
 
     def __init__(self, env):
         super(Addition, self).__init__()

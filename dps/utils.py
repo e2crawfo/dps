@@ -8,6 +8,18 @@ import tensorflow as tf
 from tensorflow.python.ops import random_ops, math_ops
 from tensorflow.python.framework import ops, constant_op
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
+from tensorflow.contrib.slim import fully_connected
+
+
+class MLP(object):
+    def __init__(self, n_units):
+        self.n_units = n_units
+
+    def __call__(self, inp, output_size):
+        hidden = inp
+        for nu in self.n_units:
+            hidden = tf.nn.relu(fully_connected(hidden, nu))
+        return fully_connected(hidden, output_size)
 
 
 class CompositeCell(RNNCell):

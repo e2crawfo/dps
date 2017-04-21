@@ -224,3 +224,10 @@ class RegisterSpec(object):
                 shape = iv[0]
             ss.append(shape)
         return ss
+
+    def concatenate(self, reg_list, axis):
+        new_registers = []
+        for i in range(len(reg_list[0])):
+            new_elem = np.concatenate(tuple(r[i][0] if isinstance(r[i], tuple) else r[i] for r in reg_list), axis=axis)
+            new_registers.append(new_elem)
+        return self.wrap(*new_registers)

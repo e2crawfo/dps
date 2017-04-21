@@ -2,6 +2,8 @@ import numpy as np
 from collections import namedtuple
 import os
 import copy
+import pandas as pd
+from tabulate import tabulate
 
 import tensorflow as tf
 from tensorflow.python.ops.rnn import dynamic_rnn
@@ -28,6 +30,99 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
     def build_psystem_func(self, sample=False):
         return ProductionSystemFunction(self, sample=sample)
 
+    def visualize(self, mode, n_rollouts, sample):
+        ps_func = self.build_psystem_func(sample=sample)
+        env = self.env
+        env.set_mode(mode, n_rollouts)
+
+        obs = env.reset()
+
+        final_registers = None
+
+        registers, actions, rewards = [], [], []
+
+        done = False
+        while not done:
+            if final_registers is None:
+                fd = ps_func.build_feeddict(inp=obs)
+            else:
+                start_registers = copy.deepcopy(final_registers)
+                self.core_network.register_spec.set_input(start_registers, obs)
+                fd = ps_func.build_feeddict(registers=start_registers)
+
+            sess = tf.get_default_session()
+            reg, a, final = sess.run(
+                [ps_func.registers,
+                 ps_func.action_activations,
+                 ps_func.final_registers],
+                feed_dict=fd)
+
+            external_action = self.core_network.register_spec.get_output(final)
+            new_obs, reward, done, info = env.step(external_action)
+
+            registers.append(reg)
+            actions.append(a)
+
+            _reward = np.zeros(a.shape[:-1])
+            _reward[-1, :] = reward
+            rewards.append(_reward)
+
+            obs = new_obs
+
+        external_step_lengths = [a.shape[0] for a in actions]
+
+        registers = self.core_network.register_spec.concatenate(registers, axis=0)
+        actions = np.concatenate(actions, axis=0)
+        rewards = np.concatenate(rewards, axis=0)
+
+        self._pprint_rollouts(actions, registers, rewards, external_step_lengths)
+
+    def _pprint_rollouts(self, action_activations, registers, rewards, external_step_lengths):
+        """ Prints a single rollout, which may consists of multiple external time steps.
+
+            Each of ``action_activations`` and ``registers`` has as many entries as there are external time steps.
+            Each of THOSE entries has as many entries as there were internal time steps for that external time step.
+
+        """
+        total_internal_steps = sum(external_step_lengths)
+        register_spec = self.core_network.register_spec
+        row_names = ['t=', 'i=', ''] + self.core_network.action_names + ['stop']
+        reg_ranges = {}
+        for n, s in zip(register_spec.names, register_spec.shapes()):
+            row_names.append('')
+            start = len(row_names)
+            for k in range(s[-1]):
+                row_names.append('{}[{}]'.format(n, k))
+            end = len(row_names)
+            reg_ranges[n] = (start, end)
+        row_names.extend(['', 'reward'])
+
+        n_timesteps, batch_size, n_actions = action_activations.shape
+
+        for b in range(batch_size):
+            print("\nElement {} of batch ".format(b) + "-" * 40)
+            values = np.zeros((total_internal_steps, len(row_names)))
+            external_t, internal_t = 0, 0
+            for i in range(action_activations.shape[0]):
+                values[i, 0] = external_t
+                values[i, 1] = internal_t
+                values[i, 3:3+n_actions] = action_activations[i, b, :]
+                for n, v in zip(register_spec.names, registers):
+                    rr = reg_ranges[n]
+                    values[i, rr[0]:rr[1]] = v[i, b, :]
+                values[i, -1] = rewards[i, b]
+
+                internal_t += 1
+
+                if internal_t == external_step_lengths[external_t]:
+                    external_t += 1
+                    internal_t = 0
+
+            values = pd.DataFrame(values.T)
+            values.insert(0, 'name', row_names)
+            values = values.set_index('name')
+            print(tabulate(values, headers='keys', tablefmt='fancy_grid'))
+
 
 class CoreNetwork(object):
     """ A core network inside a production system.
@@ -49,6 +144,7 @@ class CoreNetwork(object):
 
     """
     _n_actions = None
+    _action_names = None
     _register_spec = None
 
     def __init__(self):
@@ -65,6 +161,11 @@ class CoreNetwork(object):
     def n_actions(self):
         self.assert_defined('_n_actions')
         return self._n_actions
+
+    @property
+    def action_names(self):
+        self.assert_defined('_action_names')
+        return self._action_names
 
     @property
     def obs_dim(self):
@@ -450,6 +551,7 @@ class ProductionSystemCurriculum(Curriculum):
             saver.restore(tf.get_default_session(), os.path.join(default_config().path, 'policy.chk'))
 
         psystem = ProductionSystem(env, core_network, policy, False, T)
+        self.current_psystem = psystem
 
         if config.use_rl:
             updater = build_reinforce_updater(psystem)
@@ -459,6 +561,8 @@ class ProductionSystemCurriculum(Curriculum):
         return updater
 
     def end_stage(self):
+        self.current_psystem.visualize('train', 5, default_config().use_rl)
+
         # Occurs inside the same default graph, session and config as the previous call to __call__.
         g = tf.get_default_graph()
         policy_variables = g.get_collection('trainable_variables', scope=self.policy.scope.name)

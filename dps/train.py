@@ -196,3 +196,26 @@ class Curriculum(object):
         """ Should be called inside the same default graph, session
             and config as the previous call to ``__call__``. """
         raise NotImplementedError()
+
+
+def build_and_visualize(build_psystem, mode, n_rollouts, sample):
+    graph = tf.Graph()
+    sess = tf.Session(graph=graph)
+
+    with ExitStack() as stack:
+        stack.enter_context(graph.as_default())
+        stack.enter_context(sess)
+        stack.enter_context(sess.as_default())
+
+        tf_seed = gen_seed()
+        tf.set_random_seed(tf_seed)
+
+        psystem = build_psystem()
+
+        sess.run(uninitialized_variables_initializer())
+        sess.run(tf.assert_variables_initialized())
+
+        start_time = time.time()
+        psystem.visualize(mode, n_rollouts, sample)
+        duration = time.time() - start_time
+        print("Took {} seconds.".format(duration))
