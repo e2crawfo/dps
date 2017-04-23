@@ -9,7 +9,7 @@ from dps.utils import (
     Config, default_config, CompositeCell, FeedforwardCell, get_config, MLP)
 from dps.production_system import ProductionSystemCurriculum
 from dps.train import training_loop, build_and_visualize
-from dps.policy import Policy, ReluSelect, SoftmaxSelect, GumbelSoftmaxSelect
+from dps.policy import Policy, ReluSelect, SigmoidSelect, SoftmaxSelect, GumbelSoftmaxSelect
 
 
 class PointerDataset(RegressionDataset):
@@ -52,12 +52,12 @@ class PointerRegSpec(RegisterSpec):
         self.width = width
         self._initial_values = (
             [np.zeros(2*width+1, dtype='f')] +
-            [np.array([v], dtype='f') for v in [width, 0.0, 0.0, 0.0]])
+            [np.array([v], dtype='f') for v in [0.0, 0.0, 0.0, 0.0]])
 
 
 class Pointer(CoreNetwork):
-    _n_actions = 5
-    _action_names = ['fovea += 1', 'fovea -= 1', 'wm += 1', 'wm -= 1', 'wm = vision']
+    _n_actions = 6
+    _action_names = ['fovea += 1', 'fovea -= 1', 'wm += 1', 'wm -= 1', 'wm = vision', 'no-op/stop']
     _register_spec = None
 
     def __init__(self, env):
@@ -70,17 +70,19 @@ class Pointer(CoreNetwork):
             * +/- fovea
             * +/- wm
             * store vision in wm
+            * no-op
 
         """
-        a0, a1, a2, a3, a4 = tf.split(action_activations, self.n_actions, axis=1)
+        a0, a1, a2, a3, a4, a5 = tf.split(action_activations, self.n_actions, axis=1)
         fovea = (1 - a0 - a1) * r.fovea + a0 * (r.fovea + 1) + a1 * (r.fovea - 1)
         wm = (1 - a2 - a3 - a4) * r.wm + a2 * (r.wm + 1) + a3 * (r.wm - 1) + a4 * r.vision
         t = r.t + 1
 
-        filt = tf.contrib.distributions.Normal(fovea, 0.4)
+        filt = tf.contrib.distributions.Normal(fovea, 0.1)
         filt = filt.pdf(np.linspace(-self.width, self.width, 2*self.width+1, dtype='f'))
         l1_norm = tf.reduce_sum(filt, axis=1, keep_dims=True)
         filt = filt / l1_norm
+        filt = tf.where(tf.is_nan(filt), tf.fill(tf.shape(filt), 1/(2*self.width+1)), filt)
         vision = tf.reduce_sum(r.inp * filt, axis=1, keep_dims=True)
 
         new_registers = self.register_spec.wrap(inp=r.inp, fovea=fovea, vision=vision, wm=wm, t=t)
@@ -92,7 +94,7 @@ class DefaultConfig(Config):
     seed = 12
 
     T = 5
-    curriculum = [dict(width=1, n_digits=10)]
+    curriculum = [dict(width=1, n_digits=2)]
 
     optimizer_class = tf.train.RMSPropOptimizer
 
@@ -109,23 +111,24 @@ class DefaultConfig(Config):
     eval_step = 10
     checkpoint_step = 1000
 
-    # controller = CompositeCell(
-    #     tf.contrib.rnn.LSTMCell(num_units=64),
-    #     fully_connected,
-    #     Pointer._n_actions+1)
+    controller = CompositeCell(
+        tf.contrib.rnn.LSTMCell(num_units=64),
+        MLP([]),
+        Pointer._n_actions)
 
-    controller = FeedforwardCell(MLP([100, 100]), Pointer._n_actions+1)
+    # controller = FeedforwardCell(MLP([100, 100]), Pointer._n_actions)
 
     action_selection = staticmethod([
         SoftmaxSelect(),
         GumbelSoftmaxSelect(hard=0),
         GumbelSoftmaxSelect(hard=1),
-        ReluSelect()][1])
+        SigmoidSelect(),
+        ReluSelect()][0])
 
     use_rl = False
 
     # start, decay_steps, decay_rate, staircase
-    lr_schedule = (0.1, 1000, 0.96, False)
+    lr_schedule = (0.1, 1000, 0.99, False)
     noise_schedule = (0.1, 1000, 0.96, False)
     exploration_schedule = (10.0, 1000, 0.96, False)
 
@@ -145,7 +148,7 @@ class CurriculumConfig(DefaultConfig):
     #     dict(width=1, n_digits=6)]
     curriculum = [
         dict(width=2, n_digits=3),
-        dict(width=2, n_digits=3),]
+        dict(width=2, n_digits=3)]
 
 
 class RLConfig(DefaultConfig):
@@ -175,7 +178,7 @@ def train_pointer(log_dir, config="default", seed=-1):
         config = default_config()
         return Policy(
             config.controller, config.action_selection, exploration,
-            cn.n_actions+1, cn.obs_dim, name="pointer_policy")
+            cn.n_actions, cn.obs_dim, name="pointer_policy")
 
     curriculum = ProductionSystemCurriculum(
         base_kwargs, config.curriculum, build_env, build_core_network, build_policy)
@@ -195,11 +198,16 @@ def visualize():
         env = PointerEnv(1, 2, 10, 10, 10)
         cn = Pointer(env)
 
-        controller = FixedController([4, 0, 4], cn.n_actions+1)
+        controller = config.controller
+        action_selection = config.action_selection
+
+        # controller = FixedController([4, 0, 4], cn.n_actions)
+        # action_selection = IdentitySelect()
+
         exploration = build_decaying_value(config.exploration_schedule, 'exploration')
         policy = Policy(
-            controller, IdentitySelect(), exploration,
-            cn.n_actions+1, cn.obs_dim, name="pointer_policy")
+            controller, action_selection, exploration,
+            cn.n_actions, cn.obs_dim, name="pointer_policy")
         return ProductionSystem(env, cn, policy, False, 3)
 
     with DefaultConfig().as_default():

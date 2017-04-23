@@ -86,7 +86,7 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
         """
         total_internal_steps = sum(external_step_lengths)
         register_spec = self.core_network.register_spec
-        row_names = ['t=', 'i=', ''] + self.core_network.action_names + ['stop']
+        row_names = ['t=', 'i=', ''] + self.core_network.action_names
         reg_ranges = {}
         for n, s in zip(register_spec.names, register_spec.shapes()):
             row_names.append('')
@@ -200,18 +200,17 @@ class CoreNetwork(object):
 
 
 class ProductionSystemCell(RNNCell):
-    def __init__(self, psystem, reuse=None, sample=False):
+    def __init__(self, psystem, sample):
         _, self.core_network, self.policy, _, _ = psystem
 
         self._state_size = (
             self.policy.state_size,
             self.core_network.register_spec.state_size())
         self._output_size = (
-            self.core_network.n_actions+1,
+            self.core_network.n_actions,
             self.policy.state_size,
             self.core_network.register_spec.state_size())
 
-        self._reuse = reuse
         self._sample = sample
 
     def __call__(self, inputs, state, scope=None):
@@ -223,8 +222,7 @@ class ProductionSystemCell(RNNCell):
                 action_activations, new_policy_state = self.policy(obs, policy_state, sample=self._sample)
 
             with tf.name_scope('core_network'):
-                # Strip off the last action, which is the stopping action.
-                new_registers = self.core_network(action_activations[:, :-1], registers)
+                new_registers = self.core_network(action_activations, registers)
 
             # Return state as output since ProductionSystemCell has no other meaningful output,
             # and this has benefit of making all intermediate states accessible when using
@@ -240,10 +238,9 @@ class ProductionSystemCell(RNNCell):
         return self._output_size
 
     def zero_state(self, batch_size, dtype):
-        initial_state = (
-            self.policy.zero_state(batch_size, dtype),
-            self.core_network.register_spec.build_placeholders(dtype))
-        return initial_state
+        policy_state = self.policy.zero_state(batch_size, dtype)
+        registers = self.core_network.register_spec.build_placeholders(dtype)
+        return (policy_state, registers)
 
 
 class ProductionSystemFunction(object):
@@ -255,13 +252,14 @@ class ProductionSystemFunction(object):
         The production system that we want to turn into a tensorflow function.
 
     """
-    def __init__(self, psystem, scope=None, sample=False):
+    def __init__(self, psystem, scope=None, sample=False, initialize=True):
         self.psystem = psystem
         _, self.core_network, self.policy, self.use_act, self.T = psystem
         self._sample = sample
+        self._initialize = initialize
 
-        output = self._build_ps_function(psystem, scope, sample)
-        (self.inputs, self.initial_state, self.ps_cell,
+        output = self._build_ps_function(psystem, scope, sample, initialize)
+        (self.inputs, self.register_ph, self.ps_cell,
             self.action_activations, self.policy_states, self.registers,
             self.final_policy_states, self.final_registers) = output
 
@@ -285,8 +283,7 @@ class ProductionSystemFunction(object):
             # first dim of this dummy input determines the number of time steps.
             fd[self.inputs] = np.zeros((T, batch_size, 1))
 
-        register_ph = self.initial_state[1]
-        for ph, value in zip(register_ph, registers):
+        for ph, value in zip(self.register_ph, registers):
             fd[ph] = value
 
         return fd
@@ -295,7 +292,7 @@ class ProductionSystemFunction(object):
         return self.core_network.register_spec.get_output(self.final_registers)
 
     @staticmethod
-    def _build_ps_function(psystem, scope=None, sample=False):
+    def _build_ps_function(psystem, scope, sample, initialize):
         if psystem.use_act:
             raise NotImplemented()
             # Code for doing Adaptive Computation Time
@@ -331,13 +328,22 @@ class ProductionSystemFunction(object):
                 ps_cell = ProductionSystemCell(psystem, sample=sample)
 
                 batch_size = tf.shape(inputs)[1]
-                initial_state = ps_cell.zero_state(batch_size, tf.float32)
+                policy_state, register_ph = ps_cell.zero_state(batch_size, tf.float32)
+
+                if initialize:
+                    no_op = tf.concat(
+                        (tf.fill((batch_size, psystem.core_network.n_actions-1), 0.0),
+                         tf.fill((batch_size, 1), 1.0)),
+                        axis=1)
+                    initial_registers = psystem.core_network(no_op, register_ph)
+                else:
+                    initial_registers = register_ph
 
                 # ps_cell gives its internal state (at beginning of each time step)
                 # as output so that we have access to internal states from every time
                 # step, instead of just the final time step
                 output = dynamic_rnn(
-                    ps_cell, inputs, initial_state=initial_state,
+                    ps_cell, inputs, initial_state=(policy_state, initial_registers),
                     parallel_iterations=1, swap_memory=False,
                     time_major=True)
 
@@ -345,7 +351,7 @@ class ProductionSystemFunction(object):
                     (final_policy_states, final_registers)) = output
 
         return (
-            inputs, initial_state, ps_cell,
+            inputs, register_ph, ps_cell,
             action_activations, policy_states, registers,
             final_policy_states, final_registers)
 
@@ -386,7 +392,7 @@ class ProductionSystemEnv(Env):
         self.sampler = None
 
         # Extra action is for stopping. If T is not 0, this action will be effectively ignored.
-        self.n_actions = self.core_network.n_actions + 1
+        self.n_actions = self.core_network.n_actions
         self.action_space = BatchBox(low=0.0, high=1.0, shape=(None, self.n_actions))
 
         obs_dim = sum(
@@ -428,7 +434,6 @@ class ProductionSystemEnv(Env):
             self.core_network.register_spec.set_input(self.registers, external_obs)
         else:
             reward, done, info = np.zeros(action.shape[0]), False, {}
-            action = action[:, :-1]  # The core network knows nothing about stopping computation, so cut off the stop action.
             self.registers = self.core_network.run(action, self.registers)
         self.t += 1
 
@@ -462,7 +467,7 @@ class ProductionSystemEnv(Env):
             self.sampler = self.psystem.build_psystem_func(sample=True)
         self.set_mode(mode, n_rollouts)
 
-        obs = self.reset()
+        obs = self.env.reset()
 
         alg.start_episode()
         final_registers = None

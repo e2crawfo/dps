@@ -53,7 +53,7 @@ class AdditionRegSpec(RegisterSpec):
 
 class Addition(CoreNetwork):
     _n_actions = 3
-    _action_names = ['r0 = r0 + r1', 'r1 = r0 * r1', 'no-op']
+    _action_names = ['r0 = r0 + r1', 'r1 = r0 * r1', 'no-op/stop']
     _register_spec = AdditionRegSpec()
 
     def __init__(self, env):
@@ -104,7 +104,7 @@ class DefaultConfig(Config):
     controller = CompositeCell(
         tf.contrib.rnn.LSTMCell(num_units=64),
         fully_connected,
-        Addition._n_actions+1)
+        Addition._n_actions)
 
     action_selection = staticmethod([
         SoftmaxSelect(),
@@ -160,7 +160,7 @@ def train_addition(log_dir, config="default", seed=-1):
         config = default_config()
         return Policy(
             config.controller, config.action_selection, exploration,
-            cn.n_actions+1, cn.obs_dim, name="addition_policy")
+            cn.n_actions, cn.obs_dim, name="addition_policy")
 
     curriculum = ProductionSystemCurriculum(
         base_kwargs, config.curriculum, build_env, build_core_network, build_policy)
