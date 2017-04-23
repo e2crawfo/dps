@@ -98,6 +98,8 @@ def print_variables(collection, scope):
     variables = g.get_collection(collection, scope=scope)
     sess = tf.get_default_session()
     for v in variables:
+        print("\n")
+        print(v.name)
         print(sess.run(v))
 
 
