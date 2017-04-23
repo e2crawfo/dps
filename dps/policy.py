@@ -171,6 +171,13 @@ class ReluSelect(ActionSelection):
         return tf.nn.relu(utils, name="relu_action_selection")
 
 
+class SigmoidSelect(ActionSelection):
+    _can_sample = False
+
+    def __call__(self, utils, temperature):
+        return tf.sigmoid(utils, name="sigmoid_action_selection")
+
+
 class SoftmaxSelect(ActionSelection):
     _can_sample = True
 
