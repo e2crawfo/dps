@@ -48,7 +48,7 @@ def _training_loop(
     val_writer = None
 
     threshold_reached = True
-    stage = 0
+    stage = 1
     global_step = 0
 
     while True:
@@ -65,20 +65,14 @@ def _training_loop(
             tf_seed = gen_seed()
             tf.set_random_seed(tf_seed)
 
-            if threshold_reached:
-                stage += 1
-                try:
-                    updater = next(curriculum)
+            try:
+                updater = next(curriculum)
 
-                    print("\nStarting stage {} of the curriculum. "
-                          "New updater is \n{}\n".format(stage, updater))
+                print("\nStarting stage {} of the curriculum. "
+                      "New updater is \n{}\n".format(stage, updater))
 
-                except StopIteration:
-                    print("Curriculum complete after {} stage(s).".format(stage-1))
-                    break
-
-            else:
-                print("Failed to reach error threshold on stage {} of the curriculum, terminating.".format(stage))
+            except StopIteration:
+                print("Curriculum complete after {} stage(s).".format(stage-1))
                 break
 
             if train_writer is None:
@@ -90,7 +84,6 @@ def _training_loop(
                 tf_stage = tf.constant(stage)
                 tf.summary.scalar('stage', tf_stage)
 
-            saver = tf.train.Saver()
             summary_op = tf.summary.merge_all()
             tf.contrib.framework.get_or_create_global_step()
             sess.run(uninitialized_variables_initializer())
@@ -131,11 +124,11 @@ def _training_loop(
                     new_best, stop = early_stop.check(global_step, local_step, val_loss)
 
                     if new_best:
-                        print("Storing new best on local step {} (global step {}) "
-                              "with validation loss of {}.".format(local_step, global_step, val_loss))
-                        checkpoint_file = exp_dir.path_for('best_stage={}.checkpoint'.format(stage))
-                        saver.save(sess, checkpoint_file, global_step=local_step)
-
+                        checkpoint_file = exp_dir.path_for('best_stage={}'.format(stage))
+                        print("Storing new best in file {} on local step {} (global step {}) "
+                              "with validation loss of {}.".format(
+                                  checkpoint_file, local_step, global_step, val_loss))
+                        best_path = updater.save(checkpoint_file)
                     if stop:
                         print("Optimization complete, early stopping triggered.")
                         break
@@ -144,14 +137,24 @@ def _training_loop(
 
                 if global_step % config.checkpoint_step == 0:
                     print("Checkpointing on global step {}.".format(global_step))
-                    checkpoint_file = exp_dir.path_for('model_stage={}.checkpoint'.format(stage))
-                    saver.save(sess, checkpoint_file, global_step=global_step)
+                    checkpoint_file = exp_dir.path_for('model_stage={}'.format(stage))
+                    updater.save(checkpoint_file, local_step)
 
                 local_step += 1
                 global_step += 1
 
+            if not new_best:
+                print("Loading best hypothesis from stage {} from file {}...".format(stage, best_path))
+                updater.restore(best_path)
+
             early_stop.end_stage()
             curriculum.end_stage()
+
+            if threshold_reached:
+                stage += 1
+            else:
+                print("Failed to reach error threshold on stage {} of the curriculum, terminating.".format(stage))
+                break
 
     print(early_stop.summarize())
 

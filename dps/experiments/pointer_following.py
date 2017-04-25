@@ -10,6 +10,7 @@ from dps.utils import (
 from dps.production_system import ProductionSystemCurriculum
 from dps.train import training_loop, build_and_visualize
 from dps.policy import Policy, ReluSelect, SigmoidSelect, SoftmaxSelect, GumbelSoftmaxSelect
+from dps.updater import DifferentiableUpdater
 
 
 class PointerDataset(RegressionDataset):
@@ -90,16 +91,17 @@ class Pointer(CoreNetwork):
         return new_registers
 
 
-class DefaultConfig(Config):
+class PointerConfig(Config):
     seed = 12
 
-    T = 5
+    T = 8
     curriculum = [dict(width=1, n_digits=2)]
 
     optimizer_class = tf.train.RMSPropOptimizer
+    updater_class = DifferentiableUpdater
 
     max_steps = 10000
-    batch_size = 100
+    batch_size = 10
     n_train = 1000
     n_val = 100
     n_test = 0
@@ -111,12 +113,11 @@ class DefaultConfig(Config):
     eval_step = 10
     checkpoint_step = 1000
 
+    controller = FeedforwardCell(MLP([100, 100]), Pointer._n_actions)
     controller = CompositeCell(
-        tf.contrib.rnn.LSTMCell(num_units=64),
-        MLP([]),
+        tf.contrib.rnn.LSTMCell(num_units=32),
+        MLP(),
         Pointer._n_actions)
-
-    # controller = FeedforwardCell(MLP([100, 100]), Pointer._n_actions)
 
     action_selection = staticmethod([
         SoftmaxSelect(),
@@ -125,44 +126,19 @@ class DefaultConfig(Config):
         SigmoidSelect(),
         ReluSelect()][0])
 
-    use_rl = False
-
     # start, decay_steps, decay_rate, staircase
     lr_schedule = (0.1, 1000, 0.99, False)
-    noise_schedule = (0.1, 1000, 0.96, False)
+    noise_schedule = (0.0, 1000, 0.96, False)
     exploration_schedule = (10.0, 1000, 0.96, False)
 
-    max_grad_norm = 1.0
+    max_grad_norm = 0.0
     l2_norm_param = 0.0
     gamma = 1.0
 
     debug = False
 
 
-class CurriculumConfig(DefaultConfig):
-    # curriculum = [
-    #     dict(width=1, n_digits=3),
-    #     dict(width=1, n_digits=3),
-    #     dict(width=1, n_digits=4),
-    #     dict(width=1, n_digits=5),
-    #     dict(width=1, n_digits=6)]
-    curriculum = [
-        dict(width=2, n_digits=3),
-        dict(width=2, n_digits=3)]
-
-
-class RLConfig(DefaultConfig):
-    use_rl = True
-    threshold = 1e-2
-    action_selection = SoftmaxSelect()
-
-
-class RLCurriculumConfig(RLConfig, CurriculumConfig):
-    pass
-
-
-def train_pointer(log_dir, config="default", seed=-1):
-    config = get_config(__file__, config)
+def train(log_dir, config, seed=-1):
     config.seed = config.seed if seed < 0 else seed
     np.random.seed(config.seed)
 
@@ -181,28 +157,25 @@ def train_pointer(log_dir, config="default", seed=-1):
             cn.n_actions, cn.obs_dim, name="pointer_policy")
 
     curriculum = ProductionSystemCurriculum(
-        base_kwargs, config.curriculum, build_env, build_core_network, build_policy)
+        base_kwargs, config.curriculum, config.updater_class, build_env, build_core_network, build_policy)
 
-    exp_name = "selection={}_rl={}".format(
-        config.action_selection.__class__.__name__, int(config.use_rl))
+    exp_name = "selection={}_updater={}".format(
+        config.action_selection.__class__.__name__, config.updater_class.__name__)
     training_loop(curriculum, log_dir, config, exp_name=exp_name)
 
 
 def visualize():
     from dps.production_system import ProductionSystem
-    from dps.policy import FixedController, IdentitySelect
-    from dps.utils import build_decaying_value
+    from dps.policy import IdentitySelect
+    from dps.utils import build_decaying_value, FixedController
 
     def build_psystem():
         config = default_config()
         env = PointerEnv(1, 2, 10, 10, 10)
         cn = Pointer(env)
 
-        controller = config.controller
-        action_selection = config.action_selection
-
-        # controller = FixedController([4, 0, 4], cn.n_actions)
-        # action_selection = IdentitySelect()
+        controller = FixedController([4, 0, 4], cn.n_actions)
+        action_selection = IdentitySelect()
 
         exploration = build_decaying_value(config.exploration_schedule, 'exploration')
         policy = Policy(
@@ -210,10 +183,10 @@ def visualize():
             cn.n_actions, cn.obs_dim, name="pointer_policy")
         return ProductionSystem(env, cn, policy, False, 3)
 
-    with DefaultConfig().as_default():
+    with PointerConfig().as_default():
         build_and_visualize(build_psystem, 'train', 1, False)
 
 
 if __name__ == '__main__':
     from clify import command_line
-    command_line(train_pointer)(log_dir='/tmp/dps/pointer')
+    command_line(train)(log_dir='/tmp/dps/pointer', config=PointerConfig())

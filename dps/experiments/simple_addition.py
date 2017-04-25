@@ -4,15 +4,15 @@ from __future__ import print_function
 from collections import namedtuple
 
 import tensorflow as tf
-from tensorflow.contrib.slim import fully_connected
 import numpy as np
 
 from dps import CoreNetwork, RegisterSpec
 from dps.environment import RegressionDataset, RegressionEnv
-from dps.utils import Config, default_config, CompositeCell, get_config
+from dps.utils import Config, default_config, CompositeCell, MLP
 from dps.train import training_loop
 from dps.policy import Policy, ReluSelect, SoftmaxSelect, GumbelSoftmaxSelect
 from dps.production_system import ProductionSystemCurriculum
+from dps.updater import DifferentiableUpdater
 
 
 class AdditionDataset(RegressionDataset):
@@ -21,7 +21,7 @@ class AdditionDataset(RegressionDataset):
 
         x = np.random.randn(n_examples, 2)
         x = np.concatenate((x.copy(), np.zeros((x.shape[0], 1))), axis=1)
-        y = x.copy()
+        y = x[:, :2].copy()
         for i in order:
             if i == 0:
                 y[:, 0] = y[:, 0] + y[:, 1]
@@ -48,7 +48,7 @@ class AdditionRegSpec(RegisterSpec):
     _initial_values = [np.array([v], dtype='f') for v in [1.0, 0.0, 0.0]]
     _namedtuple = addition_nt
     _input_names = addition_nt._fields
-    _output_names = addition_nt._fields
+    _output_names = 'r0 r1'.split()
 
 
 class Addition(CoreNetwork):
@@ -76,17 +76,18 @@ class Addition(CoreNetwork):
         if debug:
             r0 = tf.Print(r0, [r0], "r0", summarize=20)
             r1 = tf.Print(r1, [r1], "r1", summarize=20)
-        new_registers = self.register_spec.wrap(r0=r0, r1=r1, r2=r.r2+0)
+        new_registers = self.register_spec.wrap(r0=r0, r1=r1, r2=r.r2+1)
 
         return new_registers
 
 
-class DefaultConfig(Config):
+class AdditionConfig(Config):
     seed = 10
 
     T = 3
     curriculum = [dict(order=[0, 1, 0])]
     optimizer_class = tf.train.RMSPropOptimizer
+    updater_class = DifferentiableUpdater
 
     max_steps = 10000
     batch_size = 100
@@ -102,8 +103,8 @@ class DefaultConfig(Config):
     checkpoint_step = 1000
 
     controller = CompositeCell(
-        tf.contrib.rnn.LSTMCell(num_units=64),
-        fully_connected,
+        tf.contrib.rnn.LSTMCell(num_units=32),
+        MLP(),
         Addition._n_actions)
 
     action_selection = staticmethod([
@@ -111,8 +112,6 @@ class DefaultConfig(Config):
         GumbelSoftmaxSelect(hard=0),
         GumbelSoftmaxSelect(hard=1),
         ReluSelect()][0])
-
-    use_rl = False
 
     # start, decay_steps, decay_rate, staircase
     lr_schedule = (0.1, 1000, 0.96, False)
@@ -126,25 +125,7 @@ class DefaultConfig(Config):
     debug = False
 
 
-class CurriculumConfig(DefaultConfig):
-    curriculum = [
-        dict(order=[0], T=1),
-        dict(order=[0, 1], T=2),
-        dict(order=[0, 1, 0], T=3)]
-
-
-class RLConfig(DefaultConfig):
-    use_rl = True
-    threshold = 1e-2
-    action_selection = SoftmaxSelect()
-
-
-class RLCurriculumConfig(RLConfig, CurriculumConfig):
-    pass
-
-
-def train_addition(log_dir, config="default", seed=-1):
-    config = get_config(__file__, config)
+def train(log_dir, config, seed=-1):
     config.seed = config.seed if seed < 0 else seed
     np.random.seed(config.seed)
 
@@ -163,13 +144,13 @@ def train_addition(log_dir, config="default", seed=-1):
             cn.n_actions, cn.obs_dim, name="addition_policy")
 
     curriculum = ProductionSystemCurriculum(
-        base_kwargs, config.curriculum, build_env, build_core_network, build_policy)
+        base_kwargs, config.curriculum, config.updater_class, build_env, build_core_network, build_policy)
 
-    exp_name = "selection={}_rl={}".format(
-        config.action_selection.__class__.__name__, int(config.use_rl))
+    exp_name = "selection={}_updater={}".format(
+        config.action_selection.__class__.__name__, config.updater_class.__name__)
     training_loop(curriculum, log_dir, config, exp_name=exp_name)
 
 
 if __name__ == '__main__':
     from clify import command_line
-    command_line(train_addition)(log_dir='/tmp/dps/addition')
+    command_line(train)(log_dir='/tmp/dps/addition', config=AdditionConfig())

@@ -12,14 +12,50 @@ from tensorflow.contrib.slim import fully_connected
 
 
 class MLP(object):
-    def __init__(self, n_units):
-        self.n_units = n_units
+    def __init__(self, n_units=None, activation_fn=tf.nn.relu):
+        self.n_units = n_units or []
+        self.activation_fn = activation_fn
 
     def __call__(self, inp, output_size):
         hidden = inp
         for nu in self.n_units:
-            hidden = tf.nn.relu(fully_connected(hidden, nu))
-        return fully_connected(hidden, output_size)
+            hidden = fully_connected(hidden, nu, activation_fn=self.activation_fn)
+        return fully_connected(hidden, output_size, activation_fn=None)
+
+
+class FixedController(RNNCell):
+    """ A controller that outputs a fixed sequence of actions.
+
+    Parameters
+    ----------
+    action_sequence: list of int
+        t-th entry gives the idx of the action this controller will select at time t.
+    n_actions: int
+        Number of actions.
+
+    """
+    def __init__(self, action_sequence, n_actions):
+        self.action_sequence = np.array(action_sequence)
+        self.n_actions = n_actions
+
+    def __call__(self, inp, state):
+        action_seq = tf.constant(self.action_sequence, tf.int32)
+        int_state = tf.cast(state, tf.int32)
+        action_idx = tf.gather(action_seq, int_state)
+        reference = tf.reshape(tf.range(self.n_actions), (1, self.n_actions))
+        actions = tf.equal(reference, action_idx)
+        return tf.cast(actions, tf.float32), state + 1
+
+    @property
+    def state_size(self):
+        return 1
+
+    @property
+    def output_size(self):
+        return self.n_actions
+
+    def zero_state(self, batch_size, dtype):
+        return tf.cast(tf.fill((batch_size, 1), 0), dtype)
 
 
 class CompositeCell(RNNCell):
@@ -103,7 +139,6 @@ def print_variables(collection, scope):
         print(sess.run(v))
 
 
-# class EarlyStopHook(SessionRunHook):
 class EarlyStopHook(object):
     def __init__(self, patience, n=1, name=None):
         self.patience = patience
@@ -276,6 +311,11 @@ class Config(object):
 
     def as_default(self):
         return context(self.__class__, self)
+
+    def update(self, other):
+        for k in dir(other):
+            if not k.startswith('_'):
+                setattr(self, k, getattr(other, k))
 
 
 @contextmanager

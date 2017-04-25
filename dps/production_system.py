@@ -13,7 +13,8 @@ from gym.utils import seeding
 
 from dps.environment import BatchBox, Env
 from dps.updater import DifferentiableUpdater
-from dps.rl import REINFORCE
+from dps.reinforce import REINFORCE
+from dps.qlearning import QLearning
 from dps.utils import default_config, build_decaying_value
 from dps.train import Curriculum
 
@@ -502,30 +503,10 @@ class ProductionSystemEnv(Env):
         alg.end_episode()
 
 
-def build_diff_updater(psystem):
-    config = default_config()
-    ps_func = psystem.build_psystem_func()
-    updater = DifferentiableUpdater(
-        psystem.env, ps_func, config.optimizer_class,
-        config.lr_schedule, config.noise_schedule, config.max_grad_norm)
-
-    return updater
-
-
-def build_reinforce_updater(psystem):
-    config = default_config()
-    ps_env = psystem.build_psystem_env()
-    updater = REINFORCE(
-        ps_env, psystem.policy, config.optimizer_class,
-        config.lr_schedule, config.noise_schedule, config.max_grad_norm,
-        config.gamma, config.l2_norm_param)
-
-    return updater
-
-
 class ProductionSystemCurriculum(Curriculum):
-    def __init__(self, base_kwargs, curriculum, build_env, build_core_network, build_policy):
+    def __init__(self, base_kwargs, curriculum, updater_class, build_env, build_core_network, build_policy):
         super(ProductionSystemCurriculum, self).__init__(base_kwargs, curriculum)
+        self.updater_class = updater_class
         self.build_env = build_env
         self.build_core_network = build_core_network
         self.build_policy = build_policy
@@ -558,15 +539,33 @@ class ProductionSystemCurriculum(Curriculum):
         psystem = ProductionSystem(env, core_network, policy, False, T)
         self.current_psystem = psystem
 
-        if config.use_rl:
-            updater = build_reinforce_updater(psystem)
+        config = default_config()
+        ps_func = psystem.build_psystem_func()
+        ps_env = psystem.build_psystem_env()
+
+        if self.updater_class is DifferentiableUpdater:
+            updater = DifferentiableUpdater(
+                psystem.env, ps_func, config.optimizer_class,
+                config.lr_schedule, config.noise_schedule, config.max_grad_norm)
+        elif self.updater_class is REINFORCE:
+            updater = REINFORCE(
+                ps_env, psystem.policy, config.optimizer_class,
+                config.lr_schedule, config.noise_schedule, config.max_grad_norm,
+                config.gamma, config.l2_norm_param)
+        elif self.updater_class is QLearning:
+            updater = QLearning(
+                ps_env, psystem.policy, config.double, config.replay_max_size, config.target_update_rate,
+                config.recurrent, config.optimizer_class, config.lr_schedule, config.noise_schedule, config.max_grad_norm,
+                config.gamma, config.l2_norm_param)
         else:
-            updater = build_diff_updater(psystem)
+            raise NotImplementedError()
+
         self.prev_stage = self.stage
         return updater
 
     def end_stage(self):
-        self.current_psystem.visualize('train', 5, default_config().use_rl)
+        sample = self.updater_class in [REINFORCE, QLearning]
+        self.current_psystem.visualize('train', 5, sample)
 
         # Occurs inside the same default graph, session and config as the previous call to __call__.
         g = tf.get_default_graph()

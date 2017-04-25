@@ -1,6 +1,5 @@
 from pprint import pformat
 
-import numpy as np
 import tensorflow as tf
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from tensorflow.python.util.nest import flatten_dict_items
@@ -19,38 +18,27 @@ def rnn_cell_placeholder(state_size, batch_size=None, dtype=tf.float32, name='')
         return type(state_size)(*ph)
 
 
-class FixedController(RNNCell):
-    def __init__(self, action_sequence, n_actions):
-        """ Action sequence should be a list of integers. """
-        self.action_sequence = np.array(action_sequence)
-        self.n_actions = n_actions
-
-    def __call__(self, inp, state):
-        action_seq = tf.constant(self.action_sequence, tf.int32)
-        int_state = tf.cast(state, tf.int32)
-        action_idx = tf.gather(action_seq, int_state)
-        reference = tf.reshape(tf.range(self.n_actions), (1, self.n_actions))
-        actions = tf.equal(reference, action_idx)
-        return tf.cast(actions, tf.float32), state + 1
-
-    @property
-    def state_size(self):
-        return 1
-
-    @property
-    def output_size(self):
-        return self.n_actions
-
-    def zero_state(self, batch_size, dtype):
-        return tf.cast(tf.fill((batch_size, 1), 0), dtype)
-
-
 class Policy(RNNCell):
     """ A map from observation-internal state pairs to action activations.
 
     Each instance of this class can be thought of as owning a set of variables,
     because whenever ``build`` is called, it will try to use the same set of variables
     (i.e. use the same scope, with ``reuse=True``) as the first time it was called.
+
+    Parameters
+    ----------
+    controller: callable
+        Outputs Tensor giving utilities.
+    action_selection: callable
+        Outputs Tensor giving action activations.
+    exploration: Tensor
+        Amount of exploration to use.
+    n_actions: int
+        Number of actions.
+    obs_dim: int
+        Dimension of observations.
+    name: string
+        Name of policy, used as name of variable scope.
 
     """
     def __init__(
@@ -90,8 +78,10 @@ class Policy(RNNCell):
         else:
             return action_activations, next_policy_state
 
-    def build(self, obs, policy_state):
-        with tf.variable_scope(self.scope, reuse=self.n_builds > 0):
+    def build(self, obs, policy_state, scope=None, reuse=True):
+        reuse &= self.n_builds > 0
+        scope = scope or self.scope
+        with tf.variable_scope(scope, reuse=reuse):
             utils, next_policy_state = self.controller(obs, policy_state)
             action_activations = self.action_selection(utils, self.exploration)
 
@@ -141,6 +131,12 @@ class Policy(RNNCell):
     @property
     def output_size(self):
         return self.n_actions
+
+    def copy(self, new_name):
+        new = Policy(
+            self.controller, self.action_selection, self.exploration,
+            self.n_actions, self.obs_dim, new_name)
+        return new
 
 
 class ActionSelection(object):
@@ -228,7 +224,7 @@ class GumbelSoftmaxSelect(ActionSelection):
 class EpsilonGreedySelect(ActionSelection):
     _can_sample = True
 
-    def __call__(q_values, epsilon):
+    def __call__(self, q_values, epsilon):
         mx = tf.reduce_max(q_values, axis=1, keep_dims=True)
         bool_is_max = tf.equal(q_values, mx)
         float_is_max = tf.cast(bool_is_max, tf.float32)
