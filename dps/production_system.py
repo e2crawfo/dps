@@ -482,6 +482,8 @@ class ProductionSystemEnv(Env):
                 self.core_network.register_spec.set_input(start_registers, obs)
                 fd = self.sampler.build_feeddict(registers=start_registers)
 
+            fd[alg.is_training] = mode == 'train'
+
             sess = tf.get_default_session()
             registers, actions, final_registers = sess.run(
                 [self.sampler.registers,
@@ -527,7 +529,13 @@ class ProductionSystemCurriculum(Curriculum):
 
         env = self.build_env(**kw)
         core_network = self.build_core_network(env)
+
+        is_training = tf.placeholder_with_default(False, shape=(), name="is_training")
+
         exploration = build_decaying_value(config.exploration_schedule, 'exploration')
+        if config.test_time_explore is not None:
+            testing_exploration = tf.constant(config.test_time_explore, tf.float32, name='testing_exploration')
+            exploration = tf.cond(is_training, lambda: exploration, lambda: testing_exploration)
         policy = self.policy = self.build_policy(core_network, exploration)
 
         if self.stage != 0:
@@ -559,6 +567,7 @@ class ProductionSystemCurriculum(Curriculum):
                 config.gamma, config.l2_norm_param)
         else:
             raise NotImplementedError()
+        updater.is_training = is_training
 
         self.prev_stage = self.stage
         return updater

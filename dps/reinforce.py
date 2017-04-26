@@ -20,6 +20,7 @@ class REINFORCE(ReinforcementLearningUpdater):
         self.clear_buffers()
         self.env.do_rollouts(self, self.policy, 'train', batch_size)
         feed_dict = self.build_feeddict()
+        feed_dict[self.is_training] = True
         sess = tf.get_default_session()
 
         if summary_op is not None:
@@ -30,6 +31,7 @@ class REINFORCE(ReinforcementLearningUpdater):
             self.clear_buffers()
             self.env.do_rollouts(self, self.policy, 'val')
             feed_dict = self.build_feeddict()
+            feed_dict[self.is_training] = False
 
             val_summary, val_loss, val_reward = sess.run(
                 [summary_op, self.loss, self.reward_per_ep], feed_dict=feed_dict)

@@ -98,10 +98,6 @@ def _training_loop(
                 if n_epochs >= max_epochs:
                     print("Optimization complete, maximum number of epochs reached.")
                     break
-                if val_loss < config.threshold:
-                    print("Optimization complete, validation loss threshold reached.")
-                    threshold_reached = True
-                    break
 
                 evaluate = global_step % config.eval_step == 0
                 display = global_step % config.display_step == 0
@@ -139,6 +135,11 @@ def _training_loop(
                     print("Checkpointing on global step {}.".format(global_step))
                     checkpoint_file = exp_dir.path_for('model_stage={}'.format(stage))
                     updater.save(checkpoint_file, local_step)
+
+                if val_loss < config.threshold:
+                    print("Optimization complete, validation loss threshold reached.")
+                    threshold_reached = True
+                    break
 
                 local_step += 1
                 global_step += 1

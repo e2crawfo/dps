@@ -178,7 +178,8 @@ class SoftmaxSelect(ActionSelection):
     _can_sample = True
 
     def __call__(self, utils, temperature):
-        return tf.nn.softmax(utils/temperature, name="softmax_action_selection")
+        softmax = tf.nn.softmax(utils/temperature, name="softmax_action_selection")
+        return softmax
 
 
 class GumbelSoftmaxSelect(ActionSelection):

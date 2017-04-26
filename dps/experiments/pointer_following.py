@@ -131,6 +131,8 @@ class PointerConfig(Config):
     noise_schedule = (0.0, 1000, 0.96, False)
     exploration_schedule = (10.0, 1000, 0.96, False)
 
+    test_time_explore = None
+
     max_grad_norm = 0.0
     l2_norm_param = 0.0
     gamma = 1.0

@@ -49,6 +49,7 @@ class QLearning(ReinforcementLearningUpdater):
         self.obs_buffer, self.action_buffer, self.reward_buffer = self.replay_buffer.get_batch(batch_size)
 
         feed_dict = self.build_feeddict()
+        feed_dict[self.is_training] = True
         sess = tf.get_default_session()
 
         if summary_op is not None:
@@ -59,6 +60,7 @@ class QLearning(ReinforcementLearningUpdater):
             self.clear_buffers()
             self.env.do_rollouts(self, self.q_network, 'val')
             feed_dict = self.build_feeddict()
+            feed_dict[self.is_training] = False
 
             val_summary, val_loss, val_reward = sess.run(
                 [summary_op, self.loss, self.reward_per_ep], feed_dict=feed_dict)

@@ -119,7 +119,6 @@ class DifferentiableUpdater(Updater):
         super(DifferentiableUpdater, self).__init__(env)
 
     def _update(self, batch_size, summary_op=None):
-
         env, loss = self.env, self.loss
         train_op, f, targets = self.train_op, self.f, self.target_placeholders
         sess = tf.get_default_session()
@@ -131,6 +130,7 @@ class DifferentiableUpdater(Updater):
 
         feed_dict = f.build_feeddict(train_x)
         feed_dict[targets] = train_y
+        feed_dict[self.is_training] = True
 
         if summary_op is not None:
             train_summary, train_loss, _ = sess.run([summary_op, loss, train_op], feed_dict=feed_dict)
@@ -138,6 +138,7 @@ class DifferentiableUpdater(Updater):
             val_x, val_y = env.val.next_batch()
             val_feed_dict = f.build_feeddict(val_x)
             val_feed_dict[targets] = val_y
+            val_feed_dict[self.is_training] = False
 
             val_summary, val_loss = sess.run([summary_op, loss], feed_dict=val_feed_dict)
             return train_summary, train_loss, val_summary, val_loss

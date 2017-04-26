@@ -63,21 +63,10 @@ class Addition(CoreNetwork):
         """ Action 0: add the variables in the registers, store in r0.
             Action 1: multiply the variables in the registers, store in r1.
             Action 2: no-op """
-        debug = default_config().debug
-        if debug:
-            action_activations = tf.Print(action_activations, [r], "registers", summarize=20)
-            action_activations = tf.Print(
-                action_activations, [action_activations], "action activations", summarize=20)
-
         a0, a1, a2 = tf.split(action_activations, self.n_actions, axis=1)
         r0 = a0 * (r.r0 + r.r1) + (1 - a0) * r.r0
         r1 = a1 * (r.r0 * r.r1) + (1 - a1) * r.r1
-
-        if debug:
-            r0 = tf.Print(r0, [r0], "r0", summarize=20)
-            r1 = tf.Print(r1, [r1], "r1", summarize=20)
         new_registers = self.register_spec.wrap(r0=r0, r1=r1, r2=r.r2+1)
-
         return new_registers
 
 
@@ -117,6 +106,8 @@ class AdditionConfig(Config):
     lr_schedule = (0.1, 1000, 0.96, False)
     noise_schedule = (0.0, 10, 0.96, False)
     exploration_schedule = (10.0, 100, 0.96, False)
+
+    test_time_explore = None
 
     max_grad_norm = 0.0
     l2_norm_param = 0.0
