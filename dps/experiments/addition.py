@@ -13,61 +13,65 @@ from dps.policy import Policy, ReluSelect, SigmoidSelect, SoftmaxSelect, GumbelS
 from dps.updater import DifferentiableUpdater
 
 
-class PointerDataset(RegressionDataset):
+class AdditionDataset(RegressionDataset):
     def __init__(
             self, width, n_digits, n_examples, for_eval=False, shuffle=True):
         self.width = width
         self.n_digits = n_digits
 
         x = np.random.randint(0, n_digits, size=(n_examples, 2*width+1))
-        x[:, width] = np.random.randint(-width, width+1, size=n_examples)
-        y = x[range(x.shape[0]), x[:, width]+width].reshape(-1, 1)
-        super(PointerDataset, self).__init__(x, y, for_eval, shuffle)
+        y = x[:, :1] + x[:, -1:]
+        super(AdditionDataset, self).__init__(x, y, for_eval, shuffle)
 
 
-class PointerEnv(RegressionEnv):
+class AdditionEnv(RegressionEnv):
     def __init__(self, width, n_digits, n_train, n_val, n_test):
         self.width = width
         self.n_digits = n_digits
-        super(PointerEnv, self).__init__(
-            train=PointerDataset(width, n_digits, n_train, for_eval=False),
-            val=PointerDataset(width, n_digits, n_val, for_eval=True),
-            test=PointerDataset(width, n_digits, n_test, for_eval=True))
+        super(AdditionEnv, self).__init__(
+            train=AdditionDataset(width, n_digits, n_train, for_eval=False),
+            val=AdditionDataset(width, n_digits, n_val, for_eval=True),
+            test=AdditionDataset(width, n_digits, n_test, for_eval=True))
 
     def __str__(self):
-        return "<PointerEnv width={} n_digits={}>".format(self.width, self.n_digits)
+        return "<AdditionEnv width={} n_digits={}>".format(self.width, self.n_digits)
 
 
 # Define at top-level to enable pickling
-pointer_nt = namedtuple('PointerRegister', 'inp fovea vision wm t'.split())
+addition_nt = namedtuple('AdditionRegister', 'inp fovea vision wm1 wm2 output t'.split())
 
 
-class PointerRegSpec(RegisterSpec):
-    _visible = [0, 1, 1, 1, 1]
+class AdditionRegSpec(RegisterSpec):
+    _visible = [0, 1, 1, 1, 1, 1, 1]
     _initial_values = None
-    _namedtuple = pointer_nt
+    _namedtuple = addition_nt
     _input_names = ['inp']
-    _output_names = ['wm']
+    _output_names = ['output']
 
     def __init__(self, width):
         self.width = width
         self._initial_values = (
             [np.zeros(2*width+1, dtype='f')] +
-            [np.array([v], dtype='f') for v in [0.0, 0.0, 0.0, 0.0]])
+            [np.array([v], dtype='f') for v in [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
 
 
-class Pointer(CoreNetwork):
-    action_names = ['fovea += 1', 'fovea -= 1', 'wm += 1', 'wm -= 1', 'wm = vision', 'no-op/stop']
+class Addition(CoreNetwork):
+    action_names = ['fovea += 1', 'fovea -= 1', 'wm1 = vision', 'wm2 = vision',
+                    'output = vision', 'output = wm1 + wm2', 'no-op/stop']
 
     def __init__(self, env):
         self.width = env.width
-        self.register_spec = PointerRegSpec(env.width)
-        super(Pointer, self).__init__()
+        self.register_spec = AdditionRegSpec(env.width)
+        super(Addition, self).__init__()
 
     def __call__(self, action_activations, r):
-        a0, a1, a2, a3, a4, a5 = tf.split(action_activations, self.n_actions, axis=1)
-        fovea = (1 - a0 - a1) * r.fovea + a0 * (r.fovea + 1) + a1 * (r.fovea - 1)
-        wm = (1 - a2 - a3 - a4) * r.wm + a2 * (r.wm + 1) + a3 * (r.wm - 1) + a4 * r.vision
+        inc_fovea, dec_fovea, vision_to_wm1, vision_to_wm2, vision_to_output, add, no_op = (
+            tf.split(action_activations, self.n_actions, axis=1))
+
+        fovea = (1 - inc_fovea - dec_fovea) * r.fovea + inc_fovea * (r.fovea + 1) + dec_fovea * (r.fovea - 1)
+        wm1 = (1 - vision_to_wm1) * r.wm1 + vision_to_wm1 * r.vision
+        wm2 = (1 - vision_to_wm2) * r.wm2 + vision_to_wm2 * r.vision
+        output = (1 - vision_to_output - add) * r.output + vision_to_output * r.vision + add * (r.wm1 + r.wm2)
         t = r.t + 1
 
         filt = tf.contrib.distributions.Normal(fovea, 0.1)
@@ -77,12 +81,12 @@ class Pointer(CoreNetwork):
         filt = tf.where(tf.is_nan(filt), tf.fill(tf.shape(filt), 1/(2*self.width+1)), filt)
         vision = tf.reduce_sum(r.inp * filt, axis=1, keep_dims=True)
 
-        new_registers = self.register_spec.wrap(inp=r.inp, fovea=fovea, vision=vision, wm=wm, t=t)
+        new_registers = self.register_spec.wrap(inp=r.inp, fovea=fovea, vision=vision, wm1=wm1, wm2=wm2, output=output, t=t)
 
         return new_registers
 
 
-class PointerConfig(Config):
+class AdditionConfig(Config):
     seed = 12
 
     T = 8
@@ -104,8 +108,7 @@ class PointerConfig(Config):
     eval_step = 10
     checkpoint_step = 1000
 
-    n_actions = Pointer.n_actions
-    controller = FeedforwardCell(MLP([100, 100]), n_actions)
+    n_actions = Addition.n_actions
     controller = CompositeCell(
         tf.contrib.rnn.LSTMCell(num_units=32),
         MLP(),
@@ -139,16 +142,16 @@ def train(log_dir, config, seed=-1):
     base_kwargs = dict(n_train=config.n_train, n_val=config.n_val, n_test=config.n_test)
 
     def build_env(**kwargs):
-        return PointerEnv(**kwargs)
+        return AdditionEnv(**kwargs)
 
     def build_core_network(env):
-        return Pointer(env)
+        return Addition(env)
 
     def build_policy(cn, exploration):
         config = default_config()
         return Policy(
             config.controller, config.action_selection, exploration,
-            cn.n_actions, cn.obs_dim, name="pointer_policy")
+            cn.n_actions, cn.obs_dim, name="addition_policy")
 
     curriculum = ProductionSystemCurriculum(
         base_kwargs, config.curriculum, config.updater_class, build_env, build_core_network, build_policy)
@@ -167,17 +170,17 @@ def visualize(config):
         _config = default_config()
         width = _config.curriculum[0]['width']
         n_digits = _config.curriculum[0]['n_digits']
-        env = PointerEnv(width, n_digits, 10, 10, 10)
-        cn = Pointer(env)
+        env = AdditionEnv(width, n_digits, 10, 10, 10)
+        cn = Addition(env)
 
-        controller = FixedController([4, 0, 4], cn.n_actions)
+        controller = FixedController([0, 2, 1, 1, 3, 5, 0], cn.n_actions)
         action_selection = IdentitySelect()
 
         exploration = build_decaying_value(_config.exploration_schedule, 'exploration')
         policy = Policy(
             controller, action_selection, exploration,
-            cn.n_actions, cn.obs_dim, name="pointer_policy")
-        return ProductionSystem(env, cn, policy, False, 3)
+            cn.n_actions, cn.obs_dim, name="addition_policy")
+        return ProductionSystem(env, cn, policy, False, 7)
 
     with config.as_default():
         build_and_visualize(build_psystem, 'train', 1, False)
@@ -185,4 +188,4 @@ def visualize(config):
 
 if __name__ == '__main__':
     from clify import command_line
-    command_line(train)(log_dir='/tmp/dps/pointer', config=PointerConfig())
+    command_line(train)(log_dir='/tmp/dps/addition', config=AdditionConfig())

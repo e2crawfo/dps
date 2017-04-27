@@ -104,6 +104,7 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
             print("\nElement {} of batch ".format(b) + "-" * 40)
             values = np.zeros((total_internal_steps, len(row_names)))
             external_t, internal_t = 0, 0
+
             for i in range(action_activations.shape[0]):
                 values[i, 0] = external_t
                 values[i, 1] = internal_t
@@ -125,60 +126,47 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
             print(tabulate(values, headers='keys', tablefmt='fancy_grid'))
 
 
-class CoreNetwork(object):
+class CoreNetworkMeta(type):
+    def __init__(cls, *args, **kwargs):
+        super(CoreNetworkMeta, cls).__init__(*args, **kwargs)
+        if hasattr(cls.action_names, '__len__'):
+            cls.n_actions = len(cls.action_names)
+
+
+class CoreNetwork(object, metaclass=CoreNetworkMeta):
     """ A core network inside a production system.
 
-    A specification of the functionality of the core network; state must be maintained externally.
-
-    Parameters
-    ----------
-    n_actions: int > 0
-        The number of actions recognized by the core network. Doesn't include a stopping actions.
-    __call__:
-        Accepts a tensor representing action activations and an object
-        created by calling ``instantiate`` on ``register_spec``
-        (which stores tensors representing register values) and outputs tensors
-        representing the new values of the registers after running the
-        core network for one step.
-    register_spec: instance of a subclass of RegisterSpec
-        Provides information about the registers operated on by this core network.
+    A specification of the functionality of the core network;
+    state must be maintained externally.
 
     """
-    _n_actions = None
-    _action_names = None
-    _register_spec = None
+    action_names = None
+    register_spec = None
 
     def __init__(self):
         self._graph = None
         self._action_activations_ph = None
         self._register_ph = None
 
+        self.assert_defined('action_names')
+
     def assert_defined(self, attr):
         assert getattr(self, attr) is not None, (
-            "Instances of subclasses of CoreNetwork must "
+            "Subclasses of CoreNetwork must "
             "specify a value for attr {}.".format(attr))
-
-    @property
-    def n_actions(self):
-        self.assert_defined('_n_actions')
-        return self._n_actions
-
-    @property
-    def action_names(self):
-        self.assert_defined('_action_names')
-        return self._action_names
 
     @property
     def obs_dim(self):
         return sum(shape[1] for shape in self.register_spec.shapes(visible_only=True))
 
-    @property
-    def register_spec(self):
-        self.assert_defined('_register_spec')
-        return self._register_spec
+    def __call__(self, action_activations, egisters):
+        """ Accepts a tensor representing action activations and an object
+        created by calling ``instantiate`` on ``register_spec``
+        (which stores tensors representing register values) and outputs tensors
+        representing the new values of the registers after running the
+        core network for one step.
 
-    def __call__(self, action_activations, registers):
-        """ Returns: Tensors representing action_activations, new_registers. """
+        """
         raise NotImplementedError()
 
     def _build_graph(self):

@@ -40,7 +40,7 @@ class ArithmeticEnv(RegressionEnv):
 
 
 # Define at top-level to enable pickling
-arithmetic_nt = namedtuple('_ArithmeticRegister', 'r0 r1 r2'.split())
+arithmetic_nt = namedtuple('ArithmeticRegister', 'r0 r1 r2'.split())
 
 
 class ArithmeticRegSpec(RegisterSpec):
@@ -52,9 +52,8 @@ class ArithmeticRegSpec(RegisterSpec):
 
 
 class Arithmetic(CoreNetwork):
-    _n_actions = 3
-    _action_names = ['r0 = r0 + r1', 'r1 = r0 * r1', 'no-op/stop']
-    _register_spec = ArithmeticRegSpec()
+    action_names = ['r0 = r0 + r1', 'r1 = r0 * r1', 'no-op/stop']
+    register_spec = ArithmeticRegSpec()
 
     def __init__(self, env):
         super(Arithmetic, self).__init__()
@@ -94,7 +93,7 @@ class ArithmeticConfig(Config):
     controller = CompositeCell(
         tf.contrib.rnn.LSTMCell(num_units=32),
         MLP(),
-        Arithmetic._n_actions)
+        Arithmetic.n_actions)
 
     action_selection = staticmethod([
         SoftmaxSelect(),
