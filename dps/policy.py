@@ -102,7 +102,7 @@ class Policy(RNNCell):
     def act(self, obs, policy_state, sample=False):
         """ Return action activations given an observation and the current policy state.
 
-        Perform additional step of sampling from activation activations
+        Perform arithmetical step of sampling from activation activations
         if ``sample`` is True and the activations represent a distribution
         over actions (so ``self.action_selection.can_sample`` is True).
 

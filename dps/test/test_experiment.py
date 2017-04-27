@@ -6,7 +6,7 @@ from dps.utils import Config
 from dps.reinforce import REINFORCE
 from dps.qlearning import QLearning
 from dps.policy import SoftmaxSelect, EpsilonGreedySelect
-from dps.experiments import simple_addition
+from dps.experiments import simple_arithmetic
 from dps.experiments import pointer_following
 
 from dps.utils import CompositeCell, MLP
@@ -23,7 +23,7 @@ def debug(request):
     return request.config.getoption("--debug")
 
 
-class AdditionConfig(Config):
+class ArithmeticConfig(Config):
     seed = 10
 
     T = 3
@@ -50,7 +50,7 @@ class AdditionConfig(Config):
     controller = CompositeCell(
         tf.contrib.rnn.LSTMCell(num_units=32),
         MLP(),
-        simple_addition.Addition._n_actions)
+        simple_arithmetic.Arithmetic._n_actions)
     action_selection = staticmethod(GumbelSoftmaxSelect(hard=0))
 
     # start, decay_steps, decay_rate, staircase
@@ -129,7 +129,8 @@ class DebugConfig(object):
 
 class DiffConfig(object):
     test_time_explore = 0.01
-    action_selection = staticmethod(GumbelSoftmaxSelect(hard=1))
+    action_selection = staticmethod(GumbelSoftmaxSelect(hard=0))
+    exploration_schedule = (10.0, 1000, 0.9, False)
 
 
 class ReinforceConfig(object):
@@ -156,8 +157,8 @@ class QLearningConfig(object):
 
 
 @pytest.mark.parametrize('config_str', ['diff', 'reinforce', 'qlearning'])
-def test_simple_addition(config_str, debug):
-    cfg = AdditionConfig()
+def test_simple_arithmetic(config_str, debug):
+    cfg = ArithmeticConfig()
 
     if config_str == 'reinforce':
         cfg.update(ReinforceConfig())
@@ -171,7 +172,7 @@ def test_simple_addition(config_str, debug):
     if debug:
         cfg.update(DebugConfig())
 
-    simple_addition.train(log_dir='/tmp/dps/addition/', config=cfg, seed=20)
+    simple_arithmetic.train(log_dir='/tmp/dps/arithmetic/', config=cfg, seed=20)
 
 
 @pytest.mark.parametrize('config_str', ['diff', 'reinforce', 'qlearning'])
@@ -184,7 +185,12 @@ def test_pointer_following(config_str, debug):
         cfg.update(QLearningConfig())
         cfg.T = 4
     elif config_str == 'diff':
-        pass
+        cfg.update(DiffConfig())
+        cfg.curriculum = [
+            dict(width=1, n_digits=3, T=4),
+            dict(width=2, n_digits=3, T=4),
+            dict(width=3, n_digits=3, T=4),
+            dict(width=4, n_digits=3, T=6)]
     else:
         raise NotImplementedError()
 

@@ -15,7 +15,7 @@ from dps.production_system import ProductionSystemCurriculum
 from dps.updater import DifferentiableUpdater
 
 
-class AdditionDataset(RegressionDataset):
+class ArithmeticDataset(RegressionDataset):
     def __init__(self, order, n_examples, for_eval=False, shuffle=True):
         self.order = order
 
@@ -28,36 +28,36 @@ class AdditionDataset(RegressionDataset):
             else:
                 y[:, 1] = y[:, 0] * y[:, 1]
 
-        super(AdditionDataset, self).__init__(x, y, for_eval, shuffle)
+        super(ArithmeticDataset, self).__init__(x, y, for_eval, shuffle)
 
 
-class AdditionEnv(RegressionEnv):
+class ArithmeticEnv(RegressionEnv):
     def __init__(self, order, n_train, n_val, n_test):
-        super(AdditionEnv, self).__init__(
-            train=AdditionDataset(order, n_train, for_eval=False),
-            val=AdditionDataset(order, n_val, for_eval=True),
-            test=AdditionDataset(order, n_test, for_eval=True))
+        super(ArithmeticEnv, self).__init__(
+            train=ArithmeticDataset(order, n_train, for_eval=False),
+            val=ArithmeticDataset(order, n_val, for_eval=True),
+            test=ArithmeticDataset(order, n_test, for_eval=True))
 
 
 # Define at top-level to enable pickling
-addition_nt = namedtuple('_AdditionRegister', 'r0 r1 r2'.split())
+arithmetic_nt = namedtuple('_ArithmeticRegister', 'r0 r1 r2'.split())
 
 
-class AdditionRegSpec(RegisterSpec):
+class ArithmeticRegSpec(RegisterSpec):
     _visible = [1, 1, 1]
     _initial_values = [np.array([v], dtype='f') for v in [1.0, 0.0, 0.0]]
-    _namedtuple = addition_nt
-    _input_names = addition_nt._fields
+    _namedtuple = arithmetic_nt
+    _input_names = arithmetic_nt._fields
     _output_names = 'r0 r1'.split()
 
 
-class Addition(CoreNetwork):
+class Arithmetic(CoreNetwork):
     _n_actions = 3
     _action_names = ['r0 = r0 + r1', 'r1 = r0 * r1', 'no-op/stop']
-    _register_spec = AdditionRegSpec()
+    _register_spec = ArithmeticRegSpec()
 
     def __init__(self, env):
-        super(Addition, self).__init__()
+        super(Arithmetic, self).__init__()
 
     def __call__(self, action_activations, r):
         """ Action 0: add the variables in the registers, store in r0.
@@ -70,7 +70,7 @@ class Addition(CoreNetwork):
         return new_registers
 
 
-class AdditionConfig(Config):
+class ArithmeticConfig(Config):
     seed = 10
 
     T = 3
@@ -94,7 +94,7 @@ class AdditionConfig(Config):
     controller = CompositeCell(
         tf.contrib.rnn.LSTMCell(num_units=32),
         MLP(),
-        Addition._n_actions)
+        Arithmetic._n_actions)
 
     action_selection = staticmethod([
         SoftmaxSelect(),
@@ -123,16 +123,16 @@ def train(log_dir, config, seed=-1):
     base_kwargs = dict(n_train=config.n_train, n_val=config.n_val, n_test=config.n_test)
 
     def build_env(**kwargs):
-        return AdditionEnv(**kwargs)
+        return ArithmeticEnv(**kwargs)
 
     def build_core_network(env):
-        return Addition(env)
+        return Arithmetic(env)
 
     def build_policy(cn, exploration):
         config = default_config()
         return Policy(
             config.controller, config.action_selection, exploration,
-            cn.n_actions, cn.obs_dim, name="addition_policy")
+            cn.n_actions, cn.obs_dim, name="arithmetic_policy")
 
     curriculum = ProductionSystemCurriculum(
         base_kwargs, config.curriculum, config.updater_class, build_env, build_core_network, build_policy)
@@ -144,4 +144,4 @@ def train(log_dir, config, seed=-1):
 
 if __name__ == '__main__':
     from clify import command_line
-    command_line(train)(log_dir='/tmp/dps/addition', config=AdditionConfig())
+    command_line(train)(log_dir='/tmp/dps/arithmetic', config=ArithmeticConfig())
