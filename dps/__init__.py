@@ -3,5 +3,4 @@ from .production_system import (
 from .updater import DifferentiableUpdater
 from .register import RegisterSpec
 from .policy import (
-    Policy, ActionSelection, ReluSelect, SoftmaxSelect, GumbelSoftmaxSelect,
-    EpsilonGreedySelect, sample_action)
+    Policy, ActionSelection, ReluSelect, SoftmaxSelect, GumbelSoftmaxSelect, EpsilonGreedySelect)

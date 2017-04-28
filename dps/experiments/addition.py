@@ -5,12 +5,10 @@ import numpy as np
 
 from dps import CoreNetwork, RegisterSpec
 from dps.environment import RegressionDataset, RegressionEnv
-from dps.utils import (
-    Config, default_config, CompositeCell, FeedforwardCell, MLP)
+from dps.utils import default_config, visual_filter_one_d
 from dps.production_system import ProductionSystemCurriculum
 from dps.train import training_loop, build_and_visualize
-from dps.policy import Policy, ReluSelect, SigmoidSelect, SoftmaxSelect, GumbelSoftmaxSelect
-from dps.updater import DifferentiableUpdater
+from dps.policy import Policy
 
 
 class AdditionDataset(RegressionDataset):
@@ -74,65 +72,10 @@ class Addition(CoreNetwork):
         output = (1 - vision_to_output - add) * r.output + vision_to_output * r.vision + add * (r.wm1 + r.wm2)
         t = r.t + 1
 
-        filt = tf.contrib.distributions.Normal(fovea, 0.1)
-        filt = filt.pdf(np.linspace(-self.width, self.width, 2*self.width+1, dtype='f'))
-        l1_norm = tf.reduce_sum(filt, axis=1, keep_dims=True)
-        filt = filt / l1_norm
-        filt = tf.where(tf.is_nan(filt), tf.fill(tf.shape(filt), 1/(2*self.width+1)), filt)
-        vision = tf.reduce_sum(r.inp * filt, axis=1, keep_dims=True)
-
+        vision = visual_filter_one_d(self.width, r.inp, r.fovea, 0.01)
         new_registers = self.register_spec.wrap(inp=r.inp, fovea=fovea, vision=vision, wm1=wm1, wm2=wm2, output=output, t=t)
 
         return new_registers
-
-
-class AdditionConfig(Config):
-    seed = 12
-
-    T = 8
-    curriculum = [dict(width=1, n_digits=2)]
-
-    optimizer_class = tf.train.RMSPropOptimizer
-    updater_class = DifferentiableUpdater
-
-    max_steps = 10000
-    batch_size = 10
-    n_train = 1000
-    n_val = 100
-    n_test = 0
-
-    threshold = 1e-2
-    patience = np.inf
-
-    display_step = 100
-    eval_step = 10
-    checkpoint_step = 1000
-
-    n_actions = Addition.n_actions
-    controller = CompositeCell(
-        tf.contrib.rnn.LSTMCell(num_units=32),
-        MLP(),
-        n_actions)
-
-    action_selection = staticmethod([
-        SoftmaxSelect(),
-        GumbelSoftmaxSelect(hard=0),
-        GumbelSoftmaxSelect(hard=1),
-        SigmoidSelect(),
-        ReluSelect()][0])
-
-    # start, decay_steps, decay_rate, staircase
-    lr_schedule = (0.1, 1000, 0.99, False)
-    noise_schedule = (0.0, 1000, 0.96, False)
-    exploration_schedule = (10.0, 1000, 0.96, False)
-
-    test_time_explore = None
-
-    max_grad_norm = 0.0
-    l2_norm_param = 0.0
-    gamma = 1.0
-
-    debug = False
 
 
 def train(log_dir, config, seed=-1):
@@ -150,7 +93,7 @@ def train(log_dir, config, seed=-1):
     def build_policy(cn, exploration):
         config = default_config()
         return Policy(
-            config.controller, config.action_selection, exploration,
+            config.controller_func(cn.n_actions), config.action_selection, exploration,
             cn.n_actions, cn.obs_dim, name="addition_policy")
 
     curriculum = ProductionSystemCurriculum(
@@ -184,8 +127,3 @@ def visualize(config):
 
     with config.as_default():
         build_and_visualize(build_psystem, 'train', 1, False)
-
-
-if __name__ == '__main__':
-    from clify import command_line
-    command_line(train)(log_dir='/tmp/dps/addition', config=AdditionConfig())

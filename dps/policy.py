@@ -86,7 +86,7 @@ class Policy(RNNCell):
             action_activations = self.action_selection(utils, self.exploration)
 
             if self.action_selection.can_sample:
-                samples = sample_action(action_activations)
+                samples = self.action_selection.sample(action_activations)
             else:
                 samples = None
 
@@ -160,6 +160,13 @@ class ActionSelection(object):
         raise NotImplementedError()
 
 
+class IdentitySelect(ActionSelection):
+    _can_sample = False  # TODO this depends on what it gets as input
+
+    def __call__(self, inp, epsilon):
+        return tf.identity(inp, name="IdentitySelect")
+
+
 class ReluSelect(ActionSelection):
     _can_sample = False
 
@@ -167,22 +174,25 @@ class ReluSelect(ActionSelection):
         return tf.nn.relu(utils, name="relu_action_selection")
 
 
-class SigmoidSelect(ActionSelection):
-    _can_sample = False
-
-    def __call__(self, utils, temperature):
-        return tf.sigmoid(utils, name="sigmoid_action_selection")
-
-
-class SoftmaxSelect(ActionSelection):
+class MultinomialSelect(ActionSelection):
     _can_sample = True
 
+    def sample(self, action_activations):
+        logprobs = tf.log(action_activations)
+        n_actions = int(logprobs.shape[1])
+        samples = tf.cast(tf.multinomial(logprobs, 1), tf.int32)
+        reference = tf.reshape(tf.range(n_actions), (1, n_actions))
+        actions = tf.equal(samples, reference)
+        return tf.cast(actions, tf.float32)
+
+
+class SoftmaxSelect(MultinomialSelect):
     def __call__(self, utils, temperature):
         softmax = tf.nn.softmax(utils/temperature, name="softmax_action_selection")
         return softmax
 
 
-class GumbelSoftmaxSelect(ActionSelection):
+class GumbelSoftmaxSelect(MultinomialSelect):
     """Sample from the Gumbel-Softmax distribution and optionally discretize.
 
     Adapted from code by Eric Jang.
@@ -197,8 +207,6 @@ class GumbelSoftmaxSelect(ActionSelection):
         be a probabilitiy distribution that sums to 1 across classes
 
     """
-    _can_sample = True
-
     def __init__(self, hard=False):
         self.hard = hard
 
@@ -212,19 +220,20 @@ class GumbelSoftmaxSelect(ActionSelection):
     def _gumbel_softmax_sample(logits, temperature):
         """ Draw a sample from the Gumbel-Softmax distribution"""
         y = logits + GumbelSoftmaxSelect._sample_gumbel(tf.shape(logits))
-        return tf.nn.softmax(y / temperature, name='gumbel_softmax')
+        probs = tf.nn.softmax(y / temperature, name='gumbel_softmax')
+        probs = tf.Print(probs, [logits, y, probs], 'logits/noisy_logits/probs', summarize=7)
+        return probs
 
     def __call__(self, utils, temperature):
         y = self._gumbel_softmax_sample(utils, temperature)
         if self.hard:
             y_hard = tf.cast(tf.equal(y, tf.reduce_max(y, 1, keep_dims=True)), y.dtype)
+            y_hard = tf.Print(y_hard, [y_hard], 'y_hard', summarize=7)
             y = tf.stop_gradient(y_hard - y) + y
         return y
 
 
 class EpsilonGreedySelect(ActionSelection):
-    _can_sample = True
-
     def __call__(self, q_values, epsilon):
         mx = tf.reduce_max(q_values, axis=1, keep_dims=True)
         bool_is_max = tf.equal(q_values, mx)
@@ -236,17 +245,14 @@ class EpsilonGreedySelect(ActionSelection):
         return probs
 
 
-class IdentitySelect(ActionSelection):
-    _can_sample = False  # TODO this depends on what it gets as input
+class BernoulliSelect(ActionSelection):
+    _can_sample = True
 
-    def __call__(self, inp, epsilon):
-        return tf.identity(inp, name="IdentitySelect")
+    def sample(self, action_activations):
+        uniform = tf.random_uniform(tf.shape(action_activations))
+        return tf.cast(tf.less(uniform, action_activations), tf.float32)
 
 
-def sample_action(probs):
-    logprobs = tf.log(probs)
-    n_actions = int(logprobs.shape[1])
-    samples = tf.cast(tf.multinomial(logprobs, 1), tf.int32)
-    reference = tf.reshape(tf.range(n_actions), (1, n_actions))
-    actions = tf.equal(samples, reference)
-    return tf.cast(actions, tf.float32)
+class SigmoidSelect(BernoulliSelect):
+    def __call__(self, utils, temperature):
+        return tf.sigmoid(utils, name="sigmoid_action_selection")

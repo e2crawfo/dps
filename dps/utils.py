@@ -3,12 +3,21 @@ from pprint import pformat
 from contextlib import contextmanager
 import numpy as np
 import inspect
+import types
 
 import tensorflow as tf
 from tensorflow.python.ops import random_ops, math_ops
 from tensorflow.python.framework import ops, constant_op
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from tensorflow.contrib.slim import fully_connected
+
+
+def visual_filter_one_d(width, inp, fovea, std):
+    """ ``std`` and ``width`` have to be known at graph creation time. """
+    dist = tf.contrib.distributions.Normal(mu=fovea, sigma=std)
+    filt = np.sqrt(2 * np.pi) * std * dist.pdf(np.linspace(-width, width, 2*width+1, dtype='f'))
+    vision = tf.reduce_sum(inp * filt, axis=1, keep_dims=True)
+    return vision
 
 
 class MLP(object):
@@ -305,7 +314,7 @@ class Config(object):
     _stack = []
 
     def __str__(self):
-        attrs = {k: getattr(self, k) for k in dir(self) if not k.startswith('_')}
+        attrs = {attr: getattr(self, attr) for attr in self.list_attrs()}
         s = "<{} -\n{}\n>".format(self.__class__.__name__, pformat(attrs))
         return s
 
@@ -313,9 +322,14 @@ class Config(object):
         return context(self.__class__, self)
 
     def update(self, other):
-        for k in dir(other):
-            if not k.startswith('_'):
-                setattr(self, k, getattr(other, k))
+        for attr in other.list_attrs():
+            setattr(self, attr, getattr(other, attr))
+
+    def list_attrs(self):
+        return (
+            attr for attr in dir(self)
+            if (not attr.startswith('_') and
+                not isinstance(getattr(self, attr), types.MethodType)))
 
 
 @contextmanager

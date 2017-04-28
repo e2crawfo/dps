@@ -8,11 +8,10 @@ import numpy as np
 
 from dps import CoreNetwork, RegisterSpec
 from dps.environment import RegressionDataset, RegressionEnv
-from dps.utils import Config, default_config, CompositeCell, MLP
-from dps.train import training_loop
-from dps.policy import Policy, ReluSelect, SoftmaxSelect, GumbelSoftmaxSelect
+from dps.utils import default_config
+from dps.train import training_loop, build_and_visualize
+from dps.policy import Policy
 from dps.production_system import ProductionSystemCurriculum
-from dps.updater import DifferentiableUpdater
 
 
 class ArithmeticDataset(RegressionDataset):
@@ -69,52 +68,6 @@ class Arithmetic(CoreNetwork):
         return new_registers
 
 
-class ArithmeticConfig(Config):
-    seed = 10
-
-    T = 3
-    curriculum = [dict(order=[0, 1, 0])]
-    optimizer_class = tf.train.RMSPropOptimizer
-    updater_class = DifferentiableUpdater
-
-    max_steps = 10000
-    batch_size = 100
-    n_train = 1000
-    n_val = 100
-    n_test = 0
-
-    threshold = 1e-2
-    patience = 100
-
-    display_step = 100
-    eval_step = 10
-    checkpoint_step = 1000
-
-    controller = CompositeCell(
-        tf.contrib.rnn.LSTMCell(num_units=32),
-        MLP(),
-        Arithmetic.n_actions)
-
-    action_selection = staticmethod([
-        SoftmaxSelect(),
-        GumbelSoftmaxSelect(hard=0),
-        GumbelSoftmaxSelect(hard=1),
-        ReluSelect()][0])
-
-    # start, decay_steps, decay_rate, staircase
-    lr_schedule = (0.1, 1000, 0.96, False)
-    noise_schedule = (0.0, 10, 0.96, False)
-    exploration_schedule = (10.0, 100, 0.96, False)
-
-    test_time_explore = None
-
-    max_grad_norm = 0.0
-    l2_norm_param = 0.0
-    gamma = 1.0
-
-    debug = False
-
-
 def train(log_dir, config, seed=-1):
     config.seed = config.seed if seed < 0 else seed
     np.random.seed(config.seed)
@@ -130,7 +83,7 @@ def train(log_dir, config, seed=-1):
     def build_policy(cn, exploration):
         config = default_config()
         return Policy(
-            config.controller, config.action_selection, exploration,
+            config.controller_func(cn.n_actions), config.action_selection, exploration,
             cn.n_actions, cn.obs_dim, name="arithmetic_policy")
 
     curriculum = ProductionSystemCurriculum(
@@ -141,6 +94,24 @@ def train(log_dir, config, seed=-1):
     training_loop(curriculum, log_dir, config, exp_name=exp_name)
 
 
-if __name__ == '__main__':
-    from clify import command_line
-    command_line(train)(log_dir='/tmp/dps/arithmetic', config=ArithmeticConfig())
+def visualize(config):
+    from dps.production_system import ProductionSystem
+    from dps.policy import IdentitySelect
+    from dps.utils import build_decaying_value, FixedController
+
+    def build_psystem():
+        _config = default_config()
+        env = ArithmeticEnv([0, 1, 0], 10, 10, 10)
+        cn = Arithmetic(env)
+
+        controller = FixedController([4, 0, 4], cn.n_actions)
+        action_selection = IdentitySelect()
+
+        exploration = build_decaying_value(_config.exploration_schedule, 'exploration')
+        policy = Policy(
+            controller, action_selection, exploration,
+            cn.n_actions, cn.obs_dim, name="arithmetic_policy")
+        return ProductionSystem(env, cn, policy, False, 3)
+
+    with config.as_default():
+        build_and_visualize(build_psystem, 'train', 1, False)
