@@ -55,7 +55,7 @@ class PointerRegSpec(RegisterSpec):
 
 
 class Pointer(CoreNetwork):
-    action_names = ['fovea += 1', 'fovea -= 1', 'wm += 1', 'wm -= 1', 'wm = vision', 'no-op/stop']
+    action_names = ['fovea += 1', 'fovea -= 1', 'wm = vision', 'no-op/stop']
 
     def __init__(self, env):
         self.width = env.width
@@ -63,9 +63,9 @@ class Pointer(CoreNetwork):
         super(Pointer, self).__init__()
 
     def __call__(self, action_activations, r):
-        a0, a1, a2, a3, a4, a5 = tf.split(action_activations, self.n_actions, axis=1)
-        fovea = (1 - a0 - a1) * r.fovea + a0 * (r.fovea + 1) + a1 * (r.fovea - 1)
-        wm = (1 - a2 - a3 - a4) * r.wm + a2 * (r.wm + 1) + a3 * (r.wm - 1) + a4 * r.vision
+        inc_fovea, dec_fovea, vision_to_wm, no_op = tf.split(action_activations, self.n_actions, axis=1)
+        fovea = (1 - inc_fovea - dec_fovea) * r.fovea + inc_fovea * (r.fovea + 1) + dec_fovea * (r.fovea - 1)
+        wm = (1 - vision_to_wm) * r.wm + vision_to_wm * r.vision
         t = r.t + 1
 
         diag_std = tf.fill(tf.shape(r.fovea), 0.01)
