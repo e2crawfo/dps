@@ -5,7 +5,7 @@ import numpy as np
 
 from dps import CoreNetwork, RegisterSpec
 from dps.environment import RegressionDataset, RegressionEnv
-from dps.utils import default_config, visual_filter_one_d
+from dps.utils import default_config, visual_filter
 from dps.production_system import ProductionSystemCurriculum
 from dps.train import training_loop, build_and_visualize
 from dps.policy import Policy
@@ -68,7 +68,10 @@ class Pointer(CoreNetwork):
         wm = (1 - a2 - a3 - a4) * r.wm + a2 * (r.wm + 1) + a3 * (r.wm - 1) + a4 * r.vision
         t = r.t + 1
 
-        vision = visual_filter_one_d(self.width, r.inp, r.fovea, 0.01)
+        diag_std = tf.fill(tf.shape(r.fovea), 0.01)
+        locations = tf.constant(np.linspace(-self.width, self.width, 2*self.width+1, dtype='f'))
+        vision = visual_filter(r.fovea, diag_std, locations, r.inp)
+
         new_registers = self.register_spec.wrap(inp=r.inp, fovea=fovea, vision=vision, wm=wm, t=t)
 
         return new_registers

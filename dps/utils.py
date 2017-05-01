@@ -12,12 +12,46 @@ from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from tensorflow.contrib.slim import fully_connected
 
 
-def visual_filter_one_d(width, inp, fovea, std):
-    """ ``std`` and ``width`` have to be known at graph creation time. """
-    dist = tf.contrib.distributions.Normal(mu=fovea, sigma=std)
-    filt = np.sqrt(2 * np.pi) * std * dist.pdf(np.linspace(-width, width, 2*width+1, dtype='f'))
-    vision = tf.reduce_sum(inp * filt, axis=1, keep_dims=True)
-    return vision
+def visual_filter(mu, diag_std, locations, values=None):
+    """
+    Parameters
+    ----------
+    mu: Tensor (batch_size, dim)
+        Row i gives the centre of attention for batch-elment i.
+    diag_std: Tensor (batch_size, dim)
+        Row i gives the diagonal entries of the covariance matrix for batch element i.
+    locations: Tensor (n_points, dim)
+        Row j gives the j-th point to evaluate the filter at.
+    values: Tensor (batch_size, n_points)
+        Entry (i, j) gives the value of the function that we are filtering for batch-element
+        i at the location given by ``locations[j, :]``. If not supplied, the filter
+        itself is returned.
+
+    Returns
+    -------
+    if values is not None:
+        vision: Tensor (batch_size, 1)
+            Row i gives the function for batch-element i (given by ``values[:, i]``) filtered by
+            the filter for batch-element i (specified by ``mu[i, :]`` and ``diag_std[i, :]``).
+    else:
+        filt: Tensor (batch_size, n_points)
+            Row i gives the filter for batch-element i.
+
+    """
+    locations = tf.reshape(locations, (tf.shape(locations)[0], 1, -1))
+    dist = tf.contrib.distributions.MultivariateNormalDiag(mu, diag_std)
+    probs = tf.transpose(dist.pdf(locations))
+
+    # Don't need to sqrt because we have stds rather than variances.
+    Z = tf.reduce_prod(diag_std, axis=-1, keep_dims=True) * ((2 * np.pi) ** (int(mu.shape[1]) / 2))
+
+    filt = Z * probs
+
+    if values is not None:
+        vision = tf.reduce_sum(values * filt, axis=1, keep_dims=True)
+        return vision
+    else:
+        return filt
 
 
 class MLP(object):

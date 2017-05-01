@@ -5,7 +5,7 @@ import numpy as np
 
 from dps import CoreNetwork, RegisterSpec
 from dps.environment import RegressionDataset, RegressionEnv
-from dps.utils import default_config, visual_filter_one_d
+from dps.utils import default_config, visual_filter
 from dps.production_system import ProductionSystemCurriculum
 from dps.train import training_loop, build_and_visualize
 from dps.policy import Policy
@@ -69,10 +69,14 @@ class Addition(CoreNetwork):
         fovea = (1 - inc_fovea - dec_fovea) * r.fovea + inc_fovea * (r.fovea + 1) + dec_fovea * (r.fovea - 1)
         wm1 = (1 - vision_to_wm1) * r.wm1 + vision_to_wm1 * r.vision
         wm2 = (1 - vision_to_wm2) * r.wm2 + vision_to_wm2 * r.vision
+
+        diag_std = tf.fill(tf.shape(r.fovea), 0.01)
+        locations = np.linspace(-self.width, self.width, 2*self.width+1, dtype='f')
+        vision = visual_filter(r.fovea, diag_std, locations, r.inp)
+
         output = (1 - vision_to_output - add) * r.output + vision_to_output * r.vision + add * (r.wm1 + r.wm2)
         t = r.t + 1
 
-        vision = visual_filter_one_d(self.width, r.inp, r.fovea, 0.01)
         new_registers = self.register_spec.wrap(inp=r.inp, fovea=fovea, vision=vision, wm1=wm1, wm2=wm2, output=output, t=t)
 
         return new_registers
