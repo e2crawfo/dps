@@ -14,7 +14,7 @@ class DefaultConfig(Config):
     optimizer_class = tf.train.RMSPropOptimizer
     updater_class = None
 
-    max_steps = 10000
+    max_steps = 100
     batch_size = 100
     n_train = 1000
     n_val = 100
@@ -84,6 +84,10 @@ class QLearningConfig(Config):
     test_time_explore = 0.0
 
 
+class RealConfig(Config):
+    max_steps = 10000
+
+
 class DebugConfig(Config):
     max_steps = 4
     batch_size = 2
@@ -95,3 +99,10 @@ class DebugConfig(Config):
     eval_step = 1
 
     debug = True
+
+
+def apply_mode(cfg, mode):
+    if mode == "debug":
+        cfg.update(DebugConfig())
+    elif mode == "real":
+        cfg.update(RealConfig())

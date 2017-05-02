@@ -86,9 +86,8 @@ class FixedController(RNNCell):
         action_seq = tf.constant(self.action_sequence, tf.int32)
         int_state = tf.cast(state, tf.int32)
         action_idx = tf.gather(action_seq, int_state)
-        reference = tf.reshape(tf.range(self.n_actions), (1, self.n_actions))
-        actions = tf.equal(reference, action_idx)
-        return tf.cast(actions, tf.float32), state + 1
+        actions = tf.one_hot(tf.reshape(action_idx, (-1,)), self.n_actions)
+        return actions, state + 1
 
     @property
     def state_size(self):

@@ -2,9 +2,12 @@ import pytest
 
 
 def pytest_addoption(parser):
-    parser.addoption("--debug", action="store_true", help="Run small tests in debug mode.")
+    parser.addoption("--mode", choices=["debug", "basic", "real"], default="basic",
+                     help="In debug mode, run small versions of test with lots of output. "
+                          "In real mode, wait for each optimization to finish. Basic mode "
+                          "is somewhere in between.")
 
 
 @pytest.fixture
-def debug(request):
-    return request.config.getoption("--debug")
+def mode(request):
+    return request.config.getoption("--mode")

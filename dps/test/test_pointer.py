@@ -14,7 +14,7 @@ class PointerConfig(config.DefaultConfig):
 
 
 @pytest.mark.parametrize('config_str', ['diff', 'reinforce', 'qlearning'])
-def test_pointer_following(config_str, debug):
+def test_pointer_following(config_str, mode):
     cfg = PointerConfig()
 
     if config_str == 'reinforce':
@@ -26,8 +26,7 @@ def test_pointer_following(config_str, debug):
     else:
         raise NotImplementedError()
 
-    if debug:
-        cfg.update(config.DebugConfig())
+    config.apply_mode(cfg, mode)
 
     pointer_following.train(log_dir='/tmp/dps/pointer/', config=cfg, seed=10)
 

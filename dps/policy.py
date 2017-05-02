@@ -179,11 +179,10 @@ class MultinomialSelect(ActionSelection):
 
     def sample(self, action_activations):
         logprobs = tf.log(action_activations)
-        n_actions = int(logprobs.shape[1])
         samples = tf.cast(tf.multinomial(logprobs, 1), tf.int32)
-        reference = tf.reshape(tf.range(n_actions), (1, n_actions))
-        actions = tf.equal(samples, reference)
-        return tf.cast(actions, tf.float32)
+        n_actions = int(logprobs.shape[1])
+        actions = tf.one_hot(tf.reshape(samples, (-1,)), n_actions)
+        return actions
 
 
 class SoftmaxSelect(MultinomialSelect):
@@ -233,7 +232,7 @@ class GumbelSoftmaxSelect(MultinomialSelect):
         return y
 
 
-class EpsilonGreedySelect(ActionSelection):
+class EpsilonGreedySelect(MultinomialSelect):
     def __call__(self, q_values, epsilon):
         mx = tf.reduce_max(q_values, axis=1, keep_dims=True)
         bool_is_max = tf.equal(q_values, mx)

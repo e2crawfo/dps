@@ -70,7 +70,7 @@ class Pointer(CoreNetwork):
         t = r.t + 1
 
         diag_std = tf.fill(tf.shape(r.fovea), 0.01)
-        locations = tf.constant(np.linspace(-self.width, self.width, 2*self.width+1, dtype='f'))
+        locations = tf.constant(np.linspace(-self.width, self.width, 2*self.width+1, dtype='f').reshape(-1, 1))
         vision = visual_filter(r.fovea, diag_std, locations, r.inp)
 
         new_registers = self.register_spec.wrap(inp=r.inp, fovea=fovea, vision=vision, wm=wm, t=t)
@@ -116,7 +116,7 @@ def visualize(config):
         env = PointerEnv(width, n_digits, 10, 10, 10)
         cn = Pointer(env)
 
-        controller = FixedController([4, 0, 4], cn.n_actions)
+        controller = FixedController([0, 2, 1], cn.n_actions)
         action_selection = IdentitySelect()
 
         exploration = build_decaying_value(_config.exploration_schedule, 'exploration')

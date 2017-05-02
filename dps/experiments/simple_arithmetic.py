@@ -104,7 +104,7 @@ def visualize(config):
         env = ArithmeticEnv([0, 1, 0], 10, 10, 10)
         cn = Arithmetic(env)
 
-        controller = FixedController([4, 0, 4], cn.n_actions)
+        controller = FixedController([0, 1, 0], cn.n_actions)
         action_selection = IdentitySelect()
 
         exploration = build_decaying_value(_config.exploration_schedule, 'exploration')

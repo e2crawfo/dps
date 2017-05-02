@@ -72,7 +72,7 @@ class Addition(CoreNetwork):
         wm2 = (1 - vision_to_wm2) * r.wm2 + vision_to_wm2 * r.vision
 
         diag_std = tf.fill(tf.shape(fovea), 0.01)
-        locations = np.linspace(-self.width, self.width, 2*self.width+1, dtype='f')
+        locations = tf.constant(np.linspace(-self.width, self.width, 2*self.width+1, dtype='f').reshape(-1, 1))
         vision = visual_filter(fovea, diag_std, locations, r.inp)
 
         output = (1 - vision_to_output - add) * r.output + vision_to_output * r.vision + add * (r.wm1 + r.wm2)

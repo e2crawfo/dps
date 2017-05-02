@@ -11,11 +11,10 @@ class HardAdditionConfig(config.DefaultConfig):
         dict(height=2, width=3, n_digits=10),
         dict(height=2, width=4, n_digits=10),
         dict(height=2, width=5, n_digits=10)]
-    max_steps = 20000
 
 
 @pytest.mark.parametrize('config_str', ['diff', 'reinforce', 'qlearning'])
-def test_hard_addition(config_str, debug):
+def test_hard_addition(config_str, mode):
     cfg = HardAdditionConfig()
 
     if config_str == 'reinforce':
@@ -27,8 +26,7 @@ def test_hard_addition(config_str, debug):
     else:
         raise NotImplementedError()
 
-    if debug:
-        cfg.update(config.DebugConfig())
+    config.apply_mode(cfg, mode)
 
     hard_addition.train(log_dir='/tmp/dps/hard_addition/', config=cfg, seed=10)
 

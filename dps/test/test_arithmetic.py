@@ -13,7 +13,7 @@ class ArithmeticConfig(config.DefaultConfig):
 
 
 @pytest.mark.parametrize('config_str', ['diff', 'reinforce', 'qlearning'])
-def test_simple_arithmetic(config_str, debug):
+def test_simple_arithmetic(config_str, mode):
     cfg = ArithmeticConfig()
 
     if config_str == 'reinforce':
@@ -25,8 +25,7 @@ def test_simple_arithmetic(config_str, debug):
     else:
         raise NotImplementedError()
 
-    if debug:
-        cfg.update(config.DebugConfig())
+    config.apply_mode(cfg, mode)
 
     simple_arithmetic.train(log_dir='/tmp/dps/arithmetic/', config=cfg, seed=20)
 
