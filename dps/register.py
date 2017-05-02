@@ -25,6 +25,10 @@ class RegisterSpec(object):
     _input_names = None
     _output_names = None
 
+    def __init__(self):
+        assert len(self._initial_values) == len(self.names)
+        assert len(self._visible) == len(self.names)
+
     def assert_defined(self, attr):
         assert getattr(self, attr) is not None, (
             "Instances of subclasses of RegisterSpec must "

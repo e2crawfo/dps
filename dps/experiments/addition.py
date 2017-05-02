@@ -51,6 +51,7 @@ class AdditionRegSpec(RegisterSpec):
         self._initial_values = (
             [np.zeros(2*width+1, dtype='f')] +
             [np.array([v], dtype='f') for v in [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
+        super(AdditionRegSpec, self).__init__()
 
 
 class Addition(CoreNetwork):
@@ -70,9 +71,9 @@ class Addition(CoreNetwork):
         wm1 = (1 - vision_to_wm1) * r.wm1 + vision_to_wm1 * r.vision
         wm2 = (1 - vision_to_wm2) * r.wm2 + vision_to_wm2 * r.vision
 
-        diag_std = tf.fill(tf.shape(r.fovea), 0.01)
+        diag_std = tf.fill(tf.shape(fovea), 0.01)
         locations = np.linspace(-self.width, self.width, 2*self.width+1, dtype='f')
-        vision = visual_filter(r.fovea, diag_std, locations, r.inp)
+        vision = visual_filter(fovea, diag_std, locations, r.inp)
 
         output = (1 - vision_to_output - add) * r.output + vision_to_output * r.vision + add * (r.wm1 + r.wm2)
         t = r.t + 1

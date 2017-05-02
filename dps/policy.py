@@ -221,14 +221,14 @@ class GumbelSoftmaxSelect(MultinomialSelect):
         """ Draw a sample from the Gumbel-Softmax distribution"""
         y = logits + GumbelSoftmaxSelect._sample_gumbel(tf.shape(logits))
         probs = tf.nn.softmax(y / temperature, name='gumbel_softmax')
-        probs = tf.Print(probs, [logits, y, probs], 'logits/noisy_logits/probs', summarize=7)
+        # probs = tf.Print(probs, [logits, y, probs], 'logits/noisy_logits/probs', summarize=7)
         return probs
 
     def __call__(self, utils, temperature):
         y = self._gumbel_softmax_sample(utils, temperature)
         if self.hard:
             y_hard = tf.cast(tf.equal(y, tf.reduce_max(y, 1, keep_dims=True)), y.dtype)
-            y_hard = tf.Print(y_hard, [y_hard], 'y_hard', summarize=7)
+            # y_hard = tf.Print(y_hard, [y_hard], 'y_hard', summarize=7)
             y = tf.stop_gradient(y_hard - y) + y
         return y
 

@@ -52,6 +52,7 @@ class PointerRegSpec(RegisterSpec):
         self._initial_values = (
             [np.zeros(2*width+1, dtype='f')] +
             [np.array([v], dtype='f') for v in [0.0, 0.0, 0.0, 0.0]])
+        super(PointerRegSpec, self).__init__()
 
 
 class Pointer(CoreNetwork):

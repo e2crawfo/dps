@@ -195,6 +195,7 @@ class ProductionSystemCell(RNNCell):
         self._state_size = (
             self.policy.state_size,
             self.core_network.register_spec.state_size())
+
         self._output_size = (
             self.core_network.n_actions,
             self.policy.state_size,

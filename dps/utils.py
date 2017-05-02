@@ -38,7 +38,8 @@ def visual_filter(mu, diag_std, locations, values=None):
             Row i gives the filter for batch-element i.
 
     """
-    locations = tf.reshape(locations, (tf.shape(locations)[0], 1, -1))
+    assert len(locations.shape) == 2
+    locations = tf.expand_dims(locations, 1)
     dist = tf.contrib.distributions.MultivariateNormalDiag(mu, diag_std)
     probs = tf.transpose(dist.pdf(locations))
 
