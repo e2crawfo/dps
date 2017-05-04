@@ -255,10 +255,6 @@ def restart_tensorboard(logdir):
     print("Done restarting tensorboard.")
 
 
-def MSE(outputs, targets):
-    return tf.reduce_mean(tf.square(tf.subtract(targets, outputs)))
-
-
 def add_scaled_noise_to_gradients(grads_and_vars, gradient_noise_scale):
     """Taken from tensorflow.
 

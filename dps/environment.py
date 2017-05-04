@@ -10,8 +10,6 @@ from gym import Env as GymEnv
 from gym.utils import seeding
 from gym.spaces import prng
 
-from dps.utils import MSE
-
 
 class BatchBox(gym.Space):
     """ A box that allows some dimensions to be unspecified at instance-creation time.
@@ -96,7 +94,8 @@ class DifferentiableEnv(with_metaclass(abc.ABCMeta, Env)):
         has a loss that it is a differentiable function of its input. """
 
     @abc.abstractmethod
-    def loss(self, policy):
+    def build_loss(self, policy):
+        """ Return tensor with shape (batch_size, 1) """
         raise NotImplementedError()
 
 
@@ -187,17 +186,19 @@ class RegressionEnv(DifferentiableEnv):
     def __init__(self, train, val, test):
         self.train, self.val, self.test = train, val, test
 
-        action_dim = self.train.y.shape[1]
-        self.action_space = BatchBox(low=-np.inf, high=np.inf, shape=(None, action_dim))
+        self.n_actions = self.train.y.shape[1]
+        self.action_space = BatchBox(low=-np.inf, high=np.inf, shape=(None, self.n_actions))
 
-        obs_dim = self.train.x.shape[1]
+        self.obs_dim = self.train.x.shape[1]
         self.observation_space = BatchBox(
-            low=-np.inf, high=np.inf, shape=(None, obs_dim))
+            low=-np.inf, high=np.inf, shape=(None, self.obs_dim))
 
         self.reward_range = (-np.inf, 0)
 
         self._kind = 'train'
         self._batch_size = None
+
+        self.action_ph, self.loss, self.target_ph = None, None, None
 
         self.reset()
 
@@ -208,9 +209,9 @@ class RegressionEnv(DifferentiableEnv):
     def completion(self):
         return self.train.completion
 
-    def loss(self, policy_output):
+    def build_loss(self, policy_output):
         target_ph = tf.placeholder(tf.float32, shape=policy_output.shape, name='target')
-        loss = MSE(policy_output, target_ph)
+        loss = tf.reduce_mean((policy_output - target_ph)**2, axis=-1)
         return loss, target_ph
 
     def _step(self, action):
@@ -220,7 +221,13 @@ class RegressionEnv(DifferentiableEnv):
 
         assert self.y.shape == action.shape
         obs = np.zeros(self.x.shape)
-        reward = -np.mean((action - self.y)**2, axis=1)
+
+        if self.action_ph is None:
+            self.action_ph = tf.placeholder(tf.float32, (None, self.n_actions))
+            self.loss, self.target_ph = self.build_loss(self.action_ph)
+        sess = tf.get_default_session()
+        reward = -sess.run(self.loss, {self.action_ph: action, self.target_ph: self.y})
+
         done = True
         info = {}
         return obs, reward, done, info

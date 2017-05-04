@@ -148,7 +148,8 @@ class DifferentiableUpdater(Updater):
 
     def _build_graph(self):
         with tf.name_scope('loss'):
-            self.loss, self.target_placeholders = self.env.loss(self.f.get_output())
+            loss, self.target_placeholders = self.env.build_loss(self.f.get_output())
+            self.loss = tf.reduce_mean(loss)
 
         self._build_train()
 
