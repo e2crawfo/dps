@@ -15,7 +15,7 @@ class AdditionConfig(config.DefaultConfig):
 
 
 @pytest.mark.parametrize('config_str', ['diff', 'reinforce', 'qlearning'])
-def test_addition(config_str, mode):
+def test_addition(config_str, mode, max_steps):
     cfg = AdditionConfig()
 
     if config_str == 'reinforce':
@@ -28,6 +28,8 @@ def test_addition(config_str, mode):
         raise NotImplementedError()
 
     config.apply_mode(cfg, mode)
+    if max_steps is not None:
+        cfg.max_steps = int(max_steps)
 
     addition.train(log_dir='/tmp/dps/addition/', config=cfg, seed=10)
 

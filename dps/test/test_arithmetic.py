@@ -13,7 +13,7 @@ class ArithmeticConfig(config.DefaultConfig):
 
 
 @pytest.mark.parametrize('config_str', ['diff', 'reinforce', 'qlearning'])
-def test_simple_arithmetic(config_str, mode):
+def test_simple_arithmetic(config_str, mode, max_steps):
     cfg = ArithmeticConfig()
 
     if config_str == 'reinforce':
@@ -26,6 +26,8 @@ def test_simple_arithmetic(config_str, mode):
         raise NotImplementedError()
 
     config.apply_mode(cfg, mode)
+    if max_steps is not None:
+        cfg.max_steps = int(max_steps)
 
     simple_arithmetic.train(log_dir='/tmp/dps/arithmetic/', config=cfg, seed=20)
 

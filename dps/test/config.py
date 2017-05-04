@@ -4,7 +4,7 @@ import tensorflow as tf
 from dps.updater import DifferentiableUpdater
 from dps.reinforce import REINFORCE
 from dps.qlearning import QLearning
-from dps.policy import SoftmaxSelect, EpsilonGreedySelect
+from dps.policy import SoftmaxSelect, EpsilonGreedySelect, GumbelSoftmaxSelect
 from dps.utils import Config, CompositeCell, MLP
 
 
@@ -33,8 +33,8 @@ class DefaultConfig(Config):
                                         n_actions))
 
     # start, decay_steps, decay_rate, staircase
-    lr_schedule = (0.01, 1000, 0.96, False)
-    noise_schedule = (0.0, 1000, 0.96, False)
+    lr_schedule = (0.001, 1000, 0.96, False)
+    noise_schedule = (0.1, 1000, 0.96, False)
     exploration_schedule = (10.0, 1000, 0.96, False)
 
     test_time_explore = None
@@ -49,11 +49,13 @@ class DefaultConfig(Config):
 class DiffConfig(Config):
     updater_class = DifferentiableUpdater
     test_time_explore = None
-    action_selection = SoftmaxSelect()
-    # action_selection = GumbelSoftmaxSelect(hard=0)
+    # action_selection = SoftmaxSelect()
+    action_selection = GumbelSoftmaxSelect(hard=0)
+    noise_schedule = (0.0, 1000, 0.96, False)
     exploration_schedule = (1.0, 1000, 0.9, False)
     max_grad_norm = 1.0
     patience = np.inf
+    T = 10
 
 
 class ReinforceConfig(Config):
