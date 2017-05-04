@@ -230,8 +230,22 @@ class RegisterSpec(object):
         return ss
 
     def concatenate(self, reg_list, axis):
+        """ Create a new register whose contents at idx i is the concetenation
+            of the supplied registers as idx i along given axis. """
         new_registers = []
         for i in range(len(reg_list[0])):
-            new_elem = np.concatenate(tuple(r[i][0] if isinstance(r[i], tuple) else r[i] for r in reg_list), axis=axis)
+            new_elem = np.concatenate(
+                tuple(r[i][0] if isinstance(r[i], tuple) else r[i] for r in reg_list),
+                axis=axis)
             new_registers.append(new_elem)
         return self.wrap(*new_registers)
+
+    def expand_dims(self, reg, axis):
+        """ Create a new register whose contents at idx i is the concetenation
+            of the supplied registers as idx i along given axis. """
+        new_reg = []
+        for elem in reg:
+            elem = elem[0] if isinstance(elem, tuple) else elem
+            new_elem = np.expand_dims(elem, axis)
+            new_reg.append(new_elem)
+        return self.wrap(*new_reg)

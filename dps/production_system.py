@@ -72,7 +72,8 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
 
         external_step_lengths = [a.shape[0] for a in actions]
 
-        registers = self.core_network.register_spec.concatenate(registers, axis=0)
+        rspec = self.core_network.register_spec
+        registers = rspec.concatenate(registers + [rspec.expand_dims(final, 0)], axis=0)
         actions = np.concatenate(actions, axis=0)
         rewards = np.concatenate(rewards, axis=0)
 
@@ -102,10 +103,10 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
 
         for b in range(batch_size):
             print("\nElement {} of batch ".format(b) + "-" * 40)
-            values = np.zeros((total_internal_steps, len(row_names)))
+            values = np.zeros((total_internal_steps+1, len(row_names)))
             external_t, internal_t = 0, 0
 
-            for i in range(action_activations.shape[0]):
+            for i in range(total_internal_steps):
                 values[i, 0] = external_t
                 values[i, 1] = internal_t
                 values[i, 3:3+n_actions] = action_activations[i, b, :]
@@ -119,6 +120,11 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
                 if internal_t == external_step_lengths[external_t]:
                     external_t += 1
                     internal_t = 0
+
+            # Print final values for the registers
+            for n, v in zip(register_spec.names, registers):
+                rr = reg_ranges[n]
+                values[-1, rr[0]:rr[1]] = v[-1, b, :]
 
             values = pd.DataFrame(values.T)
             values.insert(0, 'name', row_names)

@@ -121,9 +121,9 @@ def _training_loop(
 
                     if new_best:
                         checkpoint_file = exp_dir.path_for('best_stage={}'.format(stage))
-                        print("Storing new best in file {} on local step {} (global step {}) "
+                        print("Storing new best in on local step {} (global step {}) "
                               "with validation loss of {}.".format(
-                                  checkpoint_file, local_step, global_step, val_loss))
+                                  local_step, global_step, val_loss))
                         best_path = updater.save(checkpoint_file)
                     if stop:
                         print("Optimization complete, early stopping triggered.")
