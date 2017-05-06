@@ -117,11 +117,11 @@ def _training_loop(
                               "Minibatch Duration={:06.4f} seconds, Epoch={:04.2f}.".format(
                                   global_step, local_step, train_loss, val_loss, duration, updater.env.completion))
 
-                    new_best, stop = early_stop.check(global_step, local_step, val_loss)
+                    new_best, stop = early_stop.check(val_loss, global_step, local_step)
 
                     if new_best:
                         checkpoint_file = exp_dir.path_for('best_stage={}'.format(stage))
-                        print("Storing new best in on local step {} (global step {}) "
+                        print("Storing new best on local step {} (global step {}) "
                               "with validation loss of {}.".format(
                                   local_step, global_step, val_loss))
                         best_path = updater.save(checkpoint_file)

@@ -1,7 +1,7 @@
 import tensorflow as tf
 import numpy as np
 
-from dps import lifting
+from dps import lift
 
 
 def test_lift_binary():
@@ -11,9 +11,9 @@ def test_lift_binary():
     input_tensor1 = tf.constant([[1, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], [0, 0.5, 0.5], [0.5, 0, 0.5]], dtype=tf.float32)
     input_tensor2 = tf.constant([[1, 0, 0, 0], [0, 1, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0], [0.5, 0.5, 0, 0]], dtype=tf.float32)
 
-    output_tensor, M = lifting.lift_binary(
+    output_tensor, M = lift.lift_binary(
         lambda x, y: x + y, input_space1, input_space2, range(6), input_tensor1, input_tensor2)
-    output_tensor, M = lifting.lift_binary(
+    output_tensor, M = lift.lift_binary(
         lambda x, y: x * y, input_space1, input_space2, range(7), input_tensor1, input_tensor2)
 
     sess = tf.Session()

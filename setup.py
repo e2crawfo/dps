@@ -20,6 +20,7 @@ setup(
         "future",
         "six",
         "tensorflow",
-        "gym"
+        "gym",
+        "tabulate"
     ]
 )

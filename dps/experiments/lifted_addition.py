@@ -9,10 +9,11 @@ from dps.utils import default_config, visual_filter
 from dps.production_system import ProductionSystemCurriculum
 from dps.train import training_loop, build_and_visualize
 from dps.policy import Policy
-from dps.lifting import lift_binary
+from dps.lift import lift_binary
 
 
 def one_hot(inp, depth):
+    """ numpy version of tf.one_hot. """
     new = np.zeros(inp.shape + (depth,))
     for idx in np.ndindex(inp.shape):
         new[idx + (inp[idx],)] = 1.0
