@@ -1,12 +1,12 @@
 from collections import namedtuple
-from itertools import product
 
 import tensorflow as tf
 import numpy as np
 
 from dps import CoreNetwork, RegisterSpec
 from dps.environment import RegressionDataset, RegressionEnv
-from dps.utils import default_config, visual_filter
+from dps.utils import default_config
+from dps.attention import gaussian_filter
 from dps.production_system import ProductionSystemCurriculum
 from dps.train import training_loop, build_and_visualize
 from dps.policy import Policy
@@ -123,13 +123,16 @@ class HardAddition(CoreNetwork):
 
         # Read input
         fovea = tf.concat([fovea_y, fovea_x], 1)
-        diag_std = tf.fill(tf.shape(fovea), 0.01)
-        locations = np.array(list(product(range(self.height), range(self.width))), dtype='f')
-        vision = visual_filter(fovea, diag_std, locations, r.inp)
+        std = tf.fill(tf.shape(fovea), 0.01)
+        inp = tf.reshape(r.inp, (-1, self.height, self.width))
+        x_filter = gaussian_filter(fovea[:, 1:], std[:, 1:], np.arange(self.width, dtype='f'))
+        y_filter = gaussian_filter(fovea[:, :1], std[:, :1], np.arange(self.height, dtype='f'))
+        vision = tf.matmul(y_filter, tf.matmul(inp, x_filter, adjoint_b=True))
+        vision = tf.reshape(vision, (-1, 1))
 
         # Store output
-        locations = np.arange(self.width).astype('f').reshape(-1, 1)
-        write_weighting = visual_filter(fovea_x, tf.fill(tf.shape(fovea_x), 0.01), locations)
+        write_weighting = gaussian_filter(fovea_x, tf.fill(tf.shape(fovea_x), 0.01), np.arange(self.width, dtype='f'))
+        write_weighting = tf.squeeze(write_weighting, axis=[1])
         output = (1 - write_digit) * r.outp + write_digit * ((1 - write_weighting) * r.outp + write_weighting * digit)
 
         t = r.t + 1

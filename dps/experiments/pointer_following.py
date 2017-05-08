@@ -5,7 +5,8 @@ import numpy as np
 
 from dps import CoreNetwork, RegisterSpec
 from dps.environment import RegressionDataset, RegressionEnv
-from dps.utils import default_config, visual_filter
+from dps.utils import default_config
+from dps.attention import apply_gaussian_filter
 from dps.production_system import ProductionSystemCurriculum
 from dps.train import training_loop, build_and_visualize
 from dps.policy import Policy
@@ -71,7 +72,7 @@ class Pointer(CoreNetwork):
 
         diag_std = tf.fill(tf.shape(r.fovea), 0.01)
         locations = tf.constant(np.linspace(-self.width, self.width, 2*self.width+1, dtype='f').reshape(-1, 1))
-        vision = visual_filter(r.fovea, diag_std, locations, r.inp)
+        vision = apply_gaussian_filter(r.fovea, diag_std, locations, r.inp)
 
         new_registers = self.register_spec.wrap(inp=r.inp, fovea=fovea, vision=vision, wm=wm, t=t)
 

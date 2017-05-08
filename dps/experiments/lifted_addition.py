@@ -5,7 +5,8 @@ import numpy as np
 
 from dps import CoreNetwork, RegisterSpec
 from dps.environment import RegressionDataset, RegressionEnv
-from dps.utils import default_config, visual_filter
+from dps.utils import default_config
+from dps.attention import gaussian_filter
 from dps.production_system import ProductionSystemCurriculum
 from dps.train import training_loop, build_and_visualize
 from dps.policy import Policy
@@ -121,11 +122,11 @@ class LiftedAddition(CoreNetwork):
         wm1 = (1 - vision_to_wm1) * r.wm1 + vision_to_wm1 * r.vision
         wm2 = (1 - vision_to_wm2) * r.wm2 + vision_to_wm2 * r.vision
 
-        diag_std = tf.fill(tf.shape(fovea), 0.1)
-        locations = tf.constant(np.linspace(-self.width, self.width, 2*self.width+1, dtype='f').reshape(-1, 1))
-        filt = visual_filter(fovea, diag_std, locations)
+        std = tf.fill(tf.shape(fovea), 0.1)
+        locations = tf.constant(np.linspace(-self.width, self.width, 2*self.width+1, dtype='f'))
+        filt = gaussian_filter(fovea, std, locations)
+        filt = tf.squeeze(filt, axis=[1])
         inp = tf.reshape(r.inp, (-1, 2*self.width+1, self.n_digits))
-
         vision = tf.reduce_sum(tf.expand_dims(filt, -1) * inp, 1)
         l1_norm = tf.reduce_sum(vision, axis=1, keep_dims=True)
         vision = l1_norm * vision + (1 - l1_norm) * (1 / self.n_digits) * tf.ones_like(vision)

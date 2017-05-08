@@ -151,7 +151,7 @@ def _training_loop(
             early_stop.end_stage()
             curriculum.end_stage()
 
-            if threshold_reached:
+            if threshold_reached or config.power_through:
                 stage += 1
             else:
                 print("Failed to reach error threshold on stage {} of the curriculum, terminating.".format(stage))

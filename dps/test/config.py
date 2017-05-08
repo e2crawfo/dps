@@ -14,6 +14,7 @@ class DefaultConfig(Config):
     optimizer_class = tf.train.RMSPropOptimizer
     updater_class = None
 
+    power_through = True  # Whether to complete the entire curriculum, even if threshold not reached.
     max_steps = 100
     batch_size = 100
     n_train = 1000

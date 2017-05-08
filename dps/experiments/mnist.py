@@ -8,7 +8,7 @@ import tensorflow as tf
 
 from spectral_dagger.utils.experiment import ExperimentStore
 from dps.environment import RegressionDataset
-from dps.utils import build_decaying_value, EarlyStopHook, Config
+from dps.utils import build_decaying_value, EarlyStopHook, Config, gen_seed
 
 
 class Rect(object):
@@ -29,8 +29,7 @@ class Rect(object):
 
 
 class TranslatedMnistDataset(RegressionDataset):
-    def __init__(
-            self, W, n_digits, max_overlap, n_examples, for_eval=False, shuffle=True):
+    def __init__(self, W, n_digits, max_overlap, n_examples, for_eval=False, shuffle=True):
         self.W = W
         self.n_digits = n_digits
         self.max_overlap = max_overlap
@@ -122,6 +121,8 @@ def train_mnist(
         stack.enter_context(tf.variable_scope(var_scope))
 
         sess = tf.Session()
+
+        tf.set_random_seed(gen_seed())
 
         train_writer = tf.summary.FileWriter(exp_dir.path_for('train'), g)
         val_writer = tf.summary.FileWriter(exp_dir.path_for('val'))

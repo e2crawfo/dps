@@ -33,5 +33,5 @@ def test_hard_addition(config_str, mode, max_steps):
     hard_addition.train(log_dir='/tmp/dps/hard_addition/', config=cfg, seed=10)
 
 
-def test_visualize_addition():
+def test_visualize_hard_addition():
     hard_addition.visualize(HardAdditionConfig())

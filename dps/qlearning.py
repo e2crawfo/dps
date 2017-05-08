@@ -1,7 +1,7 @@
+import numpy as np
 import tensorflow as tf
 from tensorflow.python.ops.rnn import dynamic_rnn
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
-import numpy as np
 from collections import deque
 
 from dps.updater import ReinforcementLearningUpdater
@@ -11,6 +11,7 @@ class QLearning(ReinforcementLearningUpdater):
     def __init__(self,
                  env,
                  q_network,
+                 target_network,
                  double,
                  replay_max_size,
                  target_update_rate,
@@ -23,6 +24,7 @@ class QLearning(ReinforcementLearningUpdater):
                  l2_norm_param):
 
         self.q_network = q_network
+        self.target_network = target_network
         self.double = double
         self.replay_buffer = ReplayBuffer(max_size=replay_max_size)
         self.target_update_rate = target_update_rate
@@ -117,8 +119,6 @@ class QLearning(ReinforcementLearningUpdater):
             final_rewards = self.rewards[-1, :, :]
 
             inp = (rest_obs, rest_actions, rest_rewards)
-
-            self.target_network = self.q_network.copy("target_network")
 
             q_learning_cell = QLearningCell(self.q_network, self.target_network, self.double, self.gamma)
             batch_size = tf.shape(self.obs)[1]

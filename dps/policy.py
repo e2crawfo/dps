@@ -1,4 +1,5 @@
 from pprint import pformat
+from copy import deepcopy
 
 import tensorflow as tf
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
@@ -19,11 +20,15 @@ def rnn_cell_placeholder(state_size, batch_size=None, dtype=tf.float32, name='')
 
 
 class Policy(RNNCell):
-    """ A map from observation-internal state pairs to action activations.
+    """ A map from (observation, internal state) pairs to action activations.
 
     Each instance of this class can be thought of as owning a set of variables,
     because whenever ``build`` is called, it will try to use the same set of variables
     (i.e. use the same scope, with ``reuse=True``) as the first time it was called.
+
+    Note: in TensorFlow 1.1 (and probably 1.2), its fine to deepcopy an RNNCell up
+    until the first time that it is used to add ops to the graph at which point
+    variables are created (which are not ommitted by RNNCell.__deepcopy__ in TF 1.2).
 
     Parameters
     ----------
@@ -53,16 +58,9 @@ class Policy(RNNCell):
         self.obs_dim = obs_dim
         self.name = name
 
+        self.scope = None
         self.n_builds = 0
-
-        with tf.variable_scope(self.name):
-            self.scope = tf.get_variable_scope()
-
-            self._policy_state = rnn_cell_placeholder(self.controller.state_size, name='policy_state')
-            self._obs = tf.placeholder(tf.float32, (None, self.obs_dim), name='obs')
-
-        result = self.build(self._obs, self._policy_state)
-        self._samples, self._action_activations, self._utils, self._next_policy_state = result
+        self.act_is_built = False
 
     def __str__(self):
         return pformat(self)
@@ -78,10 +76,22 @@ class Policy(RNNCell):
         else:
             return action_activations, next_policy_state
 
-    def build(self, obs, policy_state, scope=None, reuse=True):
-        reuse &= self.n_builds > 0
-        scope = scope or self.scope
-        with tf.variable_scope(scope, reuse=reuse):
+    def set_scope(self, scope):
+        if self.n_builds > 0:
+            raise ValueError("Cannot set scope once Policy has been built inside a graph.")
+        self.scope = scope
+
+    def capture_scope(self):
+        with tf.variable_scope(self.name):
+            self.set_scope(tf.get_variable_scope())
+
+    def get_scope(self):
+        if not self.scope:
+            self.capture_scope()
+        return self.scope
+
+    def build(self, obs, policy_state):
+        with tf.variable_scope(self.get_scope(), reuse=self.n_builds > 0):
             utils, next_policy_state = self.controller(obs, policy_state)
             action_activations = self.action_selection(utils, self.exploration)
 
@@ -94,6 +104,58 @@ class Policy(RNNCell):
 
         return samples, action_activations, utils, next_policy_state
 
+    def zero_state(self, batch_size, dtype):
+        return self.controller.zero_state(batch_size, dtype)
+
+    @property
+    def state_size(self):
+        return self.controller.state_size
+
+    @property
+    def output_size(self):
+        return self.n_actions
+
+    def deepcopy(self, new_name):
+        if self.n_builds > 0:
+            raise ValueError("Cannot copy Policy once it has been built inside a graph.")
+
+        new = Policy(
+            deepcopy(self.controller),
+            deepcopy(self.action_selection),
+            self.exploration,
+            self.n_actions, self.obs_dim, new_name)
+        return new
+        # Should work in TF 1.1, will need to be changed in TF 1.2.
+        # new_controller = deepcopy(self.controller)
+        # if hasattr(new_controller, '_scope'):
+        #     del new_controller._scope
+
+        # new_as = deepcopy(self.action_selection)
+        # if hasattr(new_as, '_scope'):
+        #     del new_as._scope
+
+        # new = Policy(
+        #     deepcopy(self.controller),
+        #     deepcopy(self.action_selection),
+        #     self.exploration,
+        #     self.n_actions, self.obs_dim, new_name)
+
+        # if hasattr(new, '_scope'):
+        #     del new._scope
+
+        # return new
+
+    def maybe_build_act(self):
+        if not self.act_is_built:
+            # Build a subgraph that we carry around with the Policy for implementing the ``act`` method
+            self._policy_state = rnn_cell_placeholder(self.controller.state_size, name='policy_state')
+            self._obs = tf.placeholder(tf.float32, (None, self.obs_dim), name='obs')
+
+            result = self.build(self._obs, self._policy_state)
+            self._samples, self._action_activations, self._utils, self._next_policy_state = result
+
+            self.act_is_built = True
+
     def build_feeddict(self, obs, policy_state):
         fd = flatten_dict_items({self._policy_state: policy_state})
         fd.update({self._obs: obs})
@@ -102,11 +164,13 @@ class Policy(RNNCell):
     def act(self, obs, policy_state, sample=False):
         """ Return action activations given an observation and the current policy state.
 
-        Perform arithmetical step of sampling from activation activations
+        Perform additional step of sampling from activation activations
         if ``sample`` is True and the activations represent a distribution
         over actions (so ``self.action_selection.can_sample`` is True).
 
         """
+        self.maybe_build_act()
+
         sess = tf.get_default_session()
         feed_dict = self.build_feeddict(obs, policy_state)
 
@@ -120,23 +184,6 @@ class Policy(RNNCell):
             actions, next_policy_state = sess.run(
                 [self._action_activations, self._next_policy_state], feed_dict)
         return actions, next_policy_state
-
-    def zero_state(self, batch_size, dtype):
-        return self.controller.zero_state(batch_size, dtype)
-
-    @property
-    def state_size(self):
-        return self.controller.state_size
-
-    @property
-    def output_size(self):
-        return self.n_actions
-
-    def copy(self, new_name):
-        new = Policy(
-            self.controller, self.action_selection, self.exploration,
-            self.n_actions, self.obs_dim, new_name)
-        return new
 
 
 class ActionSelection(object):

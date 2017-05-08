@@ -532,10 +532,18 @@ class ProductionSystemCurriculum(Curriculum):
             testing_exploration = tf.constant(config.test_time_explore, tf.float32, name='testing_exploration')
             exploration = tf.cond(is_training, lambda: exploration, lambda: testing_exploration)
         policy = self.policy = self.build_policy(core_network, exploration)
+        policy.capture_scope()
+
+        target_policy = policy.deepcopy("target_policy")
+        target_policy.capture_scope()
 
         if self.stage != 0:
+            # So that there exist variables to load into
+            policy.maybe_build_act()
+
             g = tf.get_default_graph()
-            policy_variables = g.get_collection('trainable_variables', scope=self.policy.scope.name)
+
+            policy_variables = g.get_collection('trainable_variables', scope=policy.scope.name)
             saver = tf.train.Saver(policy_variables)
             saver.restore(tf.get_default_session(), os.path.join(default_config().path, 'policy.chk'))
 
@@ -557,7 +565,7 @@ class ProductionSystemCurriculum(Curriculum):
                 config.gamma, config.l2_norm_param)
         elif self.updater_class is QLearning:
             updater = QLearning(
-                ps_env, psystem.policy, config.double, config.replay_max_size, config.target_update_rate,
+                ps_env, psystem.policy, target_policy, config.double, config.replay_max_size, config.target_update_rate,
                 config.recurrent, config.optimizer_class, config.lr_schedule, config.noise_schedule, config.max_grad_norm,
                 config.gamma, config.l2_norm_param)
         else:
