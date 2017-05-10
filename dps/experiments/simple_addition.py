@@ -12,7 +12,7 @@ from dps.train import training_loop, build_and_visualize
 from dps.policy import Policy
 
 
-class AdditionDataset(RegressionDataset):
+class SimpleAdditionDataset(RegressionDataset):
     def __init__(
             self, width, n_digits, n_examples, for_eval=False, shuffle=True):
         self.width = width
@@ -20,30 +20,30 @@ class AdditionDataset(RegressionDataset):
 
         x = np.random.randint(0, n_digits, size=(n_examples, 2*width+1))
         y = x[:, :1] + x[:, -1:]
-        super(AdditionDataset, self).__init__(x, y, for_eval, shuffle)
+        super(SimpleAdditionDataset, self).__init__(x, y, for_eval, shuffle)
 
 
-class AdditionEnv(RegressionEnv):
+class SimpleAdditionEnv(RegressionEnv):
     def __init__(self, width, n_digits, n_train, n_val, n_test):
         self.width = width
         self.n_digits = n_digits
-        super(AdditionEnv, self).__init__(
-            train=AdditionDataset(width, n_digits, n_train, for_eval=False),
-            val=AdditionDataset(width, n_digits, n_val, for_eval=True),
-            test=AdditionDataset(width, n_digits, n_test, for_eval=True))
+        super(SimpleAdditionEnv, self).__init__(
+            train=SimpleAdditionDataset(width, n_digits, n_train, for_eval=False),
+            val=SimpleAdditionDataset(width, n_digits, n_val, for_eval=True),
+            test=SimpleAdditionDataset(width, n_digits, n_test, for_eval=True))
 
     def __str__(self):
-        return "<AdditionEnv width={} n_digits={}>".format(self.width, self.n_digits)
+        return "<SimpleAdditionEnv width={} n_digits={}>".format(self.width, self.n_digits)
 
 
 # Define at top-level to enable pickling
-addition_nt = namedtuple('AdditionRegister', 'inp fovea vision wm1 wm2 output t'.split())
+simple_addition_nt = namedtuple('SimpleAdditionRegister', 'inp fovea vision wm1 wm2 output t'.split())
 
 
-class AdditionRegSpec(RegisterSpec):
+class SimpleAdditionRegSpec(RegisterSpec):
     _visible = [0, 1, 1, 1, 1, 1, 1]
     _initial_values = None
-    _namedtuple = addition_nt
+    _namedtuple = simple_addition_nt
     _input_names = ['inp']
     _output_names = ['output']
 
@@ -52,17 +52,17 @@ class AdditionRegSpec(RegisterSpec):
         self._initial_values = (
             [np.zeros(2*width+1, dtype='f')] +
             [np.array([v], dtype='f') for v in [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
-        super(AdditionRegSpec, self).__init__()
+        super(SimpleAdditionRegSpec, self).__init__()
 
 
-class Addition(CoreNetwork):
+class SimpleAddition(CoreNetwork):
     action_names = ['fovea += 1', 'fovea -= 1', 'wm1 = vision', 'wm2 = vision',
                     'output = vision', 'output = wm1 + wm2', 'no-op/stop']
 
     def __init__(self, env):
         self.width = env.width
-        self.register_spec = AdditionRegSpec(env.width)
-        super(Addition, self).__init__()
+        self.register_spec = SimpleAdditionRegSpec(env.width)
+        super(SimpleAddition, self).__init__()
 
     def __call__(self, action_activations, r):
         inc_fovea, dec_fovea, vision_to_wm1, vision_to_wm2, vision_to_output, add, no_op = (
@@ -91,16 +91,16 @@ def train(log_dir, config, seed=-1):
     base_kwargs = dict(n_train=config.n_train, n_val=config.n_val, n_test=config.n_test)
 
     def build_env(**kwargs):
-        return AdditionEnv(**kwargs)
+        return SimpleAdditionEnv(**kwargs)
 
     def build_core_network(env):
-        return Addition(env)
+        return SimpleAddition(env)
 
     def build_policy(cn, exploration):
         config = default_config()
         return Policy(
             config.controller_func(cn.n_actions), config.action_selection, exploration,
-            cn.n_actions, cn.obs_dim, name="addition_policy")
+            cn.n_actions, cn.obs_dim, name="simple_addition_policy")
 
     curriculum = ProductionSystemCurriculum(
         base_kwargs, config.curriculum, config.updater_class, build_env, build_core_network, build_policy)
@@ -119,8 +119,8 @@ def visualize(config):
         _config = default_config()
         width = _config.curriculum[0]['width']
         n_digits = _config.curriculum[0]['n_digits']
-        env = AdditionEnv(width, n_digits, 10, 10, 10)
-        cn = Addition(env)
+        env = SimpleAdditionEnv(width, n_digits, 10, 10, 10)
+        cn = SimpleAddition(env)
 
         controller = FixedController([0, 2, 1, 1, 3, 5, 0], cn.n_actions)
         action_selection = IdentitySelect()
@@ -128,7 +128,7 @@ def visualize(config):
         exploration = build_decaying_value(_config.exploration_schedule, 'exploration')
         policy = Policy(
             controller, action_selection, exploration,
-            cn.n_actions, cn.obs_dim, name="addition_policy")
+            cn.n_actions, cn.obs_dim, name="simple_addition_policy")
         return ProductionSystem(env, cn, policy, False, 7)
 
     with config.as_default():
