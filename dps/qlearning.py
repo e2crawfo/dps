@@ -143,11 +143,13 @@ class QLearning(ReinforcementLearningUpdater):
                 self.reg_loss = None
                 self.loss = self.q_loss
 
-            tf.summary.scalar("q_loss", self.q_loss)
             tf.summary.scalar("reward_per_ep", self.reward_per_ep)
+
+            tf.summary.scalar("q_loss", self.q_loss)
             if self.l2_norm_param > 0:
                 tf.summary.scalar("reg_loss", self.reg_loss)
-            tf.summary.scalar("total_loss", self.loss)
+
+            self._build_train()
 
         with tf.name_scope("update_target_network"):
             q_network_variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=self.q_network.scope.name)
@@ -158,8 +160,6 @@ class QLearning(ReinforcementLearningUpdater):
                 update_op = v_target.assign_sub(self.target_update_rate * (v_target - v_source))
                 target_network_update.append(update_op)
             self.target_network_update = tf.group(*target_network_update)
-
-        self._build_train()
 
 
 class QLearningCell(RNNCell):

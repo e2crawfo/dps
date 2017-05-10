@@ -5,12 +5,13 @@ import matplotlib.pyplot as plt
 from dps.experiments.mnist import TranslatedMnistDataset
 
 
-def DRAW_attention_2D(inp, fovea, delta, std, N, normalize=False):
+def DRAW_attention_2D(inp, fovea_x, fovea_y, delta, std, N, normalize=False):
     """
     Parameters
     ----------
     inp: Tensor (batch_size, B, A)
-    fovea: Tensor (batch_size, 2)
+    fovea_x: Tensor (batch_size, 1)
+    fovea_y: Tensor (batch_size, 1)
     delta: Tensor (batch_size, 1)
     std: Tensor (batch_size, 1)
     N: int
@@ -18,11 +19,11 @@ def DRAW_attention_2D(inp, fovea, delta, std, N, normalize=False):
         Whether to normalize the filter before applying it.
 
     """
-    A = int(inp.shape[1])
-    B = int(inp.shape[2])
+    B = int(inp.shape[1])
+    A = int(inp.shape[2])
 
-    fovea_x = (fovea[:, :1] + 1) * A/2
-    fovea_y = (fovea[:, 1:] + 1) * B/2
+    fovea_x = (fovea_x + 1) * A/2
+    fovea_y = (fovea_y + 1) * B/2
 
     mu_x = fovea_x + np.linspace(-A/2, A/2, N).reshape(1, -1) * delta
     mu_y = fovea_y + np.linspace(-B/2, B/2, N).reshape(1, -1) * delta
@@ -100,7 +101,8 @@ def test_mnist():
     train = tf.constant(train.reshape(-1, W, W))
 
     N = 20
-    tf_attended_images = DRAW_attention_2D(train, params[:, 0:2], params[:, 2:3], params[:, 3:4], N, normalize=0)
+    tf_attended_images = DRAW_attention_2D(
+        train, params[:, 0:1], params[:, 1:2], params[:, 2:3], params[:, 3:4], N, normalize=0)
 
     sess = tf.Session()
     sess.run(tf.global_variables_initializer())
@@ -115,14 +117,14 @@ def show_parameter_effect():
     from itertools import product
     n_digits = 1
     max_overlap = 200
-    W = 100
+    W = 28
     n_images = 2
     mnist = TranslatedMnistDataset(W, n_digits, max_overlap, n_images, for_eval=True)
 
     images, _ = mnist.next_batch(2)
     images = np.reshape(images, (-1, W, W))
 
-    N = 28
+    N = 14
 
     gx = 0.0
     gy = 0.0
@@ -143,7 +145,8 @@ def show_parameter_effect():
     images = np.repeat(images, n_settings, axis=0)
     images = tf.constant(images, dtype=tf.float32)
 
-    tf_attended_images = DRAW_attention_2D(images, params[:, 0:2], params[:, 2:3], params[:, 3:4], N, normalize=0)
+    tf_attended_images = DRAW_attention_2D(
+        images, params[:, :1], params[:, 1:2], params[:, 2:3], params[:, 3:4], N, normalize=0)
     sess = tf.Session()
     glimpses = sess.run(tf_attended_images)
 

@@ -78,7 +78,7 @@ class REINFORCE(ReinforcementLearningUpdater):
         self.reward_buffer.append(reward)
 
     def _build_graph(self):
-        with tf.name_scope("loss"):
+        with tf.name_scope("train"):
             self.obs = tf.placeholder(tf.float32, shape=(None, None, self.obs_dim), name="obs")
             self.actions = tf.placeholder(tf.float32, shape=(None, None, self.n_actions), name="actions")
             self.cumulative_rewards = tf.placeholder(
@@ -109,13 +109,13 @@ class REINFORCE(ReinforcementLearningUpdater):
                 self.reg_loss = None
                 self.loss = self.q_loss
 
-            tf.summary.scalar("policy_loss", self.q_loss)
             tf.summary.scalar("reward_per_ep", self.reward_per_ep)
+
+            tf.summary.scalar("policy_loss", self.q_loss)
             if self.l2_norm_param > 0:
                 tf.summary.scalar("reg_loss", self.reg_loss)
-            tf.summary.scalar("total_loss", self.loss)
 
-        self._build_train()
+            self._build_train()
 
 
 class ReinforceCell(RNNCell):

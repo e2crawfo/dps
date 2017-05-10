@@ -4,12 +4,26 @@ from contextlib import contextmanager
 import numpy as np
 import inspect
 import types
+from pathlib import Path
 
 import tensorflow as tf
 from tensorflow.python.ops import random_ops, math_ops
 from tensorflow.python.framework import ops, constant_op
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from tensorflow.contrib.slim import fully_connected
+
+
+def reduce_results(*inputs):
+    pass
+
+
+def build_hyperparameter_search(path, parameters, function):
+    from dps.parallel.base import Job
+    job = Job(path)
+    outputs = job.map(function, parameters)
+    job.reduce(reduce_results, outputs)
+    print("Hyperparameter search was built and saved as {}. "
+          "Use ``dps_parallel`` to execute the search.".format(path))
 
 
 class NumpySeed(object):
@@ -25,8 +39,8 @@ class NumpySeed(object):
         np.random.set_state(self.state)
 
 
-def load_or_train(sess, build_model, train, var_scope, filename, config):
-    """ Attempts to load variables into ``var_scope`` from checkpoint stored at ``filename``.
+def load_or_train(sess, build_model, train, var_scope, path=None, config=None):
+    """ Attempts to load variables into ``var_scope`` from checkpoint stored at ``path``.
 
     If said variables are not found, trains a model using the function
     ``train`` and stores the resulting variables for future use.
@@ -37,16 +51,19 @@ def load_or_train(sess, build_model, train, var_scope, filename, config):
     to_be_loaded = tf.get_collection('trainable_variables', scope=var_scope.name)
     saver = tf.train.Saver(var_list=to_be_loaded)
 
+    if path is not None:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+
     success = False
     try:
-        print("Trying to load variables for variable scope {} from checkpoint {}...".format(var_scope.name, filename))
-        saver.restore(sess, filename)
+        print("Trying to load variables for variable scope {} from checkpoint {}...".format(var_scope.name, path))
+        saver.restore(sess, path)
         success = True
         print("Load successful.")
     except tf.errors.NotFoundError:
         print("Loading failed, training a model...")
-        train(build_model, var_scope, config, filename)
-        saver.restore(sess, filename)
+        train(build_model, var_scope, path, config)
+        saver.restore(sess, path)
         print("Training successful.")
     return success
 
@@ -86,6 +103,9 @@ class FixedController(RNNCell):
         action_idx = tf.gather(action_seq, int_state)
         actions = tf.one_hot(tf.reshape(action_idx, (-1,)), self.n_actions)
         return actions, state + 1
+
+    def __len__(self):
+        return len(self.action_sequence)
 
     @property
     def state_size(self):

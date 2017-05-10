@@ -4,6 +4,7 @@ import os
 import copy
 import pandas as pd
 from tabulate import tabulate
+from pprint import pprint
 
 import tensorflow as tf
 from tensorflow.python.ops.rnn import dynamic_rnn
@@ -31,7 +32,22 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
     def build_psystem_func(self, sample=False):
         return ProductionSystemFunction(self, sample=sample)
 
-    def visualize(self, mode, n_rollouts, sample):
+    def visualize(self, mode, n_rollouts, sample, render_rollouts=None):
+        """ Visualize rollouts from a production system.
+
+        Parameters
+        ----------
+        mode: str
+            One of 'train', 'val', 'test', specifies mode for environment.
+        n_rollouts: int
+            Number of rollouts.
+        sample: bool
+            Whether to perform additional sampling step when rolling out.
+        render_rollouts: fn (optional)
+            Accepts actions, registers, rewards, and external_step_lengths and
+            performs visualization.
+
+        """
         ps_func = self.build_psystem_func(sample=sample)
         env = self.env
         env.set_mode(mode, n_rollouts)
@@ -41,6 +57,7 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
         final_registers = None
 
         registers, actions, rewards = [], [], []
+        t = 0
 
         done = False
         while not done:
@@ -70,6 +87,10 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
 
             obs = new_obs
 
+            print("info: ")
+            info.update(t=t)
+            pprint(info)
+
         external_step_lengths = [a.shape[0] for a in actions]
 
         rspec = self.core_network.register_spec
@@ -79,6 +100,9 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
 
         self._pprint_rollouts(actions, registers, rewards, external_step_lengths)
 
+        if render_rollouts is not None:
+            render_rollouts(self, actions, registers, rewards, external_step_lengths)
+
     def _pprint_rollouts(self, action_activations, registers, rewards, external_step_lengths):
         """ Prints a single rollout, which may consists of multiple external time steps.
 
@@ -87,10 +111,17 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
 
         """
         total_internal_steps = sum(external_step_lengths)
-        register_spec = self.core_network.register_spec
+
         row_names = ['t=', 'i=', ''] + self.core_network.action_names
+
+        register_spec = self.core_network.register_spec
+        omit = set(getattr(self.core_network.register_spec, 'omit', []))
         reg_ranges = {}
+
         for n, s in zip(register_spec.names, register_spec.shapes()):
+            if n in omit:
+                continue
+
             row_names.append('')
             start = len(row_names)
             for k in range(s[-1]):
@@ -111,6 +142,8 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
                 values[i, 1] = internal_t
                 values[i, 3:3+n_actions] = action_activations[i, b, :]
                 for n, v in zip(register_spec.names, registers):
+                    if n in omit:
+                        continue
                     rr = reg_ranges[n]
                     values[i, rr[0]:rr[1]] = v[i, b, :]
                 values[i, -1] = rewards[i, b]
@@ -123,6 +156,8 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
 
             # Print final values for the registers
             for n, v in zip(register_spec.names, registers):
+                if n in omit:
+                    continue
                 rr = reg_ranges[n]
                 values[-1, rr[0]:rr[1]] = v[-1, b, :]
 

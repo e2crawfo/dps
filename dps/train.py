@@ -57,92 +57,97 @@ def _training_loop(
         sess = tf.Session(graph=graph)
 
         with ExitStack() as stack:
-            stack.enter_context(graph.as_default())
-            stack.enter_context(sess)
-            stack.enter_context(sess.as_default())
-            stack.enter_context(config.as_default())
-
-            tf_seed = gen_seed()
-            tf.set_random_seed(tf_seed)
-
             try:
-                updater = next(curriculum)
+                stack.enter_context(graph.as_default())
+                stack.enter_context(sess)
+                stack.enter_context(sess.as_default())
+                stack.enter_context(config.as_default())
 
-                print("\nStarting stage {} of the curriculum. "
-                      "New updater is \n{}\n".format(stage, updater))
+                tf_seed = gen_seed()
+                tf.set_random_seed(tf_seed)
 
-            except StopIteration:
-                print("Curriculum complete after {} stage(s).".format(stage-1))
-                break
+                try:
+                    updater = next(curriculum)
 
-            if train_writer is None:
-                train_writer = tf.summary.FileWriter(exp_dir.path_for('train'), graph)
-                val_writer = tf.summary.FileWriter(exp_dir.path_for('val'))
-                print("Writing summaries to {}.".format(exp_dir.path))
+                    print("\nStarting stage {} of the curriculum. "
+                          "New updater is \n{}\n".format(stage, updater))
 
-            with tf.name_scope('stage'):
-                tf_stage = tf.constant(stage)
-                tf.summary.scalar('stage', tf_stage)
-
-            summary_op = tf.summary.merge_all()
-            tf.contrib.framework.get_or_create_global_step()
-            sess.run(uninitialized_variables_initializer())
-            sess.run(tf.assert_variables_initialized())
-
-            threshold_reached = False
-            val_loss = np.inf
-            local_step = 0
-
-            while True:
-                n_epochs = updater.n_experiences / config.n_train
-                if n_epochs >= max_epochs:
-                    print("Optimization complete, maximum number of epochs reached.")
+                except StopIteration:
+                    print("Curriculum complete after {} stage(s).".format(stage-1))
                     break
 
-                evaluate = global_step % config.eval_step == 0
-                display = global_step % config.display_step == 0
+                if train_writer is None:
+                    train_writer = tf.summary.FileWriter(exp_dir.path_for('train'), graph)
+                    val_writer = tf.summary.FileWriter(exp_dir.path_for('val'))
+                    print("Writing summaries to {}.".format(exp_dir.path))
 
-                if evaluate or display:
-                    start_time = time.time()
-                    train_summary, train_loss, val_summary, val_loss = updater.update(
-                        config.batch_size, summary_op if evaluate else None)
-                    duration = time.time() - start_time
+                with tf.name_scope('stage'):
+                    tf_stage = tf.constant(stage)
+                    tf.summary.scalar('stage', tf_stage)
 
-                    if evaluate:
-                        train_writer.add_summary(train_summary, global_step)
-                        val_writer.add_summary(val_summary, global_step)
+                summary_op = tf.summary.merge_all()
+                tf.contrib.framework.get_or_create_global_step()
+                sess.run(uninitialized_variables_initializer())
+                sess.run(tf.assert_variables_initialized())
 
-                    if display:
-                        print("Step(global: {}, local: {}): Minibatch Loss={:06.4f}, Validation Loss={:06.4f}, "
-                              "Minibatch Duration={:06.4f} seconds, Epoch={:04.2f}.".format(
-                                  global_step, local_step, train_loss, val_loss, duration, updater.env.completion))
+                threshold_reached = False
+                val_loss = np.inf
+                local_step = 0
 
-                    new_best, stop = early_stop.check(val_loss, global_step, local_step)
-
-                    if new_best:
-                        checkpoint_file = exp_dir.path_for('best_stage={}'.format(stage))
-                        print("Storing new best on local step {} (global step {}) "
-                              "with validation loss of {}.".format(
-                                  local_step, global_step, val_loss))
-                        best_path = updater.save(checkpoint_file)
-                    if stop:
-                        print("Optimization complete, early stopping triggered.")
+                while True:
+                    n_epochs = updater.n_experiences / config.n_train
+                    if n_epochs >= max_epochs:
+                        print("Optimization complete, maximum number of epochs reached.")
                         break
-                else:
-                    updater.update(config.batch_size)
 
-                if global_step % config.checkpoint_step == 0:
-                    print("Checkpointing on global step {}.".format(global_step))
-                    checkpoint_file = exp_dir.path_for('model_stage={}'.format(stage))
-                    updater.save(checkpoint_file, local_step)
+                    evaluate = global_step % config.eval_step == 0
+                    display = global_step % config.display_step == 0
 
-                if val_loss < config.threshold:
-                    print("Optimization complete, validation loss threshold reached.")
-                    threshold_reached = True
-                    break
+                    if evaluate or display:
+                        start_time = time.time()
+                        train_summary, train_loss, val_summary, val_loss = updater.update(
+                            config.batch_size, summary_op if evaluate else None)
+                        duration = time.time() - start_time
 
-                local_step += 1
-                global_step += 1
+                        if evaluate:
+                            train_writer.add_summary(train_summary, global_step)
+                            val_writer.add_summary(val_summary, global_step)
+
+                        if display:
+                            print("Step(global: {}, local: {}): Minibatch Loss={:06.4f}, Validation Loss={:06.4f}, "
+                                  "Minibatch Duration={:06.4f} seconds, Epoch={:04.2f}.".format(
+                                      global_step, local_step, train_loss, val_loss, duration, updater.env.completion))
+
+                        new_best, stop = early_stop.check(val_loss, global_step, local_step)
+
+                        if new_best:
+                            checkpoint_file = exp_dir.path_for('best_stage={}'.format(stage))
+                            print("Storing new best on local step {} (global step {}) "
+                                  "with validation loss of {}.".format(
+                                      local_step, global_step, val_loss))
+                            best_path = updater.save(checkpoint_file)
+                        if stop:
+                            print("Optimization complete, early stopping triggered.")
+                            break
+                    else:
+                        updater.update(config.batch_size)
+
+                    if global_step % config.checkpoint_step == 0:
+                        print("Checkpointing on global step {}.".format(global_step))
+                        checkpoint_file = exp_dir.path_for('model_stage={}'.format(stage))
+                        updater.save(checkpoint_file, local_step)
+
+                    if val_loss < config.threshold:
+                        print("Optimization complete, validation loss threshold reached.")
+                        threshold_reached = True
+                        break
+
+                    local_step += 1
+                    global_step += 1
+
+            except KeyboardInterrupt:
+                print("Keyboard interrupt...")
+                pass
 
             if not new_best:
                 print("Loading best hypothesis from stage {} from file {}...".format(stage, best_path))
@@ -202,7 +207,7 @@ class Curriculum(object):
         raise NotImplementedError()
 
 
-def build_and_visualize(build_psystem, mode, n_rollouts, sample):
+def build_and_visualize(build_psystem, mode, n_rollouts, sample, render_rollouts=None):
     graph = tf.Graph()
     sess = tf.Session(graph=graph)
 
@@ -220,6 +225,6 @@ def build_and_visualize(build_psystem, mode, n_rollouts, sample):
         sess.run(tf.assert_variables_initialized())
 
         start_time = time.time()
-        psystem.visualize(mode, n_rollouts, sample)
+        psystem.visualize(mode, n_rollouts, sample, render_rollouts)
         duration = time.time() - start_time
         print("Took {} seconds.".format(duration))

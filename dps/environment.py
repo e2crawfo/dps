@@ -96,7 +96,7 @@ class DifferentiableEnv(with_metaclass(abc.ABCMeta, Env)):
     @abc.abstractmethod
     def build_loss(self, policy):
         """ Return tensor with shape (batch_size, 1) """
-        raise NotImplementedError()
+        raise NotImplementedError("Abstract method.")
 
 
 class RegressionDataset(object):
@@ -229,7 +229,7 @@ class RegressionEnv(DifferentiableEnv):
         reward = -sess.run(self.loss, {self.action_ph: action, self.target_ph: self.y})
 
         done = True
-        info = {}
+        info = {"y": self.y}
         return obs, reward, done, info
 
     def _reset(self):
@@ -240,8 +240,7 @@ class RegressionEnv(DifferentiableEnv):
         return self.x
 
     def _render(self, mode='human', close=False):
-        if not close:
-            raise NotImplementedError()
+        pass
 
     def _close(self):
         pass

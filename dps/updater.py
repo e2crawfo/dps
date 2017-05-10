@@ -42,37 +42,36 @@ class Updater(with_metaclass(abc.ABCMeta, object)):
     def _build_train(self):
         """ Add ops to implement training. ``self.loss`` must already be defined. """
 
-        with tf.name_scope('train'):
-            tf.summary.scalar('loss', self.loss)
+        tf.summary.scalar('loss', self.loss)
 
-            lr = build_decaying_value(self.lr_schedule, 'learning_rate')
+        lr = build_decaying_value(self.lr_schedule, 'learning_rate')
 
-            self.optimizer = self.optimizer_class(lr)
+        self.optimizer = self.optimizer_class(lr)
 
-            tvars = tf.trainable_variables()
-            self.pure_gradients = tf.gradients(self.loss, tvars)
+        tvars = tf.trainable_variables()
+        self.pure_gradients = tf.gradients(self.loss, tvars)
 
-            if hasattr(self, 'max_grad_norm') and self.max_grad_norm > 0.0:
-                self.clipped_gradients, _ = tf.clip_by_global_norm(self.pure_gradients, self.max_grad_norm)
-            else:
-                self.clipped_gradients = self.pure_gradients
+        if hasattr(self, 'max_grad_norm') and self.max_grad_norm > 0.0:
+            self.clipped_gradients, _ = tf.clip_by_global_norm(self.pure_gradients, self.max_grad_norm)
+        else:
+            self.clipped_gradients = self.pure_gradients
 
-            global_step = tf.contrib.framework.get_or_create_global_step()
+        global_step = tf.contrib.framework.get_or_create_global_step()
 
-            grads_and_vars = zip(self.clipped_gradients, tvars)
-            if hasattr(self, 'noise_schedule'):
-                start, decay_steps, decay_rate, staircase = self.noise_schedule
-                noise = adj_inverse_time_decay(
-                    start, global_step, decay_steps, decay_rate, staircase=staircase, gamma=0.55)
-                tf.summary.scalar('noise', noise)
-                grads_and_vars = add_scaled_noise_to_gradients(grads_and_vars, noise)
+        grads_and_vars = zip(self.clipped_gradients, tvars)
+        if hasattr(self, 'noise_schedule'):
+            start, decay_steps, decay_rate, staircase = self.noise_schedule
+            noise = adj_inverse_time_decay(
+                start, global_step, decay_steps, decay_rate, staircase=staircase, gamma=0.55)
+            tf.summary.scalar('noise', noise)
+            grads_and_vars = add_scaled_noise_to_gradients(grads_and_vars, noise)
 
-            self.final_gradients = [g for g, v in grads_and_vars]
-            self.train_op = self.optimizer.apply_gradients(grads_and_vars, global_step=global_step)
+        self.final_gradients = [g for g, v in grads_and_vars]
+        self.train_op = self.optimizer.apply_gradients(grads_and_vars, global_step=global_step)
 
-            # if default_config().debug:
-            #     for grad, var in self.gradients:
-            #         tf.histogram_summary(var.name, var)
+        # if default_config().debug:
+        #     for grad, var in self.gradients:
+        #         tf.histogram_summary(var.name, var)
 
     def save(self, path, step=None):
         g = tf.get_default_graph()
@@ -147,11 +146,13 @@ class DifferentiableUpdater(Updater):
             return train_loss
 
     def _build_graph(self):
-        with tf.name_scope('loss'):
+        with tf.name_scope("train"):
             loss, self.target_placeholders = self.env.build_loss(self.f.get_output())
             self.loss = tf.reduce_mean(loss)
 
-        self._build_train()
+            tf.summary.scalar("reward_per_ep", -self.loss)
+
+            self._build_train()
 
 
 class ReinforcementLearningUpdater(Updater):
