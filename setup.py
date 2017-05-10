@@ -22,5 +22,7 @@ setup(
         "tensorflow",
         "gym",
         "tabulate"
-    ]
+    ],
+    entry_points={
+        'console_scripts': ['dps_parallel=dps.parallel:parallel_cl']}
 )
