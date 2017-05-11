@@ -6,6 +6,9 @@ from dps.reinforce import REINFORCE
 from dps.qlearning import QLearning
 from dps.policy import SoftmaxSelect, EpsilonGreedySelect, GumbelSoftmaxSelect
 from dps.utils import Config, CompositeCell, MLP
+from dps.experiments import (
+    arithmetic, simple_addition, pointer_following,
+    hard_addition, lifted_addition, translated_mnist)
 
 
 class DefaultConfig(Config):
@@ -104,8 +107,122 @@ class DebugConfig(Config):
     debug = True
 
 
+class ArithmeticConfig(DefaultConfig):
+    T = 3
+    curriculum = [
+        dict(order=[0], T=1),
+        dict(order=[0, 1], T=2),
+        dict(order=[0, 1, 0], T=3)]
+    controller_func = staticmethod(
+        lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=256),
+                                        MLP(),
+                                        n_actions))
+    log_dir = '/tmp/dps/arithmetic/'
+    trainer = arithmetic.ArithmeticTrainer()
+    visualize = arithmetic.visualize
+
+
+class SimpleAdditionConfig(DefaultConfig):
+    T = 30
+
+    curriculum = [
+        dict(width=1, n_digits=10),
+        dict(width=2, n_digits=10),
+        dict(width=3, n_digits=10),
+        dict(width=4, n_digits=10),
+        dict(width=5, n_digits=10),
+        dict(width=6, n_digits=10),
+        dict(width=7, n_digits=10),
+        dict(width=8, n_digits=10),
+        dict(width=9, n_digits=10),
+    ]
+
+    log_dir = '/tmp/dps/simple_addition/'
+
+    trainer = simple_addition.SimpleAdditionTrainer()
+    visualize = simple_addition.visualize
+
+
+class PointerConfig(DefaultConfig):
+    T = 30
+    curriculum = [
+        dict(width=1, n_digits=10),
+        dict(width=2, n_digits=10),
+        dict(width=3, n_digits=10),
+        dict(width=4, n_digits=10)]
+    log_dir = '/tmp/dps/pointer/'
+
+    trainer = pointer_following.PointerTrainer()
+    visualize = pointer_following.visualize
+
+
+class HardAdditionConfig(DefaultConfig):
+    T = 30
+    curriculum = [
+        dict(height=2, width=2, n_digits=10),
+        dict(height=2, width=3, n_digits=10),
+        dict(height=2, width=4, n_digits=10),
+        dict(height=2, width=5, n_digits=10)]
+    log_dir = '/tmp/dps/hard_addition/'
+    trainer = hard_addition.HardAdditionTrainer()
+    visualize = hard_addition.visualize
+
+
+class LiftedAdditionConfig(DefaultConfig):
+    T = 30
+    curriculum = [
+        dict(width=1, n_digits=10),
+        dict(width=2, n_digits=10),
+        dict(width=3, n_digits=10),
+        dict(width=4, n_digits=10),
+        dict(width=5, n_digits=10)]
+    log_dir = '/tmp/dps/lifted_addition/'
+
+    trainer = lifted_addition.LiftedAdditionTrainer()
+    visualize = lifted_addition.visualize
+
+
+class TranslatedMnistConfig(DefaultConfig):
+    T = 10
+    curriculum = [
+        dict(W=28, N=28),
+        # dict(W=50, N=14),
+    ]
+    inc_delta = 0.2
+    inc_x = 0.2
+    inc_y = 0.2
+    inc_sigma = 0.2
+    controller_func = staticmethod(
+        lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=8),
+                                        MLP(),
+                                        n_actions))
+
+    # controller_func = staticmethod(
+    #     lambda n_actions: FeedforwardCell(MLP([100, 100]), n_actions))
+
+    log_dir = '/tmp/dps/translated_mnist/'
+
+    base_kwargs = dict(inc_delta=0.2, inc_sigma=0.2, inc_x=0.2, inc_y=0.2)
+
+    trainer = translated_mnist.TranslatedMnistTrainer()
+    visualize = translated_mnist.visualize
+
+
+algorithms = dict(
+    diff=DiffConfig(),
+    reinforce=ReinforceConfig(),
+    qlearning=QLearningConfig())
+
+
+tasks = dict(
+    arithmetic=ArithmeticConfig(),
+    simple_addition=SimpleAdditionConfig(),
+    pointer=PointerConfig(),
+    hard_addition=HardAdditionConfig(),
+    lifted_addition=LiftedAdditionConfig(),
+    translated_mnist=TranslatedMnistConfig())
+
+
 def apply_mode(cfg, mode):
     if mode == "debug":
         cfg.update(DebugConfig())
-    elif mode == "real":
-        cfg.update(RealConfig())
