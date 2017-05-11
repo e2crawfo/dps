@@ -1,5 +1,5 @@
 import shutil
-import dill as pickle
+import dill
 from pathlib import Path
 from zipfile import ZipFile
 from collections import defaultdict
@@ -270,14 +270,14 @@ class FileSystemObjectStore(ObjectStore):
         path.parent.mkdir(exist_ok=True, parents=True)
 
         with path.open('wb') as f:
-            pickle.dump(obj, f, protocol=pickle.HIGHEST_PROTOCOL)
+            dill.dump(obj, f, protocol=dill.HIGHEST_PROTOCOL, recurse=True)
 
     def load_object(self, kind, key):
         path = self.path_for(kind, key)
         if not self.object_exists(kind, key):
             raise ValueError("No object with kind {} and key {}.".format(kind, key))
         with path.open('rb') as f:
-            obj = pickle.load(f)
+            obj = dill.load(f)
         return obj
 
     def load_objects(self, kind):
@@ -285,7 +285,7 @@ class FileSystemObjectStore(ObjectStore):
         objects = {}
         for obj_path in directory.glob('**/*.key'):
             with obj_path.open('rb') as f:
-                obj = pickle.load(f)
+                obj = dill.load(f)
             objects[split_path(obj_path, self.directory)] = obj
         return objects
 
@@ -336,7 +336,7 @@ class ZipObjectStore(ObjectStore):
         if not self.object_exists(kind, key):
             raise ValueError("No object with kind {} and key {}.".format(kind, key))
         with self._zip.open(str(path), 'r') as f:
-            obj = pickle.load(f)
+            obj = dill.load(f)
         return obj
 
     def load_objects(self, kind):
@@ -347,7 +347,7 @@ class ZipObjectStore(ObjectStore):
         objects = {}
         for o in object_files:
             with self._zip.open(o, 'r') as f:
-                obj = pickle.load(f)
+                obj = dill.load(f)
             objects[split_path(o, self._zip_root)] = obj
         return objects
 
