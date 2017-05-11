@@ -7,8 +7,8 @@ from dps import CoreNetwork, RegisterSpec
 from dps.environment import RegressionDataset, RegressionEnv
 from dps.utils import default_config
 from dps.attention import gaussian_filter
-from dps.production_system import ProductionSystemCurriculum
-from dps.train import training_loop, build_and_visualize
+from dps.production_system import ProductionSystemTrainer
+from dps.train import build_and_visualize
 from dps.policy import Policy
 
 
@@ -153,32 +153,6 @@ class HardAddition(CoreNetwork):
         return new_registers
 
 
-def train(log_dir, config, seed=-1):
-    config.seed = config.seed if seed < 0 else seed
-    np.random.seed(config.seed)
-
-    base_kwargs = dict(n_train=config.n_train, n_val=config.n_val, n_test=config.n_test)
-
-    def build_env(**kwargs):
-        return HardAdditionEnv(**kwargs)
-
-    def build_core_network(env):
-        return HardAddition(env)
-
-    def build_policy(cn, exploration):
-        config = default_config()
-        return Policy(
-            config.controller_func(cn.n_actions), config.action_selection, exploration,
-            cn.n_actions, cn.obs_dim, name="addition_policy")
-
-    curriculum = ProductionSystemCurriculum(
-        base_kwargs, config.curriculum, config.updater_class, build_env, build_core_network, build_policy)
-
-    exp_name = "selection={}_updater={}".format(
-        config.action_selection.__class__.__name__, config.updater_class.__name__)
-    training_loop(curriculum, log_dir, config, exp_name=exp_name)
-
-
 def visualize(config):
     from dps.production_system import ProductionSystem
     from dps.policy import IdentitySelect
@@ -186,9 +160,9 @@ def visualize(config):
 
     def build_psystem():
         _config = default_config()
-        height = _config.curriculum[0]['height']
-        width = _config.curriculum[0]['width']
-        n_digits = _config.curriculum[0]['n_digits']
+        height = 2
+        width = 3
+        n_digits = 10
         env = HardAdditionEnv(height, width, n_digits, 10, 10, 10)
         cn = HardAddition(env)
 
@@ -206,3 +180,11 @@ def visualize(config):
 
     with config.as_default():
         build_and_visualize(build_psystem, 'train', 1, False)
+
+
+class HardAdditionTrainer(ProductionSystemTrainer):
+    def build_env(self, **kwargs):
+        return HardAdditionEnv(**kwargs)
+
+    def build_core_network(self, env):
+        return HardAddition(env)

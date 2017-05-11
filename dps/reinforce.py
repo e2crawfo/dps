@@ -38,7 +38,8 @@ class REINFORCE(ReinforcementLearningUpdater):
 
             return_value = train_summary, -train_reward, val_summary, -val_reward
         else:
-            train_loss, train_reward, _ = sess.run([self.loss, self.reward_per_ep, self.train_op], feed_dict=feed_dict)
+            train_loss, train_reward, _ = sess.run(
+                [self.loss, self.reward_per_ep, self.train_op], feed_dict=feed_dict)
             return_value = -train_reward
         return return_value
 
@@ -85,7 +86,10 @@ class REINFORCE(ReinforcementLearningUpdater):
                 tf.float32, shape=(None, None, 1), name="cumulative_rewards")
             self.true_rewards = tf.placeholder(tf.float32, shape=(None, None, 1), name="true_rewards")
             self.reward_per_ep = tf.squeeze(
-                tf.reduce_sum(tf.reduce_mean(self.true_rewards, axis=1), axis=0, name="reward_per_ep"))
+                tf.reduce_sum(
+                    tf.reduce_mean(self.true_rewards, axis=1),
+                    axis=0,
+                    name="reward_per_ep"))
 
             inp = (self.obs, self.actions, self.cumulative_rewards)
 
@@ -98,20 +102,20 @@ class REINFORCE(ReinforcementLearningUpdater):
                 parallel_iterations=1, swap_memory=False,
                 time_major=True)
 
-            self.q_loss = -tf.reduce_mean(surrogate_objective)
+            self.policy_loss = -tf.reduce_mean(surrogate_objective)
 
             if self.l2_norm_param > 0:
                 policy_network_variables = tf.get_collection(
                     tf.GraphKeys.TRAINABLE_VARIABLES, scope=self.policy.scope)
                 self.reg_loss = tf.reduce_sum([tf.reduce_sum(tf.square(x)) for x in policy_network_variables])
-                self.loss = self.q_loss + self.l2_norm_param * self.reg_loss
+                self.loss = self.policy_loss + self.l2_norm_param * self.reg_loss
             else:
                 self.reg_loss = None
-                self.loss = self.q_loss
+                self.loss = self.policy_loss
 
             tf.summary.scalar("reward_per_ep", self.reward_per_ep)
 
-            tf.summary.scalar("policy_loss", self.q_loss)
+            tf.summary.scalar("policy_loss", self.policy_loss)
             if self.l2_norm_param > 0:
                 tf.summary.scalar("reg_loss", self.reg_loss)
 

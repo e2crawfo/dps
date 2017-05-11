@@ -12,6 +12,7 @@ class LiftedAdditionConfig(config.DefaultConfig):
         dict(width=3, n_digits=10),
         dict(width=4, n_digits=10),
         dict(width=5, n_digits=10)]
+    log_dir = '/tmp/dps/lifted_addition/'
 
 
 @pytest.mark.parametrize('config_str', ['diff', 'reinforce', 'qlearning'])
@@ -31,7 +32,7 @@ def test_lifted_addition(config_str, mode, max_steps):
     if max_steps is not None:
         cfg.max_steps = int(max_steps)
 
-    lifted_addition.train(log_dir='/tmp/dps/lifted_addition/', config=cfg, seed=10)
+    lifted_addition.LiftedAdditionTrainer().train(config=cfg, seed=10)
 
 
 def test_visualize_lifted_addition():

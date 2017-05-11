@@ -230,7 +230,8 @@ class ReplayBuffer(object):
         self.buffer = deque()
 
     def get_batch(self, batch_size):
-        idx = np.random.choice(len(self.buffer), batch_size, replace=False)
+        replace = batch_size > len(self.buffer)
+        idx = np.random.choice(len(self.buffer), batch_size, replace=replace)
         obs, actions, rewards = [], [], []
         for i in idx:
             o, a, r = self.buffer[i]

@@ -9,8 +9,8 @@ import numpy as np
 from dps import CoreNetwork, RegisterSpec
 from dps.environment import RegressionEnv
 from dps.utils import default_config, MLP
-from dps.production_system import ProductionSystemCurriculum
-from dps.train import training_loop, build_and_visualize
+from dps.production_system import ProductionSystemTrainer
+from dps.train import build_and_visualize
 from dps.policy import Policy
 from dps.experiments import mnist
 from dps.attention import DRAW_attention_2D
@@ -120,7 +120,7 @@ translated_mnist_nt = namedtuple('TranslatedMnistRegister', 'inp outp glimpse fo
 
 
 class TranslatedMnistRegSpec(RegisterSpec):
-    _visible = [1, 1, 0, 1, 1, 1, 1, 1, 1]
+    _visible = [0, 1, 1, 1, 1, 1, 1, 1, 1]
     _initial_values = None
     _namedtuple = translated_mnist_nt
     _input_names = ['inp']
@@ -203,34 +203,6 @@ class TranslatedMnist(CoreNetwork):
         return new_registers
 
 
-def train(log_dir, config, seed=-1):
-    config.seed = config.seed if seed < 0 else seed
-    np.random.seed(config.seed)
-
-    base_kwargs = dict(
-        n_train=config.n_train, n_val=config.n_val, n_test=config.n_test,
-        inc_delta=config.inc_delta, inc_sigma=config.inc_sigma, inc_x=config.inc_x, inc_y=config.inc_y)
-
-    def build_env(**kwargs):
-        return TranslatedMnistEnv(**kwargs)
-
-    def build_core_network(env):
-        return TranslatedMnist(env)
-
-    def build_policy(cn, exploration):
-        config = default_config()
-        return Policy(
-            config.controller_func(cn.n_actions), config.action_selection, exploration,
-            cn.n_actions, cn.obs_dim, name="translated_mnist_policy")
-
-    curriculum = ProductionSystemCurriculum(
-        base_kwargs, config.curriculum, config.updater_class, build_env, build_core_network, build_policy)
-
-    exp_name = "selection={}_updater={}".format(
-        config.action_selection.__class__.__name__, config.updater_class.__name__)
-    training_loop(curriculum, log_dir, config, exp_name=exp_name)
-
-
 def render_rollouts(psystem, actions, registers, reward, external_step_lengths):
     """ Render rollouts from TranslatedMnist task. """
     n_timesteps, batch_size, n_actions = actions.shape
@@ -289,13 +261,14 @@ def visualize(config):
 
     def build_psystem():
         _config = default_config()
-        W = 35
-        N = 14
+        W = 28
+        N = 28
         env = TranslatedMnistEnv(W, N, 10, 10, 10, inc_delta=0.5, inc_x=0.5, inc_y=0.5, inc_sigma=0.5)
         cn = TranslatedMnist(env)
 
-        controller = FixedController(list(range(cn.n_actions)), cn.n_actions)
+        # controller = FixedController(list(range(cn.n_actions)), cn.n_actions)
         # controller = FixedController([4, 2, 5, 6, 7, 0, 4, 3, 5, 6, 7, 0], cn.n_actions)
+        controller = FixedController([8], cn.n_actions)
         action_selection = IdentitySelect()
 
         exploration = build_decaying_value(_config.exploration_schedule, 'exploration')
@@ -306,3 +279,11 @@ def visualize(config):
 
     with config.as_default():
         build_and_visualize(build_psystem, 'train', 16, False, render_rollouts=render_rollouts)
+
+
+class TranslatedMnistTrainer(ProductionSystemTrainer):
+    def build_env(self, **kwargs):
+        return TranslatedMnistEnv(**kwargs)
+
+    def build_core_network(self, env):
+        return TranslatedMnist(env)

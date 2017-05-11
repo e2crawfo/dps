@@ -11,6 +11,7 @@ class HardAdditionConfig(config.DefaultConfig):
         dict(height=2, width=3, n_digits=10),
         dict(height=2, width=4, n_digits=10),
         dict(height=2, width=5, n_digits=10)]
+    log_dir = '/tmp/dps/hard_addition/'
 
 
 @pytest.mark.parametrize('config_str', ['diff', 'reinforce', 'qlearning'])
@@ -29,8 +30,7 @@ def test_hard_addition(config_str, mode, max_steps):
     config.apply_mode(cfg, mode)
     if max_steps is not None:
         cfg.max_steps = int(max_steps)
-
-    hard_addition.train(log_dir='/tmp/dps/hard_addition/', config=cfg, seed=10)
+    hard_addition.HardAdditionTrainer().train(config=cfg, seed=10)
 
 
 def test_visualize_hard_addition():

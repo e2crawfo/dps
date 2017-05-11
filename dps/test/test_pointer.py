@@ -11,6 +11,7 @@ class PointerConfig(config.DefaultConfig):
         dict(width=2, n_digits=10),
         dict(width=3, n_digits=10),
         dict(width=4, n_digits=10)]
+    log_dir = '/tmp/dps/pointer/'
 
 
 @pytest.mark.parametrize('config_str', ['diff', 'reinforce', 'qlearning'])
@@ -30,7 +31,7 @@ def test_pointer_following(config_str, mode, max_steps):
     if max_steps is not None:
         cfg.max_steps = int(max_steps)
 
-    pointer_following.train(log_dir='/tmp/dps/pointer/', config=cfg, seed=10)
+    pointer_following.PointerTrainer().train(config=cfg, seed=10)
 
 
 def test_visualize_pointer():

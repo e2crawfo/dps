@@ -17,7 +17,41 @@ from dps.updater import DifferentiableUpdater
 from dps.reinforce import REINFORCE
 from dps.qlearning import QLearning
 from dps.utils import default_config, build_decaying_value
-from dps.train import Curriculum
+from dps.train import Curriculum, training_loop
+from dps.policy import Policy
+
+
+class ProductionSystemTrainer(object):
+    def __init__(self):
+        pass
+
+    def build_policy(self, cn, exploration):
+        config = default_config()
+        return Policy(
+            config.controller_func(cn.n_actions), config.action_selection, exploration,
+            cn.n_actions, cn.obs_dim, name="{}_policy".format(cn.__class__.__name__))
+
+    def build_env(self, **kwargs):
+        raise NotImplementedError("Abstract method.")
+
+    def build_core_network(self, env):
+        raise NotImplementedError("Abstract method.")
+
+    def train(self, config, seed=-1):
+        config.seed = config.seed if seed < 0 else seed
+        np.random.seed(config.seed)
+
+        base_kwargs = dict(n_train=config.n_train, n_val=config.n_val, n_test=config.n_test)
+        if hasattr(config, 'base_kwargs'):
+            base_kwargs.update(config.base_kwargs)
+
+        curriculum = ProductionSystemCurriculum(
+            base_kwargs, config.curriculum, config.updater_class,
+            self.build_env, self.build_core_network, self.build_policy)
+
+        exp_name = "selection={}_updater={}".format(
+            config.action_selection.__class__.__name__, config.updater_class.__name__)
+        training_loop(curriculum, config, exp_name=exp_name)
 
 
 params = 'env core_network policy use_act T'

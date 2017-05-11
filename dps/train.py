@@ -26,11 +26,10 @@ def uninitialized_variables_initializer():
 
 
 def _training_loop(
-        curriculum, log_dir, config,
-        max_experiments=5, start_tensorboard=True, exp_name='',
-        reset_global_step=False):
+        curriculum, config, max_experiments=5, start_tensorboard=True,
+        exp_name='', reset_global_step=False):
 
-    es = ExperimentStore(log_dir, max_experiments=max_experiments, delete_old=1)
+    es = ExperimentStore(config.log_dir, max_experiments=max_experiments, delete_old=1)
     exp_dir = es.new_experiment(exp_name, use_time=1, force_fresh=1)
     config.path = exp_dir.path
 
@@ -166,7 +165,7 @@ def _training_loop(
 
 
 def training_loop(
-        curriculum, log_dir, config,
+        curriculum, config,
         max_experiments=5, start_tensorboard=True, exp_name='',
         reset_global_step=False):
 
@@ -176,13 +175,13 @@ def training_loop(
         _training_loop(**kwargs)
     except KeyboardInterrupt:
         if start_tensorboard:
-            restart_tensorboard(log_dir)
+            restart_tensorboard(config.log_dir)
 
         et, ei, tb = sys.exc_info()
         raise ei.with_traceback(tb)
 
     if start_tensorboard:
-        restart_tensorboard(log_dir)
+        restart_tensorboard(config.log_dir)
 
 
 class Curriculum(object):
