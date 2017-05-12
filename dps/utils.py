@@ -13,19 +13,6 @@ from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from tensorflow.contrib.slim import fully_connected
 
 
-def reduce_results(*inputs):
-    pass
-
-
-def build_hyperparameter_search(path, parameters, function):
-    from dps.parallel.base import Job
-    job = Job(path)
-    outputs = job.map(function, parameters)
-    job.reduce(reduce_results, outputs)
-    print("Hyperparameter search was built and saved as {}. "
-          "Use ``dps_parallel`` to execute the search.".format(path))
-
-
 class NumpySeed(object):
     def __init__(self, seed):
         self.seed = seed
@@ -211,7 +198,7 @@ class EarlyStopHook(object):
         self._best_value = None
 
         self._stage = 1
-        self._history = {}  # stage -> (best_value_step, best_value)
+        self._history = []  # each element: (best_global_step, best_local_step, best_loss_value)
 
     @property
     def early_stopped(self):
@@ -245,7 +232,7 @@ class EarlyStopHook(object):
         return new_best, stop
 
     def end_stage(self):
-        self._history[self._stage] = (self._best_value_gstep, self._best_value_lstep, self._best_value)
+        self._history.append((self._best_value_gstep, self._best_value_lstep, self._best_value))
         self._stage += 1
         self._best_value = None
         self._best_value_gstep = None
@@ -254,8 +241,7 @@ class EarlyStopHook(object):
 
     def summarize(self):
         s = ""
-        for stage in sorted(self._history):
-            bvgs, bvls, bv = self._history[stage]
+        for stage, (bvgs, bvls, bv) in enumerate(self._history):
             s += "Stage {} ".format(stage) + "*" * 30 + '\n'
             s += "* best value: {}\n".format(bv)
             s += "* global step: {}\n".format(bvgs)
@@ -350,11 +336,12 @@ def adj_inverse_time_decay(initial, global_step, decay_steps, decay_rate, gamma,
         return math_ops.pow(quotient, gamma, name=name)
 
 
-def build_decaying_value(schedule, name=None):
+def build_decaying_value(schedule, name=None, dtype=tf.float32):
     global_step = tf.contrib.framework.get_or_create_global_step()
     start, decay_steps, decay_rate, staircase = schedule
     decaying_value = tf.train.exponential_decay(
         start, global_step, decay_steps, decay_rate, staircase=staircase)
+    decaying_value = tf.cast(decaying_value, dtype)
     if name is not None:
         tf.summary.scalar(name, decaying_value)
     return decaying_value

@@ -1,6 +1,9 @@
 import pytest
+import os
 import shutil
 from pathlib import Path
+import subprocess
+from contextlib import contextmanager
 
 from dps.parallel.base import FileSystemObjectStore, ZipObjectStore
 
@@ -63,3 +66,43 @@ def test_force_unique():
 
     with pytest.raises(ValueError):
         store.save_object('dict', 1, dict(x=4))
+
+
+@contextmanager
+def remove_tree(path):
+    path = os.path.abspath(path)
+    try:
+        yield
+    finally:
+        try:
+            shutil.rmtree(path)
+        except:
+            pass
+
+
+def run_cmd(cmd):
+    try:
+        process = subprocess.run(cmd.split(), check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    except subprocess.CalledProcessError as e:
+        print(e.output.decode())
+        raise e
+    print(process.stdout.decode())
+    return process
+
+
+def test_hyper():
+    path = '/tmp/dps/test_hyper'
+    with remove_tree(path):
+        cmd = 'dps-hyper build 2 2 {} reinforce simple_addition'.format(path)
+        process = run_cmd(cmd)
+
+        cmd = 'dps-hyper run {}/latest _'.format(path)
+        process = run_cmd(cmd)
+
+        cmd = 'dps-hyper view {}/latest'.format(path)
+        process = run_cmd(cmd)
+        output = process.stdout.decode()
+        assert "n_ops: 5" in output
+        assert "n_completed_ops: 5" in output
+        assert "n_ready_incomplete_ops: 0" in output
+        assert "n_not_ready_incomplete_ops: 0" in output

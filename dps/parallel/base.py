@@ -39,23 +39,24 @@ class Operator(object):
     def __repr__(self):
         return str(self)
 
-    def status(self, store):
-        from pprint import pformat
+    def status(self, store, verbose=False):
         s = ["\n" + ("-" * 40)]
         s.append("Status report for\n {}.".format(self))
         is_ready = self.is_ready(store)
         s.append("Ready? {}".format(is_ready))
-        if is_ready:
+        if is_ready and verbose:
             s.append("Input values:")
             inputs = [store.load_object('data', ik) for ik in self.inp_keys]
-            s.append(pformat(inputs))
+            for inp in inputs:
+                s.append(str(inp))
 
         is_complete = self.is_complete(store)
         s.append("Complete? {}".format(is_complete))
-        if is_complete:
+        if is_complete and verbose:
             s.append("Output values:")
             outputs = [store.load_object('data', ok) for ok in self.outp_keys]
-            s.append(pformat(outputs))
+            for outp in outputs:
+                s.append(str(outp))
         return '\n'.join(s)
 
     def is_complete(self, store):
@@ -77,6 +78,10 @@ class Operator(object):
 
         inputs = [store.load_object('data', ik) for ik in self.inp_keys]
         func = store.load_object('function', self.func_key)
+
+        for inp in inputs:
+            if hasattr(inp, 'log_dir'):
+                inp.log_dir = str(store.directory)
 
         outputs = func(*inputs)
 
@@ -166,7 +171,7 @@ class Job(object):
 
         return op_result
 
-    def summary(self):
+    def summary(self, verbose=False):
         operators = list(self.objects.load_objects('operator').values())
         s = ["Job Summary\n-----------"]
         s.append("\nn_ops: {}".format(len(operators)))
@@ -177,7 +182,7 @@ class Job(object):
 
         s.append("\nn_completed_ops: {}".format(len(completed_ops)))
         for op in completed_ops:
-            s.append(op.status(self.objects))
+            s.append(op.status(self.objects, verbose=verbose))
 
         is_ready = [op.is_ready(self.objects) for op in operators]
         ready_incomplete_ops = [op for i, op in enumerate(incomplete_ops) if is_ready[i]]
@@ -185,11 +190,11 @@ class Job(object):
 
         s.append("\nn_ready_incomplete_ops: {}".format(len(ready_incomplete_ops)))
         for op in ready_incomplete_ops:
-            s.append(op.status(self.objects))
+            s.append(op.status(self.objects, verbose=verbose))
 
         s.append("\nn_not_ready_incomplete_ops: {}".format(len(not_ready_incomplete_ops)))
         for op in not_ready_incomplete_ops:
-            s.append(op.status(self.objects))
+            s.append(op.status(self.objects, verbose=verbose))
 
         return '\n'.join(s)
 
@@ -425,11 +430,21 @@ def run_command(args):
 
 def view_command(args):
     job = Job(args.path)
-    print(job.summary())
+    print(job.summary(args.verbose))
 
 
-def parallel_cl():
-    parser = argparse.ArgumentParser(description='Run jobs and view their statuses.')
+def parallel_cl(desc, additional_cmds=None):
+    """
+    Parameters
+    ----------
+    desc: str
+        Description for the script.
+    additional_cmds: list
+        Each element has form (name, help, func, *(arg_name, kwargs)).
+
+    """
+    desc = desc or 'Run jobs and view their statuses.'
+    parser = argparse.ArgumentParser(description=desc)
 
     parser.add_argument(
         '--pdb', action='store_true', help="If supplied, enter post-mortem debugging on error.")
@@ -450,13 +465,28 @@ def parallel_cl():
 
     view_parser.set_defaults(func=view_command)
 
+    subparser_names = ['run', 'view']
+
+    additional_cmds = additional_cmds or []
+    for cmd in additional_cmds:
+        subparser_names.append(cmd[0])
+        cmd_parser = subparsers.add_parser(cmd[0], help=cmd[1])
+        for arg_name, kwargs in cmd[3:]:
+            cmd_parser.add_argument(arg_name, **kwargs)
+        cmd_parser.set_defaults(func=cmd[2])
+
     args = parser.parse_args()
+
+    try:
+        func = args.func
+    except AttributeError:
+        raise ValueError("Missing ``command`` argument to script. Should be one of {}.".format(subparser_names))
 
     if args.pdb:
         with pdb_postmortem():
-            args.func(args)
+            func(args)
     else:
-        args.func(args)
+        func(args)
 
 
 @contextmanager

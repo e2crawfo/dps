@@ -24,5 +24,6 @@ setup(
         "tabulate"
     ],
     entry_points={
-        'console_scripts': ['dps_parallel=dps.parallel:parallel_cl']}
+        'console_scripts': ['dps-parallel=dps.parallel:parallel_cl',
+                            'dps-hyper=dps.parallel:hyper_search_cl']}
 )

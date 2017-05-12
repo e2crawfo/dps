@@ -49,6 +49,8 @@ class DefaultConfig(Config):
 
     debug = False
 
+    verbose = False
+
 
 class DiffConfig(Config):
     updater_class = DifferentiableUpdater
@@ -124,18 +126,23 @@ class ArithmeticConfig(DefaultConfig):
 
 class SimpleAdditionConfig(DefaultConfig):
     T = 30
-
     curriculum = [
         dict(width=1, n_digits=10),
         dict(width=2, n_digits=10),
         dict(width=3, n_digits=10),
-        dict(width=4, n_digits=10),
-        dict(width=5, n_digits=10),
-        dict(width=6, n_digits=10),
-        dict(width=7, n_digits=10),
-        dict(width=8, n_digits=10),
-        dict(width=9, n_digits=10),
     ]
+
+    # curriculum = [
+    #     dict(width=1, n_digits=10),
+    #     dict(width=2, n_digits=10),
+    #     dict(width=3, n_digits=10),
+    #     dict(width=4, n_digits=10),
+    #     dict(width=5, n_digits=10),
+    #     dict(width=6, n_digits=10),
+    #     dict(width=7, n_digits=10),
+    #     dict(width=8, n_digits=10),
+    #     dict(width=9, n_digits=10),
+    # ]
 
     log_dir = '/tmp/dps/simple_addition/'
 

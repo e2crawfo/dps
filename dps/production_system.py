@@ -47,11 +47,11 @@ class ProductionSystemTrainer(object):
 
         curriculum = ProductionSystemCurriculum(
             base_kwargs, config.curriculum, config.updater_class,
-            self.build_env, self.build_core_network, self.build_policy)
+            self.build_env, self.build_core_network, self.build_policy, verbose=config.verbose)
 
         exp_name = "selection={}_updater={}".format(
             config.action_selection.__class__.__name__, config.updater_class.__name__)
-        training_loop(curriculum, config, exp_name=exp_name)
+        return training_loop(curriculum, config, exp_name=exp_name)
 
 
 params = 'env core_network policy use_act T'
@@ -570,12 +570,13 @@ class ProductionSystemEnv(Env):
 
 
 class ProductionSystemCurriculum(Curriculum):
-    def __init__(self, base_kwargs, curriculum, updater_class, build_env, build_core_network, build_policy):
+    def __init__(self, base_kwargs, curriculum, updater_class, build_env, build_core_network, build_policy, verbose=False):
         super(ProductionSystemCurriculum, self).__init__(base_kwargs, curriculum)
         self.updater_class = updater_class
         self.build_env = build_env
         self.build_core_network = build_core_network
         self.build_policy = build_policy
+        self.verbose = verbose
 
     def __call__(self):
         if self.stage == self.prev_stage:
@@ -646,7 +647,8 @@ class ProductionSystemCurriculum(Curriculum):
 
     def end_stage(self):
         sample = self.updater_class in [REINFORCE, QLearning]
-        self.current_psystem.visualize('train', 5, sample)
+        if self.verbose:
+            self.current_psystem.visualize('train', 5, sample)
 
         # Occurs inside the same default graph, session and config as the previous call to __call__.
         g = tf.get_default_graph()

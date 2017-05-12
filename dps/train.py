@@ -162,6 +162,12 @@ def _training_loop(
                 break
 
     print(early_stop.summarize())
+    result = dict(
+        config=config,
+        output=early_stop._history,
+        n_stages=len(early_stop._history)
+    )
+    return result
 
 
 def training_loop(
@@ -172,7 +178,7 @@ def training_loop(
     kwargs = locals().copy()
 
     try:
-        _training_loop(**kwargs)
+        value = _training_loop(**kwargs)
     except KeyboardInterrupt:
         if start_tensorboard:
             restart_tensorboard(config.log_dir)
@@ -182,6 +188,8 @@ def training_loop(
 
     if start_tensorboard:
         restart_tensorboard(config.log_dir)
+
+    return value
 
 
 class Curriculum(object):
