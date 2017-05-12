@@ -118,31 +118,29 @@ class DifferentiableUpdater(Updater):
         super(DifferentiableUpdater, self).__init__(env)
 
     def _update(self, batch_size, summary_op=None):
-        env, loss = self.env, self.loss
-        train_op, f, targets = self.train_op, self.f, self.target_placeholders
         sess = tf.get_default_session()
 
-        train_x, train_y = env.train.next_batch(batch_size)
+        train_x, train_y = self.env.train.next_batch(batch_size)
         if default_config().debug:
             print("x", train_x)
             print("y", train_y)
 
-        feed_dict = f.build_feeddict(train_x)
-        feed_dict[targets] = train_y
+        feed_dict = self.f.build_feeddict(train_x)
+        feed_dict[self.target_placeholders] = train_y
         feed_dict[self.is_training] = True
 
         if summary_op is not None:
-            train_summary, train_loss, _ = sess.run([summary_op, loss, train_op], feed_dict=feed_dict)
+            train_summary, train_loss, _ = sess.run([summary_op, self.loss, self.train_op], feed_dict=feed_dict)
 
-            val_x, val_y = env.val.next_batch()
-            val_feed_dict = f.build_feeddict(val_x)
-            val_feed_dict[targets] = val_y
+            val_x, val_y = self.env.val.next_batch()
+            val_feed_dict = self.f.build_feeddict(val_x)
+            val_feed_dict[self.target_placeholders] = val_y
             val_feed_dict[self.is_training] = False
 
-            val_summary, val_loss = sess.run([summary_op, loss], feed_dict=val_feed_dict)
+            val_summary, val_loss = sess.run([summary_op, self.loss], feed_dict=val_feed_dict)
             return train_summary, train_loss, val_summary, val_loss
         else:
-            train_loss, _ = sess.run([loss, train_op], feed_dict=feed_dict)
+            train_loss, _ = sess.run([self.loss, self.train_op], feed_dict=feed_dict)
             return train_loss
 
     def _build_graph(self):

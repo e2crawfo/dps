@@ -78,7 +78,7 @@ class QLearning(ReinforcementLearningUpdater):
     def build_feeddict(self):
         obs = np.array(self.obs_buffer)
         actions = np.array(self.action_buffer)
-        rewards = np.expand_dims(np.array(self.reward_buffer), -1)
+        rewards = np.array(self.reward_buffer)
 
         feed_dict = {
             self.obs: obs,
@@ -242,8 +242,7 @@ class ReplayBuffer(object):
         # TODO: need to pad returned array with zeros if trajectories are different lengths
         obs = np.transpose(obs, (1, 0, 2))
         actions = np.transpose(actions, (1, 0, 2))
-        rewards = np.transpose(rewards)
-        assert rewards.ndim == 2
+        rewards = np.transpose(rewards, (1, 0, 2))
 
         return obs, actions, rewards
 
@@ -251,7 +250,7 @@ class ReplayBuffer(object):
         # Assumes shape is (n_timsesteps, batch_size, dim)
         obs = list(np.transpose(obs, (1, 0, 2)))
         actions = list(np.transpose(actions, (1, 0, 2)))
-        rewards = list(np.transpose(rewards))
+        rewards = list(np.transpose(rewards, (1, 0, 2)))
 
         for o, a, r in zip(obs, actions, rewards):
             self.buffer.append((o, a, r))

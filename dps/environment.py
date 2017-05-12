@@ -61,7 +61,7 @@ class BatchBox(gym.Space):
 class Env(with_metaclass(abc.ABCMeta, GymEnv)):
     def set_mode(self, kind, batch_size):
         # It would be preferable to have these be passed to ``reset``, but
-        # the gym interface makes no affordances for extra args to ``reset``.
+        # the gym interface do not allow extra args to ``reset``.
         assert kind in ['train', 'val', 'test'], "Unknown kind {}.".format(kind)
         self._kind = kind
         self._batch_size = batch_size
@@ -91,11 +91,21 @@ class Env(with_metaclass(abc.ABCMeta, GymEnv)):
 
 class DifferentiableEnv(with_metaclass(abc.ABCMeta, Env)):
     """ An environment which, when provided with a differentiable policy,
-        has a loss that it is a differentiable function of its input. """
+        has a loss that is a differentiable function of its input. """
 
     @abc.abstractmethod
-    def build_loss(self, policy):
-        """ Return tensor with shape (batch_size, 1) """
+    def build_loss(self, actions):
+        """
+
+        Parameters
+        ----------
+        actions: Tensor (batch_size, n_actions)
+
+        Returns
+        -------
+        loss: Tensor(batch_size, 1)
+
+        """
         raise NotImplementedError("Abstract method.")
 
 
@@ -209,9 +219,16 @@ class RegressionEnv(DifferentiableEnv):
     def completion(self):
         return self.train.completion
 
-    def build_loss(self, policy_output):
-        target_ph = tf.placeholder(tf.float32, shape=policy_output.shape, name='target')
-        loss = tf.reduce_mean((policy_output - target_ph)**2, axis=-1)
+    def build_loss(self, actions):
+        target_ph = tf.placeholder(tf.float32, shape=actions.shape, name='target')
+        loss = tf.reduce_mean((actions - target_ph)**2, axis=-1, keep_dims=True)
+        return loss, target_ph
+
+    def build_rl_loss(self, actions):
+        """ A separate loss used in the RL setting where things are not required to be differentiable. """
+        target_ph = tf.placeholder(tf.float32, shape=actions.shape, name='target')
+        error = tf.reduce_sum(tf.abs(actions - target_ph), axis=-1, keep_dims=True)
+        loss = tf.cast(error > 0.1, tf.float32)
         return loss, target_ph
 
     def _step(self, action):
@@ -224,7 +241,9 @@ class RegressionEnv(DifferentiableEnv):
 
         if self.action_ph is None:
             self.action_ph = tf.placeholder(tf.float32, (None, self.n_actions))
-            self.loss, self.target_ph = self.build_loss(self.action_ph)
+            build_loss = getattr(self, 'build_rl_loss', self.build_loss)
+            self.loss, self.target_ph = build_loss(self.action_ph)
+
         sess = tf.get_default_session()
         reward = -sess.run(self.loss, {self.action_ph: action, self.target_ph: self.y})
 

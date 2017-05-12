@@ -355,6 +355,9 @@ class Config(object):
         s = "<{} -\n{}\n>".format(self.__class__.__name__, pformat(attrs))
         return s
 
+    def __repr__(self):
+        return str(self)
+
     def as_default(self):
         return context(self.__class__, self)
 
@@ -367,6 +370,9 @@ class Config(object):
             attr for attr in dir(self)
             if (not attr.startswith('_') and
                 not isinstance(getattr(self, attr), types.MethodType)))
+
+    def __getitem__(self, key):
+        return getattr(self, key)
 
 
 @contextmanager

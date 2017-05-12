@@ -13,8 +13,7 @@ from dps.policy import Policy
 
 
 class SimpleAdditionDataset(RegressionDataset):
-    def __init__(
-            self, width, n_digits, n_examples, for_eval=False, shuffle=True):
+    def __init__(self, width, n_digits, n_examples, for_eval=False, shuffle=True):
         self.width = width
         self.n_digits = n_digits
 

@@ -48,20 +48,19 @@ class REINFORCE(ReinforcementLearningUpdater):
         actions = np.array(self.action_buffer)
 
         T = len(self.reward_buffer)
-        discounts = np.logspace(0, T-1, T, base=self.gamma).reshape(-1, 1)
+        discounts = np.logspace(0, T-1, T, base=self.gamma).reshape(-1, 1, 1)
         true_rewards = np.array(self.reward_buffer)
         discounted_rewards = true_rewards * discounts
         sum_discounted_rewards = np.flipud(np.cumsum(np.flipud(discounted_rewards), axis=0))
         baselines = sum_discounted_rewards.mean(1, keepdims=True)
         rewards = sum_discounted_rewards - baselines
-        rewards = np.expand_dims(rewards, -1)
 
-        feed_dict = {
+        return {
             self.obs: obs,
             self.actions: actions,
             self.cumulative_rewards: rewards,
-            self.true_rewards: np.expand_dims(true_rewards, -1)}
-        return feed_dict
+            self.true_rewards: true_rewards
+        }
 
     def start_episode(self):
         pass
