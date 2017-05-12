@@ -65,12 +65,17 @@ class Operator(object):
     def is_ready(self, store):
         return all([store.object_exists('data', ik) for ik in self.inp_keys])
 
-    def run(self, store):
+    def run(self, store, force):
         print("\n\n" + ("-" * 40))
         print("Running op {}".format(self.name))
+        force_unique = True
         if self.is_complete(store):
-            print("Skipping op {}, already complete.".format(self.name))
-            return False
+            if force:
+                force_unique = False
+                print("Op {} is already complete, but ``force`` is True, so we're running it anyway.".format(self.name))
+            else:
+                print("Skipping op {}, already complete.".format(self.name))
+                return False
 
         if not self.is_ready(store):
             print("Skipping op {}, deps are not met.".format(self.name))
@@ -86,10 +91,10 @@ class Operator(object):
         outputs = func(*inputs)
 
         if len(self.outp_keys) == 1:
-            store.save_object('data', self.outp_keys[0], outputs, force_unique=True)
+            store.save_object('data', self.outp_keys[0], outputs, force_unique=force_unique, clobber=True)
         else:
             for o, ok in zip(outputs, self.outp_keys):
-                store.save_object('data', ok, o, force_unique=True)
+                store.save_object('data', ok, o, force_unique=force_unique, clobber=True)
 
         print("Op complete.")
 
@@ -108,10 +113,83 @@ class Signal(object):
         return "Signal(key={}, name={})".format(self.key, self.name)
 
 
-class Job(object):
+class ReadOnlyJob(object):
     def __init__(self, path):
         # A store for functions, data and operators.
-        self.objects = FileSystemObjectStore(path)
+        path = Path(path)
+        if path.suffix == '.zip':
+            self.objects = ZipObjectStore(path)
+        else:
+            self.objects = FileSystemObjectStore(path)
+
+    def get_ops(self, pattern=None, sort=True):
+        operators = list(self.objects.load_objects('operator').values())
+        if pattern is not None:
+            selected = KeywordMapping.batch([op.name for op in operators], pattern)
+            operators = (op for i, op in enumerate(operators) if selected[i])
+        if sort:
+            operators = sorted(operators, key=lambda op: op.name)
+        return operators
+
+    def _print_ops(self, ops, verbose):
+        s = []
+        if verbose == 1:
+            for op in ops:
+                s.append(op.name)
+        elif verbose == 2:
+            for op in ops:
+                s.append(op.status(self.objects, verbose=False))
+        elif verbose == 3:
+            for op in ops:
+                s.append(op.status(self.objects, verbose=True))
+        return '\n'.join(s)
+
+    def summary(self, pattern=None, verbose=0):
+        operators = self.get_ops(pattern, sort=True)
+        operators = list(self.objects.load_objects('operator').values())
+        s = ["Job Summary\n-----------"]
+        s.append("\nn_ops: {}".format(len(operators)))
+
+        is_complete = [op.is_complete(self.objects) for op in operators]
+        completed_ops = [op for i, op in enumerate(operators) if is_complete[i]]
+        incomplete_ops = [op for i, op in enumerate(operators) if not is_complete[i]]
+
+        s.append("\nn_completed_ops: {}".format(len(completed_ops)))
+        s.append(self._print_ops(completed_ops, verbose))
+
+        is_ready = [op.is_ready(self.objects) for op in operators]
+        ready_incomplete_ops = [op for i, op in enumerate(incomplete_ops) if is_ready[i]]
+        not_ready_incomplete_ops = [op for i, op in enumerate(incomplete_ops) if not is_ready[i]]
+
+        s.append("\nn_ready_incomplete_ops: {}".format(len(ready_incomplete_ops)))
+        s.append(self._print_ops(ready_incomplete_ops, verbose))
+
+        s.append("\nn_not_ready_incomplete_ops: {}".format(len(not_ready_incomplete_ops)))
+        s.append(self._print_ops(not_ready_incomplete_ops, verbose))
+
+        return '\n'.join(s)
+
+    def completion(self, pattern=None):
+        operators = list(self.get_ops(pattern, sort=False))
+        is_complete = [op.is_complete(self.objects) for op in operators]
+        completed_ops = [op for i, op in enumerate(operators) if is_complete[i]]
+        incomplete_ops = [op for i, op in enumerate(operators) if not is_complete[i]]
+
+        is_ready = [op.is_ready(self.objects) for op in operators]
+        ready_incomplete_ops = [op for i, op in enumerate(incomplete_ops) if is_ready[i]]
+        not_ready_incomplete_ops = [op for i, op in enumerate(incomplete_ops) if not is_ready[i]]
+
+        return dict(
+            n_ops=len(operators),
+            n_complete=len(completed_ops),
+            n_incomplete=len(incomplete_ops),
+            n_ready_incomplete=len(ready_incomplete_ops),
+            n_not_ready_incomplete=len(not_ready_incomplete_ops))
+
+
+class Job(ReadOnlyJob):
+    def __init__(self, path):
+        self.objects = FileSystemObjectStore(path)  # A store for functions, data and operators.
         self.map_idx = 0
         self.reduce_idx = 0
         self.n_signals = 0
@@ -171,44 +249,19 @@ class Job(object):
 
         return op_result
 
-    def summary(self, verbose=False):
-        operators = list(self.objects.load_objects('operator').values())
-        s = ["Job Summary\n-----------"]
-        s.append("\nn_ops: {}".format(len(operators)))
+    def run(self, pattern, indices, force):
+        operators = self.get_ops(pattern)
 
-        is_complete = [op.is_complete(self.objects) for op in operators]
-        completed_ops = [op for i, op in enumerate(operators) if is_complete[i]]
-        incomplete_ops = [op for i, op in enumerate(operators) if not is_complete[i]]
-
-        s.append("\nn_completed_ops: {}".format(len(completed_ops)))
-        for op in completed_ops:
-            s.append(op.status(self.objects, verbose=verbose))
-
-        is_ready = [op.is_ready(self.objects) for op in operators]
-        ready_incomplete_ops = [op for i, op in enumerate(incomplete_ops) if is_ready[i]]
-        not_ready_incomplete_ops = [op for i, op in enumerate(incomplete_ops) if not is_ready[i]]
-
-        s.append("\nn_ready_incomplete_ops: {}".format(len(ready_incomplete_ops)))
-        for op in ready_incomplete_ops:
-            s.append(op.status(self.objects, verbose=verbose))
-
-        s.append("\nn_not_ready_incomplete_ops: {}".format(len(not_ready_incomplete_ops)))
-        for op in not_ready_incomplete_ops:
-            s.append(op.status(self.objects, verbose=verbose))
-
-        return '\n'.join(s)
-
-    def run(self, pattern, indices):
-        operators = list(self.objects.load_objects('operator').values())
-        selected = KeywordMapping.batch([op.name for op in operators], pattern)
-        operators = sorted((op for i, op in enumerate(operators) if selected[i]), key=lambda op: op.name)
         if not operators:
             return False
 
         if not indices:
             indices = set(range(len(operators)))
 
-        return [op.run(self.objects) for i, op in enumerate(operators) if i in indices]
+        return [op.run(self.objects, force) for i, op in enumerate(operators) if i in indices]
+
+    def zip(self, archive_name=None):
+        return self.objects.zip(archive_name)
 
 
 class ObjectStore(object):
@@ -277,6 +330,13 @@ class FileSystemObjectStore(ObjectStore):
         with path.open('wb') as f:
             dill.dump(obj, f, protocol=dill.HIGHEST_PROTOCOL, recurse=True)
 
+    def delete_object(self, kind, key):
+        path = self.path_for(kind, key)
+        try:
+            shutil.rmtree(str(path))
+        except:
+            pass
+
     def load_object(self, kind, key):
         path = self.path_for(kind, key)
         if not self.object_exists(kind, key):
@@ -302,12 +362,17 @@ class FileSystemObjectStore(ObjectStore):
         directory = self.path_for(kind)
         return list(split_path(p, self.directory) for p in directory.glob('**/*.key'))
 
-    def zip(self, archive_name):
+    def zip(self, archive_name=None):
+        if not archive_name:
+            archive_name = Path(self.directory).name
+
         # Within the archive, all entries are contained inside
         # a directory with a name given by ``base_dir``.
-        shutil.make_archive(
+        archive_path = shutil.make_archive(
             str(archive_name), 'zip', root_dir=str(self.directory.parent),
             base_dir=str(self.directory.name))
+        print("Zipped {} as {}.".format(self.directory, archive_path))
+        # shutil.rmtree(str(self.directory))
 
 
 class ZipObjectStore(ObjectStore):
@@ -369,9 +434,8 @@ class ZipObjectStore(ObjectStore):
 
 def zip_root(zipfile):
     """ Get the name of the root directory of a zip file, if it has one. """
-    if isinstance(zipfile, str):
-        zipfile = ZipFile(zipfile, 'r')
-    assert isinstance(zipfile, ZipFile)
+    if not isinstance(zipfile, ZipFile):
+        zipfile = ZipFile(str(zipfile), 'r')
     zip_root = min(
         [z.filename for z in zipfile.infolist()],
         key=lambda s: len(s))
@@ -425,12 +489,12 @@ class KeywordMapping(object):
 
 def run_command(args):
     job = Job(args.path)
-    job.run(args.pattern, args.indices)
+    job.run(args.pattern, args.indices, args.force)
 
 
 def view_command(args):
-    job = Job(args.path)
-    print(job.summary(args.verbose))
+    job = ReadOnlyJob(args.path)
+    print(job.summary(verbose=args.verbose))
 
 
 def parallel_cl(desc, additional_cmds=None):
@@ -457,6 +521,9 @@ def parallel_cl(desc, additional_cmds=None):
     run_parser.add_argument('path', type=str)
     run_parser.add_argument('pattern', type=str)
     run_parser.add_argument('indices', nargs='*', type=int)
+    run_parser.add_argument(
+        '--force', action='store_true', help="If supplied, run the selected operators "
+                                             "even if they've already been completed.")
 
     run_parser.set_defaults(func=run_command)
 

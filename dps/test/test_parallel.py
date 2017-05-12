@@ -93,7 +93,7 @@ def run_cmd(cmd):
 def test_hyper():
     path = '/tmp/dps/test_hyper'
     with remove_tree(path):
-        cmd = 'dps-hyper build 2 2 {} reinforce simple_addition'.format(path)
+        cmd = 'dps-hyper build {} this_is_a_test 2 2 reinforce simple_addition'.format(path)
         process = run_cmd(cmd)
 
         cmd = 'dps-hyper run {}/latest _'.format(path)

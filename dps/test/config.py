@@ -89,7 +89,7 @@ class QLearningConfig(Config):
     recurrent = True
     patience = np.inf
     batch_size = 100
-    test_time_explore = 0.0
+    test_time_explore = None
 
 
 class RealConfig(Config):
@@ -166,10 +166,9 @@ class PointerConfig(DefaultConfig):
 class HardAdditionConfig(DefaultConfig):
     T = 30
     curriculum = [
-        dict(height=2, width=2, n_digits=10),
-        dict(height=2, width=3, n_digits=10),
-        dict(height=2, width=4, n_digits=10),
-        dict(height=2, width=5, n_digits=10)]
+        dict(height=2, width=3, n_digits=2),
+        dict(height=2, width=4, n_digits=2),
+        dict(height=2, width=5, n_digits=2)]
     log_dir = '/tmp/dps/hard_addition/'
     trainer = hard_addition.HardAdditionTrainer()
     visualize = hard_addition.visualize

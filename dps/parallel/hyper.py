@@ -1,6 +1,9 @@
 import copy
 from scipy.stats import distributions as spdists
 import numpy as np
+import matplotlib.pyplot as plt
+from collections import defaultdict
+from pathlib import Path
 
 from dps.utils import gen_seed
 from dps.test.config import algorithms, tasks
@@ -37,11 +40,6 @@ class ChoiceDist(object):
         return np.random.choice(self.choices, shape)
 
 
-class SeedDist(object):
-    def rvs(self, shape):
-        return np.random.randint(np.iinfo(np.int32).max, size=shape)
-
-
 def sample_configs(n, repeats, base_config, distributions):
     """
     Parameters
@@ -74,7 +72,86 @@ def sample_configs(n, repeats, base_config, distributions):
     return configs
 
 
-def build_search(n, repeats, path, alg, task):
+def reduce_hyper_results(*results):
+    # Only take settings which got to the latest stage of the curriculum
+    deepest = max(r['n_stages'] for r in results)
+    results = [r for r in results if r['n_stages'] == deepest]
+
+    fig, subplots = plt.subplots(deepest, 2)
+
+    x_lim = [np.inf, -np.inf]
+    y_lim = [np.inf, -np.inf]
+    for stage in range(deepest):
+        stage_results = [r for r in results if r['n_stages'] > stage]
+        n_reached = len(stage_results)
+        print("Num settings that reached stage {}: {}.".format(stage, n_reached))
+
+        losses = [sr['output'][stage][2] for sr in stage_results]
+
+        # Losses reached on current stage.
+        axis = subplots[stage, 0]
+        n, bins, patches = axis.hist(losses, 50, normed=1, facecolor='green', alpha=0.75)
+        axis.set_title('Individual')
+
+        y_lim[0] = min(y_lim[0], min(n))
+        y_lim[1] = max(y_lim[1], max(n))
+        x_lim[0] = min(x_lim[0], min(bins))
+        x_lim[1] = max(x_lim[1], max(bins))
+
+        grouped = defaultdict(list)
+        for sr in stage_results:
+            grouped[sr['config']['idx']].append(sr['output'][stage][2])
+
+        mean_losses = [np.mean(v) for v in grouped.values()]
+
+        # Mean losses reached on current stage.
+        axis = subplots[stage, 1]
+        n, bins, patches = axis.hist(mean_losses, 50, normed=1, facecolor='blue', alpha=0.75)
+        axis.set_title('Group Averages')
+
+        y_lim[0] = min(y_lim[0], min(n))
+        y_lim[1] = max(y_lim[1], max(n))
+        x_lim[0] = min(x_lim[0], min(bins))
+        x_lim[1] = max(x_lim[1], max(bins))
+
+    x_diff = (x_lim[1] - x_lim[0])
+    x_lim = (x_lim[0] - 0.05 * x_diff, x_lim[1] + 0.05 * x_diff)
+    y_diff = (y_lim[1] - y_lim[0])
+    y_lim = (y_lim[0] - 0.05 * y_diff, y_lim[1] + 0.05 * y_diff)
+
+    for ax in subplots.flatten():
+        ax.set_xlim(x_lim)
+        ax.set_ylim(y_lim)
+
+    # Rank settings by performance on the greatest curriculum stage reached by any setting.
+    reached_deepest = [r for r in results if r['n_stages'] == deepest]
+    ranked = sorted(reached_deepest, key=lambda r: r['output'][-1][2])
+    ranked = [(r['output'][-1][2], r['config']) for r in ranked]
+
+    print("Best 3 ranked: ")
+    print(ranked[:3])
+
+    grouped = defaultdict(list)
+    configs = {}
+    for sr in reached_deepest:
+        idx = sr['config']['idx']
+        grouped[idx].append(sr['output'][-1][2])
+        if idx not in configs:
+            configs[idx] = sr['config']
+
+    scores = {k: np.mean(v) for k, v in grouped.items()}
+    mean_ranked = sorted(scores, key=lambda k: scores[k])
+    mean_ranked = [(scores[idx], configs[idx]) for idx in mean_ranked]
+
+    print("Best 3 group ranked: ")
+    print(mean_ranked[:3])
+
+    plt.tight_layout()
+
+    plt.show()
+
+
+def build_search(name, n, repeats, path, alg, task, _zip):
     config = tasks[task]
     config.update(algorithms[alg])
 
@@ -97,7 +174,7 @@ def build_search(n, repeats, path, alg, task):
     configs = sample_configs(n, repeats, config, distributions)
 
     es = ExperimentStore(str(path), max_experiments=10, delete_old=1)
-    exp_dir = es.new_experiment('{}_{}'.format(alg, task), use_time=1, force_fresh=1)
+    exp_dir = es.new_experiment('{}_{}_{}'.format(name, alg, task), use_time=0, force_fresh=1)
     print(str(config))
 
     print("Building parameter search at {}.".format(exp_dir.path))
@@ -106,28 +183,37 @@ def build_search(n, repeats, path, alg, task):
     summaries = job.map(config.trainer.train, configs)
     best = job.reduce(reduce_hyper_results, summaries)
 
-
-def reduce_hyper_results(*results):
-    # Only take settings which got to the latest stage of the curriculum
-    deepest = max(r['n_stages'] for r in results)
-    results = [r for r in results if r['n_stages'] == deepest]
-
-    # Take the best of those that got to the latest stage.
-    return min(results, key=lambda r: r['output'][-1][2])
+    if _zip:
+        job.zip()
 
 
 def _build_search(args):
-    build_search(args.n, args.repeats, args.path, args.alg, args.task)
+    build_search(args.n, args.repeats, args.path, args.alg, args.task, args.zip)
+
+
+def _zip_search(args):
+    job = Job(args.path)
+    archive_name = args.name or Path(args.path).stem
+    job.zip(archive_name)
 
 
 def hyper_search_cl():
     from dps.parallel.base import parallel_cl
-    cmd = (
+    build_cmd = (
         'build', 'Build a hyper-parameter search.', _build_search,
+        ('path', dict(help="Location to save the built job.", type=str)),
+        ('name', dict(help="Memorable name for the search.", type=int)),
         ('n', dict(help="Number of parameter settings to try.", type=int)),
         ('repeats', dict(help="Number of repeats for each parameter setting.", type=int)),
-        ('path', dict(help="Location to save the built job.", type=str)),
         ('alg', dict(help="Algorithm to use for learning.", type=str)),
-        ('task', dict(help="Task to test on.", type=str))
+        ('task', dict(help="Task to test on.", type=str)),
+        ('--zip', dict(action='store_true', help="Whether to compress the result."))
     )
-    parallel_cl('Build, run and view hyper-parameter searches.', [cmd])
+
+    zip_cmd = (
+        'zip', 'Zip up a job.', _zip_search,
+        ('to_zip', dict(help="Path to the job we want to zip.", type=str)),
+        ('name', dict(help="Optional path where archive should be created.", type=str, default='')),
+    )
+
+    parallel_cl('Build, run and view hyper-parameter searches.', [build_cmd, zip_cmd])
