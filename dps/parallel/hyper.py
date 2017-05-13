@@ -213,7 +213,7 @@ def hyper_search_cl():
     zip_cmd = (
         'zip', 'Zip up a job.', _zip_search,
         ('to_zip', dict(help="Path to the job we want to zip.", type=str)),
-        ('name', dict(help="Optional path where archive should be created.", type=str, default='')),
+        ('name', dict(help="Optional path where archive should be created.", type=str, default='', nargs='?')),
     )
 
     parallel_cl('Build, run and view hyper-parameter searches.', [build_cmd, zip_cmd])
