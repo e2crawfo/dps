@@ -151,7 +151,7 @@ def reduce_hyper_results(*results):
     plt.show()
 
 
-def build_search(name, n, repeats, path, alg, task, _zip):
+def build_search(path, name, n, repeats, alg, task, _zip):
     config = tasks[task]
     config.update(algorithms[alg])
 
@@ -188,7 +188,7 @@ def build_search(name, n, repeats, path, alg, task, _zip):
 
 
 def _build_search(args):
-    build_search(args.n, args.repeats, args.path, args.alg, args.task, args.zip)
+    build_search(args.path, args.name, args.n, args.repeats, args.alg, args.task, args.zip)
 
 
 def _zip_search(args):
@@ -202,7 +202,7 @@ def hyper_search_cl():
     build_cmd = (
         'build', 'Build a hyper-parameter search.', _build_search,
         ('path', dict(help="Location to save the built job.", type=str)),
-        ('name', dict(help="Memorable name for the search.", type=int)),
+        ('name', dict(help="Memorable name for the search.", type=str)),
         ('n', dict(help="Number of parameter settings to try.", type=int)),
         ('repeats', dict(help="Number of repeats for each parameter setting.", type=int)),
         ('alg', dict(help="Algorithm to use for learning.", type=str)),
