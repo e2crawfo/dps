@@ -1,14 +1,15 @@
 import numpy as np
 import tensorflow as tf
+import os
 
 from dps.updater import DifferentiableUpdater
 from dps.reinforce import REINFORCE
 from dps.qlearning import QLearning
 from dps.policy import SoftmaxSelect, EpsilonGreedySelect, GumbelSoftmaxSelect
-from dps.utils import Config, CompositeCell, MLP
+from dps.utils import Config, CompositeCell, FeedforwardCell, MLP
 from dps.experiments import (
     arithmetic, simple_addition, pointer_following,
-    hard_addition, lifted_addition, translated_mnist)
+    hard_addition, lifted_addition, translated_mnist, mnist_addition)
 
 
 class DefaultConfig(Config):
@@ -20,8 +21,8 @@ class DefaultConfig(Config):
     power_through = True  # Whether to complete the entire curriculum, even if threshold not reached.
     max_steps = 100
     batch_size = 100
-    n_train = 1000
-    n_val = 100
+    n_train = 10000
+    n_val = 200
     n_test = 0
 
     threshold = 1e-2
@@ -46,10 +47,13 @@ class DefaultConfig(Config):
     max_grad_norm = 0.0
     l2_norm_param = 0.0
     gamma = 1.0
+    reward_window = 0.1
 
     debug = False
-
     verbose = False
+    display = False
+    save_display = False
+    path = os.getcwd()
 
 
 class DiffConfig(Config):
@@ -66,30 +70,26 @@ class DiffConfig(Config):
 
 class ReinforceConfig(Config):
     updater_class = REINFORCE
-    threshold = 1e-2
     action_selection = SoftmaxSelect()
     test_time_explore = None
     exploration_schedule = (10.0, 1000, 0.9, False)
     noise_schedule = (0.0, 1000, 0.96, False)
     lr_schedule = (0.01, 1000, 0.98, False)
     patience = np.inf
-    max_grad_norm = 0.0
-    gamma = 1.0
 
 
 class QLearningConfig(Config):
     updater_class = QLearning
-    threshold = 1e-2
     action_selection = EpsilonGreedySelect()
     exploration_schedule = (0.5, 1000, 0.9, False)
     lr_schedule = (0.001, 1000, 1.0, False)
     double = False
-    replay_max_size = 100
+    replay_max_size = 1000
     target_update_rate = 0.001
     recurrent = True
     patience = np.inf
     batch_size = 100
-    test_time_explore = None
+    test_time_explore = 0.0
 
 
 class RealConfig(Config):
@@ -126,23 +126,34 @@ class ArithmeticConfig(DefaultConfig):
 
 class SimpleAdditionConfig(DefaultConfig):
     T = 30
-    curriculum = [
-        dict(width=1, n_digits=10),
-        dict(width=2, n_digits=10),
-        dict(width=3, n_digits=10),
-    ]
-
     # curriculum = [
     #     dict(width=1, n_digits=10),
     #     dict(width=2, n_digits=10),
     #     dict(width=3, n_digits=10),
-    #     dict(width=4, n_digits=10),
-    #     dict(width=5, n_digits=10),
-    #     dict(width=6, n_digits=10),
-    #     dict(width=7, n_digits=10),
-    #     dict(width=8, n_digits=10),
-    #     dict(width=9, n_digits=10),
     # ]
+
+    curriculum = [
+        dict(width=1, n_digits=10),
+        dict(width=2, n_digits=10),
+        dict(width=3, n_digits=10),
+        dict(width=4, n_digits=10),
+        dict(width=5, n_digits=10),
+        dict(width=6, n_digits=10),
+        dict(width=7, n_digits=10),
+        dict(width=8, n_digits=10),
+        dict(width=9, n_digits=10),
+        dict(width=9, n_digits=10, T=40),
+        dict(width=10, n_digits=10, T=40),
+        dict(width=11, n_digits=10, T=40),
+        dict(width=12, n_digits=10, T=50),
+        dict(width=13, n_digits=10, T=50),
+        dict(width=15, n_digits=10, T=60),
+        dict(width=17, n_digits=10, T=70),
+        dict(width=20, n_digits=10, T=80),
+        dict(width=25, n_digits=10, T=90),
+        dict(width=30, n_digits=10, T=100),
+        dict(width=35, n_digits=10, T=110),
+    ]
 
     log_dir = '/tmp/dps/simple_addition/'
 
@@ -191,27 +202,84 @@ class LiftedAdditionConfig(DefaultConfig):
 class TranslatedMnistConfig(DefaultConfig):
     T = 10
     curriculum = [
-        dict(W=28, N=28),
+        dict(W=28, N=8, T=4),
+        dict(W=28, N=8, T=10),
+        dict(W=35, N=8, T=10),
+        dict(W=45, N=8, T=10),
+        dict(W=55, N=8, T=10),
+        dict(W=65, N=8, T=12),
+        dict(W=65, N=8, T=15),
+        dict(W=65, N=8, T=20),
+        dict(W=75, N=8, T=20),
+        dict(W=85, N=8, T=20),
+        dict(W=95, N=8, T=20),
+        # dict(W=35, N=14, T=4),
+        #dict(W=28, N=28, T=10),
+        #dict(W=35, N=28, T=10),
         # dict(W=50, N=14),
     ]
-    inc_delta = 0.2
-    inc_x = 0.2
-    inc_y = 0.2
-    inc_sigma = 0.2
-    controller_func = staticmethod(
-        lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=8),
-                                        MLP(),
-                                        n_actions))
+    threshold = 0.15
+    verbose = 4
+
+    classifier_str = "MLP_50_50"
+
+    @staticmethod
+    def build_classifier(inp):
+        logits = MLP([50, 50], activation_fn=tf.nn.sigmoid)(inp, 10)
+        return tf.nn.softmax(logits)
 
     # controller_func = staticmethod(
-    #     lambda n_actions: FeedforwardCell(MLP([100, 100]), n_actions))
+    #     lambda n_actions: FeedforwardCell(MLP([100, 100], activation_fn=tf.nn.sigmoid), n_actions))
+    controller_func = staticmethod(
+        lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=256),
+                                        MLP(),
+                                        n_actions))
+    reward_window = 2.0
 
     log_dir = '/tmp/dps/translated_mnist/'
 
-    base_kwargs = dict(inc_delta=0.2, inc_sigma=0.2, inc_x=0.2, inc_y=0.2)
+    base_kwargs = dict(inc_delta=0.1, inc_x=0.1, inc_y=0.1)
 
     trainer = translated_mnist.TranslatedMnistTrainer()
     visualize = translated_mnist.visualize
+
+
+class MnistAdditionConfig(DefaultConfig):
+    T = 10
+    curriculum = [
+        dict(W=28, N=8, T=4, n_digits=1),
+        dict(W=28, N=8, T=4, n_digits=1),
+        dict(W=28, N=8, T=6, n_digits=1),
+        dict(W=28, N=8, T=8, n_digits=1),
+        dict(W=28, N=8, T=10, n_digits=1),
+        dict(W=28, N=8, T=12, n_digits=1),
+        dict(W=35, N=8, T=12, n_digits=1),
+        dict(W=45, N=8, T=12, n_digits=1),
+    ]
+    threshold = 0.15
+    verbose = 4
+
+    classifier_str = "MLP_50_50"
+
+    @staticmethod
+    def build_classifier(inp):
+        logits = MLP([50, 50], activation_fn=tf.nn.sigmoid)(inp, 10)
+        return tf.nn.softmax(logits)
+
+    # controller_func = staticmethod(
+    #     lambda n_actions: FeedforwardCell(MLP([100, 100], activation_fn=tf.nn.sigmoid), n_actions))
+    controller_func = staticmethod(
+        lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=256),
+                                        MLP(),
+                                        n_actions))
+    reward_window = 0.5
+
+    log_dir = '/tmp/dps/mnist_addition/'
+
+    base_kwargs = dict(inc_delta=0.1, inc_x=0.1, inc_y=0.1)
+
+    trainer = mnist_addition.MnistAdditionTrainer()
+    visualize = mnist_addition.visualize
 
 
 algorithms = dict(
@@ -226,7 +294,8 @@ tasks = dict(
     pointer=PointerConfig(),
     hard_addition=HardAdditionConfig(),
     lifted_addition=LiftedAdditionConfig(),
-    translated_mnist=TranslatedMnistConfig())
+    translated_mnist=TranslatedMnistConfig(),
+    mnist_addition=MnistAdditionConfig())
 
 
 def apply_mode(cfg, mode):

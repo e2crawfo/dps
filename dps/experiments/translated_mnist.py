@@ -2,6 +2,7 @@ from collections import namedtuple
 import matplotlib.pyplot as plt
 from matplotlib import animation, patches
 import os
+from pathlib import Path
 
 import tensorflow as tf
 import numpy as np
@@ -17,11 +18,10 @@ from dps.attention import DRAW_attention_2D
 
 
 class TranslatedMnistEnv(RegressionEnv):
-    def __init__(self, W, N, n_train, n_val, n_test, inc_delta, inc_sigma, inc_x, inc_y):
+    def __init__(self, W, N, n_train, n_val, n_test, inc_delta, inc_x, inc_y):
         self.W = W
         self.N = N
         self.inc_delta = inc_delta
-        self.inc_sigma = inc_sigma
         self.inc_x = inc_x
         self.inc_y = inc_y
         n_digits = 1
@@ -46,7 +46,7 @@ def build_classifier(inp):
 class MnistDrawPretrained(object):
     """ A wrapper around a classifier that initializes it with values stored on disk. """
     def __init__(
-            self, build_classifier, N, var_scope_name='mnist',
+            self, build_classifier, N, var_scope_name='mnist', freeze_weights=True,
             model_dir='/tmp/dps_mnist/', name='model.chk', config=None):
 
         self._build_classifier = build_classifier
@@ -58,6 +58,7 @@ class MnistDrawPretrained(object):
         self.path = os.path.join(model_dir, name)
         self.config = config
         self.n_builds = 0
+        self.freeze_weights = freeze_weights
 
     def build_classifier(self, inp):
         """ Returns class probabilities given a glimpse. """
@@ -84,7 +85,7 @@ class MnistDrawPretrained(object):
 
             glimpse = DRAW_attention_2D(
                 inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta,
-                std=sigma, N=self.N)
+                std=tf.ones((batch_size, 1)), N=self.N)
         else:
             glimpse = inp
 
@@ -95,7 +96,8 @@ class MnistDrawPretrained(object):
         if self.n_builds == 0:
             with tf.variable_scope(self.var_scope_name, reuse=False) as var_scope:
                 outp, glimpse = self.build_draw_plus_classifier(inp, **build_kwargs)
-                outp = tf.stop_gradient(outp)
+                if self.freeze_weights:
+                    outp = tf.stop_gradient(outp)
 
             self.var_scope = var_scope
 
@@ -106,7 +108,8 @@ class MnistDrawPretrained(object):
         else:
             with tf.variable_scope(self.var_scope, reuse=True) as var_scope:
                 outp, glimpse = self.build_draw_plus_classifier(inp, **build_kwargs)
-                outp = tf.stop_gradient(outp)
+                if self.freeze_weights:
+                    outp = tf.stop_gradient(outp)
 
         return outp, glimpse
 
@@ -116,11 +119,11 @@ class MnistDrawPretrained(object):
 
 
 # Define at top-level to enable pickling
-translated_mnist_nt = namedtuple('TranslatedMnistRegister', 'inp outp glimpse fovea_x fovea_y vision delta sigma t'.split())
+translated_mnist_nt = namedtuple('TranslatedMnistRegister', 'inp outp glimpse fovea_x fovea_y vision delta t'.split())
 
 
 class TranslatedMnistRegSpec(RegisterSpec):
-    _visible = [0, 1, 1, 1, 1, 1, 1, 1, 1]
+    _visible = [0, 1, 1, 1, 1, 1, 1, 1]
     _initial_values = None
     _namedtuple = translated_mnist_nt
     _input_names = ['inp']
@@ -133,58 +136,72 @@ class TranslatedMnistRegSpec(RegisterSpec):
 
         self._initial_values = [
             np.zeros(W*W, dtype='f'), np.array([0.0]), np.zeros(N*N, dtype='f'), np.array([0.0]),
-            np.array([0.0]), np.array([0.0]), np.array([1.0]), np.array([1.0]), np.array([0.0])]
+            np.array([0.0]), np.array([0.0]), np.array([1.0]), np.array([0.0])]
         super(TranslatedMnistRegSpec, self).__init__()
 
 
 class TranslatedMnist(CoreNetwork):
     """ Top left is (y=0, x=0). Corresponds to using origin='upper' in plt.imshow. """
 
-    action_names = ['fovea_x += ', 'fovea_x -= ', 'fovea_y += ', 'fovea_y -= ',
-                    'delta += ', 'delta -= ', 'sigma += ', 'sigma -= ', 'store', 'no-op/stop']
+    action_names = [
+        'fovea_x += ', 'fovea_x -= ', 'fovea_x ++= ', 'fovea_x --= ',
+        'fovea_y += ', 'fovea_y -= ', 'fovea_y ++= ', 'fovea_y --= ',
+        'delta += ', 'delta -= ', 'delta ++= ', 'delta --= ',
+        # 'sigma += ', 'sigma -= ',
+        'store', 'no-op/stop']
 
     def __init__(self, env):
         self.W = env.W
         self.N = env.N
         self.inc_delta = env.inc_delta
-        self.inc_sigma = env.inc_sigma
         self.inc_x = env.inc_x
         self.inc_y = env.inc_y
 
-        self.classifier = MnistDrawPretrained(build_classifier, self.N, name='model_N={}.chk'.format(self.N))
+        build_classifier = default_config().build_classifier
+        classifier_str = default_config().classifier_str
+        self.classifier = MnistDrawPretrained(build_classifier, self.N, name='{}_N={}.chk'.format(classifier_str, self.N))
         self.register_spec = TranslatedMnistRegSpec(env.W, env.N)
         super(TranslatedMnist, self).__init__()
 
     def __call__(self, action_activations, r):
-        (inc_fovea_x, dec_fovea_x, inc_fovea_y, dec_fovea_y,
-         inc_delta, dec_delta, inc_sigma, dec_sigma, store, no_op) = (
+        (inc_fovea_x, dec_fovea_x, inc_fovea_x_big, dec_fovea_x_big,
+         inc_fovea_y, dec_fovea_y, inc_fovea_y_big, dec_fovea_y_big,
+         inc_delta, dec_delta, inc_delta_big, dec_delta_big,
+         # inc_sigma,dec_sigma,
+         store, no_op) = (
             tf.split(action_activations, self.n_actions, axis=1))
+        # (inc_fovea_x, dec_fovea_x, inc_fovea_y, dec_fovea_y,
+        #  inc_delta, dec_delta, inc_sigma, dec_sigma, store, no_op) = (
+        #     tf.split(action_activations, self.n_actions, axis=1))
 
-        fovea_x = (1 - inc_fovea_x - dec_fovea_x) * r.fovea_x + \
+        fovea_x = (1 - inc_fovea_x - dec_fovea_x - inc_fovea_x_big - dec_fovea_x_big) * r.fovea_x + \
             inc_fovea_x * (r.fovea_x + self.inc_x) + \
-            dec_fovea_x * (r.fovea_x - self.inc_x)
+            inc_fovea_x_big * (r.fovea_x + 5 * self.inc_x) + \
+            dec_fovea_x * (r.fovea_x - self.inc_x) + \
+            dec_fovea_x_big * (r.fovea_x - 5 * self.inc_x)
 
-        fovea_y = (1 - inc_fovea_y - dec_fovea_y) * r.fovea_y + \
+        fovea_y = (1 - inc_fovea_y - dec_fovea_y - inc_fovea_y_big - dec_fovea_y_big) * r.fovea_y + \
             inc_fovea_y * (r.fovea_y + self.inc_y) + \
-            dec_fovea_y * (r.fovea_y - self.inc_y)
+            inc_fovea_y_big * (r.fovea_y + 5 * self.inc_y) + \
+            dec_fovea_y * (r.fovea_y - self.inc_y) + \
+            dec_fovea_y_big * (r.fovea_y - 5 * self.inc_y)
 
-        delta = (1 - inc_delta - dec_delta) * r.delta + \
+        delta = (1 - inc_delta - dec_delta - inc_delta_big - dec_delta_big) * r.delta + \
             inc_delta * (r.delta + self.inc_delta) + \
-            dec_delta * (r.delta - self.inc_delta)
-
-        sigma = (1 - inc_sigma - dec_sigma) * r.sigma + \
-            inc_sigma * (r.sigma + self.inc_sigma) + \
-            dec_sigma * (r.sigma - self.inc_sigma)
+            inc_delta_big * (r.delta + 5 * self.inc_delta) + \
+            dec_delta * (r.delta - self.inc_delta) + \
+            dec_delta_big * (r.delta - 5 * self.inc_delta)
 
         outp = (1 - store) * r.outp + store * r.vision
 
         inp = tf.reshape(r.inp, (-1, self.W, self.W))
         classification, glimpse = self.classifier.build_pretrained(
-            inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta, sigma=sigma)
+            inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta, sigma=1.0)
 
-        batch_size = tf.shape(classification)[0]
-        _vision = classification * tf.tile(tf.expand_dims(tf.range(10, dtype=tf.float32), 0), (batch_size, 1))
-        vision = tf.reduce_sum(_vision, 1, keep_dims=True)
+        # batch_size = tf.shape(classification)[0]
+        # _vision = classification * tf.tile(tf.expand_dims(tf.range(10, dtype=tf.float32), 0), (batch_size, 1))
+        # vision = tf.reduce_sum(_vision, 1, keep_dims=True)
+        vision = tf.cast(tf.expand_dims(tf.argmax(classification, 1), 1), tf.float32)
 
         t = r.t + 1
 
@@ -197,7 +214,7 @@ class TranslatedMnist(CoreNetwork):
                 fovea_y=tf.identity(fovea_y, "fovea_y"),
                 vision=tf.identity(vision, "vision"),
                 delta=tf.identity(delta, "delta"),
-                sigma=tf.identity(sigma, "sigma"),
+                # sigma=tf.identity(sigma, "sigma"),
                 t=tf.identity(t, "t"))
 
         return new_registers
@@ -251,7 +268,14 @@ def render_rollouts(psystem, actions, registers, reward, external_step_lengths):
         return rectangles + glimpses
 
     _animation = animation.FuncAnimation(fig, animate, n_timesteps, blit=True, interval=1000, repeat=True)
-    plt.show()
+
+    if default_config().save_display:
+        Writer = animation.writers['ffmpeg']
+        writer = Writer(fps=15, metadata=dict(artist='Me'), bitrate=1800)
+        _animation.save(str(Path(default_config().path) / 'animation.mp4'), writer=writer)
+
+    if default_config().display:
+        plt.show()
 
 
 def visualize(config):
@@ -261,14 +285,14 @@ def visualize(config):
 
     def build_psystem():
         _config = default_config()
-        W = 28
-        N = 28
-        env = TranslatedMnistEnv(W, N, 10, 10, 10, inc_delta=0.5, inc_x=0.5, inc_y=0.5, inc_sigma=0.5)
+        W = 60
+        N = 14
+        env = TranslatedMnistEnv(W, N, 10, 10, 10, inc_delta=0.1, inc_x=0.1, inc_y=0.1)
         cn = TranslatedMnist(env)
 
-        # controller = FixedController(list(range(cn.n_actions)), cn.n_actions)
+        controller = FixedController(list(range(cn.n_actions)), cn.n_actions)
         # controller = FixedController([4, 2, 5, 6, 7, 0, 4, 3, 5, 6, 7, 0], cn.n_actions)
-        controller = FixedController([8], cn.n_actions)
+        # controller = FixedController([8], cn.n_actions)
         action_selection = IdentitySelect()
 
         exploration = build_decaying_value(_config.exploration_schedule, 'exploration')

@@ -10,6 +10,8 @@ from gym import Env as GymEnv
 from gym.utils import seeding
 from gym.spaces import prng
 
+from dps.utils import default_config
+
 
 class BatchBox(gym.Space):
     """ A box that allows some dimensions to be unspecified at instance-creation time.
@@ -228,7 +230,7 @@ class RegressionEnv(DifferentiableEnv):
         """ A separate loss used in the RL setting where things are not required to be differentiable. """
         target_ph = tf.placeholder(tf.float32, shape=actions.shape, name='target')
         error = tf.reduce_sum(tf.abs(actions - target_ph), axis=-1, keep_dims=True)
-        loss = tf.cast(error > 0.1, tf.float32)
+        loss = tf.cast(error > default_config().reward_window, tf.float32)
         return loss, target_ph
 
     def _step(self, action):

@@ -5,10 +5,13 @@ from dps.test.config import algorithms, tasks, apply_mode
 
 @pytest.mark.parametrize('task', sorted(tasks.keys()))
 @pytest.mark.parametrize('alg', sorted(algorithms.keys()))
-def test_production_system(task, alg, mode, max_steps):
+def test_production_system(task, alg, mode, max_steps, verbose, display):
 
     config = tasks[task]
     config.update(algorithms[alg])
+
+    config.verbose = verbose
+    config.display = display
 
     apply_mode(config, mode)
     if max_steps is not None:
@@ -20,4 +23,6 @@ def test_production_system(task, alg, mode, max_steps):
 @pytest.mark.parametrize('task', sorted(tasks.keys()))
 def test_visualize(task):
     config = tasks[task]
+    config.display = True
+    config.save_display = True
     config.visualize()

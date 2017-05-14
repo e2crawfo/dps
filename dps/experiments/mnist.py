@@ -30,10 +30,15 @@ class Rect(object):
 
 
 class TranslatedMnistDataset(RegressionDataset):
-    def __init__(self, W, n_digits, max_overlap, n_examples, for_eval=False, shuffle=True):
+    def __init__(self, W, n_digits, max_overlap, n_examples, function=None, for_eval=False, shuffle=True):
+
         self.W = W
         self.n_digits = n_digits
         self.max_overlap = max_overlap
+
+        if function is None:
+            function = lambda inputs: sum(inputs)
+        self.function = function
 
         mnist = pickle.load(gzip.open('/data/mnist.pkl.gz', 'r'), encoding='bytes')
 
@@ -44,12 +49,12 @@ class TranslatedMnistDataset(RegressionDataset):
 
         x, y = self.make_dataset(
             self.n_digits, mnist_x, mnist_y, n_examples, self.W,
-            self.max_overlap)
+            self.max_overlap, self.function)
 
         super(TranslatedMnistDataset, self).__init__(x, y, for_eval, shuffle)
 
     @staticmethod
-    def make_dataset(n_digits, X, Y, n_examples, W, max_overlap):
+    def make_dataset(n_digits, X, Y, n_examples, W, max_overlap, function):
         if n_examples == 0:
             return np.zeros((0, W*W)).astype('f'), np.zeros((0, 1)).astype('i')
 
@@ -76,7 +81,10 @@ class TranslatedMnistDataset(RegressionDataset):
 
                 i += 1
 
-                if i > 1000: break
+                if i > 1000:
+                    raise Exception(
+                        "Could not fit digits. "
+                        "(n_digits: {}, W: {}, max_overlap: {})".format(n_digits, W, max_overlap))
 
             ids = np.random.randint(0, Y.shape[0], n_digits)
             o = np.zeros((W, W), 'f')
@@ -84,7 +92,7 @@ class TranslatedMnistDataset(RegressionDataset):
                 o[rect.left:rect.right, rect.bottom:rect.top] += X[idx]
 
             new_X.append(np.uint8(255*np.minimum(o, 1)))
-            new_Y.append(sum(Y[idx] for idx in ids))
+            new_Y.append(function([Y[idx] for idx in ids]))
 
         new_X = np.array(new_X).astype('f').reshape(len(new_X), -1)
         new_Y = np.array(new_Y).astype('i').reshape(-1, 1)
@@ -95,7 +103,7 @@ class MnistConfig(Config):
     batch_size = 64
     eval_step = 100
     max_steps = 100000
-    patience = np.inf
+    patience = 10000
     lr_schedule = (0.001, 1000, 0.96, False)
     optimizer_class = tf.train.AdamOptimizer
     threshold = 0.05

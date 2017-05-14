@@ -192,7 +192,7 @@ class QLearningCell(RNNCell):
             target = rewards + self.gamma * bootstrap
             new_accumulator = accumulator + tf.reduce_sum(tf.square(target - prev_q_value), axis=-1, keep_dims=True)
 
-            q_value_selected_action = tf.reduce_sum(actions * q_values, axis=1)
+            q_value_selected_action = tf.reduce_sum(actions * q_values, axis=1, keep_dims=True)
 
             new_state = (new_accumulator, q_value_selected_action, new_qn_state, new_tn_state)
             return new_accumulator, new_state
@@ -207,10 +207,10 @@ class QLearningCell(RNNCell):
 
     def zero_state(self, batch_size, dtype):
         initial_state = (
-            tf.fill((batch_size, 1), 0.0),
-            tf.fill((batch_size, 1), 0.0),
-            self.q_network.zero_state(batch_size, dtype),
-            self.target_network.zero_state(batch_size, dtype))
+            tf.fill((batch_size, 1), 0.0),  # accumulated squared error
+            tf.fill((batch_size, 1), 0.0),  # q-value of action selected on previous time step
+            self.q_network.zero_state(batch_size, dtype),  # hidden state for q network
+            self.target_network.zero_state(batch_size, dtype))  # hidden state for target network
         return initial_state
 
     def initial_state(self, first_obs, first_actions, batch_size, dtype):
@@ -218,7 +218,7 @@ class QLearningCell(RNNCell):
 
         _, _, _, new_tn_state = self.target_network.build(first_obs, tn_state)
         _, _, q_values, new_qn_state = self.q_network.build(first_obs, qn_state)
-        q_value_selected_action = tf.reduce_sum(first_actions * q_values, axis=1)
+        q_value_selected_action = tf.reduce_sum(first_actions * q_values, axis=1, keep_dims=True)
 
         return acc, q_value_selected_action, new_qn_state, new_tn_state
 
@@ -245,6 +245,45 @@ class ReplayBuffer(object):
         rewards = np.transpose(rewards, (1, 0, 2))
 
         return obs, actions, rewards
+
+    def add(self, obs, actions, rewards):
+        # Assumes shape is (n_timsesteps, batch_size, dim)
+        obs = list(np.transpose(obs, (1, 0, 2)))
+        actions = list(np.transpose(actions, (1, 0, 2)))
+        rewards = list(np.transpose(rewards, (1, 0, 2)))
+
+        for o, a, r in zip(obs, actions, rewards):
+            self.buffer.append((o, a, r))
+            while len(self.buffer) > self.max_size:
+                self.buffer.popleft()
+
+    def erase(self):
+        self.buffer = deque()
+        self.n_experiences = 0
+
+
+class PrioritizedReplayBuffer(ReplayBuffer):
+    def __init__(self, max_size, priority_max_size, threshold, ro):
+        """
+        A heuristic from:
+        Language Understanding for Text-based Games using Deep Reinforcement Learning.
+
+        Parameters
+        ----------
+        threshold: float
+            All episodes that recieve reward above this threshold are given high-priority.
+        ro: float in [0, 1]
+            Proportion of each batch that comes from the high-priority subset.
+
+        """
+        self.threshold = threshold
+        self.ro = ro
+        self.priority_max_size = priority_max_size
+        super(PrioritizedReplayBuffer, self).__init__(max_size)
+        self.priority_buffer = deque()
+
+    def get_batch(self, batch_size):
+        pass
 
     def add(self, obs, actions, rewards):
         # Assumes shape is (n_timsesteps, batch_size, dim)

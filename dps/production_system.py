@@ -115,8 +115,8 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
             registers.append(reg)
             actions.append(a)
 
-            _reward = np.zeros(a.shape[:-1])
-            _reward[-1, :] = reward
+            _reward = np.zeros(a.shape[:-1] + (1,))
+            _reward[-1, :, :] = reward
             rewards.append(_reward)
 
             obs = new_obs
