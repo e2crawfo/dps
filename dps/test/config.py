@@ -49,6 +49,9 @@ class DefaultConfig(Config):
     gamma = 1.0
     reward_window = 0.1
 
+    n_auxiliary_tasks = 0
+    auxiliary_coef = 0
+
     debug = False
     verbose = False
     display = False
@@ -81,15 +84,21 @@ class ReinforceConfig(Config):
 class QLearningConfig(Config):
     updater_class = QLearning
     action_selection = EpsilonGreedySelect()
-    exploration_schedule = (0.5, 1000, 0.9, False)
+    exploration_schedule = (0.1, 1000, 0.98, False)
     lr_schedule = (0.001, 1000, 1.0, False)
     double = False
+
     replay_max_size = 1000
+    replay_threshold = -0.5
+    replay_proportion = None
+
     target_update_rate = 0.001
     recurrent = True
     patience = np.inf
-    batch_size = 100
-    test_time_explore = 0.0
+    batch_size = 10
+    test_time_explore = 0.5
+
+    l2_norm_param = 0.0
 
 
 class RealConfig(Config):
@@ -165,9 +174,7 @@ class PointerConfig(DefaultConfig):
     T = 30
     curriculum = [
         dict(width=1, n_digits=10),
-        dict(width=2, n_digits=10),
-        dict(width=3, n_digits=10),
-        dict(width=4, n_digits=10)]
+        dict(width=2, n_digits=10)]
     log_dir = '/tmp/dps/pointer/'
 
     trainer = pointer_following.PointerTrainer()
@@ -212,11 +219,7 @@ class TranslatedMnistConfig(DefaultConfig):
         dict(W=65, N=8, T=20),
         dict(W=75, N=8, T=20),
         dict(W=85, N=8, T=20),
-        dict(W=95, N=8, T=20),
-        # dict(W=35, N=14, T=4),
-        #dict(W=28, N=28, T=10),
-        #dict(W=35, N=28, T=10),
-        # dict(W=50, N=14),
+        dict(W=95, N=8, T=20)
     ]
     threshold = 0.15
     verbose = 4

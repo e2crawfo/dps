@@ -226,7 +226,7 @@ class RegressionEnv(DifferentiableEnv):
         loss = tf.reduce_mean((actions - target_ph)**2, axis=-1, keep_dims=True)
         return loss, target_ph
 
-    def build_rl_loss(self, actions):
+    def build_rl_loss(self, actions, idx=0):
         """ A separate loss used in the RL setting where things are not required to be differentiable. """
         target_ph = tf.placeholder(tf.float32, shape=actions.shape, name='target')
         error = tf.reduce_sum(tf.abs(actions - target_ph), axis=-1, keep_dims=True)

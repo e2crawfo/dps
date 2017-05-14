@@ -14,6 +14,8 @@ class QLearning(ReinforcementLearningUpdater):
                  target_network,
                  double,
                  replay_max_size,
+                 replay_threshold,
+                 replay_proportion,
                  target_update_rate,
                  recurrent,
                  optimizer_class,
@@ -26,7 +28,8 @@ class QLearning(ReinforcementLearningUpdater):
         self.q_network = q_network
         self.target_network = target_network
         self.double = double
-        self.replay_buffer = ReplayBuffer(max_size=replay_max_size)
+        self.replay_buffer = PrioritizedReplayBuffer(
+            replay_max_size, replay_proportion, replay_threshold)
         self.target_update_rate = target_update_rate
         self.recurrent = recurrent
         if not self.recurrent:
@@ -46,8 +49,8 @@ class QLearning(ReinforcementLearningUpdater):
     def _update(self, batch_size, summary_op=None):
         self.clear_buffers()
         self.env.do_rollouts(self, self.q_network, 'train', batch_size)
-
         self.replay_buffer.add(self.obs_buffer, self.action_buffer, self.reward_buffer)
+
         self.obs_buffer, self.action_buffer, self.reward_buffer = self.replay_buffer.get_batch(batch_size)
 
         feed_dict = self.build_feeddict()
@@ -223,18 +226,33 @@ class QLearningCell(RNNCell):
         return acc, q_value_selected_action, new_qn_state, new_tn_state
 
 
-class ReplayBuffer(object):
-    def __init__(self, max_size):
-        self.max_size = max_size
-        self.n_experiences = 0
-        self.buffer = deque()
+class PrioritizedReplayBuffer(object):
+    def __init__(self, max_size, ro=None, threshold=0.0):
+        """
+        A heuristic from:
+        Language Understanding for Text-based Games using Deep Reinforcement Learning.
 
-    def get_batch(self, batch_size):
-        replace = batch_size > len(self.buffer)
-        idx = np.random.choice(len(self.buffer), batch_size, replace=replace)
+        Parameters
+        ----------
+        ro: float in [0, 1]
+            Proportion of each batch that comes from the high-priority subset.
+        threshold: float
+            All episodes that recieve reward above this threshold are given high-priority.
+
+        """
+        self.max_size = max_size
+        self.threshold = threshold
+        self.ro = ro
+        self.low_buffer = deque()
+        self.high_buffer = deque()
+
+    @staticmethod
+    def _get_batch(batch_size, buff):
+        replace = batch_size > len(buff)
+        idx = np.random.choice(len(buff), batch_size, replace=replace)
         obs, actions, rewards = [], [], []
         for i in idx:
-            o, a, r = self.buffer[i]
+            o, a, r = buff[i]
             obs.append(o)
             actions.append(a)
             rewards.append(r)
@@ -246,56 +264,29 @@ class ReplayBuffer(object):
 
         return obs, actions, rewards
 
-    def add(self, obs, actions, rewards):
-        # Assumes shape is (n_timsesteps, batch_size, dim)
-        obs = list(np.transpose(obs, (1, 0, 2)))
-        actions = list(np.transpose(actions, (1, 0, 2)))
-        rewards = list(np.transpose(rewards, (1, 0, 2)))
-
-        for o, a, r in zip(obs, actions, rewards):
-            self.buffer.append((o, a, r))
-            while len(self.buffer) > self.max_size:
-                self.buffer.popleft()
-
-    def erase(self):
-        self.buffer = deque()
-        self.n_experiences = 0
-
-
-class PrioritizedReplayBuffer(ReplayBuffer):
-    def __init__(self, max_size, priority_max_size, threshold, ro):
-        """
-        A heuristic from:
-        Language Understanding for Text-based Games using Deep Reinforcement Learning.
-
-        Parameters
-        ----------
-        threshold: float
-            All episodes that recieve reward above this threshold are given high-priority.
-        ro: float in [0, 1]
-            Proportion of each batch that comes from the high-priority subset.
-
-        """
-        self.threshold = threshold
-        self.ro = ro
-        self.priority_max_size = priority_max_size
-        super(PrioritizedReplayBuffer, self).__init__(max_size)
-        self.priority_buffer = deque()
-
     def get_batch(self, batch_size):
-        pass
+        if self.ro is not None and len(self.high_buffer) > 0:
+            n_high_priority = int(self.ro * batch_size)
+            n_low_priority = batch_size - n_high_priority
+
+            low_priority = self._get_batch(n_low_priority, self.low_buffer)
+            high_priority = self._get_batch(n_high_priority, self.high_buffer)
+
+            obs = np.concatenate((low_priority[0], high_priority[0]), axis=1)
+            actions = np.concatenate((low_priority[1], high_priority[1]), axis=1)
+            rewards = np.concatenate((low_priority[2], high_priority[2]), axis=1)
+            return obs, actions, rewards
+        else:
+            return self._get_batch(batch_size, self.low_buffer)
 
     def add(self, obs, actions, rewards):
-        # Assumes shape is (n_timsesteps, batch_size, dim)
+        # Assumes shape is (n_timesteps, batch_size, dim)
         obs = list(np.transpose(obs, (1, 0, 2)))
         actions = list(np.transpose(actions, (1, 0, 2)))
         rewards = list(np.transpose(rewards, (1, 0, 2)))
 
         for o, a, r in zip(obs, actions, rewards):
-            self.buffer.append((o, a, r))
-            while len(self.buffer) > self.max_size:
-                self.buffer.popleft()
-
-    def erase(self):
-        self.buffer = deque()
-        self.n_experiences = 0
+            buff = self.high_buffer if (r.sum() > self.threshold and self.ro is not None) else self.low_buffer
+            buff.append((o, a, r))
+            while len(buff) > self.max_size:
+                buff.popleft()
