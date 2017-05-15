@@ -9,6 +9,8 @@ import traceback
 import pdb
 import sys
 
+from dps.utils import KeywordMapping
+
 
 class Operator(object):
     """
@@ -440,51 +442,6 @@ def zip_root(zipfile):
         [z.filename for z in zipfile.infolist()],
         key=lambda s: len(s))
     return zip_root
-
-
-# From py.test
-class KeywordMapping(object):
-    """ Provides a local mapping for keywords.
-
-        Can be used to implement user-friendly name selection
-        using boolean expressions.
-
-        names=[orange], pattern = "ora and e" -> True
-        names=[orange], pattern = "orang" -> True
-        names=[orange], pattern = "orane" -> False
-        names=[orange], pattern = "ora and z" -> False
-        names=[orange], pattern = "ora or z" -> True
-
-        Given a list of names, map any string that is a substring
-        of one of those names to True.
-
-        ``names`` are the things we are trying to select, ``pattern``
-        is the thing we are using to select them. Note that supplying
-        multiple names does not mean "apply the pattern to each one
-        separately". Rather, we are selecting the list as a whole,
-        which doesn't seem that useful. The different names should be
-        thought of as different names for a single object.
-
-    """
-    def __init__(self, names):
-        self._names = names
-
-    def __getitem__(self, subname):
-        if subname is "_":
-            return True
-
-        for name in self._names:
-            if subname in name:
-                return True
-        return False
-
-    def eval(self, pattern):
-        return eval(pattern, {}, self)
-
-    @staticmethod
-    def batch(batch, pattern):
-        """ Apply a single pattern to a batch of names. """
-        return [KeywordMapping([b]).eval(pattern) for b in batch]
 
 
 def run_command(args):

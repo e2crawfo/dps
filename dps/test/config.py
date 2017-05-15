@@ -15,6 +15,8 @@ from dps.experiments import (
 class DefaultConfig(Config):
     seed = 12
 
+    preserve_policy = True  # Whether to use the policy learned on the last stage of the curriculum for each new stage.
+
     optimizer_class = tf.train.RMSPropOptimizer
     updater_class = None
 
@@ -129,11 +131,11 @@ class DebugConfig(Config):
 class ArithmeticConfig(DefaultConfig):
     T = 3
     curriculum = [
-        dict(order=[0], T=1),
         dict(order=[0, 1], T=2),
-        dict(order=[0, 1, 0], T=3)]
+        dict(order=[0, 1, 0], T=3),
+        dict(order=[0, 1, 0, 1], T=4)]
     controller_func = staticmethod(
-        lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=256),
+        lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=32),
                                         MLP(),
                                         n_actions))
     log_dir = '/tmp/dps/arithmetic/'

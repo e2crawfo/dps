@@ -580,7 +580,7 @@ class ProductionSystemCurriculum(Curriculum):
         target_policy = policy.deepcopy("target_policy")
         target_policy.capture_scope()
 
-        if self.stage != 0:
+        if self.stage != 0 and config.preserve_policy:
             policy.maybe_build_act()
 
             g = tf.get_default_graph()
