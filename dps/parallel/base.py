@@ -8,8 +8,26 @@ from contextlib import contextmanager
 import traceback
 import pdb
 import sys
+import signal
 
-from dps.utils import KeywordMapping
+from dps.utils import SigTerm, KeywordMapping
+
+
+@contextmanager
+def redirect_stream(stream, filename, mode='w'):
+    assert stream in ['stdout', 'stderr']
+    with open(str(filename), mode=mode) as f:
+        old = getattr(sys, stream)
+        setattr(sys, stream, f)
+
+        try:
+            yield
+        finally:
+            setattr(sys, stream, old)
+
+
+def raise_sigterm(*args, **kwargs):
+    raise SigTerm()
 
 
 class Operator(object):
@@ -67,40 +85,63 @@ class Operator(object):
     def is_ready(self, store):
         return all([store.object_exists('data', ik) for ik in self.inp_keys])
 
-    def run(self, store, force):
+    def run(self, store, force, output_to_files=True):
         print("\n\n" + ("-" * 40))
-        print("Running op {}".format(self.name))
-        force_unique = True
-        if self.is_complete(store):
-            if force:
-                force_unique = False
-                print("Op {} is already complete, but ``force`` is True, so we're running it anyway.".format(self.name))
+        print("Checking whether to run op {}".format(self.name))
+        old_sigterm_handler = signal.signal(signal.SIGTERM, raise_sigterm)
+
+        try:
+            force_unique = True
+            if self.is_complete(store):
+                if force:
+                    force_unique = False
+                    print("Op {} is already complete, but ``force`` is True, so we're running it anyway.".format(self.name))
+                else:
+                    print("Skipping op {}, already complete.".format(self.name))
+                    return False
             else:
-                print("Skipping op {}, already complete.".format(self.name))
+                print("Op {} is not complete, so we SHOULD run it.".format(self.name))
+
+            if not self.is_ready(store):
+                print("Skipping op {}, deps are not met.".format(self.name))
                 return False
+            else:
+                print("Op {} is ready, so we CAN run it.".format(self.name))
 
-        if not self.is_ready(store):
-            print("Skipping op {}, deps are not met.".format(self.name))
-            return False
+            print("Running op {}".format(self.name))
 
-        inputs = [store.load_object('data', ik) for ik in self.inp_keys]
-        func = store.load_object('function', self.func_key)
+            print("Loading objects for op {}".format(self.name))
+            inputs = [store.load_object('data', ik) for ik in self.inp_keys]
+            func = store.load_object('function', self.func_key)
 
-        for inp in inputs:
-            if hasattr(inp, 'log_dir'):
-                inp.log_dir = str(store.directory)
+            for inp in inputs:
+                if hasattr(inp, 'log_dir'):
+                    inp.log_dir = str(store.directory)
 
-        outputs = func(*inputs)
+            print("Calling function for op {}".format(self.name))
+            if output_to_files:
+                stdout = store.path_for('stdout')
+                stdout.mkdir(parents=True, exist_ok=True)
+                stderr = store.path_for('stderr')
+                stderr.mkdir(parents=True, exist_ok=True)
+                with redirect_stream('stdout', stdout / self.name):
+                    with redirect_stream('stderr', stderr / self.name):
+                        outputs = func(*inputs)
+            else:
+                outputs = func(*inputs)
 
-        if len(self.outp_keys) == 1:
-            store.save_object('data', self.outp_keys[0], outputs, force_unique=force_unique, clobber=True)
-        else:
-            for o, ok in zip(outputs, self.outp_keys):
-                store.save_object('data', ok, o, force_unique=force_unique, clobber=True)
+            print("Saving output for op {}".format(self.name))
+            if len(self.outp_keys) == 1:
+                store.save_object('data', self.outp_keys[0], outputs, force_unique=force_unique, clobber=True)
+            else:
+                for o, ok in zip(outputs, self.outp_keys):
+                    store.save_object('data', ok, o, force_unique=force_unique, clobber=True)
 
-        print("Op complete.")
+            print("Op complete.")
 
-        return True
+            return True
+        finally:
+            signal.signal(signal.SIGTERM, old_sigterm_handler)
 
 
 class Signal(object):
@@ -237,7 +278,7 @@ class Job(ReadOnlyJob):
         self.save_object('function', func_key, func, force_unique=True)
 
         for idx, inp in enumerate(inputs):
-            op_result = self.add_op('{}/app:{}'.format(op_name, idx), func_key, [inp], 1)
+            op_result = self.add_op('{},app:{}'.format(op_name, idx), func_key, [inp], 1)
             results.append(op_result[0])
 
         self.map_idx += 1
@@ -251,7 +292,7 @@ class Job(ReadOnlyJob):
 
         return op_result
 
-    def run(self, pattern, indices, force):
+    def run(self, pattern, indices, force, output_to_files):
         operators = self.get_ops(pattern)
 
         if not operators:
@@ -260,10 +301,10 @@ class Job(ReadOnlyJob):
         if not indices:
             indices = set(range(len(operators)))
 
-        return [op.run(self.objects, force) for i, op in enumerate(operators) if i in indices]
+        return [op.run(self.objects, force, output_to_files) for i, op in enumerate(operators) if i in indices]
 
-    def zip(self, archive_name=None):
-        return self.objects.zip(archive_name)
+    def zip(self, archive_name=None, delete=False):
+        return self.objects.zip(archive_name, delete=delete)
 
 
 class ObjectStore(object):
@@ -295,6 +336,8 @@ def split_path(path, root):
 
 class FileSystemObjectStore(ObjectStore):
     def __init__(self, directory, force_fresh=False):
+        if str(directory).endswith('.zip'):
+            raise ValueError("Cannot create a FileSystemObjectStore from a zip file.")
         self.used_keys = defaultdict(list)
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=not force_fresh)
@@ -364,7 +407,7 @@ class FileSystemObjectStore(ObjectStore):
         directory = self.path_for(kind)
         return list(split_path(p, self.directory) for p in directory.glob('**/*.key'))
 
-    def zip(self, archive_name=None):
+    def zip(self, archive_name=None, delete=False):
         if not archive_name:
             archive_name = Path(self.directory).name
 
@@ -372,9 +415,13 @@ class FileSystemObjectStore(ObjectStore):
         # a directory with a name given by ``base_dir``.
         archive_path = shutil.make_archive(
             str(archive_name), 'zip', root_dir=str(self.directory.parent),
-            base_dir=str(self.directory.name))
+            base_dir=str(self.directory.relative_to(self.directory.parent)))
+
+        archive_path = shutil.move(archive_path, str(self.directory.parent))
+
         print("Zipped {} as {}.".format(self.directory, archive_path))
-        # shutil.rmtree(str(self.directory))
+        if delete:
+            shutil.rmtree(str(self.directory))
 
 
 class ZipObjectStore(ObjectStore):
@@ -446,7 +493,7 @@ def zip_root(zipfile):
 
 def run_command(args):
     job = Job(args.path)
-    job.run(args.pattern, args.indices, args.force)
+    job.run(args.pattern, args.indices, args.force, args.redirect)
 
 
 def view_command(args):
@@ -481,6 +528,8 @@ def parallel_cl(desc, additional_cmds=None):
     run_parser.add_argument(
         '--force', action='store_true', help="If supplied, run the selected operators "
                                              "even if they've already been completed.")
+    run_parser.add_argument(
+        '--redirect', action='store_true', help="If supplied, output is redirected to files rather than being printed.")
 
     run_parser.set_defaults(func=run_command)
 
@@ -499,7 +548,7 @@ def parallel_cl(desc, additional_cmds=None):
             cmd_parser.add_argument(arg_name, **kwargs)
         cmd_parser.set_defaults(func=cmd[2])
 
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
 
     try:
         func = args.func

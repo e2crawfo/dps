@@ -34,7 +34,8 @@ def submit_job(
         input_zip, pattern, scratch, n_jobs=-1, n_nodes=1, ppn=12, walltime="1:00:00",
         cleanup_time="00:15:00", add_date=True, test=0,
         show_script=0, dry_run=0, queue=None,
-        parallel_exe="parallel", sdbin='$HOME/.virtualenvs/dps/bin/'):
+        parallel_exe="/home/e2crawfo/.local/bin/parallel",
+        sdbin='$HOME/.virtualenvs/dps/bin/'):
 
     idx_file = 'job_indices.txt'
     input_zip = Path(input_zip)
@@ -57,14 +58,15 @@ def submit_job(
 
     cleanup_time = parse_timedelta(cleanup_time)
     walltime = parse_timedelta(walltime)
+    if cleanup_time > walltime:
+        raise Exception("Cleanup time {} is larger than walltime {}!".format(cleanup_time, walltime))
     execution_time = int((walltime - cleanup_time).total_seconds())
 
     node_file = " --sshloginfile $PBS_NODEFILE "
 
     kwargs = locals().copy()
 
-    code = '''
-#!/bin/bash
+    code = '''#!/bin/bash
 
 # MOAB/Torque submission script for multiple, dynamically-run serial jobs
 #
@@ -82,70 +84,80 @@ def submit_job(
 export OMP_NUM_THREADS=1
 
 cd {job_directory}
+echo PWD $PWD | tee -a /dev/stderr
 mkdir results
-echo "Starting job at - "
+echo "Starting job at - " | tee -a /dev/stderr
 date
 
-echo "Printing RAMDISK..."
+echo "Printing RAMDISK..." | tee -a /dev/stderr
 {parallel_exe} --no-notice {node_file} --nonall \\
-    echo Ramdisk on host \\$HOSTNAME is \\$RAMDISK, working directory is \\$PWD.
+    "cd \\$RAMDISK && echo Ramdisk on host \\$HOSTNAME is \\$RAMDISK, working directory is \\$PWD."
 
-echo "Staging input archive..."
+echo "Staging input archive..." | tee -a /dev/stderr
 {parallel_exe} --no-notice {node_file} --nonall \\
-    cp {input_zip_abs} \\$RAMDISK
+    "cd \\$RAMDISK && cp {input_zip_abs} ."
 
-echo "Listing staging results..."
+echo "Listing staging results..." | tee -a /dev/stderr
 {parallel_exe} --no-notice {node_file} --nonall \\
-    "echo ls on node \\$HOSTNAME && ls"
+    "cd \\$RAMDISK && echo ls on node \\$HOSTNAME && ls"
 
-echo "Unzipping..."
+echo "Unzipping..." | tee -a /dev/stderr
 {parallel_exe} --no-notice {node_file} --nonall \\
-    "unzip \\$RAMDISK/{input_zip_base}"
+    "cd \\$RAMDISK && unzip -q {input_zip_base}"
 
-echo "Running parallel..."
+echo "Running parallel..." | tee -a /dev/stderr
 timeout --signal=TERM {execution_time}s \\
-    {parallel_exe} --no-notice -j{ppn} --workdir $PWD \\
-        --joblog {job_directory}/job_log.txt --env OMP_NUM_THREADS --env PATH \\
-        {node_file}\\
-        dps-hyper run {pattern} {{}} --verbose < {idx_file}
+    {parallel_exe} -k --no-notice -j{ppn} \\
+        --joblog {job_directory}/job_log.txt \\
+        --env OMP_NUM_THREADS --env PATH --env LD_LIBRARY_PATH \\
+        {node_file} \\
+        "cd \\$RAMDISK && dps-hyper run {archive_root} {pattern} {{}}" < {idx_file}
 
 if [ "$?" -eq 124 ]; then
-    echo Timed out after {execution_time} seconds.
+    echo Timed out after {execution_time} seconds. | tee -a /dev/stderr
 fi
 
-echo "Cleaning up at - "
+echo "Cleaning up at - " | tee -a /dev/stderr
 date
 
 {parallel_exe} --no-notice {node_file} --nonall \\
-    "echo Retrieving results from node \\$HOSTNAME &&
-     cd \\$RAMDISK &&
-     dps-hyper zip {archive_root} \\$HOSTNAME.zip &&
-     mv \\$HOSTNAME.zip {job_directory}/results"
+    "echo Retrieving results from node \\$HOSTNAME && cd \\$RAMDISK && zip -rq \\$HOSTNAME {archive_root} && mv \\$HOSTNAME.zip {job_directory}/results"
 
 cd {job_directory}/results
-echo In job_directory/results: $PWD
+echo In job_directory/results: $PWD | tee -a /dev/stderr
 ls
 
-echo "Unzipping results from different nodes..."
+echo "Unzipping results from different nodes..." | tee -a /dev/stderr
+
+if test -n "$(find . -maxdepth 1 -name '*.zip' -print -quit)"; then
+    echo Files exist | tee -a /dev/stderr
+    ls
+else
+    echo "No zip files from nodes" | tee -a /dev/stderr
+    echo "Contents of results directory is:" | tee -a /dev/stderr
+    ls
+    exit 1
+fi
+
 for f in *zip
 do
-    echo "Storing results from node "$f
+    echo "Storing results from node "$f | tee -a /dev/stderr
     unzip -nuq $f
     rm $f
 done
 
-echo "Zipping final results..."
-dps-hyper zip {name} {archive_root}
+echo "Zipping final results..." | tee -a /dev/stderr
+zip -rq {name} {archive_root}
 mv {name}.zip ..
 cd ..
-echo Should be in job directory now: $PWD
+echo Should be in job directory now: $PWD | tee -a /dev/stderr
 ls
 
-echo "Removing results directory..."
-rm -rf results
+# echo "Removing results directory..." | tee -a /dev/stderr
+# rm -rf results
 
-dps-hyper view {name}.zip
-mv {input_zip} {input_zip}.bk
+# dps-hyper view {name}.zip
+mv {input_zip_abs} {input_zip_abs}.bk
 cp -f {name}.zip {input_zip_abs}
 
 '''
@@ -192,7 +204,7 @@ cp -f {name}.zip {input_zip_abs}
                 print(output)
 
                 # Create a file in the directory with the job_id as its name
-                job_id = output.split('.')[0]
+                job_id = output.decode().split('.')[0]
                 open(job_id, 'w').close()
                 print("Job ID: {}".format(job_id))
         except subprocess.CalledProcessError as e:

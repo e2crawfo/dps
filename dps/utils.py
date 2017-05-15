@@ -58,6 +58,10 @@ class KeywordMapping(object):
         return [KeywordMapping([b]).eval(pattern) for b in batch]
 
 
+class SigTerm(Exception):
+    pass
+
+
 class NumpySeed(object):
     def __init__(self, seed):
         self.seed = seed

@@ -1,3 +1,5 @@
+import matplotlib
+matplotlib.use('Agg')
 from .production_system import (
     ProductionSystem, CoreNetwork, ProductionSystemEnv, ProductionSystemFunction)
 from .updater import DifferentiableUpdater

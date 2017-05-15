@@ -9,6 +9,7 @@ from pprint import pformat
 
 from spectral_dagger.utils.experiment import ExperimentStore
 from dps.utils import restart_tensorboard, EarlyStopHook, gen_seed
+from dps.utils import SigTerm
 
 
 def uninitialized_variables_initializer():
@@ -27,11 +28,16 @@ def uninitialized_variables_initializer():
 
 
 def _training_loop(
-        curriculum, config, max_experiments=5, start_tensorboard=True,
-        exp_name='', reset_global_step=False):
+        curriculum, config, start_tensorboard, save_summaries, exp_name, reset_global_step):
 
-    es = ExperimentStore(config.log_dir, max_experiments=max_experiments, delete_old=1)
-    exp_dir = es.new_experiment(exp_name, use_time=1, force_fresh=1)
+    print("In training loop.")
+    # import configparser
+    # config = configparser.ConfigParser()
+    # config.read('setup.cfg')
+
+    es = ExperimentStore(config.log_dir, max_experiments=np.inf, delete_old=1)
+    exp_dir = es.new_experiment(exp_name, use_time=1, force_fresh=1, update_latest=1)
+    print("Scratch pad is {}.".format(exp_dir.path))
     config.path = exp_dir.path
 
     print(config)
@@ -72,7 +78,7 @@ def _training_loop(
                 tf_seed = gen_seed()
                 tf.set_random_seed(tf_seed)
 
-                if train_writer is None:
+                if train_writer is None and save_summaries:
                     train_writer = tf.summary.FileWriter(exp_dir.path_for('train'), graph)
                     val_writer = tf.summary.FileWriter(exp_dir.path_for('val'))
                     print("Writing summaries to {}.".format(exp_dir.path))
@@ -105,7 +111,7 @@ def _training_loop(
                             stage_config.batch_size, summary_op if evaluate else None)
                         duration = time.time() - start_time
 
-                        if evaluate:
+                        if evaluate and save_summaries:
                             train_writer.add_summary(train_summary, global_step)
                             val_writer.add_summary(val_summary, global_step)
 
@@ -141,9 +147,14 @@ def _training_loop(
                     local_step += 1
                     global_step += 1
 
+            except SigTerm:
+                # We stop the entire curriculum, but return the results we have so far.
+                print("Received TERM signal...")
+                break
+
             except KeyboardInterrupt:
+                # We move on to the next stage of curriculum.
                 print("Keyboard interrupt...")
-                pass
 
             if not new_best:
                 print("Loading best hypothesis from stage {} from file {}...".format(stage, best_path))
@@ -168,9 +179,8 @@ def _training_loop(
 
 
 def training_loop(
-        curriculum, config,
-        max_experiments=5, start_tensorboard=True, exp_name='',
-        reset_global_step=False):
+        curriculum, config, start_tensorboard=False,
+        save_summaries=False, exp_name='', reset_global_step=False):
 
     kwargs = locals().copy()
 

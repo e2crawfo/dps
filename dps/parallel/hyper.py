@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from collections import defaultdict
 from pathlib import Path
+import clify
 
 from dps.utils import gen_seed
 from dps.test.config import algorithms, tasks
@@ -38,6 +39,16 @@ class ChoiceDist(object):
 
     def rvs(self, shape):
         return np.random.choice(self.choices, shape)
+
+
+class LogUniform(object):
+    def __init__(self, lo, hi, base=None):
+        self.lo = lo
+        self.hi = hi
+        self.base = base or np.e
+
+    def rvs(self, shape):
+        return self.base ** np.random.uniform(self.lo, self.hi, shape)
 
 
 def sample_configs(n, repeats, base_config, distributions):
@@ -160,7 +171,7 @@ def build_search(path, name, n, repeats, alg, task, _zip):
         pass
     elif alg == 'qlearning':
         distributions.update(
-            lr_schedule=TupleDist(spdists.uniform(0, 0.1), 1000, 0.9, False),
+            lr_schedule=TupleDist(LogUniform(-3., 0., 10), 1000, 0.9, False),
             exploration_schedule=TupleDist(spdists.uniform(0, 0.5), 1000, 0.9, False),
             batch_size=ChoiceDist(10 * np.arange(1, 11)),
             replay_max_size=ChoiceDist(2 ** np.arange(6, 14)),
@@ -171,10 +182,23 @@ def build_search(path, name, n, repeats, alg, task, _zip):
     else:
         raise NotImplementedError("Unknown algorithm: {}.".format(alg))
 
+    config = clify.wrap_object(config).parse()
+    config.start_tensorboard = False
+    config.save_summaries = False  # Whether to save tensorflow summaries.
+
     configs = sample_configs(n, repeats, config, distributions)
 
     es = ExperimentStore(str(path), max_experiments=10, delete_old=1)
-    exp_dir = es.new_experiment('{}_{}_{}'.format(name, alg, task), use_time=0, force_fresh=1)
+    count = 0
+    base_name = name
+    has_built = False
+    while not has_built:
+        try:
+            exp_dir = es.new_experiment('{}_{}_{}'.format(name, alg, task), use_time=0, force_fresh=1)
+            has_built = True
+        except FileExistsError:
+            name = "{}_{}".format(base_name, count)
+            count += 1
     print(str(config))
 
     print("Building parameter search at {}.".format(exp_dir.path))
@@ -184,17 +208,17 @@ def build_search(path, name, n, repeats, alg, task, _zip):
     best = job.reduce(reduce_hyper_results, summaries)
 
     if _zip:
-        job.zip()
+        job.zip(delete=False)
 
 
 def _build_search(args):
-    build_search(args.path, args.name, args.n, args.repeats, args.alg, args.task, args.zip)
+    build_search(args.path, args.name, args.n, args.repeats, args.alg, args.task, not args.no_zip)
 
 
 def _zip_search(args):
-    job = Job(args.path)
-    archive_name = args.name or Path(args.path).stem
-    job.zip(archive_name)
+    job = Job(args.to_zip)
+    archive_name = args.name or Path(args.to_zip).stem
+    job.zip(archive_name, delete=args.delete)
 
 
 def hyper_search_cl():
@@ -207,13 +231,15 @@ def hyper_search_cl():
         ('repeats', dict(help="Number of repeats for each parameter setting.", type=int)),
         ('alg', dict(help="Algorithm to use for learning.", type=str)),
         ('task', dict(help="Task to test on.", type=str)),
-        ('--zip', dict(action='store_true', help="Whether to compress the result."))
+        ('--no-zip', dict(action='store_true', help="If True, no zip file is produced.")),
+        ('--max-steps', dict(type=int, default=10000, help="Maximum number of steps to run for each stage of curriculum."))
     )
 
     zip_cmd = (
         'zip', 'Zip up a job.', _zip_search,
         ('to_zip', dict(help="Path to the job we want to zip.", type=str)),
         ('name', dict(help="Optional path where archive should be created.", type=str, default='', nargs='?')),
+        ('--delete', dict(help="If True, delete the original.", action='store_true'))
     )
 
     parallel_cl('Build, run and view hyper-parameter searches.', [build_cmd, zip_cmd])

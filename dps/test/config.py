@@ -59,6 +59,8 @@ class DefaultConfig(Config):
     display = False
     save_display = False
     path = os.getcwd()
+    start_tensorboard = True
+    save_summaries = True
 
 
 class DiffConfig(Config):
