@@ -4,11 +4,24 @@ from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 import numpy as np
 
 from dps.updater import ReinforcementLearningUpdater
+from dps.utils import build_decaying_value
 
 
 class REINFORCE(ReinforcementLearningUpdater):
-    def __init__(self, *args, **kwargs):
-        super(REINFORCE, self).__init__(*args, **kwargs)
+    def __init__(self,
+                 env,
+                 policy,
+                 optimizer_class,
+                 lr_schedule,
+                 noise_schedule,
+                 max_grad_norm,
+                 gamma,
+                 l2_norm_param,
+                 entropy_param):
+        self.entropy_param = entropy_param
+        super(REINFORCE, self).__init__(
+            env, policy, optimizer_class, lr_schedule,
+            noise_schedule, max_grad_norm, gamma, l2_norm_param)
         self.clear_buffers()
 
     def _update(self, batch_size, summary_op=None):
@@ -96,27 +109,40 @@ class REINFORCE(ReinforcementLearningUpdater):
             batch_size = tf.shape(self.obs)[1]
             initial_state = reinforce_cell.zero_state(batch_size, tf.float32)
 
-            _, (surrogate_objective, controller_state) = dynamic_rnn(
+            (_, action_probs), (surrogate_objective, controller_state) = dynamic_rnn(
                 reinforce_cell, inp, initial_state=initial_state,
                 parallel_iterations=1, swap_memory=False,
                 time_major=True)
 
             self.policy_loss = -tf.reduce_mean(surrogate_objective)
+            tf.summary.scalar("policy_loss", self.policy_loss)
 
+            loss = self.policy_loss
+
+            self.reg_loss = None
             if self.l2_norm_param > 0:
                 policy_network_variables = tf.get_collection(
                     tf.GraphKeys.TRAINABLE_VARIABLES, scope=self.policy.scope)
+
                 self.reg_loss = tf.reduce_sum([tf.reduce_sum(tf.square(x)) for x in policy_network_variables])
-                self.loss = self.policy_loss + self.l2_norm_param * self.reg_loss
-            else:
-                self.reg_loss = None
-                self.loss = self.policy_loss
+                tf.summary.scalar("reg_loss", self.reg_loss)
+
+                loss += self.l2_norm_param * self.reg_loss
+
+            policy_mean_entropy = tf.reduce_mean(tf.reduce_sum(-action_probs * tf.log(action_probs), axis=-1))
+            tf.summary.scalar("policy_mean_entropy", policy_mean_entropy)
+
+            self.entropy_loss = None
+            if self.entropy_param is not None:
+                self.entropy_loss = -policy_mean_entropy
+                entropy_param = self.entropy_param
+                if isinstance(self.entropy_param, tuple):
+                    entropy_param = build_decaying_value(self.entropy_param, 'entropy_param')
+                loss += entropy_param * self.entropy_loss
+
+            self.loss = loss
 
             tf.summary.scalar("reward_per_ep", self.reward_per_ep)
-
-            tf.summary.scalar("policy_loss", self.policy_loss)
-            if self.l2_norm_param > 0:
-                tf.summary.scalar("reg_loss", self.reg_loss)
 
             self._build_train()
 
@@ -136,9 +162,8 @@ class ReinforceCell(RNNCell):
 
             new_term = tf.log(tf.reduce_sum(action_probs * actions, axis=-1, keep_dims=True)) * cumulative_rewards
             new_accumulator = accumulator + new_term
-            new_state = (new_accumulator, new_policy_state)
 
-            return new_accumulator, new_state
+            return (new_accumulator, action_probs), (new_accumulator, new_policy_state)
 
     @property
     def state_size(self):
@@ -146,7 +171,7 @@ class ReinforceCell(RNNCell):
 
     @property
     def output_size(self):
-        return 1
+        return (1, self.policy.n_actions)
 
     def zero_state(self, batch_size, dtype):
         initial_state = (

@@ -279,7 +279,7 @@ def add_scaled_noise_to_gradients(grads_and_vars, gradient_noise_scale):
             gradient_shape = gradient.get_shape()
         noise = random_ops.truncated_normal(gradient_shape) * gradient_noise_scale
         noisy_gradients.append(gradient + noise)
-    return list(zip(noisy_gradients, variables))
+    return noisy_gradients
 
 
 def adj_inverse_time_decay(initial, global_step, decay_steps, decay_rate, gamma,

@@ -50,23 +50,29 @@ class Updater(with_metaclass(abc.ABCMeta, object)):
 
         tvars = tf.trainable_variables()
         self.pure_gradients = tf.gradients(self.loss, tvars)
+        tf.summary.scalar('pure_gradient_norm', tf.global_norm(self.pure_gradients))
 
-        if hasattr(self, 'max_grad_norm') and self.max_grad_norm > 0.0:
+        if hasattr(self, 'max_grad_norm') and self.max_grad_norm is not None and self.max_grad_norm > 0.0:
             self.clipped_gradients, _ = tf.clip_by_global_norm(self.pure_gradients, self.max_grad_norm)
         else:
             self.clipped_gradients = self.pure_gradients
 
+        tf.summary.scalar('clipped_gradient_norm', tf.global_norm(self.clipped_gradients))
+
         global_step = tf.contrib.framework.get_or_create_global_step()
 
-        grads_and_vars = zip(self.clipped_gradients, tvars)
-        if hasattr(self, 'noise_schedule'):
+        if hasattr(self, 'noise_schedule') and self.noise_schedule is not None:
+            grads_and_vars = zip(self.clipped_gradients, tvars)
             start, decay_steps, decay_rate, staircase = self.noise_schedule
             noise = adj_inverse_time_decay(
                 start, global_step, decay_steps, decay_rate, staircase=staircase, gamma=0.55)
             tf.summary.scalar('noise', noise)
-            grads_and_vars = add_scaled_noise_to_gradients(grads_and_vars, noise)
+            self.noisy_gradients = add_scaled_noise_to_gradients(grads_and_vars, noise)
+        else:
+            self.noisy_gradients = self.clipped_gradients
+        tf.summary.scalar('final_gradient_norm', tf.global_norm(self.noisy_gradients))
 
-        self.final_gradients = [g for g, v in grads_and_vars]
+        grads_and_vars = list(zip(self.noisy_gradients, tvars))
         self.train_op = self.optimizer.apply_gradients(grads_and_vars, global_step=global_step)
 
         # if default_config().debug:

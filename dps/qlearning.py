@@ -7,6 +7,10 @@ from collections import deque
 from dps.updater import ReinforcementLearningUpdater
 
 
+def clipped_error(x):
+    return tf.where(tf.abs(x) < 1.0, 0.5 * tf.square(x), tf.abs(x) - 0.5)
+
+
 class QLearning(ReinforcementLearningUpdater):
     def __init__(self,
                  env,
@@ -51,15 +55,23 @@ class QLearning(ReinforcementLearningUpdater):
         self.env.do_rollouts(self, self.q_network, 'train', batch_size)
         self.replay_buffer.add(self.obs_buffer, self.action_buffer, self.reward_buffer)
 
-        self.obs_buffer, self.action_buffer, self.reward_buffer = self.replay_buffer.get_batch(batch_size)
-
         feed_dict = self.build_feeddict()
-        feed_dict[self.is_training] = True
+        feed_dict[self.is_training] = False
         sess = tf.get_default_session()
 
         if summary_op is not None:
-            train_summary, train_loss, train_reward, _ = sess.run(
-                [summary_op, self.loss, self.reward_per_ep, self.train_op], feed_dict=feed_dict)
+            # Evaluate the training rollouts.
+            train_summary, train_loss, train_reward = sess.run(
+                [summary_op, self.loss, self.reward_per_ep], feed_dict=feed_dict)
+        else:
+            train_reward, = sess.run([self.reward_per_ep], feed_dict=feed_dict)
+
+        self.obs_buffer, self.action_buffer, self.reward_buffer = self.replay_buffer.get_batch(batch_size)
+        feed_dict = self.build_feeddict()
+        feed_dict[self.is_training] = True
+
+        if summary_op is not None:
+            sess.run([self.train_op], feed_dict=feed_dict)
 
             # Run some validation rollouts
             self.clear_buffers()
@@ -72,7 +84,7 @@ class QLearning(ReinforcementLearningUpdater):
 
             return_value = train_summary, -train_reward, val_summary, -val_reward
         else:
-            train_loss, train_reward, _ = sess.run([self.loss, self.reward_per_ep, self.train_op], feed_dict=feed_dict)
+            sess.run([self.train_op], feed_dict=feed_dict)
             return_value = -train_reward
 
         sess.run(self.target_network_update)
@@ -105,7 +117,7 @@ class QLearning(ReinforcementLearningUpdater):
         self.reward_buffer.append(reward)
 
     def _build_graph(self):
-        with tf.name_scope("loss"):
+        with tf.name_scope("train"):
             self.obs = tf.placeholder(tf.float32, shape=(None, None, self.obs_dim), name="obs")
             self.actions = tf.placeholder(tf.float32, shape=(None, None, self.n_actions), name="actions")
             self.rewards = tf.placeholder(tf.float32, shape=(None, None, 1), name="rewards")
@@ -127,15 +139,14 @@ class QLearning(ReinforcementLearningUpdater):
             batch_size = tf.shape(self.obs)[1]
             initial_state = q_learning_cell.initial_state(first_obs, first_actions, batch_size, tf.float32)
 
-            _, (squared_error, prev_q_value, _, _) = dynamic_rnn(
+            td_error, (prev_q_value, _, _) = dynamic_rnn(
                 q_learning_cell, inp, initial_state=initial_state,
                 parallel_iterations=1, swap_memory=False,
                 time_major=True)
 
-            final_error = tf.reduce_sum(tf.square(final_rewards - prev_q_value), axis=-1, keep_dims=True)
-            squared_error = squared_error + final_error
-
-            self.q_loss = tf.reduce_sum(squared_error)
+            final_td_error = final_rewards - prev_q_value
+            td_error = tf.concat((td_error, tf.expand_dims(final_td_error, 0)), axis=0)
+            self.q_loss = tf.reduce_mean(clipped_error(td_error))
 
             if self.l2_norm_param > 0:
                 policy_network_variables = tf.get_collection(
@@ -180,7 +191,7 @@ class QLearningCell(RNNCell):
     def __call__(self, inp, state, scope=None):
         with tf.name_scope(scope or 'q_learning_cell'):
             observations, actions, rewards = inp
-            accumulator, prev_q_value, qn_state, tn_state = state
+            prev_q_value, qn_state, tn_state = state
 
             _, _, target_values, new_tn_state = self.target_network.build(observations, tn_state)
             _, _, q_values, new_qn_state = self.q_network.build(observations, qn_state)
@@ -192,13 +203,11 @@ class QLearningCell(RNNCell):
             else:
                 bootstrap = tf.reduce_max(tf.stop_gradient(target_values), axis=-1, keep_dims=True)
 
-            target = rewards + self.gamma * bootstrap
-            new_accumulator = accumulator + tf.reduce_sum(tf.square(target - prev_q_value), axis=-1, keep_dims=True)
-
+            td_error = rewards + self.gamma * bootstrap - prev_q_value
             q_value_selected_action = tf.reduce_sum(actions * q_values, axis=1, keep_dims=True)
 
-            new_state = (new_accumulator, q_value_selected_action, new_qn_state, new_tn_state)
-            return new_accumulator, new_state
+            new_state = (q_value_selected_action, new_qn_state, new_tn_state)
+            return td_error, new_state
 
     @property
     def state_size(self):
@@ -210,20 +219,19 @@ class QLearningCell(RNNCell):
 
     def zero_state(self, batch_size, dtype):
         initial_state = (
-            tf.fill((batch_size, 1), 0.0),  # accumulated squared error
             tf.fill((batch_size, 1), 0.0),  # q-value of action selected on previous time step
             self.q_network.zero_state(batch_size, dtype),  # hidden state for q network
             self.target_network.zero_state(batch_size, dtype))  # hidden state for target network
         return initial_state
 
     def initial_state(self, first_obs, first_actions, batch_size, dtype):
-        acc, _, qn_state, tn_state = self.zero_state(batch_size, dtype)
+        _, qn_state, tn_state = self.zero_state(batch_size, dtype)
 
         _, _, _, new_tn_state = self.target_network.build(first_obs, tn_state)
         _, _, q_values, new_qn_state = self.q_network.build(first_obs, qn_state)
         q_value_selected_action = tf.reduce_sum(first_actions * q_values, axis=1, keep_dims=True)
 
-        return acc, q_value_selected_action, new_qn_state, new_tn_state
+        return q_value_selected_action, new_qn_state, new_tn_state
 
 
 class PrioritizedReplayBuffer(object):

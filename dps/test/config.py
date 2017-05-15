@@ -39,7 +39,7 @@ class DefaultConfig(Config):
 
     # start, decay_steps, decay_rate, staircase
     lr_schedule = (0.001, 1000, 0.96, False)
-    noise_schedule = (0.0, 1000, 0.96, False)
+    noise_schedule = None
     exploration_schedule = (10.0, 1000, 0.96, False)
 
     test_time_explore = None
@@ -75,30 +75,38 @@ class ReinforceConfig(Config):
     updater_class = REINFORCE
     action_selection = SoftmaxSelect()
     test_time_explore = None
-    exploration_schedule = (10.0, 1000, 0.9, False)
     noise_schedule = (0.0, 1000, 0.96, False)
     lr_schedule = (0.01, 1000, 0.98, False)
     patience = np.inf
+    entropy_param = (0.1, 1000, 0.9, False)
+    exploration_schedule = (1.0, 1000, 1.0, False)
 
 
 class QLearningConfig(Config):
     updater_class = QLearning
     action_selection = EpsilonGreedySelect()
-    exploration_schedule = (0.1, 1000, 0.98, False)
-    lr_schedule = (0.001, 1000, 1.0, False)
+    exploration_schedule = (0.2, 1000, 0.98, False)
+    lr_schedule = (0.01, 1000, 1.0, False)
     double = False
 
-    replay_max_size = 1000
+    replay_max_size = 100000
     replay_threshold = -0.5
     replay_proportion = None
 
-    target_update_rate = 0.001
+    target_update_rate = 0.01
     recurrent = True
     patience = np.inf
     batch_size = 10
-    test_time_explore = 0.5
+    test_time_explore = 0.0
 
     l2_norm_param = 0.0
+    max_grad_norm = 0.0
+    controller_func = staticmethod(
+        lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=64),
+                                        MLP(),
+                                        n_actions))
+    # controller_func = staticmethod(
+    #     lambda n_actions: FeedforwardCell(MLP([10, 10], activation_fn=tf.nn.sigmoid), n_actions))
 
 
 class RealConfig(Config):

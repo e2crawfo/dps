@@ -632,7 +632,7 @@ class ProductionSystemCurriculum(Curriculum):
             updater = REINFORCE(
                 ps_env, psystem.policy, config.optimizer_class,
                 config.lr_schedule, config.noise_schedule, config.max_grad_norm,
-                config.gamma, config.l2_norm_param)
+                config.gamma, config.l2_norm_param, config.entropy_param)
         elif self.updater_class is QLearning:
             updater = QLearning(
                 ps_env, psystem.policy, target_policy, config.double,
