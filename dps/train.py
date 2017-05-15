@@ -5,6 +5,7 @@ from contextlib import ExitStack
 import tensorflow as tf
 import numpy as np
 import sys
+from pprint import pformat
 
 from spectral_dagger.utils.experiment import ExperimentStore
 from dps.utils import restart_tensorboard, EarlyStopHook, gen_seed
@@ -41,8 +42,6 @@ def _training_loop(
     batches_per_epoch = int(np.ceil(config.n_train / config.batch_size))
     max_epochs = int(np.ceil(config.max_steps / batches_per_epoch))
 
-    early_stop = EarlyStopHook(patience=config.patience)
-
     train_writer = None
     val_writer = None
 
@@ -60,20 +59,18 @@ def _training_loop(
                 stack.enter_context(graph.as_default())
                 stack.enter_context(sess)
                 stack.enter_context(sess.as_default())
-                stack.enter_context(config.as_default())
-
-                tf_seed = gen_seed()
-                tf.set_random_seed(tf_seed)
 
                 try:
-                    updater = next(curriculum)
-
-                    print("\nStarting stage {} of the curriculum. "
-                          "New updater is \n{}\n".format(stage, updater))
+                    stage_config, updater = next(curriculum)
 
                 except StopIteration:
                     print("Curriculum complete after {} stage(s).".format(stage-1))
                     break
+
+                stack.enter_context(stage_config.as_default())
+
+                tf_seed = gen_seed()
+                tf.set_random_seed(tf_seed)
 
                 if train_writer is None:
                     train_writer = tf.summary.FileWriter(exp_dir.path_for('train'), graph)
@@ -94,18 +91,18 @@ def _training_loop(
                 local_step = 0
 
                 while True:
-                    n_epochs = updater.n_experiences / config.n_train
+                    n_epochs = updater.n_experiences / stage_config.n_train
                     if n_epochs >= max_epochs:
                         print("Optimization complete, maximum number of epochs reached.")
                         break
 
-                    evaluate = global_step % config.eval_step == 0
-                    display = global_step % config.display_step == 0
+                    evaluate = global_step % stage_config.eval_step == 0
+                    display = global_step % stage_config.display_step == 0
 
                     if evaluate or display:
                         start_time = time.time()
                         train_summary, train_loss, val_summary, val_loss = updater.update(
-                            config.batch_size, summary_op if evaluate else None)
+                            stage_config.batch_size, summary_op if evaluate else None)
                         duration = time.time() - start_time
 
                         if evaluate:
@@ -117,7 +114,7 @@ def _training_loop(
                                   "Minibatch Duration={:06.4f} seconds, Epoch={:04.2f}.".format(
                                       global_step, local_step, train_loss, val_loss, duration, updater.env.completion))
 
-                        new_best, stop = early_stop.check(val_loss, global_step, local_step)
+                        new_best, stop = curriculum.check(val_loss, global_step, local_step)
 
                         if new_best:
                             checkpoint_file = exp_dir.path_for('best_stage={}'.format(stage))
@@ -129,14 +126,14 @@ def _training_loop(
                             print("Optimization complete, early stopping triggered.")
                             break
                     else:
-                        updater.update(config.batch_size)
+                        updater.update(stage_config.batch_size)
 
-                    if global_step % config.checkpoint_step == 0:
+                    if global_step % stage_config.checkpoint_step == 0:
                         print("Checkpointing on global step {}.".format(global_step))
                         checkpoint_file = exp_dir.path_for('model_stage={}'.format(stage))
                         updater.save(checkpoint_file, local_step)
 
-                    if val_loss < config.threshold:
+                    if val_loss < stage_config.threshold:
                         print("Optimization complete, validation loss threshold reached.")
                         threshold_reached = True
                         break
@@ -152,7 +149,6 @@ def _training_loop(
                 print("Loading best hypothesis from stage {} from file {}...".format(stage, best_path))
                 updater.restore(best_path)
 
-            early_stop.end_stage()
             curriculum.end_stage()
 
             if threshold_reached or config.power_through:
@@ -161,11 +157,12 @@ def _training_loop(
                 print("Failed to reach error threshold on stage {} of the curriculum, terminating.".format(stage))
                 break
 
-    print(early_stop.summarize())
+    print(curriculum.summarize())
+    history = curriculum.history()
     result = dict(
         config=config,
-        output=early_stop._history,
-        n_stages=len(early_stop._history)
+        output=history,
+        n_stages=len(history)
     )
     return result
 
@@ -176,6 +173,9 @@ def training_loop(
         reset_global_step=False):
 
     kwargs = locals().copy()
+
+    if start_tensorboard:
+        restart_tensorboard(config.log_dir)
 
     try:
         value = _training_loop(**kwargs)
@@ -193,11 +193,11 @@ def training_loop(
 
 
 class Curriculum(object):
-    def __init__(self, base_kwargs, curriculum):
-        self.base_kwargs = base_kwargs
-        self.curriculum = list(curriculum)
+    def __init__(self, config):
+        self.config = config
         self.prev_stage = -1
         self.stage = 0
+        self.early_stop = EarlyStopHook(patience=self.config.patience)
 
     def __iter__(self):
         return self
@@ -206,12 +206,28 @@ class Curriculum(object):
         return self.__call__()
 
     def __call__(self):
-        raise NotImplementedError()
+        pass
+
+    def check(self, validation_loss, global_step, local_step=None):
+        return self.early_stop.check(validation_loss, global_step, local_step)
 
     def end_stage(self):
         """ Should be called inside the same default graph, session
             and config as the previous call to ``__call__``. """
-        raise NotImplementedError()
+        self.early_stop.end_stage()
+
+    def summarize(self):
+        s = "\n"
+        for stage, (bvgs, bvls, bv) in enumerate(self.early_stop._history):
+            s += "Stage {} ".format(stage) + "*" * 30 + '\n'
+            s += "* best value: {}\n".format(bv)
+            s += "* global step: {}\n".format(bvgs)
+            s += "* local step: {}\n".format(bvls)
+            s += "* new config values: {}\n\n".format(pformat(self.config.curriculum[stage]))
+        return s
+
+    def history(self):
+        return self.early_stop._history
 
 
 def build_and_visualize(build_psystem, mode, n_rollouts, sample, render_rollouts=None):

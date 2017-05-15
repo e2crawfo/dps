@@ -173,8 +173,12 @@ def visualize(config):
 
 
 class MnistAdditionTrainer(ProductionSystemTrainer):
-    def build_env(self, **kwargs):
-        return MnistAdditionEnv(**kwargs)
+    def build_env(self):
+        config = default_config()
+        return MnistAdditionEnv(
+            config.n_digits, config.W, config.N,
+            config.n_train, config.n_val, config.n_test,
+            config.inc_delta, config.inc_x, config.inc_y)
 
     def build_core_network(self, env):
         return MnistAddition(env)

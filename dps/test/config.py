@@ -78,8 +78,8 @@ class ReinforceConfig(Config):
     noise_schedule = (0.0, 1000, 0.96, False)
     lr_schedule = (0.01, 1000, 0.98, False)
     patience = np.inf
-    entropy_param = (0.1, 1000, 0.9, False)
-    exploration_schedule = (1.0, 1000, 1.0, False)
+    entropy_param = (0.01, 1000, 0.9, False)
+    exploration_schedule = (10.0, 1000, 1.0, False)
 
 
 class QLearningConfig(Config):
@@ -143,34 +143,34 @@ class ArithmeticConfig(DefaultConfig):
 
 class SimpleAdditionConfig(DefaultConfig):
     T = 30
-    # curriculum = [
-    #     dict(width=1, n_digits=10),
-    #     dict(width=2, n_digits=10),
-    #     dict(width=3, n_digits=10),
-    # ]
-
     curriculum = [
         dict(width=1, n_digits=10),
         dict(width=2, n_digits=10),
         dict(width=3, n_digits=10),
-        dict(width=4, n_digits=10),
-        dict(width=5, n_digits=10),
-        dict(width=6, n_digits=10),
-        dict(width=7, n_digits=10),
-        dict(width=8, n_digits=10),
-        dict(width=9, n_digits=10),
-        dict(width=9, n_digits=10, T=40),
-        dict(width=10, n_digits=10, T=40),
-        dict(width=11, n_digits=10, T=40),
-        dict(width=12, n_digits=10, T=50),
-        dict(width=13, n_digits=10, T=50),
-        dict(width=15, n_digits=10, T=60),
-        dict(width=17, n_digits=10, T=70),
-        dict(width=20, n_digits=10, T=80),
-        dict(width=25, n_digits=10, T=90),
-        dict(width=30, n_digits=10, T=100),
-        dict(width=35, n_digits=10, T=110),
     ]
+
+    # curriculum = [
+    #     dict(width=1, n_digits=10),
+    #     dict(width=2, n_digits=10),
+    #     dict(width=3, n_digits=10),
+    #     dict(width=4, n_digits=10),
+    #     dict(width=5, n_digits=10),
+    #     dict(width=6, n_digits=10),
+    #     dict(width=7, n_digits=10),
+    #     dict(width=8, n_digits=10),
+    #     dict(width=9, n_digits=10),
+    #     dict(width=9, n_digits=10, T=40),
+    #     dict(width=10, n_digits=10, T=40),
+    #     dict(width=11, n_digits=10, T=40),
+    #     dict(width=12, n_digits=10, T=50),
+    #     dict(width=13, n_digits=10, T=50),
+    #     dict(width=15, n_digits=10, T=60),
+    #     dict(width=17, n_digits=10, T=70),
+    #     dict(width=20, n_digits=10, T=80),
+    #     dict(width=25, n_digits=10, T=90),
+    #     dict(width=30, n_digits=10, T=100),
+    #     dict(width=35, n_digits=10, T=110),
+    # ]
 
     log_dir = '/tmp/dps/simple_addition/'
 
@@ -190,11 +190,18 @@ class PointerConfig(DefaultConfig):
 
 
 class HardAdditionConfig(DefaultConfig):
-    T = 30
+    T = 40
     curriculum = [
-        dict(height=2, width=3, n_digits=2),
-        dict(height=2, width=4, n_digits=2),
-        dict(height=2, width=5, n_digits=2)]
+        dict(height=2, width=3, n_digits=2, entropy_param=(1.0, 1000, 0.9, False)),
+        dict(height=2, width=3, n_digits=2, entropy_param=(0.5, 1000, 0.9, False)),
+        dict(height=2, width=3, n_digits=2, entropy_param=(0.25, 1000, 0.9, False)),
+        dict(height=2, width=3, n_digits=2, entropy_param=(0.125, 1000, 0.9, False)),
+        dict(height=2, width=3, n_digits=2, entropy_param=(0.6125, 1000, 0.9, False)),
+        dict(height=2, width=3, n_digits=2, entropy_param=(0.3, 1000, 0.9, False)),
+        dict(height=2, width=3, n_digits=2, entropy_param=(0.15, 1000, 0.9, False)),
+        dict(height=2, width=3, n_digits=2, entropy_param=(0.1, 1000, 0.9, False)),
+        dict(height=2, width=3, n_digits=2, entropy_param=(0.05, 1000, 0.9, False)),
+        dict(height=2, width=3, n_digits=2, entropy_param=(0.01, 1000, 0.9, False))]
     log_dir = '/tmp/dps/hard_addition/'
     trainer = hard_addition.HardAdditionTrainer()
     visualize = hard_addition.visualize
@@ -249,7 +256,9 @@ class TranslatedMnistConfig(DefaultConfig):
 
     log_dir = '/tmp/dps/translated_mnist/'
 
-    base_kwargs = dict(inc_delta=0.1, inc_x=0.1, inc_y=0.1)
+    inc_delta = 0.1
+    inc_x = 0.1
+    inc_y = 0.1
 
     trainer = translated_mnist.TranslatedMnistTrainer()
     visualize = translated_mnist.visualize
@@ -287,7 +296,9 @@ class MnistAdditionConfig(DefaultConfig):
 
     log_dir = '/tmp/dps/mnist_addition/'
 
-    base_kwargs = dict(inc_delta=0.1, inc_x=0.1, inc_y=0.1)
+    inc_delta = 0.1
+    inc_x = 0.1
+    inc_y = 0.1
 
     trainer = mnist_addition.MnistAdditionTrainer()
     visualize = mnist_addition.visualize

@@ -109,8 +109,11 @@ def visualize(config):
 
 
 class SimpleAdditionTrainer(ProductionSystemTrainer):
-    def build_env(self, **kwargs):
-        return SimpleAdditionEnv(**kwargs)
+    def build_env(self):
+        config = default_config()
+        return SimpleAdditionEnv(
+            config.width, config.n_digits,
+            config.n_train, config.n_val, config.n_test)
 
     def build_core_network(self, env):
         return SimpleAddition(env)

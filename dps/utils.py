@@ -362,8 +362,14 @@ class Config(object):
         return context(self.__class__, self)
 
     def update(self, other):
-        for attr in other.list_attrs():
-            setattr(self, attr, getattr(other, attr))
+        if isinstance(other, Config):
+            for attr in other.list_attrs():
+                setattr(self, attr, getattr(other, attr))
+        elif isinstance(other, dict):
+            for attr, value in other.items():
+                setattr(self, attr, value)
+        else:
+            raise NotImplementedError()
 
     def list_attrs(self):
         return (

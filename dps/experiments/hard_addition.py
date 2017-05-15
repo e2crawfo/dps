@@ -183,8 +183,11 @@ def visualize(config):
 
 
 class HardAdditionTrainer(ProductionSystemTrainer):
-    def build_env(self, **kwargs):
-        return HardAdditionEnv(**kwargs)
+    def build_env(self):
+        config = default_config()
+        return HardAdditionEnv(
+            config.height, config.width, config.n_digits,
+            config.n_train, config.n_val, config.n_test)
 
     def build_core_network(self, env):
         return HardAddition(env)

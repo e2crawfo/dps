@@ -4,7 +4,7 @@ import os
 import copy
 import pandas as pd
 from tabulate import tabulate
-from pprint import pprint
+from pprint import pprint, pformat
 
 import tensorflow as tf
 from tensorflow.python.ops.rnn import dynamic_rnn
@@ -19,39 +19,6 @@ from dps.qlearning import QLearning
 from dps.utils import default_config, build_decaying_value
 from dps.train import Curriculum, training_loop
 from dps.policy import Policy
-
-
-class ProductionSystemTrainer(object):
-    def __init__(self):
-        pass
-
-    def build_policy(self, cn, exploration):
-        config = default_config()
-        return Policy(
-            config.controller_func(cn.n_actions), config.action_selection, exploration,
-            cn.n_actions, cn.obs_dim, name="{}_policy".format(cn.__class__.__name__))
-
-    def build_env(self, **kwargs):
-        raise NotImplementedError("Abstract method.")
-
-    def build_core_network(self, env):
-        raise NotImplementedError("Abstract method.")
-
-    def train(self, config, seed=-1):
-        config.seed = config.seed if seed < 0 else seed
-        np.random.seed(config.seed)
-
-        base_kwargs = dict(n_train=config.n_train, n_val=config.n_val, n_test=config.n_test)
-        if hasattr(config, 'base_kwargs'):
-            base_kwargs.update(config.base_kwargs)
-
-        curriculum = ProductionSystemCurriculum(
-            base_kwargs, config.curriculum, config.updater_class,
-            self.build_env, self.build_core_network, self.build_policy, verbose=config.verbose)
-
-        exp_name = "selection={}_updater={}".format(
-            config.action_selection.__class__.__name__, config.updater_class.__name__)
-        return training_loop(curriculum, config, exp_name=exp_name)
 
 
 params = 'env core_network policy use_act T'
@@ -570,29 +537,35 @@ class ProductionSystemEnv(Env):
 
 
 class ProductionSystemCurriculum(Curriculum):
-    def __init__(self, base_kwargs, curriculum, updater_class, build_env, build_core_network, build_policy, verbose=False):
-        super(ProductionSystemCurriculum, self).__init__(base_kwargs, curriculum)
-        self.updater_class = updater_class
+    def __init__(self, config, build_env, build_core_network, build_policy, verbose=False):
+        super(ProductionSystemCurriculum, self).__init__(config)
         self.build_env = build_env
         self.build_core_network = build_core_network
         self.build_policy = build_policy
-        self.verbose = verbose
 
     def __call__(self):
+        super(ProductionSystemCurriculum, self).__call__()
         if self.stage == self.prev_stage:
             raise Exception("Need to call member function ``end_stage`` before getting next stage.")
 
-        if self.stage == len(self.curriculum):
+        if self.stage == len(self.config.curriculum):
             raise StopIteration()
 
-        kw = self.curriculum[self.stage]
-        kw = kw.copy()
-        kw.update(self.base_kwargs)
+        config = copy.copy(self.config)
+        config.update(self.config.curriculum[self.stage])
 
+        print("\nStarting stage {} of the curriculum. "
+              "New config values for this stage are: \n{}\n".format(
+                  self.stage, pformat(self.config.curriculum[self.stage])))
+
+        with config.as_default():
+            updater = self._build_updater()
+        self.prev_stage = self.stage
+        return config, updater
+
+    def _build_updater(self):
         config = default_config()
-        T = kw.pop('T', config.T)
-
-        env = self.build_env(**kw)
+        env = self.build_env()
         core_network = self.build_core_network(env)
 
         is_training = tf.placeholder_with_default(False, shape=(), name="is_training")
@@ -608,7 +581,6 @@ class ProductionSystemCurriculum(Curriculum):
         target_policy.capture_scope()
 
         if self.stage != 0:
-            # So that there exist variables to load into
             policy.maybe_build_act()
 
             g = tf.get_default_graph()
@@ -617,23 +589,22 @@ class ProductionSystemCurriculum(Curriculum):
             saver = tf.train.Saver(policy_variables)
             saver.restore(tf.get_default_session(), os.path.join(default_config().path, 'policy.chk'))
 
-        psystem = ProductionSystem(env, core_network, policy, False, T)
+        psystem = ProductionSystem(env, core_network, policy, False, config.T)
         self.current_psystem = psystem
 
-        config = default_config()
         ps_func = psystem.build_psystem_func()
         ps_env = psystem.build_psystem_env()
 
-        if self.updater_class is DifferentiableUpdater:
+        if self.config.updater_class is DifferentiableUpdater:
             updater = DifferentiableUpdater(
                 psystem.env, ps_func, config.optimizer_class,
                 config.lr_schedule, config.noise_schedule, config.max_grad_norm)
-        elif self.updater_class is REINFORCE:
+        elif self.config.updater_class is REINFORCE:
             updater = REINFORCE(
                 ps_env, psystem.policy, config.optimizer_class,
                 config.lr_schedule, config.noise_schedule, config.max_grad_norm,
                 config.gamma, config.l2_norm_param, config.entropy_param)
-        elif self.updater_class is QLearning:
+        elif self.config.updater_class is QLearning:
             updater = QLearning(
                 ps_env, psystem.policy, target_policy, config.double,
                 config.replay_max_size, config.replay_threshold, config.replay_proportion,
@@ -643,13 +614,12 @@ class ProductionSystemCurriculum(Curriculum):
         else:
             raise NotImplementedError()
         updater.is_training = is_training
-
-        self.prev_stage = self.stage
         return updater
 
     def end_stage(self):
-        sample = self.updater_class in [REINFORCE, QLearning]
-        if self.verbose:
+        super(ProductionSystemCurriculum, self).end_stage()
+        sample = self.config.updater_class in [REINFORCE, QLearning]
+        if self.config.verbose:
             self.current_psystem.visualize('train', 5, sample)
 
         # Occurs inside the same default graph, session and config as the previous call to __call__.
@@ -658,3 +628,31 @@ class ProductionSystemCurriculum(Curriculum):
         saver = tf.train.Saver(policy_variables)
         saver.save(tf.get_default_session(), os.path.join(default_config().path, 'policy.chk'))
         self.stage += 1
+
+
+class ProductionSystemTrainer(object):
+    def __init__(self):
+        pass
+
+    def build_policy(self, cn, exploration):
+        config = default_config()
+        return Policy(
+            config.controller_func(cn.n_actions), config.action_selection, exploration,
+            cn.n_actions, cn.obs_dim, name="{}_policy".format(cn.__class__.__name__))
+
+    def build_env(self):
+        raise NotImplementedError("Abstract method.")
+
+    def build_core_network(self, env):
+        raise NotImplementedError("Abstract method.")
+
+    def train(self, config, seed=-1):
+        config.seed = config.seed if seed < 0 else seed
+        np.random.seed(config.seed)
+
+        curriculum = ProductionSystemCurriculum(
+            config, self.build_env, self.build_core_network, self.build_policy)
+
+        exp_name = "selection={}_updater={}".format(
+            config.action_selection.__class__.__name__, config.updater_class.__name__)
+        return training_loop(curriculum, config, exp_name=exp_name)

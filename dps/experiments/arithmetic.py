@@ -92,8 +92,9 @@ def visualize(config):
 
 
 class ArithmeticTrainer(ProductionSystemTrainer):
-    def build_env(self, **kwargs):
-        return ArithmeticEnv(**kwargs)
+    def build_env(self):
+        config = default_config()
+        return ArithmeticEnv(config.order, config.n_train, config.n_val, config.n_test)
 
     def build_core_network(self, env):
         return Arithmetic(env)

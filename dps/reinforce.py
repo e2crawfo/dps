@@ -127,9 +127,9 @@ class REINFORCE(ReinforcementLearningUpdater):
                 self.reg_loss = tf.reduce_sum([tf.reduce_sum(tf.square(x)) for x in policy_network_variables])
                 tf.summary.scalar("reg_loss", self.reg_loss)
 
-                loss += self.l2_norm_param * self.reg_loss
+                loss = loss + self.l2_norm_param * self.reg_loss
 
-            policy_mean_entropy = tf.reduce_mean(tf.reduce_sum(-action_probs * tf.log(action_probs), axis=-1))
+            policy_mean_entropy = tf.reduce_mean(tf.reduce_sum(-action_probs * tf.log(action_probs + 1e-6), axis=-1))
             tf.summary.scalar("policy_mean_entropy", policy_mean_entropy)
 
             self.entropy_loss = None
@@ -138,7 +138,7 @@ class REINFORCE(ReinforcementLearningUpdater):
                 entropy_param = self.entropy_param
                 if isinstance(self.entropy_param, tuple):
                     entropy_param = build_decaying_value(self.entropy_param, 'entropy_param')
-                loss += entropy_param * self.entropy_loss
+                loss = loss + entropy_param * self.entropy_loss
 
             self.loss = loss
 
