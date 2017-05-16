@@ -9,7 +9,7 @@ from dps.policy import SoftmaxSelect, EpsilonGreedySelect, GumbelSoftmaxSelect
 from dps.utils import Config, CompositeCell, FeedforwardCell, MLP
 from dps.experiments import (
     arithmetic, simple_addition, pointer_following,
-    hard_addition, lifted_addition, translated_mnist, mnist_addition)
+    hard_addition, lifted_addition, translated_mnist, mnist_arithmetic)
 
 
 class DefaultConfig(Config):
@@ -59,8 +59,7 @@ class DefaultConfig(Config):
     display = False
     save_display = False
     path = os.getcwd()
-    start_tensorboard = True
-    save_summaries = True
+    max_time = 0
 
 
 class DiffConfig(Config):
@@ -197,18 +196,11 @@ class HardAdditionConfig(DefaultConfig):
     T = 40
     curriculum = [
         dict(height=2, width=3, n_digits=2, entropy_param=(1.0, 1000, 0.9, False)),
-        dict(height=2, width=3, n_digits=2, entropy_param=(0.5, 1000, 0.9, False)),
-        dict(height=2, width=3, n_digits=2, entropy_param=(0.25, 1000, 0.9, False)),
-        dict(height=2, width=3, n_digits=2, entropy_param=(0.125, 1000, 0.9, False)),
-        dict(height=2, width=3, n_digits=2, entropy_param=(0.6125, 1000, 0.9, False)),
-        dict(height=2, width=3, n_digits=2, entropy_param=(0.3, 1000, 0.9, False)),
-        dict(height=2, width=3, n_digits=2, entropy_param=(0.15, 1000, 0.9, False)),
-        dict(height=2, width=3, n_digits=2, entropy_param=(0.1, 1000, 0.9, False)),
-        dict(height=2, width=3, n_digits=2, entropy_param=(0.05, 1000, 0.9, False)),
-        dict(height=2, width=3, n_digits=2, entropy_param=(0.01, 1000, 0.9, False))]
+        dict(height=2, width=3, n_digits=2, entropy_param=(0.00, 1000, 0.9, False))]
     log_dir = '/tmp/dps/hard_addition/'
     trainer = hard_addition.HardAdditionTrainer()
     visualize = hard_addition.visualize
+    preserve_policy = False
 
 
 class LiftedAdditionConfig(DefaultConfig):
@@ -268,9 +260,10 @@ class TranslatedMnistConfig(DefaultConfig):
     visualize = translated_mnist.visualize
 
 
-class MnistAdditionConfig(DefaultConfig):
+class MnistArithmeticConfig(DefaultConfig):
     T = 10
     curriculum = [
+        dict(W=28, N=8, T=4, n_digits=1),
         dict(W=28, N=8, T=4, n_digits=1),
         dict(W=28, N=8, T=4, n_digits=1),
         dict(W=28, N=8, T=6, n_digits=1),
@@ -298,14 +291,14 @@ class MnistAdditionConfig(DefaultConfig):
                                         n_actions))
     reward_window = 0.5
 
-    log_dir = '/tmp/dps/mnist_addition/'
+    log_dir = '/tmp/dps/mnist_arithmetic/'
 
     inc_delta = 0.1
     inc_x = 0.1
     inc_y = 0.1
 
-    trainer = mnist_addition.MnistAdditionTrainer()
-    visualize = mnist_addition.visualize
+    trainer = mnist_arithmetic.MnistArithmeticTrainer()
+    visualize = mnist_arithmetic.visualize
 
 
 algorithms = dict(
@@ -321,7 +314,7 @@ tasks = dict(
     hard_addition=HardAdditionConfig(),
     lifted_addition=LiftedAdditionConfig(),
     translated_mnist=TranslatedMnistConfig(),
-    mnist_addition=MnistAdditionConfig())
+    mnist_arithmetic=MnistArithmeticConfig())
 
 
 def apply_mode(cfg, mode):
