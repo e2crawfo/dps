@@ -2,6 +2,7 @@ import pickle
 import gzip
 import time
 from contextlib import ExitStack
+from pathlib import Path
 
 import numpy as np
 import tensorflow as tf
@@ -9,7 +10,7 @@ import tensorflow as tf
 from spectral_dagger.utils.experiment import ExperimentStore
 from dps.environment import RegressionDataset
 from dps.utils import build_decaying_value, EarlyStopHook, Config, gen_seed
-from dps.utils import load_or_train as _load_or_train
+from dps.utils import load_or_train as _load_or_train, parse_config
 
 
 class Rect(object):
@@ -40,7 +41,8 @@ class TranslatedMnistDataset(RegressionDataset):
             function = lambda inputs: sum(inputs)
         self.function = function
 
-        mnist = pickle.load(gzip.open('/data/mnist.pkl.gz', 'r'), encoding='bytes')
+        loc = Path(parse_config()['data_dir'])
+        mnist = pickle.load(gzip.open(str(loc / 'mnist.pkl.gz'), 'r'), encoding='bytes')
 
         mnist_x = np.concatenate((mnist[0][0], mnist[1][0], mnist[2][0]), axis=0)
         mnist_x = mnist_x.reshape(-1, 28, 28)

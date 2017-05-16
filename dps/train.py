@@ -5,44 +5,22 @@ from contextlib import ExitStack
 import tensorflow as tf
 import numpy as np
 import sys
-import configparser
 from pprint import pformat, pprint
-import socket
 from pathlib import Path
 
 from spectral_dagger.utils.experiment import ExperimentStore
-import dps
 from dps.utils import (
     restart_tensorboard, EarlyStopHook, gen_seed,
-    time_limit, uninitialized_variables_initializer, catch)
+    time_limit, uninitialized_variables_initializer, catch, parse_config)
 
 
 def training_loop(
         curriculum, config, exp_name='', reset_global_step=False):
 
-    config.update(parse_train_config(), clobber=False)
+    config.update(parse_config(), clobber=False)
 
     kwargs = locals().copy()
     return TrainingLoop(**kwargs).run()
-
-
-def parse_train_config():
-    config = configparser.ConfigParser()
-    location = Path(dps.__file__).parent
-    config.read(str(location / 'config.ini'))
-    host_name = socket.gethostname()
-    if host_name not in config:
-        host_name = 'DEFAULT'
-    _config = config[host_name]
-    _config = {k: v for k, v in _config.items()}
-    for s in 'start_tensorboard update_latest save_summaries max_experiments'.split():
-        assert s in _config
-    _config['max_experiments'] = int(_config['max_experiments'])
-    if _config['max_experiments'] <= 0:
-        _config['max_experiments'] = np.inf
-    print("\nTraining loop config: ")
-    pprint(_config)
-    return _config
 
 
 class TrainingLoop(object):

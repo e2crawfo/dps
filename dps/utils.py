@@ -7,12 +7,35 @@ import types
 from pathlib import Path
 import signal
 import time
+import configparser
+from pprint import pprint
+import socket
 
 import tensorflow as tf
 from tensorflow.python.ops import random_ops, math_ops
 from tensorflow.python.framework import ops, constant_op
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from tensorflow.contrib.slim import fully_connected
+
+import dps
+
+
+def parse_config():
+    config = configparser.ConfigParser()
+    location = Path(dps.__file__).parent
+    config.read(str(location / 'config.ini'))
+    host_name = socket.gethostname()
+    if host_name not in config:
+        host_name = 'DEFAULT'
+    _config = config[host_name]
+    _config = {k: v for k, v in _config.items()}
+    for s in 'start_tensorboard update_latest save_summaries max_experiments data_dir'.split():
+        assert s in _config
+    _config['max_experiments'] = int(_config['max_experiments'])
+    if _config['max_experiments'] <= 0:
+        _config['max_experiments'] = np.inf
+    pprint(_config)
+    return _config
 
 
 @contextmanager
