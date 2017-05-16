@@ -5,12 +5,71 @@ import numpy as np
 import inspect
 import types
 from pathlib import Path
+import signal
+import time
 
 import tensorflow as tf
 from tensorflow.python.ops import random_ops, math_ops
 from tensorflow.python.framework import ops, constant_op
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from tensorflow.contrib.slim import fully_connected
+
+
+@contextmanager
+def catch(exception_types, action=None):
+    """ A try-except block as a context manager. """
+    try:
+        yield
+    except exception_types as e:
+        if isinstance(action, str):
+            print(action)
+        elif action:
+            action(e)
+
+
+def uninitialized_variables_initializer():
+    """ init only uninitialized variables - from
+        http://stackoverflow.com/questions/35164529/
+        in-tensorflow-is-there-any-way-to-just-initialize-uninitialised-variables """
+    uninitialized_vars = []
+    sess = tf.get_default_session()
+    for var in tf.global_variables():
+        try:
+            sess.run(var)
+        except tf.errors.FailedPreconditionError:
+            uninitialized_vars.append(var)
+    uninit_init = tf.variables_initializer(uninitialized_vars)
+    return uninit_init
+
+
+class Alarm(Exception):
+    pass
+
+
+def raise_alarm(*args, **kwargs):
+    raise Alarm()
+
+
+@contextmanager
+def time_limit(seconds, verbose=False):
+    """ Example use:
+
+        with time_limit(seconds=5):
+            while True:
+                pass
+
+    """
+    old_handler = signal.signal(signal.SIGALRM, raise_alarm)
+    try:
+        if not np.isinf(seconds):
+            signal.alarm(max(seconds, 0.00001))
+        then = time.time()
+        yield
+    except Alarm:
+        if verbose:
+            print("Block ran for {} seconds (limit was {}).".format(time.time() - then, seconds))
+    finally:
+        signal.signal(signal.SIGALRM, old_handler)
 
 
 # From py.test

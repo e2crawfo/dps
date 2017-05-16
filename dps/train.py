@@ -8,66 +8,101 @@ import sys
 from pprint import pformat
 
 from spectral_dagger.utils.experiment import ExperimentStore
-from dps.utils import restart_tensorboard, EarlyStopHook, gen_seed
-from dps.utils import SigTerm
+from dps.utils import (
+    restart_tensorboard, EarlyStopHook, gen_seed,
+    time_limit, uninitialized_variables_initializer, catch)
 
 
-def uninitialized_variables_initializer():
-    """ init only uninitialized variables - from
-        http://stackoverflow.com/questions/35164529/
-        in-tensorflow-is-there-any-way-to-just-initialize-uninitialised-variables """
-    uninitialized_vars = []
-    sess = tf.get_default_session()
-    for var in tf.global_variables():
+def training_loop(
+        curriculum, config, start_tensorboard=False,
+        save_summaries=False, exp_name='', reset_global_step=False,
+        max_time=None):
+
+    kwargs = locals().copy()
+    return TrainingLoop(**kwargs).run()
+
+
+class TrainingLoop(object):
+    def __init__(
+            self, curriculum, config, start_tensorboard=False,
+            save_summaries=False, exp_name='', reset_global_step=False,
+            max_time=None):
+
+        self.curriculum = curriculum
+        self.config = config
+        self.start_tensorboard = start_tensorboard
+        self.save_summaries = save_summaries
+        self.exp_name = exp_name
+        self.reset_global_step = reset_global_step
+        self.max_time = max_time
+
+    def run(self):
+        print("In TrainingLoop.run.")
+
+        if self.start_tensorboard:
+            restart_tensorboard(self.config.log_dir)
+
         try:
-            sess.run(var)
-        except tf.errors.FailedPreconditionError:
-            uninitialized_vars.append(var)
-    uninit_init = tf.variables_initializer(uninitialized_vars)
-    return uninit_init
+            value = self._run_core()
+        except KeyboardInterrupt:
+            if self.start_tensorboard:
+                restart_tensorboard(self.config.log_dir)
 
+            et, ei, tb = sys.exc_info()
+            raise ei.with_traceback(tb)
 
-def _training_loop(
-        curriculum, config, start_tensorboard, save_summaries, exp_name, reset_global_step):
+        if self.start_tensorboard:
+            restart_tensorboard(self.config.log_dir)
 
-    print("In training loop.")
-    # import configparser
-    # config = configparser.ConfigParser()
-    # config.read('setup.cfg')
+        return value
 
-    es = ExperimentStore(config.log_dir, max_experiments=np.inf, delete_old=1)
-    exp_dir = es.new_experiment(exp_name, use_time=1, force_fresh=1, update_latest=1)
-    print("Scratch pad is {}.".format(exp_dir.path))
-    config.path = exp_dir.path
+    def _run_core(self):
+        # import configparser
+        # config = configparser.ConfigParser()
+        # config.read('setup.cfg')
+        self.start = time.time()
 
-    print(config)
+        config = self.config
 
-    with open(exp_dir.path_for('config'), 'w') as f:
-        f.write(str(config))
+        es = ExperimentStore(config.log_dir, max_experiments=np.inf, delete_old=1)
+        self.exp_dir = exp_dir = es.new_experiment(self.exp_name, use_time=1, force_fresh=1, update_latest=1)
+        print("Scratch pad is {}.".format(exp_dir.path))
+        config.path = exp_dir.path
 
-    batches_per_epoch = int(np.ceil(config.n_train / config.batch_size))
-    max_epochs = int(np.ceil(config.max_steps / batches_per_epoch))
+        print(config)
 
-    train_writer = None
-    val_writer = None
+        with open(exp_dir.path_for('config'), 'w') as f:
+            f.write(str(config))
 
-    threshold_reached = True
-    stage = 1
-    global_step = 0
+        batches_per_epoch = int(np.ceil(config.n_train / config.batch_size))
+        self.max_epochs = int(np.ceil(config.max_steps / batches_per_epoch))
 
-    while True:
-        # tf.reset_default_graph()
-        graph = tf.Graph()
-        sess = tf.Session(graph=graph)
+        threshold_reached = True
+        stage = 1
+        self.global_step = 0
 
-        with ExitStack() as stack:
-            try:
+        while True:
+            if self._elapsed_time > self.max_time:
+                print("Time limit exceeded.")
+                break
+
+            graph = tf.Graph()
+
+            if self.save_summaries:
+                self.train_writer = tf.summary.FileWriter(exp_dir.path_for('train'), graph)
+                self.val_writer = tf.summary.FileWriter(exp_dir.path_for('val'))
+                print("Writing summaries to {}.".format(exp_dir.path))
+
+            sess = tf.Session(graph=graph)
+
+            with ExitStack() as stack:
+                stack.enter_context(catch(KeyboardInterrupt, "Keyboard interrupt..."))
                 stack.enter_context(graph.as_default())
                 stack.enter_context(sess)
                 stack.enter_context(sess.as_default())
 
                 try:
-                    stage_config, updater = next(curriculum)
+                    stage_config, updater = next(self.curriculum)
 
                 except StopIteration:
                     print("Curriculum complete after {} stage(s).".format(stage-1))
@@ -78,128 +113,98 @@ def _training_loop(
                 tf_seed = gen_seed()
                 tf.set_random_seed(tf_seed)
 
-                if train_writer is None and save_summaries:
-                    train_writer = tf.summary.FileWriter(exp_dir.path_for('train'), graph)
-                    val_writer = tf.summary.FileWriter(exp_dir.path_for('val'))
-                    print("Writing summaries to {}.".format(exp_dir.path))
-
-                with tf.name_scope('stage'):
-                    tf_stage = tf.constant(stage)
-                    tf.summary.scalar('stage', tf_stage)
-
-                summary_op = tf.summary.merge_all()
+                self.summary_op = tf.summary.merge_all()
                 tf.contrib.framework.get_or_create_global_step()
                 sess.run(uninitialized_variables_initializer())
                 sess.run(tf.assert_variables_initialized())
 
-                threshold_reached = False
-                val_loss = np.inf
-                local_step = 0
+                threshold_reached, n_steps = self._run_stage(stage, updater, stage_config)
 
-                while True:
-                    n_epochs = updater.n_experiences / stage_config.n_train
-                    if n_epochs >= max_epochs:
-                        print("Optimization complete, maximum number of epochs reached.")
+                print("Loading best hypothesis from stage {} "
+                      "from file {}...".format(stage, self.best_path))
+                updater.restore(self.best_path)
+
+                self.curriculum.end_stage()
+
+                if threshold_reached or config.power_through:
+                    stage += 1
+                else:
+                    print("Failed to reach error threshold on stage {} "
+                          "of the curriculum, terminating.".format(stage))
+                    break
+
+        print(self.curriculum.summarize())
+        history = self.curriculum.history()
+        result = dict(
+            config=config,
+            output=history,
+            n_stages=len(history)
+        )
+        return result
+
+    @property
+    def _elapsed_time(self):
+        return time.time() - self.start
+
+    def _run_stage(self, stage_idx, updater, stage_config):
+        """ Run a stage of a curriculum. """
+        local_step = 0
+        threshold_reached = False
+
+        limit = np.inf if self.max_time is None else self.max_time - self._elapsed_time
+        with time_limit(limit):
+            while True:
+                n_epochs = updater.n_experiences / stage_config.n_train
+                if n_epochs >= self.max_epochs:
+                    print("Optimization complete, maximum number of steps reached.")
+                    break
+
+                evaluate = self.global_step % stage_config.eval_step == 0
+                display = self.global_step % stage_config.display_step == 0
+
+                if evaluate or display:
+                    start_time = time.time()
+                    train_summary, train_loss, val_summary, val_loss = updater.update(
+                        stage_config.batch_size, self.summary_op if evaluate else None)
+                    duration = time.time() - start_time
+
+                    if evaluate and self.save_summaries:
+                        self.train_writer.add_summary(train_summary, self.global_step)
+                        self.val_writer.add_summary(val_summary, self.global_step)
+
+                    if display:
+                        print("Step(global: {}, local: {}): Minibatch Loss={:06.4f}, Validation Loss={:06.4f}, "
+                              "Minibatch Duration={:06.4f} seconds, Epoch={:04.2f}.".format(
+                                  self.global_step, local_step, train_loss, val_loss, duration, updater.env.completion))
+
+                    new_best, stop = self.curriculum.check(val_loss, self.global_step, local_step)
+
+                    if new_best:
+                        checkpoint_file = self.exp_dir.path_for('best_stage={}'.format(stage_idx))
+                        print("Storing new best on local step {} (global step {}) "
+                              "with validation loss of {}.".format(
+                                  local_step, self.global_step, val_loss))
+                        self.best_path = updater.save(checkpoint_file)
+                    if stop:
+                        print("Optimization complete, early stopping triggered.")
                         break
+                else:
+                    updater.update(stage_config.batch_size)
 
-                    evaluate = global_step % stage_config.eval_step == 0
-                    display = global_step % stage_config.display_step == 0
+                if self.global_step % stage_config.checkpoint_step == 0:
+                    print("Checkpointing on global step {}.".format(self.global_step))
+                    checkpoint_file = self.exp_dir.path_for('model_stage={}'.format(stage_idx))
+                    updater.save(checkpoint_file, local_step)
 
-                    if evaluate or display:
-                        start_time = time.time()
-                        train_summary, train_loss, val_summary, val_loss = updater.update(
-                            stage_config.batch_size, summary_op if evaluate else None)
-                        duration = time.time() - start_time
+                if val_loss < stage_config.threshold:
+                    print("Optimization complete, validation loss threshold reached.")
+                    threshold_reached = True
+                    break
 
-                        if evaluate and save_summaries:
-                            train_writer.add_summary(train_summary, global_step)
-                            val_writer.add_summary(val_summary, global_step)
+                local_step += 1
+                self.global_step += 1
 
-                        if display:
-                            print("Step(global: {}, local: {}): Minibatch Loss={:06.4f}, Validation Loss={:06.4f}, "
-                                  "Minibatch Duration={:06.4f} seconds, Epoch={:04.2f}.".format(
-                                      global_step, local_step, train_loss, val_loss, duration, updater.env.completion))
-
-                        new_best, stop = curriculum.check(val_loss, global_step, local_step)
-
-                        if new_best:
-                            checkpoint_file = exp_dir.path_for('best_stage={}'.format(stage))
-                            print("Storing new best on local step {} (global step {}) "
-                                  "with validation loss of {}.".format(
-                                      local_step, global_step, val_loss))
-                            best_path = updater.save(checkpoint_file)
-                        if stop:
-                            print("Optimization complete, early stopping triggered.")
-                            break
-                    else:
-                        updater.update(stage_config.batch_size)
-
-                    if global_step % stage_config.checkpoint_step == 0:
-                        print("Checkpointing on global step {}.".format(global_step))
-                        checkpoint_file = exp_dir.path_for('model_stage={}'.format(stage))
-                        updater.save(checkpoint_file, local_step)
-
-                    if val_loss < stage_config.threshold:
-                        print("Optimization complete, validation loss threshold reached.")
-                        threshold_reached = True
-                        break
-
-                    local_step += 1
-                    global_step += 1
-
-            except SigTerm:
-                # We stop the entire curriculum, but return the results we have so far.
-                print("Received TERM signal...")
-                break
-
-            except KeyboardInterrupt:
-                # We move on to the next stage of curriculum.
-                print("Keyboard interrupt...")
-
-            if not new_best:
-                print("Loading best hypothesis from stage {} from file {}...".format(stage, best_path))
-                updater.restore(best_path)
-
-            curriculum.end_stage()
-
-            if threshold_reached or config.power_through:
-                stage += 1
-            else:
-                print("Failed to reach error threshold on stage {} of the curriculum, terminating.".format(stage))
-                break
-
-    print(curriculum.summarize())
-    history = curriculum.history()
-    result = dict(
-        config=config,
-        output=history,
-        n_stages=len(history)
-    )
-    return result
-
-
-def training_loop(
-        curriculum, config, start_tensorboard=False,
-        save_summaries=False, exp_name='', reset_global_step=False):
-
-    kwargs = locals().copy()
-
-    if start_tensorboard:
-        restart_tensorboard(config.log_dir)
-
-    try:
-        value = _training_loop(**kwargs)
-    except KeyboardInterrupt:
-        if start_tensorboard:
-            restart_tensorboard(config.log_dir)
-
-        et, ei, tb = sys.exc_info()
-        raise ei.with_traceback(tb)
-
-    if start_tensorboard:
-        restart_tensorboard(config.log_dir)
-
-    return value
+        return threshold_reached, local_step
 
 
 class Curriculum(object):
