@@ -1,6 +1,6 @@
 import subprocess as sp
 from pprint import pformat
-from contextlib import contextmanager
+from contextlib import contextmanager, ContextDecorator
 import numpy as np
 import inspect
 import types
@@ -50,26 +50,40 @@ def raise_alarm(*args, **kwargs):
     raise Alarm()
 
 
-@contextmanager
-def time_limit(seconds, verbose=False):
+class time_limit(object):
     """ Example use:
 
-        with time_limit(seconds=5):
+        with time_limit(seconds=5) as tl:
             while True:
                 pass
 
+        if tl.ran_out:
+            print("Time ran out.")
+
     """
-    old_handler = signal.signal(signal.SIGALRM, raise_alarm)
-    try:
-        if not np.isinf(seconds):
-            signal.alarm(max(seconds, 0.00001))
-        then = time.time()
-        yield
-    except Alarm:
-        if verbose:
-            print("Block ran for {} seconds (limit was {}).".format(time.time() - then, seconds))
-    finally:
-        signal.signal(signal.SIGALRM, old_handler)
+    def __init__(self, seconds, verbose=False):
+        self.seconds = seconds
+        self.verbose = verbose
+        self.ran_out = False
+
+    def __enter__(self):
+        self.old_handler = signal.signal(signal.SIGALRM, raise_alarm)
+        if self.seconds <= 0:
+            raise_alarm()
+        if not np.isinf(self.seconds):
+            signal.alarm(int(np.ceil(self.seconds)))
+        self.then = time.time()
+        return self
+
+    def __exit__(self, exc_type, exc, exc_tb):
+        if exc_type is Alarm:
+            self.ran_out = True
+            if self.verbose:
+                print("Block ran for {} seconds (limit was {}).".format(time.time() - self.then, self.seconds))
+            return True
+        else:
+            signal.alarm(0)  # Cancel the alarm.
+        return False
 
 
 # From py.test
@@ -469,13 +483,15 @@ class Config(object):
     def as_default(self):
         return context(self.__class__, self)
 
-    def update(self, other):
+    def update(self, other, clobber=True):
         if isinstance(other, Config):
             for attr in other.list_attrs():
-                setattr(self, attr, getattr(other, attr))
+                if not hasattr(self, attr) or clobber:
+                    setattr(self, attr, getattr(other, attr))
         elif isinstance(other, dict):
             for attr, value in other.items():
-                setattr(self, attr, value)
+                if not hasattr(self, attr) or clobber:
+                    setattr(self, attr, value)
         else:
             raise NotImplementedError()
 

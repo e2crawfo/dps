@@ -89,6 +89,7 @@ def reduce_hyper_results(*results):
     results = [r for r in results if r['n_stages'] == deepest]
 
     fig, subplots = plt.subplots(deepest, 2)
+    subplots = np.atleast_2d(subplots)
 
     x_lim = [np.inf, -np.inf]
     y_lim = [np.inf, -np.inf]

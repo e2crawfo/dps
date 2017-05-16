@@ -5,54 +5,74 @@ from contextlib import ExitStack
 import tensorflow as tf
 import numpy as np
 import sys
-from pprint import pformat
+import configparser
+from pprint import pformat, pprint
+import socket
+from pathlib import Path
 
 from spectral_dagger.utils.experiment import ExperimentStore
+import dps
 from dps.utils import (
     restart_tensorboard, EarlyStopHook, gen_seed,
     time_limit, uninitialized_variables_initializer, catch)
 
 
 def training_loop(
-        curriculum, config, start_tensorboard=False,
-        save_summaries=False, exp_name='', reset_global_step=False,
-        max_time=None):
+        curriculum, config, exp_name='', reset_global_step=False):
+
+    config.update(parse_train_config(), clobber=False)
 
     kwargs = locals().copy()
     return TrainingLoop(**kwargs).run()
 
 
+def parse_train_config():
+    config = configparser.ConfigParser()
+    location = Path(dps.__file__).parent
+    config.read(str(location / 'config.ini'))
+    host_name = socket.gethostname()
+    if host_name not in config:
+        host_name = 'DEFAULT'
+    _config = config[host_name]
+    _config = {k: v for k, v in _config.items()}
+    for s in 'start_tensorboard update_latest save_summaries max_experiments'.split():
+        assert s in _config
+    _config['max_experiments'] = int(_config['max_experiments'])
+    if _config['max_experiments'] <= 0:
+        _config['max_experiments'] = np.inf
+    print("\nTraining loop config: ")
+    pprint(_config)
+    return _config
+
+
 class TrainingLoop(object):
     def __init__(
             self, curriculum, config, start_tensorboard=False,
-            save_summaries=False, exp_name='', reset_global_step=False,
-            max_time=None):
+            save_summaries=False, exp_name='', reset_global_step=False):
 
         self.curriculum = curriculum
         self.config = config
-        self.start_tensorboard = start_tensorboard
-        self.save_summaries = save_summaries
         self.exp_name = exp_name
         self.reset_global_step = reset_global_step
-        self.max_time = max_time
 
     def run(self):
         print("In TrainingLoop.run.")
+        start_tensorboard, log_dir = self.config.start_tensorboard, self.config.log_dir
 
-        if self.start_tensorboard:
-            restart_tensorboard(self.config.log_dir)
+        if start_tensorboard:
+            restart_tensorboard(log_dir)
 
         try:
             value = self._run_core()
         except KeyboardInterrupt:
-            if self.start_tensorboard:
-                restart_tensorboard(self.config.log_dir)
+            if start_tensorboard:
+                restart_tensorboard(log_dir)
 
             et, ei, tb = sys.exc_info()
             raise ei.with_traceback(tb)
 
-        if self.start_tensorboard:
-            restart_tensorboard(self.config.log_dir)
+        if start_tensorboard:
+            restart_tensorboard(log_dir)
 
         return value
 
@@ -64,8 +84,8 @@ class TrainingLoop(object):
 
         config = self.config
 
-        es = ExperimentStore(config.log_dir, max_experiments=np.inf, delete_old=1)
-        self.exp_dir = exp_dir = es.new_experiment(self.exp_name, use_time=1, force_fresh=1, update_latest=1)
+        es = ExperimentStore(config.log_dir, max_experiments=config.max_experiments, delete_old=1)
+        self.exp_dir = exp_dir = es.new_experiment(self.exp_name, use_time=1, force_fresh=1, update_latest=config.update_latest)
         print("Scratch pad is {}.".format(exp_dir.path))
         config.path = exp_dir.path
 
@@ -82,13 +102,13 @@ class TrainingLoop(object):
         self.global_step = 0
 
         while True:
-            if self._elapsed_time > self.max_time:
+            if config.max_time > 0 and self._elapsed_time > config.max_time:
                 print("Time limit exceeded.")
                 break
 
             graph = tf.Graph()
 
-            if self.save_summaries:
+            if config.save_summaries:
                 self.train_writer = tf.summary.FileWriter(exp_dir.path_for('train'), graph)
                 self.val_writer = tf.summary.FileWriter(exp_dir.path_for('val'))
                 print("Writing summaries to {}.".format(exp_dir.path))
@@ -118,7 +138,8 @@ class TrainingLoop(object):
                 sess.run(uninitialized_variables_initializer())
                 sess.run(tf.assert_variables_initialized())
 
-                threshold_reached, n_steps = self._run_stage(stage, updater, stage_config)
+                threshold_reached, n_steps, reason = self._run_stage(stage, updater, stage_config)
+                print("Optimization complete. Reason: {}".format(reason))
 
                 print("Loading best hypothesis from stage {} "
                       "from file {}...".format(stage, self.best_path))
@@ -151,12 +172,14 @@ class TrainingLoop(object):
         local_step = 0
         threshold_reached = False
 
-        limit = np.inf if self.max_time is None else self.max_time - self._elapsed_time
-        with time_limit(limit):
+        reason = None
+
+        tl = self.config.max_time - self._elapsed_time if self.config.max_time > 0 else np.inf
+        with time_limit(tl, verbose=True) as limiter:
             while True:
                 n_epochs = updater.n_experiences / stage_config.n_train
                 if n_epochs >= self.max_epochs:
-                    print("Optimization complete, maximum number of steps reached.")
+                    reason = "Maximum number of steps reached."
                     break
 
                 evaluate = self.global_step % stage_config.eval_step == 0
@@ -168,7 +191,7 @@ class TrainingLoop(object):
                         stage_config.batch_size, self.summary_op if evaluate else None)
                     duration = time.time() - start_time
 
-                    if evaluate and self.save_summaries:
+                    if evaluate and self.config.save_summaries:
                         self.train_writer.add_summary(train_summary, self.global_step)
                         self.val_writer.add_summary(val_summary, self.global_step)
 
@@ -186,7 +209,7 @@ class TrainingLoop(object):
                                   local_step, self.global_step, val_loss))
                         self.best_path = updater.save(checkpoint_file)
                     if stop:
-                        print("Optimization complete, early stopping triggered.")
+                        reason = "Early stopping triggered."
                         break
                 else:
                     updater.update(stage_config.batch_size)
@@ -197,14 +220,17 @@ class TrainingLoop(object):
                     updater.save(checkpoint_file, local_step)
 
                 if val_loss < stage_config.threshold:
-                    print("Optimization complete, validation loss threshold reached.")
+                    reason = "Validation loss threshold reached."
                     threshold_reached = True
                     break
 
                 local_step += 1
                 self.global_step += 1
 
-        return threshold_reached, local_step
+        if limiter.ran_out:
+            reason = "Time limit reached."
+
+        return threshold_reached, local_step, reason
 
 
 class Curriculum(object):

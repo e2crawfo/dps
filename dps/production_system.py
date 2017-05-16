@@ -655,7 +655,4 @@ class ProductionSystemTrainer(object):
 
         exp_name = "selection={}_updater={}_seed={}".format(
             config.action_selection.__class__.__name__, config.updater_class.__name__, config.seed)
-        return training_loop(
-            curriculum, config, exp_name=exp_name,
-            start_tensorboard=config.start_tensorboard,
-            save_summaries=config.save_summaries)
+        return training_loop(curriculum, config, exp_name=exp_name)
