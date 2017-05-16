@@ -27,13 +27,17 @@ def parse_config():
     host_name = socket.gethostname()
     if host_name not in config:
         host_name = 'DEFAULT'
-    _config = config[host_name]
-    _config = {k: v for k, v in _config.items()}
-    for s in 'start_tensorboard update_latest save_summaries max_experiments data_dir'.split():
-        assert s in _config
-    _config['max_experiments'] = int(_config['max_experiments'])
+
+    _config = {}
+    _config['start_tensorboard'] = config.getboolean(host_name, 'start_tensorboard')
+    _config['update_latest'] = config.getboolean(host_name, 'update_latest')
+    _config['save_summaries'] = config.getboolean(host_name, 'save_summaries')
+    _config['max_experiments'] = config.getint(host_name, 'max_experiments')
+    _config['data_dir'] = config.get(host_name, 'data_dir')
+
     if _config['max_experiments'] <= 0:
         _config['max_experiments'] = np.inf
+
     pprint(_config)
     return _config
 
