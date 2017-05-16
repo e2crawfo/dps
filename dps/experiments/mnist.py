@@ -41,7 +41,7 @@ class TranslatedMnistDataset(RegressionDataset):
             function = lambda inputs: sum(inputs)
         self.function = function
 
-        loc = Path(parse_config()['data_dir'])
+        loc = Path(parse_config()['data_dir']).resolve()
         mnist = pickle.load(gzip.open(str(loc / 'mnist.pkl.gz'), 'r'), encoding='bytes')
 
         mnist_x = np.concatenate((mnist[0][0], mnist[1][0], mnist[2][0]), axis=0)
