@@ -13,8 +13,7 @@ from dps.policy import Policy
 
 
 class PointerDataset(RegressionDataset):
-    def __init__(
-            self, width, n_digits, n_examples, for_eval=False, shuffle=True):
+    def __init__(self, width, n_digits, n_examples, for_eval=False, shuffle=True):
         self.width = width
         self.n_digits = n_digits
 
@@ -105,8 +104,9 @@ def visualize(config):
 
 
 class PointerTrainer(ProductionSystemTrainer):
-    def build_env(self, **kwargs):
-        return PointerEnv(**kwargs)
+    def build_env(self):
+        config = default_config()
+        return PointerEnv(config.width, config.n_digits, config.n_train, config.n_val, config.n_test)
 
     def build_core_network(self, env):
         return Pointer(env)
