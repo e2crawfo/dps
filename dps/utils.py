@@ -24,18 +24,19 @@ def parse_config():
     config = configparser.ConfigParser()
     location = Path(dps.__file__).parent
     config.read(str(location / 'config.ini'))
-    host_name = socket.gethostname()
-    if host_name not in config:
-        host_name = 'DEFAULT'
+    key = socket.gethostname().split('-')[0]
+    if key not in config:
+        key = 'DEFAULT'
 
     _config = {}
-    _config['start_tensorboard'] = config.getboolean(host_name, 'start_tensorboard')
-    _config['update_latest'] = config.getboolean(host_name, 'update_latest')
-    _config['save_summaries'] = config.getboolean(host_name, 'save_summaries')
-    _config['max_experiments'] = config.getint(host_name, 'max_experiments')
-    _config['data_dir'] = config.get(host_name, 'data_dir')
-    _config['display'] = config.getboolean(host_name, 'display')
-    _config['save_display'] = config.getboolean(host_name, 'save_display')
+    _config['start_tensorboard'] = config.getboolean(key, 'start_tensorboard')
+    _config['update_latest'] = config.getboolean(key, 'update_latest')
+    _config['save_summaries'] = config.getboolean(key, 'save_summaries')
+    _config['max_experiments'] = config.getint(key, 'max_experiments')
+    _config['data_dir'] = config.get(key, 'data_dir')
+    _config['display'] = config.getboolean(key, 'display')
+    _config['save_display'] = config.getboolean(key, 'save_display')
+    _config['mpl_backend'] = config.get(key, 'mpl_backend')
 
     if _config['max_experiments'] <= 0:
         _config['max_experiments'] = np.inf

@@ -69,6 +69,7 @@ def split_by_class(filename='emnist-byclass.mat'):
     import gzip
     emnist_path = maybe_download_emnist()
 
+    print("Processing...")
     mat_path = emnist_path / filename
     dir_name = mat_path.parent / mat_path.stem
     try:
