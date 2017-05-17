@@ -219,6 +219,7 @@ class LiftedAdditionConfig(DefaultConfig):
 
 class TranslatedMnistConfig(DefaultConfig):
     T = 10
+    scaled = True
     curriculum = [
         dict(W=28, N=8, T=4),
         dict(W=28, N=8, T=10),
@@ -238,8 +239,8 @@ class TranslatedMnistConfig(DefaultConfig):
     classifier_str = "MLP_50_50"
 
     @staticmethod
-    def build_classifier(inp):
-        logits = MLP([50, 50], activation_fn=tf.nn.sigmoid)(inp, 10)
+    def build_classifier(inp, outp_size):
+        logits = MLP([50, 50], activation_fn=tf.nn.sigmoid)(inp, outp_size)
         return tf.nn.softmax(logits)
 
     # controller_func = staticmethod(
@@ -279,8 +280,8 @@ class MnistArithmeticConfig(DefaultConfig):
     classifier_str = "MLP_50_50"
 
     @staticmethod
-    def build_classifier(inp):
-        logits = MLP([50, 50], activation_fn=tf.nn.sigmoid)(inp, 10)
+    def build_classifier(inp, outp_size):
+        logits = MLP([50, 50], activation_fn=tf.nn.sigmoid)(inp, outp_size)
         return tf.nn.softmax(logits)
 
     # controller_func = staticmethod(

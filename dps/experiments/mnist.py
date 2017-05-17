@@ -1,9 +1,9 @@
-import pickle
-import gzip
 import time
 from contextlib import ExitStack
 from pathlib import Path
+import dill
 
+import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
 
@@ -31,23 +31,19 @@ class Rect(object):
 
 
 class TranslatedMnistDataset(RegressionDataset):
-    def __init__(self, W, n_digits, max_overlap, n_examples, function=None, for_eval=False, shuffle=True):
+    def __init__(self, W, n_digits, max_overlap, n_examples, symbols=None, function=None, for_eval=False, shuffle=True):
 
         self.W = W
         self.n_digits = n_digits
         self.max_overlap = max_overlap
+        self.symbols = symbols or list(range(10))
 
         if function is None:
             function = lambda inputs: sum(inputs)
         self.function = function
 
-        loc = Path(parse_config()['data_dir']).expanduser()
-        mnist = pickle.load(gzip.open(str(loc / 'mnist.pkl.gz'), 'r'), encoding='bytes')
-
-        mnist_x = np.concatenate((mnist[0][0], mnist[1][0], mnist[2][0]), axis=0)
+        mnist_x, mnist_y, symbol_map = load_emnist(self.symbols)
         mnist_x = mnist_x.reshape(-1, 28, 28)
-
-        mnist_y = np.concatenate((mnist[0][1], mnist[1][1], mnist[2][1]), axis=0)
 
         x, y = self.make_dataset(
             self.n_digits, mnist_x, mnist_y, n_examples, self.W,
@@ -101,6 +97,210 @@ class TranslatedMnistDataset(RegressionDataset):
         return new_X, new_Y
 
 
+chars = "$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\|()1{}[]?-_+~<>i!lI;:,\"^`'. "
+
+
+def char_map(value):
+    """ Assumes value between 0 and 1. """
+    if value >= 1:
+        value = 1 - 1e-6
+    n_bins = len(chars)
+    bin_id = int(value * n_bins)
+    return chars[bin_id]
+
+
+def image_to_string(array):
+    if array.ndim == 1:
+        array = array.reshape(-1, int(np.sqrt(array.shape[0])))
+    image = [char_map(value) for value in array.flatten()]
+    image = np.reshape(image, array.shape)
+    return '\n'.join(''.join(c for c in row) for row in image)
+
+
+def view_emnist(x, y, n):
+    m = int(np.ceil(np.sqrt(n)))
+    fig, subplots = plt.subplots(m, m)
+    for i, s in enumerate(subplots.flatten()):
+        s.imshow(x[i, :].reshape(28, 28).transpose())
+        s.set_title(str(y[i, 0]))
+
+
+def load_emnist(classes, balance=False):
+    """ maps the symbols down to range(0, len(classes)) """
+    data_dir = Path(parse_config()['data_dir']).expanduser()
+    emnist_dir = data_dir / 'emnist/emnist-byclass'
+    y = []
+    x = []
+    symbol_map = {}
+    for i, cls in enumerate(sorted(list(classes))):
+        with (emnist_dir / (str(cls) + '.pkl')).open('rb') as f:
+            x.append(dill.load(f))
+            y.extend([i] * x[-1].shape[0])
+        symbol_map[cls] = i
+    x = np.concatenate(x, axis=0)
+    y = np.array(y).reshape(-1, 1)
+
+    order = np.random.permutation(x.shape[0])
+
+    x = x[order, :]
+    y = y[order, :]
+
+    if balance:
+        class_count = min([(y == c).sum() for c in classes])
+        keep_x, keep_y = [], []
+        for i, cls in enumerate(classes):
+            keep_indices, _ = np.nonzero(i == cls)
+            keep_indices = keep_indices[:class_count]
+            keep_x.append(x[keep_indices, :])
+            keep_y.append(y[keep_indices, :])
+        x = np.concatenate(keep_x, 0)
+        y = np.concatenate(keep_y, 0)
+
+    return x, y, symbol_map
+
+
+def idx_to_char(i):
+    assert isinstance(i, int)
+    if i >= 72:
+        raise Exception()
+    elif i >= 36:
+        char = chr(i-36+ord('a'))
+    elif i >= 10:
+        char = chr(i-10+ord('A'))
+    elif i >= 0:
+        char = str(i)
+    else:
+        raise Exception()
+    return char
+
+
+def char_to_idx(c):
+    assert isinstance(c, str)
+    assert len(c) == 1
+
+    if c.isupper():
+        idx = ord(c) - ord('A') + 10
+    elif c.islower():
+        idx = ord(c) - ord('A') + 36
+    elif c.isnumeric():
+        idx = int(c)
+    else:
+        raise Exception()
+    return idx
+
+
+class MnistArithmeticDataset(RegressionDataset):
+    def __init__(self, symbols, W, n_digits, max_overlap, n_examples, base=10, for_eval=False, shuffle=True):
+        assert 1 <= base <= 10
+        # symbols is a list of pairs of the form (letter, reduction function)
+        self.symbols = symbols
+        self.W = W
+        self.n_digits = n_digits
+        self.max_overlap = max_overlap
+        self.base = base
+
+        # mnist = pickle.load(gzip.open(str(data_dir / 'mnist.pkl.gz'), 'r'), encoding='bytes')
+        # mnist_x = np.concatenate((mnist[0][0], mnist[1][0], mnist[2][0]), axis=0)
+        # mnist_x = mnist_x.reshape(-1, 28, 28)
+        # mnist_y = np.concatenate((mnist[0][1], mnist[1][1], mnist[2][1]), axis=0)
+
+        # keep = mnist_y < self.base
+        # mnist_x = mnist_x[keep]
+        # mnist_y = mnist_y[keep]
+
+        mnist_x, mnist_y, symbol_map = load_emnist(list(range(base)))
+        mnist_x = mnist_x.reshape(-1, 28, 28)
+
+        # map each character to an index.
+        functions = {char_to_idx(s): f for s, f in symbols}
+
+        emnist_x, emnist_y, symbol_map = load_emnist(list(functions.keys()))
+        emnist_x = emnist_x.reshape(-1, 28, 28)
+
+        functions = {symbol_map[k]: v for k, v in functions.items()}
+
+        import pdb; pdb.set_trace()
+        x, y = self.make_dataset(
+            self.n_digits, mnist_x, mnist_y, emnist_x, emnist_y, functions,
+            n_examples, self.W, self.max_overlap)
+
+        super(MnistArithmeticDataset, self).__init__(x, y, for_eval, shuffle)
+
+    @staticmethod
+    def make_dataset(
+            n_digits, X, Y, eX, eY, functions, n_examples, W, max_overlap):
+        # n_digits is really max_digits.
+        assert n_digits > 0
+
+        if n_examples == 0:
+            return np.zeros((0, W*W)).astype('f'), np.zeros((0, 1)).astype('i')
+
+        new_X, new_Y = [], []
+
+        for j in range(n_examples):
+            n = np.random.randint(1, n_digits+1)
+            i = 0
+            # Sample rectangles
+            while True:
+                rects = [Rect(np.random.randint(0, W-28),
+                              np.random.randint(0, W-28),
+                              28, 28)
+                         for i in range(n + 1)]
+                area = np.zeros((W, W), 'f')
+
+                for rect in rects:
+                    area[rect.left:rect.right, rect.bottom:rect.top] += 1
+
+                if (area >= 2).sum() < max_overlap:
+                    break
+
+                i += 1
+
+                if i > 1000:
+                    raise Exception(
+                        "Could not fit digits. "
+                        "(n_digits: {}+1, W: {}, max_overlap: {})".format(n_digits, W, max_overlap))
+
+            # Populate rectangles
+            o = np.zeros((W, W), 'f')
+
+            symbol_idx = np.random.randint(0, eY.shape[0])
+            symbol_class = eY[symbol_idx, 0]
+            func = functions[symbol_class]
+            o[rect.left:rect.right, rect.bottom:rect.top] += eX[symbol_idx]
+
+            ids = np.random.randint(0, Y.shape[0], n)
+
+            for idx, rect in zip(ids, rects):
+                o[rect.left:rect.right, rect.bottom:rect.top] += X[idx]
+
+            new_X.append(np.uint8(255*np.minimum(o, 1)))
+            new_Y.append(func([Y[idx] for idx in ids]))
+
+        new_X = np.array(new_X).astype('f').reshape(len(new_X), -1)
+        new_Y = np.array(new_Y).astype('i').reshape(-1, 1)
+        return new_X, new_Y
+
+    def visualize(self, n=9):
+        m = int(np.ceil(np.sqrt(n)))
+        fig, subplots = plt.subplots(m, m)
+        size = int(np.sqrt(self.x.shape[1]))
+        for i, s in enumerate(subplots.flatten()):
+            s.imshow(self.x[i, :].reshape(size, size))
+            s.set_title(str(self.y[i, 0]))
+
+
+if __name__ == "__main__":
+    W = 100
+    n_digits = 3
+    max_overlap = 100
+    n_examples = 400
+    symbols = [('A', lambda x: sum(x)), ('M', lambda x: np.product(x)), ('C', lambda x: len(x))]
+    dataset = MnistArithmeticDataset(symbols, W, n_digits, max_overlap, n_examples, base=2, for_eval=False, shuffle=True)
+    dataset.visualize()
+    plt.show()
+
+
 class MnistConfig(Config):
     batch_size = 64
     eval_step = 100
@@ -112,10 +312,12 @@ class MnistConfig(Config):
 
     n_train = 60000
     n_val = 1000
+    symbols = list(range(10))
 
 
 def train_mnist(
         build_model, var_scope, path=None, config=None, max_experiments=5, start_tensorboard=True):
+
     config = config or MnistConfig()
 
     log_dir = getattr(config, 'logdir', '/tmp/mnist_training')
@@ -128,8 +330,8 @@ def train_mnist(
     with open(exp_dir.path_for('config'), 'w') as f:
         f.write(str(config))
 
-    train_dataset = TranslatedMnistDataset(28, 1, np.inf, config.n_train)
-    val_dataset = TranslatedMnistDataset(28, 1, np.inf, config.n_val, for_eval=True)
+    train_dataset = TranslatedMnistDataset(28, 1, np.inf, config.n_train, symbols=config.symbols)
+    val_dataset = TranslatedMnistDataset(28, 1, np.inf, config.n_val, for_eval=True, symbols=config.symbols)
     obs_dim = 28 ** 2
 
     g = tf.Graph()
@@ -214,6 +416,10 @@ def train_mnist(
 
                 if val_loss < config.threshold:
                     print("Optimization complete, validation loss threshold reached.")
+                    break
+
+                if step >= config.max_steps:
+                    print("Optimization complete, maximum number of steps reached.")
                     break
 
             else:

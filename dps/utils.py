@@ -34,6 +34,8 @@ def parse_config():
     _config['save_summaries'] = config.getboolean(host_name, 'save_summaries')
     _config['max_experiments'] = config.getint(host_name, 'max_experiments')
     _config['data_dir'] = config.get(host_name, 'data_dir')
+    _config['display'] = config.getboolean(host_name, 'display')
+    _config['save_display'] = config.getboolean(host_name, 'save_display')
 
     if _config['max_experiments'] <= 0:
         _config['max_experiments'] = np.inf
@@ -498,6 +500,9 @@ def build_decaying_value(schedule, name=None, dtype=tf.float32):
 
 class Config(object):
     _stack = []
+
+    def __init__(self, **kwargs):
+        self.update(kwargs)
 
     def __str__(self):
         attrs = {attr: getattr(self, attr) for attr in self.list_attrs()}

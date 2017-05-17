@@ -18,7 +18,8 @@ from dps.attention import DRAW_attention_2D
 
 
 class TranslatedMnistEnv(RegressionEnv):
-    def __init__(self, W, N, n_train, n_val, n_test, inc_delta, inc_x, inc_y):
+    def __init__(self, scaled, W, N, n_train, n_val, n_test, inc_delta, inc_x, inc_y):
+        self.scaled = scaled
         self.W = W
         self.N = N
         self.inc_delta = inc_delta
@@ -56,15 +57,15 @@ class MnistDrawPretrained(object):
         self.model_dir = model_dir
         self.name = name
         self.path = os.path.join(model_dir, name)
-        self.config = config
         self.n_builds = 0
         self.freeze_weights = freeze_weights
+        self.config = config or mnist.MnistConfig()
 
     def build_classifier(self, inp):
         """ Returns class probabilities given a glimpse. """
         if len(inp.shape) == 3:
             inp = tf.reshape(inp, (tf.shape(inp)[0], int(inp.shape[1]) * int(inp.shape[2])))
-        return self._build_classifier(inp)
+        return self._build_classifier(inp, len(self.config.symbols))
 
     def build_draw_plus_classifier(self, inp, fovea_x=None, fovea_y=None, delta=None, sigma=None):
         """ Returns class probabilities and a glimpse given raw image, but doesn't load from disk. """
@@ -94,6 +95,7 @@ class MnistDrawPretrained(object):
     def build_pretrained(self, inp, **build_kwargs):
         """ Adds a draw layer and a classifier pretrained from data. """
         if self.n_builds == 0:
+            # Create the network so there are variables to load into
             with tf.variable_scope(self.var_scope_name, reuse=False) as var_scope:
                 outp, glimpse = self.build_draw_plus_classifier(inp, **build_kwargs)
                 if self.freeze_weights:
@@ -101,7 +103,7 @@ class MnistDrawPretrained(object):
 
             self.var_scope = var_scope
 
-            # Initializes its own variables by loading from a file or training separately
+            # Initializes created variables by loading from a file or training separately
             mnist.load_or_train(
                 tf.get_default_session(), self, var_scope, self.path, self.config)
             self.n_builds += 1
@@ -146,13 +148,12 @@ class TranslatedMnist(CoreNetwork):
     action_names = [
         'fovea_x += ', 'fovea_x -= ', 'fovea_x ++= ', 'fovea_x --= ',
         'fovea_y += ', 'fovea_y -= ', 'fovea_y ++= ', 'fovea_y --= ',
-        'delta += ', 'delta -= ', 'delta ++= ', 'delta --= ',
-        # 'sigma += ', 'sigma -= ',
-        'store', 'no-op/stop']
+        'delta += ', 'delta -= ', 'delta ++= ', 'delta --= ', 'store', 'no-op/stop']
 
     def __init__(self, env):
         self.W = env.W
         self.N = env.N
+        self.scaled = env.scaled
         self.inc_delta = env.inc_delta
         self.inc_x = env.inc_x
         self.inc_y = env.inc_y
@@ -167,30 +168,39 @@ class TranslatedMnist(CoreNetwork):
         (inc_fovea_x, dec_fovea_x, inc_fovea_x_big, dec_fovea_x_big,
          inc_fovea_y, dec_fovea_y, inc_fovea_y_big, dec_fovea_y_big,
          inc_delta, dec_delta, inc_delta_big, dec_delta_big,
-         # inc_sigma,dec_sigma,
          store, no_op) = (
             tf.split(action_activations, self.n_actions, axis=1))
-        # (inc_fovea_x, dec_fovea_x, inc_fovea_y, dec_fovea_y,
-        #  inc_delta, dec_delta, inc_sigma, dec_sigma, store, no_op) = (
-        #     tf.split(action_activations, self.n_actions, axis=1))
 
-        fovea_x = (1 - inc_fovea_x - dec_fovea_x - inc_fovea_x_big - dec_fovea_x_big) * r.fovea_x + \
-            inc_fovea_x * (r.fovea_x + self.inc_x) + \
-            inc_fovea_x_big * (r.fovea_x + 5 * self.inc_x) + \
-            dec_fovea_x * (r.fovea_x - self.inc_x) + \
-            dec_fovea_x_big * (r.fovea_x - 5 * self.inc_x)
+        if self.scaled:
+            fovea_x = (1 - inc_fovea_x - dec_fovea_x) * r.fovea_x + \
+                inc_fovea_x * (r.fovea_x + r.delta) + dec_fovea_x * (r.fovea_x - r.delta)
 
-        fovea_y = (1 - inc_fovea_y - dec_fovea_y - inc_fovea_y_big - dec_fovea_y_big) * r.fovea_y + \
-            inc_fovea_y * (r.fovea_y + self.inc_y) + \
-            inc_fovea_y_big * (r.fovea_y + 5 * self.inc_y) + \
-            dec_fovea_y * (r.fovea_y - self.inc_y) + \
-            dec_fovea_y_big * (r.fovea_y - 5 * self.inc_y)
+            fovea_y = (1 - inc_fovea_y - dec_fovea_y) * r.fovea_y + \
+                inc_fovea_y * (r.fovea_y + r.delta) + dec_fovea_y * (r.fovea_y - r.delta)
 
-        delta = (1 - inc_delta - dec_delta - inc_delta_big - dec_delta_big) * r.delta + \
-            inc_delta * (r.delta + self.inc_delta) + \
-            inc_delta_big * (r.delta + 5 * self.inc_delta) + \
-            dec_delta * (r.delta - self.inc_delta) + \
-            dec_delta_big * (r.delta - 5 * self.inc_delta)
+            delta = (1 - inc_delta - dec_delta - inc_delta_big - dec_delta_big) * r.delta + \
+                inc_delta * (r.delta + self.inc_delta) + \
+                inc_delta_big * (r.delta + 5 * self.inc_delta) + \
+                dec_delta * (r.delta - self.inc_delta) + \
+                dec_delta_big * (r.delta - 5 * self.inc_delta)
+        else:
+            fovea_x = (1 - inc_fovea_x - dec_fovea_x - inc_fovea_x_big - dec_fovea_x_big) * r.fovea_x + \
+                inc_fovea_x * (r.fovea_x + self.inc_x) + \
+                inc_fovea_x_big * (r.fovea_x + 5 * self.inc_x) + \
+                dec_fovea_x * (r.fovea_x - self.inc_x) + \
+                dec_fovea_x_big * (r.fovea_x - 5 * self.inc_x)
+
+            fovea_y = (1 - inc_fovea_y - dec_fovea_y - inc_fovea_y_big - dec_fovea_y_big) * r.fovea_y + \
+                inc_fovea_y * (r.fovea_y + self.inc_y) + \
+                inc_fovea_y_big * (r.fovea_y + 5 * self.inc_y) + \
+                dec_fovea_y * (r.fovea_y - self.inc_y) + \
+                dec_fovea_y_big * (r.fovea_y - 5 * self.inc_y)
+
+            delta = (1 - inc_delta - dec_delta - inc_delta_big - dec_delta_big) * r.delta + \
+                inc_delta * (r.delta + self.inc_delta) + \
+                inc_delta_big * (r.delta + 5 * self.inc_delta) + \
+                dec_delta * (r.delta - self.inc_delta) + \
+                dec_delta_big * (r.delta - 5 * self.inc_delta)
 
         outp = (1 - store) * r.outp + store * r.vision
 
@@ -287,11 +297,12 @@ def visualize(config):
         _config = default_config()
         W = 60
         N = 14
-        env = TranslatedMnistEnv(W, N, 10, 10, 10, inc_delta=0.1, inc_x=0.1, inc_y=0.1)
+        _config.display = True
+        env = TranslatedMnistEnv(True, W, N, 10, 10, 10, inc_delta=0.1, inc_x=0.1, inc_y=0.1)
         cn = TranslatedMnist(env)
 
-        controller = FixedController(list(range(cn.n_actions)), cn.n_actions)
-        # controller = FixedController([4, 2, 5, 6, 7, 0, 4, 3, 5, 6, 7, 0], cn.n_actions)
+        # controller = FixedController(list(range(cn.n_actions)), cn.n_actions)
+        controller = FixedController([0, 1, 11, 0, 1], cn.n_actions)
         # controller = FixedController([8], cn.n_actions)
         action_selection = IdentitySelect()
 
@@ -309,7 +320,7 @@ class TranslatedMnistTrainer(ProductionSystemTrainer):
     def build_env(self, **kwargs):
         config = default_config()
         return TranslatedMnistEnv(
-            config.W, config.N, config.n_train, config.n_val, config.n_test,
+            config.scaled, config.W, config.N, config.n_train, config.n_val, config.n_test,
             config.inc_delta, config.inc_x, config.inc_y)
 
     def build_core_network(self, env):
