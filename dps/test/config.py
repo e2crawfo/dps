@@ -1,18 +1,25 @@
 import numpy as np
 import tensorflow as tf
 import os
+from pathlib import Path
 
 from dps.updater import DifferentiableUpdater
 from dps.reinforce import REINFORCE
 from dps.qlearning import QLearning
 from dps.policy import SoftmaxSelect, EpsilonGreedySelect, GumbelSoftmaxSelect
-from dps.utils import Config, CompositeCell, FeedforwardCell, MLP
+from dps.utils import Config, CompositeCell, FeedforwardCell, MLP, parse_config, camel_to_snake
 from dps.experiments import (
     arithmetic, simple_addition, pointer_following,
     hard_addition, lifted_addition, translated_mnist, mnist_arithmetic)
 
 
 class DefaultConfig(Config):
+
+    def __init__(self, **kwargs):
+        super(DefaultConfig, self).__init__(**kwargs)
+        if self.log_dir is None:
+            self.log_dir = Path(parse_config()['log_root']) / self.log_name
+
     seed = 12
 
     preserve_policy = True  # Whether to use the policy learned on the last stage of the curriculum for each new stage.
@@ -61,6 +68,8 @@ class DefaultConfig(Config):
     path = os.getcwd()
     max_time = 0
 
+    log_dir = None
+
 
 class DiffConfig(Config):
     updater_class = DifferentiableUpdater
@@ -81,7 +90,7 @@ class ReinforceConfig(Config):
     noise_schedule = (0.0, 1000, 0.96, False)
     lr_schedule = (0.01, 1000, 0.98, False)
     patience = np.inf
-    entropy_param = (0.01, 1000, 0.9, False)
+    entropy_param = (0.01, 1000, 0.96, False)
     exploration_schedule = (10.0, 1000, 1.0, False)
 
 
@@ -139,7 +148,7 @@ class ArithmeticConfig(DefaultConfig):
         lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=32),
                                         MLP(),
                                         n_actions))
-    log_dir = '/tmp/dps/arithmetic/'
+    log_name = 'arithmetic'
     trainer = arithmetic.ArithmeticTrainer()
     visualize = arithmetic.visualize
 
@@ -175,7 +184,7 @@ class SimpleAdditionConfig(DefaultConfig):
     #     dict(width=35, n_digits=10, T=110),
     # ]
 
-    log_dir = '/tmp/dps/simple_addition/'
+    log_name = 'simple_addition'
 
     trainer = simple_addition.SimpleAdditionTrainer()
     visualize = simple_addition.visualize
@@ -186,7 +195,7 @@ class PointerConfig(DefaultConfig):
     curriculum = [
         dict(width=1, n_digits=10),
         dict(width=2, n_digits=10)]
-    log_dir = '/tmp/dps/pointer/'
+    log_name = 'pointer'
 
     trainer = pointer_following.PointerTrainer()
     visualize = pointer_following.visualize
@@ -197,7 +206,7 @@ class HardAdditionConfig(DefaultConfig):
     curriculum = [
         dict(height=2, width=3, n_digits=2, entropy_param=(1.0, 1000, 0.9, False)),
         dict(height=2, width=3, n_digits=2, entropy_param=(0.00, 1000, 0.9, False))]
-    log_dir = '/tmp/dps/hard_addition/'
+    log_name = 'hard_addition'
     trainer = hard_addition.HardAdditionTrainer()
     visualize = hard_addition.visualize
     preserve_policy = False
@@ -211,7 +220,7 @@ class LiftedAdditionConfig(DefaultConfig):
         dict(width=3, n_digits=10),
         dict(width=4, n_digits=10),
         dict(width=5, n_digits=10)]
-    log_dir = '/tmp/dps/lifted_addition/'
+    log_name = 'lifted_addition'
 
     trainer = lifted_addition.LiftedAdditionTrainer()
     visualize = lifted_addition.visualize
@@ -233,7 +242,7 @@ class TranslatedMnistConfig(DefaultConfig):
         dict(W=85, N=8, T=20),
         dict(W=95, N=8, T=20)
     ]
-    threshold = 0.15
+    threshold = 0.10
     verbose = 4
 
     classifier_str = "MLP_50_50"
@@ -249,9 +258,9 @@ class TranslatedMnistConfig(DefaultConfig):
         lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=256),
                                         MLP(),
                                         n_actions))
-    reward_window = 2.0
+    reward_window = 0.4
 
-    log_dir = '/tmp/dps/translated_mnist/'
+    log_name = 'translated_mnist'
 
     inc_delta = 0.1
     inc_x = 0.1
@@ -292,7 +301,7 @@ class MnistArithmeticConfig(DefaultConfig):
                                         n_actions))
     reward_window = 0.5
 
-    log_dir = '/tmp/dps/mnist_arithmetic/'
+    log_name = 'mnist_arithmetic'
 
     inc_delta = 0.1
     inc_x = 0.1

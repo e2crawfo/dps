@@ -220,7 +220,6 @@ class MnistArithmeticDataset(RegressionDataset):
 
         functions = {symbol_map[k]: v for k, v in functions.items()}
 
-        import pdb; pdb.set_trace()
         x, y = self.make_dataset(
             self.n_digits, mnist_x, mnist_y, emnist_x, emnist_y, functions,
             n_examples, self.W, self.max_overlap)
@@ -314,18 +313,17 @@ class MnistConfig(Config):
     n_train = 60000
     n_val = 1000
     symbols = list(range(10))
+    log_name = 'mnist_training'
 
 
-def train_mnist(
-        build_model, var_scope, path=None, config=None, max_experiments=5, start_tensorboard=True):
+def train_mnist(build_model, var_scope, path=None, config=None):
 
     config = config or MnistConfig()
 
-    log_dir = getattr(config, 'logdir', '/tmp/mnist_training')
-    es = ExperimentStore(log_dir, max_experiments=max_experiments, delete_old=1)
-    exp_dir = es.new_experiment('mnist', use_time=1, force_fresh=1)
+    es = ExperimentStore(str(config.log_dir), max_experiments=5, delete_old=1)
+    exp_dir = es.new_experiment('train_mnist', use_time=1, force_fresh=1)
 
-    path = path or exp_dir.path_for('mnist.chk')
+    checkpoint_path = path or exp_dir.path_for('mnist.chk')
 
     print(config)
     with open(exp_dir.path_for('config'), 'w') as f:
@@ -409,7 +407,7 @@ def train_mnist(
                 if new_best:
                     print("Storing new best on step {} "
                           "with validation loss of {}.".format(step, val_loss))
-                    saver.save(sess, path)
+                    saver.save(sess, checkpoint_path)
 
                 if stop:
                     print("Optimization complete, early stopping triggered.")

@@ -10,6 +10,7 @@ import time
 import configparser
 from pprint import pprint
 import socket
+import re
 
 import tensorflow as tf
 from tensorflow.python.ops import random_ops, math_ops
@@ -18,6 +19,11 @@ from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from tensorflow.contrib.slim import fully_connected
 
 import dps
+
+
+def camel_to_snake(name):
+    s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
+    return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
 
 
 def parse_config():
@@ -34,6 +40,7 @@ def parse_config():
     _config['save_summaries'] = config.getboolean(key, 'save_summaries')
     _config['max_experiments'] = config.getint(key, 'max_experiments')
     _config['data_dir'] = config.get(key, 'data_dir')
+    _config['log_root'] = config.get(key, 'log_root')
     _config['display'] = config.getboolean(key, 'display')
     _config['save_display'] = config.getboolean(key, 'save_display')
     _config['mpl_backend'] = config.get(key, 'mpl_backend')
@@ -41,7 +48,7 @@ def parse_config():
     if _config['max_experiments'] <= 0:
         _config['max_experiments'] = np.inf
 
-    pprint(_config)
+    # pprint(_config)
     return _config
 
 

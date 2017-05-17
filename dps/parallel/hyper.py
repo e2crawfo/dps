@@ -1,7 +1,6 @@
 import copy
 from scipy.stats import distributions as spdists
 import numpy as np
-import matplotlib.pyplot as plt
 from collections import defaultdict
 from pathlib import Path
 import clify
@@ -10,6 +9,7 @@ from dps.utils import gen_seed
 from dps.test.config import algorithms, tasks
 from dps.parallel.base import Job
 from spectral_dagger.utils.experiment import ExperimentStore
+import matplotlib.pyplot as plt
 
 
 class TupleDist(object):
@@ -34,11 +34,31 @@ class TupleDist(object):
 
 
 class ChoiceDist(object):
-    def __init__(self, choices):
+    def __init__(self, choices, p=None):
         self.choices = choices
+        self.p = p
+        if p is not None:
+            assert len(p) == len(choices)
 
     def rvs(self, shape):
-        return np.random.choice(self.choices, shape)
+        indices = np.random.choice(len(self.choices), size=shape, p=self.p)
+        results = np.zeros(shape, dtype=np.object)
+        for i in range(len(self.choices)):
+            equals_i = indices == i
+            if hasattr(self.choices[i], 'rvs'):
+                samples = self.choices[i].rvs(equals_i.sum())
+                results[np.nonzero(equals_i)] = samples
+            else:
+                results[np.nonzero(equals_i)] = self.choices[i]
+
+        try:
+            results = results.astype('f')
+        except:
+            try:
+                results = results.astype('i')
+            except:
+                pass
+        return results
 
 
 class LogUniform(object):
@@ -181,8 +201,15 @@ def build_search(path, name, n, repeats, alg, task, _zip):
     config.update(algorithms[alg])
 
     distributions = dict()
-    if alg == 'reinforce':
-        pass
+    if alg == 'reinforce' :
+        distributions.update(
+            lr_schedule=TupleDist(LogUniform(-3., 0., 10), 1000, 0.96, False),
+            exploration_schedule=TupleDist(spdists.uniform(0, 0.5), 1000, 0.96, False),
+            batch_size=ChoiceDist(10 * np.arange(1, 11)),
+            scaled=ChoiceDist([0, 1]),
+            entropy_param=TupleDist(ChoiceDist([0.0, LogUniform(-3., 0., 10)]), 1000, 0.96, False),
+            max_grad_norm=ChoiceDist([0.0, 1.0])
+        )
     elif alg == 'qlearning':
         distributions.update(
             lr_schedule=TupleDist(LogUniform(-3., 0., 10), 1000, 0.9, False),
@@ -197,7 +224,6 @@ def build_search(path, name, n, repeats, alg, task, _zip):
         raise NotImplementedError("Unknown algorithm: {}.".format(alg))
 
     config = clify.wrap_object(config).parse()
-
     configs = sample_configs(n, repeats, config, distributions)
 
     es = ExperimentStore(str(path), max_experiments=10, delete_old=1)
