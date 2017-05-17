@@ -127,13 +127,14 @@ def view_emnist(x, y, n):
 
 def load_emnist(classes, balance=False):
     """ maps the symbols down to range(0, len(classes)) """
+    import gzip
     data_dir = Path(parse_config()['data_dir']).expanduser()
     emnist_dir = data_dir / 'emnist/emnist-byclass'
     y = []
     x = []
     symbol_map = {}
     for i, cls in enumerate(sorted(list(classes))):
-        with (emnist_dir / (str(cls) + '.pkl')).open('rb') as f:
+        with gzip.open(str(emnist_dir / (str(cls) + '.pklz')), 'rb') as f:
             x.append(dill.load(f))
             y.extend([i] * x[-1].shape[0])
         symbol_map[cls] = i

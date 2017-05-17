@@ -17,6 +17,8 @@ import dill
 import numpy as np
 from scipy.io import loadmat
 import shutil
+from dps.utils import parse_config
+import subprocess
 
 
 chars = "$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\|()1{}[]?-_+~<>i!lI;:,\"^`'. "
@@ -39,16 +41,44 @@ def image_to_string(array):
     return '\n'.join(''.join(c for c in row) for row in image)
 
 
-def split_by_class(filename):
-    dir_name = Path(Path(filename).stem)
+emnist_url = 'http://www.itl.nist.gov/iaui/vip/cs_links/EMNIST/matlab.zip'
+
+
+def maybe_download_emnist():
+    import zipfile
+
+    data_dir = Path(parse_config()['data_dir']).expanduser()
+    zip_filename = data_dir / 'emnist.zip'
+    filename = data_dir / 'emnist'
+    if not filename.exists():
+        if not zip_filename.exists():
+            print("{} not found, downloading...".format(zip_filename))
+            subprocess.run('wget -P {} {}'.format(data_dir, emnist_url).split())
+            shutil.move(str(data_dir / 'matlab.zip'), str(data_dir / 'emnist.zip'))
+
+        print("Extracting {}...".format(zip_filename))
+        zip_ref = zipfile.ZipFile(str(zip_filename), 'r')
+        zip_ref.extractall(str(data_dir))
+        zip_ref.close()
+        shutil.move(str(data_dir / 'matlab'), str(data_dir / 'emnist'))
+
+    return filename
+
+
+def split_by_class(filename='emnist-byclass.mat'):
+    import gzip
+    emnist_path = maybe_download_emnist()
+
+    mat_path = emnist_path / filename
+    dir_name = mat_path.parent / mat_path.stem
     try:
         shutil.rmtree(str(dir_name))
-    except FileExistsError:
+    except FileNotFoundError:
         pass
 
     dir_name.mkdir(exist_ok=False, parents=False)
 
-    emnist = loadmat(filename)
+    emnist = loadmat(str(mat_path))
     train, test, _ = emnist['dataset'][0, 0]
     train_x, train_y, _ = train[0, 0]
     test_x, test_y, _ = test[0, 0]
@@ -72,8 +102,8 @@ def split_by_class(filename):
         print(char)
         print(image_to_string(x_i[0, :]))
 
-        path_i = dir_name / (str(i) + '.pkl')
-        with path_i.open('wb') as f:
+        path_i = dir_name / (str(i) + '.pklz')
+        with gzip.open(str(path_i), 'wb') as f:
             dill.dump(x_i, f, protocol=dill.HIGHEST_PROTOCOL)
 
     return x, y
