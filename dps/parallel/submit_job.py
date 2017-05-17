@@ -5,6 +5,7 @@ import subprocess
 from future.utils import raise_with_traceback
 from datetime import timedelta
 from pathlib import Path
+import numpy as np
 
 from spectral_dagger.utils.misc import make_symlink
 
@@ -25,7 +26,7 @@ def make_directory_name(experiments_dir, network_name, add_date=True):
 
 
 def parse_timedelta(s):
-    """ s should be of the form HH:MM:SS """
+    """ ``s`` should be of the form HH:MM:SS """
     args = [int(i) for i in s.split(":")]
     return timedelta(hours=args[0], minutes=args[1], seconds=args[2])
 
@@ -33,11 +34,10 @@ def parse_timedelta(s):
 def submit_job(
         input_zip, pattern, scratch, n_jobs=-1, n_nodes=1, ppn=12, walltime="1:00:00",
         cleanup_time="00:15:00", add_date=True, test=0,
-        show_script=0, dry_run=0, queue=None,
-        parallel_exe="/home/e2crawfo/.local/bin/parallel",
+        show_script=0, dry_run=0, queue=None, time_slack=200,
+        parallel_exe="$HOME/.local/bin/parallel",
         sdbin='$HOME/.virtualenvs/dps/bin/'):
 
-    idx_file = 'job_indices.txt'
     input_zip = Path(input_zip)
     input_zip_abs = input_zip.resolve()
     input_zip_base = input_zip.name
@@ -60,11 +60,29 @@ def submit_job(
     walltime = parse_timedelta(walltime)
     if cleanup_time > walltime:
         raise Exception("Cleanup time {} is larger than walltime {}!".format(cleanup_time, walltime))
-    execution_time = int((walltime - cleanup_time).total_seconds())
 
     node_file = " --sshloginfile $PBS_NODEFILE "
 
+    idx_file = 'job_indices.txt'
+
     kwargs = locals().copy()
+
+    ro_job = ReadOnlyJob(input_zip)
+    completion = ro_job.completion(pattern)
+    n_jobs_to_run = completion['n_ready_incomplete']
+    if n_jobs_to_run == 0:
+        print("All jobs are finished! Exiting.")
+        return
+    execution_time = int((walltime - cleanup_time).total_seconds())
+    n_procs = ppn * n_nodes
+    total_compute_time = n_procs * execution_time
+    abs_seconds_per_job = int(np.floor(total_compute_time / n_jobs_to_run))
+    seconds_per_job = abs_seconds_per_job - time_slack
+
+    kwargs['abs_seconds_per_job'] = abs_seconds_per_job
+    kwargs['seconds_per_job'] = seconds_per_job
+    kwargs['execution_time'] = execution_time
+    kwargs['n_procs'] = n_procs
 
     code = '''#!/bin/bash
 
@@ -103,22 +121,29 @@ echo "Listing staging results..." | tee -a /dev/stderr
 
 echo "Unzipping..." | tee -a /dev/stderr
 {parallel_exe} --no-notice {node_file} --nonall \\
-    "cd \\$RAMDISK && unzip -q {input_zip_base}"
+    "cd \\$RAMDISK && unzip -ouq {input_zip_base} && ls"
 
 echo "Running parallel..." | tee -a /dev/stderr
-timeout --signal=TERM {execution_time}s \\
-    {parallel_exe} -k --no-notice -j{ppn} \\
-        --joblog {job_directory}/job_log.txt \\
-        --env OMP_NUM_THREADS --env PATH --env LD_LIBRARY_PATH \\
-        {node_file} \\
-        "cd \\$RAMDISK && dps-hyper run {archive_root} {pattern} {{}}" < {idx_file}
+echo Each job is alloted {abs_seconds_per_job} seconds, {seconds_per_job} seconds of which is pure computation time
+echo Since we have {n_procs} processors, this batch should take roughly {execution_time} seconds
 
-if [ "$?" -eq 124 ]; then
-    echo Timed out after {execution_time} seconds. | tee -a /dev/stderr
-fi
+start=`date +%s`
+
+# Requires a new-ish version of parallel, has to have --timeout
+{parallel_exe} --timeout {abs_seconds_per_job} -k --no-notice -j {ppn} \\
+    --joblog {job_directory}/job_log.txt \\
+    --env OMP_NUM_THREADS --env PATH --env LD_LIBRARY_PATH \\
+    {node_file} \\
+    "cd \\$RAMDISK && dps-hyper run {archive_root} {pattern} {{}} --max-time {seconds_per_job} " < {idx_file}
+
+end=`date +%s`
+
+runtime=$((end-start))
+
+echo Executing jobs took $runtime seconds.
 
 echo "Cleaning up at - " | tee -a /dev/stderr
-date
+date | tee -a /dev/stderr
 
 {parallel_exe} --no-notice {node_file} --nonall \\
     "echo Retrieving results from node \\$HOSTNAME && cd \\$RAMDISK && zip -rq \\$HOSTNAME {archive_root} && mv \\$HOSTNAME.zip {job_directory}/results"
@@ -172,14 +197,7 @@ cp -f {name}.zip {input_zip_abs}
         os.path.join(scratch,
                      'latest_{}_{}'.format(name, clean_pattern)))
 
-    ro_job = ReadOnlyJob(input_zip)
-    completion = ro_job.completion(pattern)
-    if completion['n_complete'] == completion['n_ops']:
-        print("All jobs are finished! Exiting.")
-        return
-
     os.chdir(job_directory)
-
     with open(idx_file, 'w') as f:
         [f.write('{}\n'.format(u)) for u in range(completion['n_ops'])]
 
@@ -199,7 +217,6 @@ cp -f {name}.zip {input_zip_abs}
             else:
                 command = ['qsub', submit_script]
                 print("Submitting.")
-                # Submit to queue
                 output = subprocess.check_output(command, stderr=subprocess.STDOUT)
                 print(output)
 

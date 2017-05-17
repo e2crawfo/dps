@@ -163,6 +163,19 @@ def reduce_hyper_results(*results):
     plt.show()
 
 
+class RunTrainer(object):
+    def __init__(self, trainer):
+        self.trainer = trainer
+
+    def __call__(self, config):
+        config = clify.wrap_object(config).parse()
+        config.start_tensorboard = False
+        config.save_summaries = False
+        config.update_latest = False
+        config.max_experiments = np.inf
+        return self.trainer.train(config)
+
+
 def build_search(path, name, n, repeats, alg, task, _zip):
     config = tasks[task]
     config.update(algorithms[alg])
@@ -184,8 +197,6 @@ def build_search(path, name, n, repeats, alg, task, _zip):
         raise NotImplementedError("Unknown algorithm: {}.".format(alg))
 
     config = clify.wrap_object(config).parse()
-    config.start_tensorboard = False
-    config.save_summaries = False  # Whether to save tensorflow summaries.
 
     configs = sample_configs(n, repeats, config, distributions)
 
@@ -205,7 +216,7 @@ def build_search(path, name, n, repeats, alg, task, _zip):
     print("Building parameter search at {}.".format(exp_dir.path))
 
     job = Job(exp_dir.path)
-    summaries = job.map(config.trainer.train, configs)
+    summaries = job.map(RunTrainer(config.trainer), configs)
     best = job.reduce(reduce_hyper_results, summaries)
 
     if _zip:
@@ -233,7 +244,6 @@ def hyper_search_cl():
         ('alg', dict(help="Algorithm to use for learning.", type=str)),
         ('task', dict(help="Task to test on.", type=str)),
         ('--no-zip', dict(action='store_true', help="If True, no zip file is produced.")),
-        ('--max-steps', dict(type=int, default=10000, help="Maximum number of steps to run for each stage of curriculum."))
     )
 
     zip_cmd = (

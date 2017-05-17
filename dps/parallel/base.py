@@ -129,7 +129,6 @@ class Operator(object):
                         outputs = func(*inputs)
             else:
                 outputs = func(*inputs)
-
             print("Saving output for op {}".format(self.name))
             if len(self.outp_keys) == 1:
                 store.save_object('data', self.outp_keys[0], outputs, force_unique=force_unique, clobber=True)

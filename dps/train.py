@@ -5,8 +5,7 @@ from contextlib import ExitStack
 import tensorflow as tf
 import numpy as np
 import sys
-from pprint import pformat, pprint
-from pathlib import Path
+from pprint import pformat
 
 from spectral_dagger.utils.experiment import ExperimentStore
 from dps.utils import (
@@ -14,27 +13,20 @@ from dps.utils import (
     time_limit, uninitialized_variables_initializer, catch, parse_config)
 
 
-def training_loop(
-        curriculum, config, exp_name='', reset_global_step=False):
-
+def training_loop(curriculum, config, exp_name=''):
     config.update(parse_config(), clobber=False)
-
-    kwargs = locals().copy()
-    return TrainingLoop(**kwargs).run()
+    return TrainingLoop(curriculum, config, exp_name).run()
 
 
 class TrainingLoop(object):
     def __init__(
-            self, curriculum, config, start_tensorboard=False,
-            save_summaries=False, exp_name='', reset_global_step=False):
+            self, curriculum, config, exp_name=''):
 
         self.curriculum = curriculum
         self.config = config
         self.exp_name = exp_name
-        self.reset_global_step = reset_global_step
 
     def run(self):
-        print("In TrainingLoop.run.")
         start_tensorboard, log_dir = self.config.start_tensorboard, self.config.log_dir
 
         if start_tensorboard:
@@ -43,21 +35,15 @@ class TrainingLoop(object):
         try:
             value = self._run_core()
         except KeyboardInterrupt:
-            if start_tensorboard:
-                restart_tensorboard(log_dir)
-
             et, ei, tb = sys.exc_info()
             raise ei.with_traceback(tb)
-
-        if start_tensorboard:
-            restart_tensorboard(log_dir)
+        finally:
+            if start_tensorboard:
+                restart_tensorboard(log_dir)
 
         return value
 
     def _run_core(self):
-        # import configparser
-        # config = configparser.ConfigParser()
-        # config.read('setup.cfg')
         self.start = time.time()
 
         config = self.config
@@ -99,6 +85,7 @@ class TrainingLoop(object):
                 stack.enter_context(sess)
                 stack.enter_context(sess.as_default())
 
+                print("created updater")
                 try:
                     stage_config, updater = next(self.curriculum)
 
@@ -108,6 +95,7 @@ class TrainingLoop(object):
 
                 stack.enter_context(stage_config.as_default())
 
+                print("setting seed")
                 tf_seed = gen_seed()
                 tf.set_random_seed(tf_seed)
 
