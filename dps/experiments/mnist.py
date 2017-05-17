@@ -302,6 +302,11 @@ if __name__ == "__main__":
 
 
 class MnistConfig(Config):
+    def __init__(self, **kwargs):
+        self.update(kwargs)
+        if self.log_dir is None:
+            self.log_dir = Path(parse_config()['log_root']) / self.log_name
+
     batch_size = 64
     eval_step = 100
     max_steps = 100000
@@ -313,6 +318,7 @@ class MnistConfig(Config):
     n_train = 60000
     n_val = 1000
     symbols = list(range(10))
+    log_dir = None
     log_name = 'mnist_training'
 
 
