@@ -305,7 +305,7 @@ class MnistConfig(DpsConfig):
     n_train = 60000
     n_val = 1000
     symbols = list(range(10))
-    log_name = 'mnist_training'
+    log_name = 'mnist_pretraining'
 
 
 def train_mnist(build_model, var_scope, path=None, config=None):

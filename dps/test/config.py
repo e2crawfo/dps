@@ -246,7 +246,7 @@ class TranslatedMnistConfig(DefaultConfig):
         lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=256),
                                         MLP(),
                                         n_actions))
-    reward_window = 0.4
+    reward_window = 0.5
 
     log_name = 'translated_mnist'
 
@@ -260,11 +260,10 @@ class TranslatedMnistConfig(DefaultConfig):
 
 class MnistArithmeticConfig(DefaultConfig):
     curriculum = [
-        dict(W=100, N=8, T=10),
-        dict(W=100, N=8, T=20),
-        dict(W=100, N=8, T=30)
+        dict(W=100, N=8, T=10, n_digits=1),
     ]
     simple = False
+    base = 3
     threshold = 0.15
     verbose = 4
     base = 2

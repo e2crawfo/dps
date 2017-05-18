@@ -1,7 +1,4 @@
 from collections import namedtuple
-import matplotlib.pyplot as plt
-from matplotlib import animation, patches
-from pathlib import Path
 
 import tensorflow as tf
 import numpy as np

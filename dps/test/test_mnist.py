@@ -4,7 +4,7 @@ from pathlib import Path
 from shutil import rmtree
 
 from dps.attention import DRAW_attention_2D
-from dps.utils import MLP, NumpySeed
+from dps.utils import MLP, NumpySeed, parse_config
 from dps.experiments.mnist import TranslatedMnistDataset, load_or_train, MnistConfig
 
 
@@ -53,7 +53,7 @@ def test_mnist_pretraining():
                 inference = build_model(x_ph)
             sess = tf.Session()
 
-            checkpoint_dir = Path('/tmp/mnist_training/checkpoint')
+            checkpoint_dir = Path(parse_config()['log_root']) / 'mnist_test/checkpoint'
             try:
                 rmtree(str(checkpoint_dir))
             except FileNotFoundError:
