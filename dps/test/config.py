@@ -1,25 +1,18 @@
 import numpy as np
 import tensorflow as tf
 import os
-from pathlib import Path
 
 from dps.updater import DifferentiableUpdater
 from dps.reinforce import REINFORCE
 from dps.qlearning import QLearning
 from dps.policy import SoftmaxSelect, EpsilonGreedySelect, GumbelSoftmaxSelect
-from dps.utils import Config, CompositeCell, FeedforwardCell, MLP, parse_config, camel_to_snake
+from dps.utils import Config, CompositeCell, FeedforwardCell, MLP, parse_config, BaseConfig
 from dps.experiments import (
     arithmetic, simple_addition, pointer_following,
     hard_addition, lifted_addition, translated_mnist, mnist_arithmetic)
 
 
-class DefaultConfig(Config):
-
-    def __init__(self, **kwargs):
-        super(DefaultConfig, self).__init__(**kwargs)
-        if self.log_dir is None:
-            self.log_dir = Path(parse_config()['log_root']) / self.log_name
-
+class DefaultConfig(BaseConfig):
     seed = 12
 
     preserve_policy = True  # Whether to use the policy learned on the last stage of the curriculum for each new stage.
@@ -67,8 +60,6 @@ class DefaultConfig(Config):
     save_display = False
     path = os.getcwd()
     max_time = 0
-
-    log_dir = None
 
 
 class DiffConfig(Config):

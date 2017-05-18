@@ -11,6 +11,7 @@ import configparser
 from pprint import pprint
 import socket
 import re
+import os
 
 import tensorflow as tf
 from tensorflow.python.ops import random_ops, math_ops
@@ -26,6 +27,10 @@ def camel_to_snake(name):
     return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
 
 
+def process_path(path):
+    return os.path.expandvars(os.path.expanduser(path))
+
+
 def parse_config():
     config = configparser.ConfigParser()
     location = Path(dps.__file__).parent
@@ -39,8 +44,8 @@ def parse_config():
     _config['update_latest'] = config.getboolean(key, 'update_latest')
     _config['save_summaries'] = config.getboolean(key, 'save_summaries')
     _config['max_experiments'] = config.getint(key, 'max_experiments')
-    _config['data_dir'] = config.get(key, 'data_dir')
-    _config['log_root'] = config.get(key, 'log_root')
+    _config['data_dir'] = process_path(config.get(key, 'data_dir'))
+    _config['log_root'] = process_path(config.get(key, 'log_root'))
     _config['display'] = config.getboolean(key, 'display')
     _config['save_display'] = config.getboolean(key, 'save_display')
     _config['mpl_backend'] = config.get(key, 'mpl_backend')
@@ -549,6 +554,15 @@ class Config(object):
 
     def keys(self):
         return self.list_attrs()
+
+
+class BaseConfig(Config):
+    def __init__(self, **kwargs):
+        super(BaseConfig, self).__init__(**kwargs)
+        if self.log_dir is None:
+            self.log_dir = Path(parse_config()['log_root']) / self.log_name
+
+    log_dir = None
 
 
 @contextmanager

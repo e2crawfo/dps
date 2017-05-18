@@ -9,7 +9,7 @@ import numpy as np
 
 from dps import CoreNetwork, RegisterSpec
 from dps.environment import RegressionEnv
-from dps.utils import default_config, MLP
+from dps.utils import default_config, MLP, parse_config
 from dps.production_system import ProductionSystemTrainer
 from dps.train import build_and_visualize
 from dps.policy import Policy
@@ -48,12 +48,13 @@ class MnistDrawPretrained(object):
     """ A wrapper around a classifier that initializes it with values stored on disk. """
     def __init__(
             self, build_classifier, N, var_scope_name='mnist', freeze_weights=True,
-            model_dir='/tmp/dps_mnist/', name='model.chk', config=None):
+            model_dir=None, name='model.chk', config=None):
 
         self._build_classifier = build_classifier
         self.N = N
         self.var_scope_name = var_scope_name
         self.var_scope = None
+        model_dir = model_dir or str(Path(parse_config()['log_root']) / 'mnist_pretrained')
         self.model_dir = model_dir
         self.name = name
         self.path = os.path.join(model_dir, name)
