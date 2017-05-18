@@ -27,7 +27,7 @@ class QLearning(ReinforcementLearningUpdater):
                  noise_schedule,
                  max_grad_norm,
                  gamma,
-                 l2_norm_param):
+                 l2_norm_penalty):
 
         self.q_network = q_network
         self.target_network = target_network
@@ -47,7 +47,7 @@ class QLearning(ReinforcementLearningUpdater):
             noise_schedule,
             max_grad_norm,
             gamma,
-            l2_norm_param)
+            l2_norm_penalty)
         self.clear_buffers()
 
     def _update(self, batch_size, summary_op=None):
@@ -147,21 +147,20 @@ class QLearning(ReinforcementLearningUpdater):
             final_td_error = final_rewards - prev_q_value
             td_error = tf.concat((td_error, tf.expand_dims(final_td_error, 0)), axis=0)
             self.q_loss = tf.reduce_mean(clipped_error(td_error))
+            tf.summary.scalar("loss_q", self.q_loss)
 
-            if self.l2_norm_param > 0:
+            loss = self.q_loss
+
+            if self.l2_norm_penalty > 0:
                 policy_network_variables = tf.get_collection(
                     tf.GraphKeys.TRAINABLE_VARIABLES, scope=self.q_network.scope.name)
                 self.reg_loss = tf.reduce_sum([tf.reduce_sum(tf.square(x)) for x in policy_network_variables])
-                self.loss = self.q_loss + self.l2_norm_param * self.reg_loss
-            else:
-                self.reg_loss = None
-                self.loss = self.q_loss
+                tf.summary.scalar("loss_reg", self.reg_loss)
+                loss += self.l2_norm_penalty * self.reg_loss
+
+            self.loss = loss
 
             tf.summary.scalar("reward_per_ep", self.reward_per_ep)
-
-            tf.summary.scalar("q_loss", self.q_loss)
-            if self.l2_norm_param > 0:
-                tf.summary.scalar("reg_loss", self.reg_loss)
 
             self._build_train()
 

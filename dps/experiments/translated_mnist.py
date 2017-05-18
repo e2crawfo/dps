@@ -9,7 +9,7 @@ import numpy as np
 
 from dps import CoreNetwork, RegisterSpec
 from dps.environment import RegressionEnv
-from dps.utils import default_config, MLP, parse_config
+from dps.utils import default_config, MLP
 from dps.production_system import ProductionSystemTrainer
 from dps.train import build_and_visualize
 from dps.policy import Policy
@@ -54,7 +54,7 @@ class MnistDrawPretrained(object):
         self.N = N
         self.var_scope_name = var_scope_name
         self.var_scope = None
-        model_dir = model_dir or str(Path(parse_config()['log_root']) / 'mnist_pretrained')
+        model_dir = model_dir or str(Path(default_config().log_root) / 'mnist_pretrained')
         self.model_dir = model_dir
         self.name = name
         self.path = os.path.join(model_dir, name)
@@ -307,7 +307,7 @@ def visualize(config):
         # controller = FixedController([8], cn.n_actions)
         action_selection = IdentitySelect()
 
-        exploration = build_decaying_value(_config.exploration_schedule, 'exploration')
+        exploration = build_decaying_value(_config.schedule(exploration), 'exploration')
         policy = Policy(
             controller, action_selection, exploration,
             cn.n_actions, cn.obs_dim, name="translated_mnist_policy")

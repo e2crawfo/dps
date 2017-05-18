@@ -9,8 +9,9 @@ import tensorflow as tf
 
 from spectral_dagger.utils.experiment import ExperimentStore
 from dps.environment import RegressionDataset
-from dps.utils import build_decaying_value, EarlyStopHook, Config, gen_seed
-from dps.utils import load_or_train as _load_or_train, parse_config, BaseConfig
+from dps.utils import load_or_train as _load_or_train
+from dps.utils import (
+    build_decaying_value, EarlyStopHook, gen_seed, DpsConfig, default_config)
 
 
 class Rect(object):
@@ -128,7 +129,7 @@ def view_emnist(x, y, n):
 def load_emnist(classes, balance=False):
     """ maps the symbols down to range(0, len(classes)) """
     import gzip
-    data_dir = Path(parse_config()['data_dir']).expanduser()
+    data_dir = Path(default_config().data_dir).expanduser()
     emnist_dir = data_dir / 'emnist/emnist-byclass'
     y = []
     x = []
@@ -199,15 +200,6 @@ class MnistArithmeticDataset(RegressionDataset):
         self.n_digits = n_digits
         self.max_overlap = max_overlap
         self.base = base
-
-        # mnist = pickle.load(gzip.open(str(data_dir / 'mnist.pkl.gz'), 'r'), encoding='bytes')
-        # mnist_x = np.concatenate((mnist[0][0], mnist[1][0], mnist[2][0]), axis=0)
-        # mnist_x = mnist_x.reshape(-1, 28, 28)
-        # mnist_y = np.concatenate((mnist[0][1], mnist[1][1], mnist[2][1]), axis=0)
-
-        # keep = mnist_y < self.base
-        # mnist_x = mnist_x[keep]
-        # mnist_y = mnist_y[keep]
 
         mnist_x, mnist_y, symbol_map = load_emnist(list(range(base)))
         mnist_x = mnist_x.reshape(-1, 28, 28)
@@ -301,12 +293,12 @@ if __name__ == "__main__":
     plt.show()
 
 
-class MnistConfig(BaseConfig):
+class MnistConfig(DpsConfig):
     batch_size = 64
     eval_step = 100
     max_steps = 100000
     patience = 10000
-    lr_schedule = (0.001, 1000, 0.96, False)
+    lr_start, lr_denom, lr_decay = 0.001, 1000, 96
     optimizer_class = tf.train.AdamOptimizer
     threshold = 0.05
 
@@ -354,20 +346,15 @@ def train_mnist(build_model, var_scope, path=None, config=None):
             tf.nn.sparse_softmax_cross_entropy_with_logits(
                 labels=_y, logits=tf.log(inference)))
 
-        tf.summary.scalar('loss', loss)
-
         correct_prediction = tf.equal(tf.argmax(inference, 1), _y)
         accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+
+        tf.summary.scalar('loss', loss)
         tf.summary.scalar('accuracy', accuracy)
 
-        lr = build_decaying_value(config.lr_schedule, 'mnist_learning_rate')
+        lr = build_decaying_value(config.schedule('lr'), 'mnist_learning_rate')
         optimizer = config.optimizer_class(lr)
 
-        # tvars = tf.trainable_variables()
-        # gradients = tf.gradients(loss, tvars)
-        # grads_and_vars = zip(gradients, tvars)
-        # global_step = tf.contrib.framework.get_or_create_global_step()
-        # train_op = optimizer.apply_gradients(grads_and_vars, global_step=global_step)
         train_op = optimizer.minimize(loss)
 
         summary_op = tf.summary.merge_all()

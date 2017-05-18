@@ -570,7 +570,7 @@ class ProductionSystemCurriculum(Curriculum):
 
         is_training = tf.placeholder_with_default(False, shape=(), name="is_training")
 
-        exploration = build_decaying_value(config.exploration_schedule, 'exploration')
+        exploration = build_decaying_value(config.schedule('exploration'), 'exploration')
         if config.test_time_explore is not None:
             testing_exploration = tf.constant(config.test_time_explore, tf.float32, name='testing_exploration')
             exploration = tf.cond(is_training, lambda: exploration, lambda: testing_exploration)
@@ -598,19 +598,19 @@ class ProductionSystemCurriculum(Curriculum):
         if self.config.updater_class is DifferentiableUpdater:
             updater = DifferentiableUpdater(
                 psystem.env, ps_func, config.optimizer_class,
-                config.lr_schedule, config.noise_schedule, config.max_grad_norm)
+                config.schedule('lr'), config.schedule('noise'), config.max_grad_norm)
         elif self.config.updater_class is REINFORCE:
             updater = REINFORCE(
                 ps_env, psystem.policy, config.optimizer_class,
-                config.lr_schedule, config.noise_schedule, config.max_grad_norm,
-                config.gamma, config.l2_norm_param, config.entropy_param)
+                config.schedule('lr'), config.schedule('noise'), config.max_grad_norm,
+                config.gamma, config.l2_norm_penalty, config.schedule('entropy'))
         elif self.config.updater_class is QLearning:
             updater = QLearning(
                 ps_env, psystem.policy, target_policy, config.double,
                 config.replay_max_size, config.replay_threshold, config.replay_proportion,
                 config.target_update_rate, config.recurrent, config.optimizer_class,
-                config.lr_schedule, config.noise_schedule, config.max_grad_norm,
-                config.gamma, config.l2_norm_param)
+                config.schedule('lr'), config.schedule('noise'), config.max_grad_norm,
+                config.gamma, config.l2_norm_penalty)
         else:
             raise NotImplementedError()
         updater.is_training = is_training

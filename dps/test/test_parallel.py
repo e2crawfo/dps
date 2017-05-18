@@ -10,10 +10,16 @@ from dps.parallel.base import FileSystemObjectStore, ZipObjectStore
 
 def test_fs_object_store():
     directory = Path('/tmp/test_fs_object_store/test')
+    zip_path = directory.parent / 'my_store.zip'
     try:
         shutil.rmtree(str(directory))
     except:
         pass
+    try:
+        zip_path.unlink()
+    except:
+        pass
+
     store = FileSystemObjectStore(directory, force_fresh=True)
     obj1 = dict(x=1)
     obj2 = dict(x=2)
@@ -29,10 +35,9 @@ def test_fs_object_store():
     lists = store.load_objects('list')
     assert len(lists) == 1
 
-    zip_path = directory.parent / 'my_store'
     store.zip(zip_path)
 
-    zip_store = ZipObjectStore("{}.zip".format(zip_path))
+    zip_store = ZipObjectStore(zip_path)
 
     dicts = zip_store.load_objects('dict')
     assert len(dicts) == 2
@@ -40,7 +45,7 @@ def test_fs_object_store():
     lists = zip_store.load_objects('list')
     assert len(lists) == 1
 
-    zip_store = ZipObjectStore("{}.zip".format(zip_path))
+    zip_store = ZipObjectStore(zip_path)
 
     dicts = zip_store.load_objects('dict')
     assert len(dicts) == 2

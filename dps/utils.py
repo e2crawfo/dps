@@ -1,6 +1,6 @@
 import subprocess as sp
 from pprint import pformat
-from contextlib import contextmanager, ContextDecorator
+from contextlib import contextmanager
 import numpy as np
 import inspect
 import types
@@ -8,7 +8,6 @@ from pathlib import Path
 import signal
 import time
 import configparser
-from pprint import pprint
 import socket
 import re
 import os
@@ -29,32 +28,6 @@ def camel_to_snake(name):
 
 def process_path(path):
     return os.path.expandvars(os.path.expanduser(path))
-
-
-def parse_config():
-    config = configparser.ConfigParser()
-    location = Path(dps.__file__).parent
-    config.read(str(location / 'config.ini'))
-    key = socket.gethostname().split('-')[0]
-    if key not in config:
-        key = 'DEFAULT'
-
-    _config = {}
-    _config['start_tensorboard'] = config.getboolean(key, 'start_tensorboard')
-    _config['update_latest'] = config.getboolean(key, 'update_latest')
-    _config['save_summaries'] = config.getboolean(key, 'save_summaries')
-    _config['max_experiments'] = config.getint(key, 'max_experiments')
-    _config['data_dir'] = process_path(config.get(key, 'data_dir'))
-    _config['log_root'] = process_path(config.get(key, 'log_root'))
-    _config['display'] = config.getboolean(key, 'display')
-    _config['save_display'] = config.getboolean(key, 'save_display')
-    _config['mpl_backend'] = config.get(key, 'mpl_backend')
-
-    if _config['max_experiments'] <= 0:
-        _config['max_experiments'] = np.inf
-
-    # pprint(_config)
-    return _config
 
 
 @contextmanager
@@ -113,7 +86,7 @@ class time_limit(object):
         if self.seconds <= 0:
             raise_alarm()
         if not np.isinf(self.seconds):
-            signal.alarm(int(np.ceil(self.seconds)))
+            signal.alarm(int(np.floor(self.seconds)))
         self.then = time.time()
         return self
 
@@ -556,13 +529,49 @@ class Config(object):
         return self.list_attrs()
 
 
-class BaseConfig(Config):
-    def __init__(self, **kwargs):
-        super(BaseConfig, self).__init__(**kwargs)
-        if self.log_dir is None:
-            self.log_dir = str(Path(parse_config()['log_root']) / self.log_name)
-
+class DpsConfig(Config):
     log_dir = None
+    log_name = "dps"
+
+    def __init__(self, **kwargs):
+        super(DpsConfig, self).__init__(**kwargs)
+        self._parse_config_file()
+        if self.log_dir is None:
+            self.log_dir = str(Path(self.log_root) / self.log_name)
+
+    def _parse_config_file(self, key=None):
+        config = configparser.ConfigParser()
+        location = Path(dps.__file__).parent
+        config.read(str(location / 'config.ini'))
+
+        if not key:
+            key = socket.gethostname().split('-')[0]
+
+        if key not in config:
+            key = 'DEFAULT'
+
+        self.start_tensorboard = config.getboolean(key, 'start_tensorboard')
+        self.update_latest = config.getboolean(key, 'update_latest')
+        self.save_summaries = config.getboolean(key, 'save_summaries')
+        self.data_dir = process_path(config.get(key, 'data_dir'))
+        self.log_root = process_path(config.get(key, 'log_root'))
+        self.display = config.getboolean(key, 'display')
+        self.save_display = config.getboolean(key, 'save_display')
+        self.mpl_backend = config.get(key, 'mpl_backend')
+
+        self.max_experiments = config.getint(key, 'max_experiments')
+        if self.max_experiments <= 0:
+            self.max_experiments = np.inf
+
+    def schedule(self, kind):
+        schedule = [getattr(self, kind + '_' + s, None)
+                    for s in 'start denom decay'.split()] + [False]
+        if any([s is None for s in schedule]):
+            return None
+        return tuple(schedule)
+
+
+Config._stack.append(DpsConfig())
 
 
 @contextmanager

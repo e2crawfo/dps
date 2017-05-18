@@ -98,7 +98,7 @@ def visualize(config):
         controller = FixedController([0, 2, 1, 1, 3, 5, 0], cn.n_actions)
         action_selection = IdentitySelect()
 
-        exploration = build_decaying_value(_config.exploration_schedule, 'exploration')
+        exploration = build_decaying_value(_config.schedule(exploration), 'exploration')
         policy = Policy(
             controller, action_selection, exploration,
             cn.n_actions, cn.obs_dim, name="simple_addition_policy")

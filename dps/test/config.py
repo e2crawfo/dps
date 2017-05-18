@@ -6,13 +6,13 @@ from dps.updater import DifferentiableUpdater
 from dps.reinforce import REINFORCE
 from dps.qlearning import QLearning
 from dps.policy import SoftmaxSelect, EpsilonGreedySelect, GumbelSoftmaxSelect
-from dps.utils import Config, CompositeCell, FeedforwardCell, MLP, parse_config, BaseConfig
+from dps.utils import Config, CompositeCell, FeedforwardCell, MLP, DpsConfig
 from dps.experiments import (
     arithmetic, simple_addition, pointer_following,
     hard_addition, lifted_addition, translated_mnist, mnist_arithmetic)
 
 
-class DefaultConfig(BaseConfig):
+class DefaultConfig(DpsConfig):
     seed = 12
 
     preserve_policy = True  # Whether to use the policy learned on the last stage of the curriculum for each new stage.
@@ -33,21 +33,20 @@ class DefaultConfig(BaseConfig):
     display_step = 100
     eval_step = 10
     checkpoint_step = 1000
+    n_controller_units = 32
 
     controller_func = staticmethod(
-        lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=32),
+        lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=DefaultConfig.n_controller_units),
                                         MLP(),
                                         n_actions))
 
-    # start, decay_steps, decay_rate, staircase
-    lr_schedule = (0.001, 1000, 0.96, False)
-    noise_schedule = None
-    exploration_schedule = (10.0, 1000, 0.96, False)
+    lr_start, lr_denom, lr_decay = 0.001, 1000, 0.96
+    exploration_start, exploration_denom, exploration_decay = 10.0, 1000, 0.96
 
     test_time_explore = None
 
     max_grad_norm = 0.0
-    l2_norm_param = 0.0
+    l2_norm_penalty = 0.0
     gamma = 1.0
     reward_window = 0.1
 
@@ -67,30 +66,31 @@ class DiffConfig(Config):
     test_time_explore = None
     # action_selection = SoftmaxSelect()
     action_selection = GumbelSoftmaxSelect(hard=0)
-    noise_schedule = (0.1, 1000, 0.96, False)
-    exploration_schedule = (1.0, 1000, 0.9, False)
     max_grad_norm = 1.0
     patience = np.inf
     T = 10
+
+    noise_start, noise_denom, noise_decay = 0.1, 1000, 0.96
 
 
 class ReinforceConfig(Config):
     updater_class = REINFORCE
     action_selection = SoftmaxSelect()
     test_time_explore = None
-    noise_schedule = (0.0, 1000, 0.96, False)
-    lr_schedule = (0.01, 1000, 0.98, False)
     patience = np.inf
-    entropy_param = (0.01, 1000, 0.96, False)
-    exploration_schedule = (10.0, 1000, 1.0, False)
+
+    entropy_start, entropy_denom, entropy_decay = 0.01, 1000, 0.96
+    lr_start, lr_denom, lr_decay = 0.01, 1000, 0.96
+    noise_start = None
 
 
 class QLearningConfig(Config):
     updater_class = QLearning
     action_selection = EpsilonGreedySelect()
-    exploration_schedule = (0.2, 1000, 0.98, False)
-    lr_schedule = (0.01, 1000, 1.0, False)
     double = False
+
+    entropy_start, entropy_denom, entropy_decay = 0.2, 1000, 0.98
+    lr_start, lr_denom, lr_decay = 0.01, 1000, 1.0
 
     replay_max_size = 100000
     replay_threshold = -0.5
@@ -102,18 +102,15 @@ class QLearningConfig(Config):
     batch_size = 10
     test_time_explore = 0.0
 
-    l2_norm_param = 0.0
+    l2_norm_penalty = 0.0
     max_grad_norm = 0.0
+
     controller_func = staticmethod(
         lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=64),
                                         MLP(),
                                         n_actions))
     # controller_func = staticmethod(
     #     lambda n_actions: FeedforwardCell(MLP([10, 10], activation_fn=tf.nn.sigmoid), n_actions))
-
-
-class RealConfig(Config):
-    max_steps = 10000
 
 
 class DebugConfig(Config):
@@ -195,8 +192,8 @@ class PointerConfig(DefaultConfig):
 class HardAdditionConfig(DefaultConfig):
     T = 40
     curriculum = [
-        dict(height=2, width=3, n_digits=2, entropy_param=(1.0, 1000, 0.9, False)),
-        dict(height=2, width=3, n_digits=2, entropy_param=(0.00, 1000, 0.9, False))]
+        dict(height=2, width=3, n_digits=2, entropy_start=1.0),
+        dict(height=2, width=3, n_digits=2, entropy_start=0.0)]
     log_name = 'hard_addition'
     trainer = hard_addition.HardAdditionTrainer()
     visualize = hard_addition.visualize
@@ -262,26 +259,22 @@ class TranslatedMnistConfig(DefaultConfig):
 
 
 class MnistArithmeticConfig(DefaultConfig):
-    T = 10
     curriculum = [
-        dict(W=28, N=8, T=4, n_digits=1),
-        dict(W=28, N=8, T=4, n_digits=1),
-        dict(W=28, N=8, T=4, n_digits=1),
-        dict(W=28, N=8, T=6, n_digits=1),
-        dict(W=28, N=8, T=8, n_digits=1),
-        dict(W=28, N=8, T=10, n_digits=1),
-        dict(W=28, N=8, T=12, n_digits=1),
-        dict(W=35, N=8, T=12, n_digits=1),
-        dict(W=45, N=8, T=12, n_digits=1),
+        dict(W=100, N=8, T=10),
+        dict(W=100, N=8, T=20),
+        dict(W=100, N=8, T=30)
     ]
+    simple = False
     threshold = 0.15
     verbose = 4
+    base = 2
+    n_digits = 2
 
-    classifier_str = "MLP_50_50"
+    classifier_str = "MLP_30_30"
 
     @staticmethod
     def build_classifier(inp, outp_size):
-        logits = MLP([50, 50], activation_fn=tf.nn.sigmoid)(inp, outp_size)
+        logits = MLP([30, 30], activation_fn=tf.nn.sigmoid)(inp, outp_size)
         return tf.nn.softmax(logits)
 
     # controller_func = staticmethod(
@@ -316,8 +309,3 @@ tasks = dict(
     lifted_addition=LiftedAdditionConfig(),
     translated_mnist=TranslatedMnistConfig(),
     mnist_arithmetic=MnistArithmeticConfig())
-
-
-def apply_mode(cfg, mode):
-    if mode == "debug":
-        cfg.update(DebugConfig())

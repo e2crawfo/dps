@@ -50,14 +50,14 @@ class Updater(with_metaclass(abc.ABCMeta, object)):
 
         tvars = tf.trainable_variables()
         self.pure_gradients = tf.gradients(self.loss, tvars)
-        tf.summary.scalar('pure_gradient_norm', tf.global_norm(self.pure_gradients))
+        tf.summary.scalar('gradient_norm_pure', tf.global_norm(self.pure_gradients))
 
         if hasattr(self, 'max_grad_norm') and self.max_grad_norm is not None and self.max_grad_norm > 0.0:
             self.clipped_gradients, _ = tf.clip_by_global_norm(self.pure_gradients, self.max_grad_norm)
         else:
             self.clipped_gradients = self.pure_gradients
 
-        tf.summary.scalar('clipped_gradient_norm', tf.global_norm(self.clipped_gradients))
+        tf.summary.scalar('gradient_norm_clipped', tf.global_norm(self.clipped_gradients))
 
         global_step = tf.contrib.framework.get_or_create_global_step()
 
@@ -66,11 +66,11 @@ class Updater(with_metaclass(abc.ABCMeta, object)):
             start, decay_steps, decay_rate, staircase = self.noise_schedule
             noise = adj_inverse_time_decay(
                 start, global_step, decay_steps, decay_rate, staircase=staircase, gamma=0.55)
-            tf.summary.scalar('noise', noise)
+            tf.summary.scalar('gradient_noise_amount', noise)
             self.noisy_gradients = add_scaled_noise_to_gradients(grads_and_vars, noise)
         else:
             self.noisy_gradients = self.clipped_gradients
-        tf.summary.scalar('final_gradient_norm', tf.global_norm(self.noisy_gradients))
+        tf.summary.scalar('gradient_norm_clipped_and_noisy', tf.global_norm(self.noisy_gradients))
 
         grads_and_vars = list(zip(self.noisy_gradients, tvars))
         self.train_op = self.optimizer.apply_gradients(grads_and_vars, global_step=global_step)
@@ -180,7 +180,7 @@ class ReinforcementLearningUpdater(Updater):
                  noise_schedule,
                  max_grad_norm,
                  gamma,
-                 l2_norm_param):
+                 l2_norm_penalty):
 
         assert policy.action_selection.can_sample, (
             "Cannot sample when using action selection method {}".format(policy.action_selection))
@@ -190,7 +190,7 @@ class ReinforcementLearningUpdater(Updater):
         self.noise_schedule = noise_schedule
         self.max_grad_norm = max_grad_norm
         self.gamma = gamma
-        self.l2_norm_param = l2_norm_param
+        self.l2_norm_penalty = l2_norm_penalty
 
         self.obs_dim = env.observation_space.shape[1]
         self.n_actions = env.action_space.shape[1]

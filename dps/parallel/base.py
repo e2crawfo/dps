@@ -409,6 +409,8 @@ class FileSystemObjectStore(ObjectStore):
     def zip(self, archive_name=None, delete=False):
         if not archive_name:
             archive_name = Path(self.directory).name
+        archive_name = Path(archive_name)
+        archive_name = archive_name.parent / archive_name.stem
 
         # Within the archive, all entries are contained inside
         # a directory with a name given by ``base_dir``.
@@ -416,7 +418,9 @@ class FileSystemObjectStore(ObjectStore):
             str(archive_name), 'zip', root_dir=str(self.directory.parent),
             base_dir=str(self.directory.relative_to(self.directory.parent)))
 
-        archive_path = shutil.move(archive_path, str(self.directory.parent))
+        archive_path = Path(archive_path).resolve()
+        if not str(archive_path).startswith(str(self.directory.parent)):
+            archive_path = shutil.move(str(archive_path), str(self.directory.parent))
 
         print("Zipped {} as {}.".format(self.directory, archive_path))
         if delete:

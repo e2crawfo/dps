@@ -34,11 +34,12 @@ class TupleDist(object):
 
 
 class ChoiceDist(object):
-    def __init__(self, choices, p=None):
+    def __init__(self, choices, p=None, dtype=None):
         self.choices = choices
         self.p = p
         if p is not None:
             assert len(p) == len(choices)
+        self.dtype = dtype
 
     def rvs(self, shape):
         indices = np.random.choice(len(self.choices), size=shape, p=self.p)
@@ -51,13 +52,10 @@ class ChoiceDist(object):
             else:
                 results[np.nonzero(equals_i)] = self.choices[i]
 
-        try:
-            results = results.astype('f')
-        except:
-            try:
-                results = results.astype('i')
-            except:
-                pass
+        if self.dtype:
+            results = results.astype(self.dtype)
+        elif hasattr(self.choices, 'dtype'):
+            results = results.astype(self.choices.dtype)
         return results
 
 
@@ -203,18 +201,18 @@ def build_search(path, name, n, repeats, alg, task, _zip):
     distributions = dict()
     if alg == 'reinforce' :
         distributions.update(
-            lr_schedule=TupleDist(LogUniform(-3., 0., 1), 1000, 0.96, False),
-            exploration_schedule=TupleDist(spdists.uniform(0, 0.5), 1000, 0.96, False),
+            lr_start=LogUniform(-3., 0., 1),
+            exploration_start=spdists.uniform(0, 0.5),
             batch_size=ChoiceDist(10 * np.arange(1, 11)),
             scaled=ChoiceDist([0, 1]),
-            entropy_param=TupleDist(ChoiceDist([0.0, LogUniform(-3., 0., 1)]), 1000, 0.96, False),
+            entropy_start=ChoiceDist([0.0, LogUniform(-3., 0., 1)]),
             max_grad_norm=ChoiceDist([0.0, 1.0, 2.0])
         )
     elif alg == 'qlearning':
         distributions.update(
-            lr_schedule=TupleDist(LogUniform(-3., 0., 10), 1000, 0.9, False),
-            exploration_schedule=TupleDist(spdists.uniform(0, 0.5), 1000, 0.9, False),
-            batch_size=ChoiceDist(10 * np.arange(1, 11)),
+            lr_start=LogUniform(-3., 0., 10),
+            exploration_start=spdists.uniform(0, 0.5),
+            batch_size=ChoiceDist(10 * np.arange(1, 11).astype('i')),
             replay_max_size=ChoiceDist(2 ** np.arange(6, 14)),
             double=ChoiceDist([0, 1])
         )

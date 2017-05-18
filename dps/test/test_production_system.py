@@ -1,11 +1,11 @@
 import pytest
 
-from dps.test.config import algorithms, tasks, apply_mode
+from dps.test.config import algorithms, tasks
 
 
 @pytest.mark.parametrize('task', sorted(tasks.keys()))
 @pytest.mark.parametrize('alg', sorted(algorithms.keys()))
-def test_production_system(task, alg, mode, max_steps, verbose, display):
+def test_production_system(task, alg, max_steps, verbose, display):
 
     config = tasks[task]
     config.update(algorithms[alg])
@@ -13,7 +13,6 @@ def test_production_system(task, alg, mode, max_steps, verbose, display):
     config.verbose = verbose
     config.display = display
 
-    apply_mode(config, mode)
     if max_steps is not None:
         config.max_steps = int(max_steps)
 

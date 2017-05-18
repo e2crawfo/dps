@@ -16,20 +16,15 @@ class REINFORCE(ReinforcementLearningUpdater):
                  noise_schedule,
                  max_grad_norm,
                  gamma,
-                 l2_norm_param,
-                 entropy_param):
-        self.entropy_param = entropy_param
+                 l2_norm_penalty,
+                 entropy_schedule):
+        self.entropy_schedule = entropy_schedule
         super(REINFORCE, self).__init__(
             env, policy, optimizer_class, lr_schedule,
-            noise_schedule, max_grad_norm, gamma, l2_norm_param)
+            noise_schedule, max_grad_norm, gamma, l2_norm_penalty)
         self.clear_buffers()
 
     def _update(self, batch_size, summary_op=None):
-        # reduce gradient variance by normalization
-        # self.all_rewards += discounted_rewards.tolist()
-        # self.all_rewards = self.all_rewards[:self.max_reward_length]
-        # discounted_rewards -= np.mean(self.all_rewards)
-        # discounted_rewards /= np.std(self.all_rewards)
         self.clear_buffers()
         self.env.do_rollouts(self, self.policy, 'train', batch_size)
         feed_dict = self.build_feeddict()
@@ -115,30 +110,26 @@ class REINFORCE(ReinforcementLearningUpdater):
                 time_major=True)
 
             self.policy_loss = -tf.reduce_mean(surrogate_objective)
-            tf.summary.scalar("policy_loss", self.policy_loss)
+            tf.summary.scalar("loss_policy", self.policy_loss)
 
             loss = self.policy_loss
 
             self.reg_loss = None
-            if self.l2_norm_param > 0:
+            if self.l2_norm_penalty > 0:
                 policy_network_variables = tf.get_collection(
                     tf.GraphKeys.TRAINABLE_VARIABLES, scope=self.policy.scope)
-
                 self.reg_loss = tf.reduce_sum([tf.reduce_sum(tf.square(x)) for x in policy_network_variables])
-                tf.summary.scalar("reg_loss", self.reg_loss)
+                tf.summary.scalar("loss_reg", self.reg_loss)
 
-                loss = loss + self.l2_norm_param * self.reg_loss
+                loss += self.l2_norm_penalty * self.reg_loss
 
             policy_mean_entropy = tf.reduce_mean(tf.reduce_sum(-action_probs * tf.log(action_probs + 1e-6), axis=-1))
             tf.summary.scalar("policy_mean_entropy", policy_mean_entropy)
 
-            self.entropy_loss = None
-            if self.entropy_param is not None:
+            if self.entropy_schedule:
                 self.entropy_loss = -policy_mean_entropy
-                entropy_param = self.entropy_param
-                if isinstance(self.entropy_param, tuple):
-                    entropy_param = build_decaying_value(self.entropy_param, 'entropy_param')
-                loss = loss + entropy_param * self.entropy_loss
+                entropy_bonus = build_decaying_value(self.entropy_schedule, 'entropy_schedule')
+                loss += entropy_bonus * self.entropy_loss
 
             self.loss = loss
 

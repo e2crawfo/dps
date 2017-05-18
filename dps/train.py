@@ -4,24 +4,21 @@ import time
 from contextlib import ExitStack
 import tensorflow as tf
 import numpy as np
-import sys
 from pprint import pformat
 
 from spectral_dagger.utils.experiment import ExperimentStore
 from dps.utils import (
     restart_tensorboard, EarlyStopHook, gen_seed,
-    time_limit, uninitialized_variables_initializer, catch, parse_config)
+    time_limit, uninitialized_variables_initializer)
 
 
 def training_loop(curriculum, config, exp_name=''):
-    config.update(parse_config(), clobber=False)
-    return TrainingLoop(curriculum, config, exp_name).run()
+    loop = TrainingLoop(curriculum, config, exp_name)
+    return loop.run()
 
 
 class TrainingLoop(object):
-    def __init__(
-            self, curriculum, config, exp_name=''):
-
+    def __init__(self, curriculum, config, exp_name=''):
         self.curriculum = curriculum
         self.config = config
         self.exp_name = exp_name
@@ -57,7 +54,7 @@ class TrainingLoop(object):
         self.global_step = 0
 
         while True:
-            if config.max_time > 0 and self._elapsed_time > config.max_time:
+            if self.time_remaining <= 1:
                 print("Time limit exceeded.")
                 break
 
@@ -75,7 +72,6 @@ class TrainingLoop(object):
                 stack.enter_context(sess)
                 stack.enter_context(sess.as_default())
 
-                print("created updater")
                 try:
                     stage_config, updater = next(self.curriculum)
 
@@ -85,7 +81,6 @@ class TrainingLoop(object):
 
                 stack.enter_context(stage_config.as_default())
 
-                print("setting seed")
                 tf_seed = gen_seed()
                 tf.set_random_seed(tf_seed)
 
@@ -94,8 +89,13 @@ class TrainingLoop(object):
                 sess.run(uninitialized_variables_initializer())
                 sess.run(tf.assert_variables_initialized())
 
-                with catch(KeyboardInterrupt, "Keyboard interrupt..."):
-                    threshold_reached, n_steps, reason = self._run_stage(stage, updater, stage_config)
+                with time_limit(self.time_remaining, verbose=True) as limiter:
+                    try:
+                        threshold_reached, n_steps, reason = self._run_stage(stage, updater, stage_config)
+                    except KeyboardInterrupt:
+                        reason = "User interrupt."
+                if limiter.ran_out:
+                    reason = "Time limit reached."
 
                 if self.config.start_tensorboard:
                     restart_tensorboard(str(self.config.log_dir))
@@ -125,71 +125,74 @@ class TrainingLoop(object):
         return result
 
     @property
-    def _elapsed_time(self):
+    def elapsed_time(self):
         return time.time() - self.start
+
+    @property
+    def time_remaining(self):
+        if self.config.max_time is None or self.config.max_time <= 0:
+            return np.inf
+        else:
+            return self.config.max_time - self.elapsed_time
 
     def _run_stage(self, stage_idx, updater, stage_config):
         """ Run a stage of a curriculum. """
         local_step = 0
         threshold_reached = False
-
+        val_loss = np.inf
         reason = None
 
-        tl = self.config.max_time - self._elapsed_time if self.config.max_time > 0 else np.inf
-        with time_limit(tl, verbose=True) as limiter:
-            while True:
-                n_epochs = updater.n_experiences / stage_config.n_train
-                if n_epochs >= self.max_epochs:
-                    reason = "Maximum number of steps reached."
+        while True:
+            n_epochs = updater.n_experiences / stage_config.n_train
+            if n_epochs >= self.max_epochs:
+                reason = "Maximum number of steps reached."
+                break
+
+            evaluate = self.global_step % stage_config.eval_step == 0
+            display = self.global_step % stage_config.display_step == 0
+
+            if evaluate or display:
+                start_time = time.time()
+                train_summary, train_loss, val_summary, val_loss = updater.update(
+                    stage_config.batch_size, self.summary_op if evaluate else None)
+                duration = time.time() - start_time
+
+                if evaluate and self.config.save_summaries:
+                    self.train_writer.add_summary(train_summary, self.global_step)
+                    self.val_writer.add_summary(val_summary, self.global_step)
+
+                if display:
+                    print("Step(global: {}, local: {}): Minibatch Loss={:06.4f}, Validation Loss={:06.4f}, "
+                          "Minibatch Duration={:06.4f} seconds, Epoch={:04.2f}.".format(
+                              self.global_step, local_step, train_loss, val_loss, duration, updater.env.completion))
+
+                new_best, stop = self.curriculum.check(val_loss, self.global_step, local_step)
+
+                if new_best:
+                    checkpoint_file = self.exp_dir.path_for('best_stage={}'.format(stage_idx))
+                    print("Storing new best on local step {} (global step {}) "
+                          "with validation loss of {}.".format(
+                              local_step, self.global_step, val_loss))
+                    self.best_path = updater.save(checkpoint_file)
+                if stop:
+                    reason = "Early stopping triggered."
                     break
-
-                evaluate = self.global_step % stage_config.eval_step == 0
-                display = self.global_step % stage_config.display_step == 0
-
-                if evaluate or display:
-                    start_time = time.time()
-                    train_summary, train_loss, val_summary, val_loss = updater.update(
-                        stage_config.batch_size, self.summary_op if evaluate else None)
-                    duration = time.time() - start_time
-
-                    if evaluate and self.config.save_summaries:
-                        self.train_writer.add_summary(train_summary, self.global_step)
-                        self.val_writer.add_summary(val_summary, self.global_step)
-
-                    if display:
-                        print("Step(global: {}, local: {}): Minibatch Loss={:06.4f}, Validation Loss={:06.4f}, "
-                              "Minibatch Duration={:06.4f} seconds, Epoch={:04.2f}.".format(
-                                  self.global_step, local_step, train_loss, val_loss, duration, updater.env.completion))
-
-                    new_best, stop = self.curriculum.check(val_loss, self.global_step, local_step)
-
-                    if new_best:
-                        checkpoint_file = self.exp_dir.path_for('best_stage={}'.format(stage_idx))
-                        print("Storing new best on local step {} (global step {}) "
-                              "with validation loss of {}.".format(
-                                  local_step, self.global_step, val_loss))
-                        self.best_path = updater.save(checkpoint_file)
-                    if stop:
-                        reason = "Early stopping triggered."
-                        break
-                else:
-                    updater.update(stage_config.batch_size)
-
-                if self.global_step % stage_config.checkpoint_step == 0:
-                    print("Checkpointing on global step {}.".format(self.global_step))
-                    checkpoint_file = self.exp_dir.path_for('model_stage={}'.format(stage_idx))
-                    updater.save(checkpoint_file, local_step)
 
                 if val_loss < stage_config.threshold:
                     reason = "Validation loss threshold reached."
                     threshold_reached = True
                     break
 
-                local_step += 1
-                self.global_step += 1
+            else:
+                updater.update(stage_config.batch_size)
 
-        if limiter.ran_out:
-            reason = "Time limit reached."
+            if self.global_step % stage_config.checkpoint_step == 0:
+                print("Checkpointing on global step {}.".format(self.global_step))
+                checkpoint_file = self.exp_dir.path_for('model_stage={}'.format(stage_idx))
+                updater.save(checkpoint_file, local_step)
+
+            local_step += 1
+            self.global_step += 1
 
         return threshold_reached, local_step, reason
 
