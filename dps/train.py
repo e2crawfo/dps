@@ -27,19 +27,10 @@ class TrainingLoop(object):
         self.exp_name = exp_name
 
     def run(self):
-        start_tensorboard, log_dir = self.config.start_tensorboard, self.config.log_dir
+        if self.config.start_tensorboard:
+            restart_tensorboard(self.config.log_dir)
 
-        if start_tensorboard:
-            restart_tensorboard(log_dir)
-
-        try:
-            value = self._run_core()
-        except KeyboardInterrupt:
-            et, ei, tb = sys.exc_info()
-            raise ei.with_traceback(tb)
-        finally:
-            if start_tensorboard:
-                restart_tensorboard(log_dir)
+        value = self._run_core()
 
         return value
 
@@ -80,7 +71,6 @@ class TrainingLoop(object):
             sess = tf.Session(graph=graph)
 
             with ExitStack() as stack:
-                stack.enter_context(catch(KeyboardInterrupt, "Keyboard interrupt..."))
                 stack.enter_context(graph.as_default())
                 stack.enter_context(sess)
                 stack.enter_context(sess.as_default())
@@ -104,7 +94,12 @@ class TrainingLoop(object):
                 sess.run(uninitialized_variables_initializer())
                 sess.run(tf.assert_variables_initialized())
 
-                threshold_reached, n_steps, reason = self._run_stage(stage, updater, stage_config)
+                with catch(KeyboardInterrupt, "Keyboard interrupt..."):
+                    threshold_reached, n_steps, reason = self._run_stage(stage, updater, stage_config)
+
+                if self.config.start_tensorboard:
+                    restart_tensorboard(self.config.log_dir)
+
                 print("Optimization complete. Reason: {}".format(reason))
 
                 print("Loading best hypothesis from stage {} "
