@@ -28,7 +28,7 @@ class TrainingLoop(object):
 
     def run(self):
         if self.config.start_tensorboard:
-            restart_tensorboard(self.config.log_dir)
+            restart_tensorboard(str(self.config.log_dir))
 
         value = self._run_core()
 
@@ -39,7 +39,7 @@ class TrainingLoop(object):
 
         config = self.config
 
-        es = ExperimentStore(config.log_dir, max_experiments=config.max_experiments, delete_old=1)
+        es = ExperimentStore(str(config.log_dir), max_experiments=config.max_experiments, delete_old=1)
         self.exp_dir = exp_dir = es.new_experiment(self.exp_name, use_time=1, force_fresh=1, update_latest=config.update_latest)
         print("Scratch pad is {}.".format(exp_dir.path))
         config.path = exp_dir.path
@@ -98,7 +98,7 @@ class TrainingLoop(object):
                     threshold_reached, n_steps, reason = self._run_stage(stage, updater, stage_config)
 
                 if self.config.start_tensorboard:
-                    restart_tensorboard(self.config.log_dir)
+                    restart_tensorboard(str(self.config.log_dir))
 
                 print("Optimization complete. Reason: {}".format(reason))
 

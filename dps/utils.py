@@ -560,7 +560,7 @@ class BaseConfig(Config):
     def __init__(self, **kwargs):
         super(BaseConfig, self).__init__(**kwargs)
         if self.log_dir is None:
-            self.log_dir = Path(parse_config()['log_root']) / self.log_name
+            self.log_dir = str(Path(parse_config()['log_root']) / self.log_name)
 
     log_dir = None
 
