@@ -203,12 +203,12 @@ def build_search(path, name, n, repeats, alg, task, _zip):
     distributions = dict()
     if alg == 'reinforce' :
         distributions.update(
-            lr_schedule=TupleDist(LogUniform(-3., 0., 10), 1000, 0.96, False),
+            lr_schedule=TupleDist(LogUniform(-3., 0., 1), 1000, 0.96, False),
             exploration_schedule=TupleDist(spdists.uniform(0, 0.5), 1000, 0.96, False),
             batch_size=ChoiceDist(10 * np.arange(1, 11)),
             scaled=ChoiceDist([0, 1]),
-            entropy_param=TupleDist(ChoiceDist([0.0, LogUniform(-3., 0., 10)]), 1000, 0.96, False),
-            max_grad_norm=ChoiceDist([0.0, 1.0])
+            entropy_param=TupleDist(ChoiceDist([0.0, LogUniform(-3., 0., 1)]), 1000, 0.96, False),
+            max_grad_norm=ChoiceDist([0.0, 1.0, 2.0])
         )
     elif alg == 'qlearning':
         distributions.update(
