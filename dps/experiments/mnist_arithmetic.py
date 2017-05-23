@@ -88,17 +88,51 @@ class MnistArithmetic(CoreNetwork):
 
         values = (
             [0., 0., 0., 0., 1., 0., 0., 0.] +
-            [np.zeros(self.N * self.N, dtype='f')] +
-            [np.zeros(self.W * self.W, dtype='f')])
+            [np.zeros(self.N * self.N, dtype='f')])
 
         self.register_bank = RegisterBank(
             'MnistArithmeticRB',
-            'op acc fovea_x fovea_y delta vision op_vision t glimpse', 'inp', values=values,
-            input_names='inp', output_names='acc', no_display='inp glimpse')
+            'op acc fovea_x fovea_y delta vision op_vision t glimpse', None, values=values,
+            output_names='acc', no_display='glimpse')
         super(MnistArithmetic, self).__init__()
 
-    def __call__(self, action_activations, r):
-        _op, _acc, _fovea_x, _fovea_y, _delta, _vision, _op_vision, _t, _glimpse, _inp = self.register_bank.as_tuple(r)
+    @property
+    def input_dim(self):
+        return self.W * self.W
+
+    @property
+    def make_input_available(self):
+        return True
+
+    def init(self, r, inp):
+        op, acc, fovea_x, fovea_y, delta, vision, op_vision, t, glimpse = self.register_bank.as_tuple(r)
+
+        inp = tf.reshape(inp, (-1, self.W, self.W))
+
+        digit_classification, glimpse = self.digit_classifier.build_pretrained(
+            inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta)
+        vision = tf.cast(tf.expand_dims(tf.argmax(digit_classification, 1), 1), tf.float32)
+
+        op_classification, _ = self.op_classifier.build_pretrained(
+            inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta)
+        op_vision = tf.cast(tf.expand_dims(tf.argmax(op_classification, 1), 1), tf.float32)
+
+        with tf.name_scope("MnistArithmetic"):
+            new_registers = self.register_bank.wrap(
+                glimpse=tf.reshape(glimpse, (-1, self.N*self.N), name="glimpse"),
+                acc=tf.identity(acc, "acc"),
+                op=tf.identity(op, "op"),
+                fovea_x=tf.identity(fovea_x, "fovea_x"),
+                fovea_y=tf.identity(fovea_y, "fovea_y"),
+                vision=tf.identity(vision, "vision"),
+                op_vision=tf.identity(op_vision, "op_vision"),
+                delta=tf.identity(delta, "delta"),
+                t=tf.identity(t, "t"))
+
+        return new_registers
+
+    def __call__(self, action_activations, r, inp):
+        _op, _acc, _fovea_x, _fovea_y, _delta, _vision, _op_vision, _t, _glimpse = self.register_bank.as_tuple(r)
 
         (inc_fovea_x, dec_fovea_x, inc_fovea_x_big, dec_fovea_x_big,
          inc_fovea_y, dec_fovea_y, inc_fovea_y_big, dec_fovea_y_big,
@@ -131,7 +165,7 @@ class MnistArithmetic(CoreNetwork):
             dec_delta * (_delta - self.inc_delta) + \
             dec_delta_big * (_delta - 5 * self.inc_delta)
 
-        inp = tf.reshape(_inp, (-1, self.W, self.W))
+        inp = tf.reshape(inp, (-1, self.W, self.W))
 
         digit_classification, glimpse = self.digit_classifier.build_pretrained(
             inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta)
@@ -151,7 +185,6 @@ class MnistArithmetic(CoreNetwork):
 
         with tf.name_scope("MnistArithmetic"):
             new_registers = self.register_bank.wrap(
-                inp=tf.identity(inp, "inp"),
                 glimpse=tf.reshape(glimpse, (-1, self.N*self.N), name="glimpse"),
                 acc=tf.identity(acc, "acc"),
                 op=tf.identity(op, "op"),

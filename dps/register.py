@@ -16,14 +16,12 @@ def concat(values, axis=-1, lib=None):
 class RegisterBank(object):
     def __init__(
             self, bank_name, visible_names, hidden_names, values,
-            input_names, output_names, no_display=None):
+            output_names, no_display=None):
 
         if isinstance(visible_names, str):
             visible_names = visible_names.replace(',', ' ').split()
         if isinstance(hidden_names, str):
             hidden_names = hidden_names.replace(',', ' ').split()
-        if isinstance(input_names, str):
-            input_names = input_names.replace(',', ' ').split()
         if isinstance(output_names, str):
             output_names = output_names.replace(',', ' ').split()
         if isinstance(no_display, str):
@@ -35,7 +33,6 @@ class RegisterBank(object):
         hidden_names = list(hidden_names or [])
         names = visible_names + hidden_names
 
-        assert all(i in names for i in input_names)
         assert all(o in names for o in output_names)
         assert all(n in names for n in no_display)
 
@@ -72,7 +69,6 @@ class RegisterBank(object):
         self.hidden_names = hidden_names
         self.values = values
         self.shapes = [v.size for v in values]
-        self.input_names = input_names
         self.output_names = output_names
         self.no_display = no_display
 
@@ -166,14 +162,6 @@ class RegisterBank(object):
     def get_output(self, array):
         values = [self.get(oname, array) for oname in self.output_names]
         return concat(values)
-
-    def set_input(self, array, inp):
-        offset = 0
-        for name, dim in zip(self.names, self.shapes):
-            if name in self.input_names:
-                start, end = offset, offset + dim
-                self.set(name, array, inp[..., start:end])
-                offset += dim
 
     def visible(self, array):
         return array[..., :self.visible_width]

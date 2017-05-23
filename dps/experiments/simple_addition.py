@@ -38,17 +38,36 @@ class SimpleAddition(CoreNetwork):
     action_names = ['fovea += 1', 'fovea -= 1', 'wm1 = vision', 'wm2 = vision',
                     'output = vision', 'output = wm1 + wm2', 'no-op/stop']
 
+    @property
+    def input_dim(self):
+        return 2*self.width+1
+
+    @property
+    def make_input_available(self):
+        return True
+
     def __init__(self, env):
         self.width = env.width
         self.register_bank = RegisterBank(
             'SimpleAdditionRB',
-            'fovea vision wm1 wm2 output t', 'inp',
-            values=([0.] * 6) + [np.zeros(2*self.width+1, dtype='f')],
-            input_names='inp', output_names='output', no_display='inp')
+            'fovea vision wm1 wm2 output t', None,
+            values=([0.] * 6),
+            output_names='output')
         super(SimpleAddition, self).__init__()
 
-    def __call__(self, action_activations, r):
-        _fovea, _vision, _wm1, _wm2, _output, _t, _inp = self.register_bank.as_tuple(r)
+    def init(self, r, inp):
+        fovea, vision, wm1, wm2, output, t = self.register_bank.as_tuple(r)
+        std = tf.fill(tf.shape(fovea), 0.01)
+        locations = tf.constant(np.linspace(-self.width, self.width, 2*self.width+1, dtype='f'), dtype=tf.float32)
+        vision = apply_gaussian_filter(fovea, std, locations, inp)
+
+        new_registers = self.register_bank.wrap(
+            fovea=fovea, vision=vision, wm1=wm1, wm2=wm2, output=output, t=t)
+
+        return new_registers
+
+    def __call__(self, action_activations, r, inp):
+        _fovea, _vision, _wm1, _wm2, _output, _t = self.register_bank.as_tuple(r)
 
         inc_fovea, dec_fovea, vision_to_wm1, vision_to_wm2, vision_to_output, add, no_op = (
             tf.split(action_activations, self.n_actions, axis=1))
@@ -60,13 +79,12 @@ class SimpleAddition(CoreNetwork):
 
         std = tf.fill(tf.shape(fovea), 0.01)
         locations = tf.constant(np.linspace(-self.width, self.width, 2*self.width+1, dtype='f'), dtype=tf.float32)
-        vision = apply_gaussian_filter(fovea, std, locations, _inp)
+        vision = apply_gaussian_filter(fovea, std, locations, inp)
 
         t = _t + 1
 
         new_registers = self.register_bank.wrap(
-            inp=_inp, fovea=fovea, vision=vision,
-            wm1=wm1, wm2=wm2, output=output, t=t)
+            fovea=fovea, vision=vision, wm1=wm1, wm2=wm2, output=output, t=t)
 
         return new_registers
 

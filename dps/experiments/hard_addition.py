@@ -74,25 +74,57 @@ class HardAddition(CoreNetwork):
     action_names = ['fovea_x += 1', 'fovea_x -= 1', 'fovea_y += 1', 'fovea_y -= 1',
                     'wm1 = vision', 'wm2 = vision', 'add', 'write_digit', 'no-op/stop']
 
+    @property
+    def input_dim(self):
+        return self.width * self.height
+
+    @property
+    def make_input_available(self):
+        return True
+
     def __init__(self, env):
         self.height = env.height
         self.width = env.width
 
         values = (
             ([0.0] * 8) +
-            [np.zeros(self.height*self.width, dtype='f')] +
             [np.zeros(self.width, dtype='f')])
 
         self.register_bank = RegisterBank(
             'HardAdditionRB',
-            'fovea_x fovea_y vision wm1 wm2 carry digit t', 'inp outp',
-            values=values, input_names='inp', output_names='outp')
+            'fovea_x fovea_y vision wm1 wm2 carry digit t', 'outp',
+            values=values, output_names='outp')
 
         super(HardAddition, self).__init__()
 
-    def __call__(self, action_activations, r):
+    def init(self, r, inp):
+        fovea_x, fovea_y, _vision, wm1, wm2, carry, digit, t, outp = self.register_bank.as_tuple(r)
 
-        _fovea_x, _fovea_y, _vision, _wm1, _wm2, _carry, _digit, _t, _inp, _outp = self.register_bank.as_tuple(r)
+        # Read input
+        fovea = tf.concat([fovea_y, fovea_x], 1)
+        std = tf.fill(tf.shape(fovea), 0.01)
+        inp = tf.reshape(inp, (-1, self.height, self.width))
+        x_filter = gaussian_filter(fovea[:, 1:], std[:, 1:], np.arange(self.width, dtype='f'))
+        y_filter = gaussian_filter(fovea[:, :1], std[:, :1], np.arange(self.height, dtype='f'))
+        vision = tf.matmul(y_filter, tf.matmul(inp, x_filter, adjoint_b=True))
+        vision = tf.reshape(vision, (-1, 1))
+
+        with tf.name_scope("HardAddition"):
+            new_registers = self.register_bank.wrap(
+                outp=tf.identity(outp, "outp"),
+                fovea_x=tf.identity(fovea_x, "fovea_x"),
+                fovea_y=tf.identity(fovea_y, "fovea_y"),
+                vision=tf.identity(vision, "vision"),
+                wm1=tf.identity(wm1, "wm1"),
+                wm2=tf.identity(wm2, "wm2"),
+                carry=tf.identity(carry, "carry"),
+                digit=tf.identity(digit, "digit"),
+                t=tf.identity(t, "t"))
+        return new_registers
+
+    def __call__(self, action_activations, r, inp):
+
+        _fovea_x, _fovea_y, _vision, _wm1, _wm2, _carry, _digit, _t, _outp = self.register_bank.as_tuple(r)
 
         (inc_fovea_x, dec_fovea_x, inc_fovea_y, dec_fovea_y,
          vision_to_wm1, vision_to_wm2, add, write_digit, no_op) = (
@@ -111,7 +143,7 @@ class HardAddition(CoreNetwork):
         # Read input
         fovea = tf.concat([fovea_y, fovea_x], 1)
         std = tf.fill(tf.shape(fovea), 0.01)
-        inp = tf.reshape(_inp, (-1, self.height, self.width))
+        inp = tf.reshape(inp, (-1, self.height, self.width))
         x_filter = gaussian_filter(fovea[:, 1:], std[:, 1:], np.arange(self.width, dtype='f'))
         y_filter = gaussian_filter(fovea[:, :1], std[:, :1], np.arange(self.height, dtype='f'))
         vision = tf.matmul(y_filter, tf.matmul(inp, x_filter, adjoint_b=True))
@@ -126,7 +158,6 @@ class HardAddition(CoreNetwork):
 
         with tf.name_scope("HardAddition"):
             new_registers = self.register_bank.wrap(
-                inp=tf.identity(_inp, "inp"),
                 outp=tf.identity(outp, "outp"),
                 fovea_x=tf.identity(fovea_x, "fovea_x"),
                 fovea_y=tf.identity(fovea_y, "fovea_y"),

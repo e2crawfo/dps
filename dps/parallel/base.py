@@ -5,12 +5,10 @@ from zipfile import ZipFile
 from collections import defaultdict
 import argparse
 from contextlib import contextmanager
-import traceback
-import pdb
 import sys
 import signal
 
-from dps.utils import SigTerm, KeywordMapping
+from dps.utils import SigTerm, KeywordMapping, pdb_postmortem
 
 
 @contextmanager
@@ -563,16 +561,6 @@ def parallel_cl(desc, additional_cmds=None):
             func(args)
     else:
         func(args)
-
-
-@contextmanager
-def pdb_postmortem():
-    try:
-        yield
-    except:
-        type, value, tb = sys.exc_info()
-        traceback.print_exc()
-        pdb.post_mortem(tb)
 
 
 if __name__ == "__main__":

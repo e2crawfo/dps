@@ -36,11 +36,19 @@ class HelloWorldEnv(RegressionEnv):
 
 class HelloWorld(CoreNetwork):
     action_names = ['r0 = r0 + r1', 'r1 = r0 * r1', 'no-op/stop']
+    input_dim = 3
+    make_input_available = False
 
     def __init__(self, env):
         self.register_bank = RegisterBank(
-            'HelloWorldRB', 'r0 r1 r2', None, [1.0, 0.0, 0.0], 'r0 r1 r2', 'r0 r1')
+            'HelloWorldRB', 'r0 r1 r2', None, [1.0, 0.0, 0.0], 'r0 r1')
         super(HelloWorld, self).__init__()
+
+    def init(self, r, inp):
+        r0 = inp[:, :1]
+        r1 = inp[:, 1:2]
+        r2 = inp[:, 2:]
+        return self.register_bank.wrap(r0=r0, r1=r1, r2=r2)
 
     def __call__(self, action_activations, r):
         """ Action 0: add the variables in the registers, store in r0.
@@ -50,11 +58,11 @@ class HelloWorld(CoreNetwork):
         """
         _r0, _r1, _r2 = self.register_bank.as_tuple(r)
 
-        a0, a1, a2 = tf.split(action_activations, self.n_actions, axis=1)
+        add, mult, noop = tf.split(action_activations, self.n_actions, axis=1)
 
         new_registers = self.register_bank.wrap(
-            r0=a0 * (_r0 + _r1) + (1 - a0) * _r0,
-            r1=a1 * (_r0 * _r1) + (1 - a1) * _r1,
+            r0=add * (_r0 + _r1) + (1 - add) * _r0,
+            r1=mult * (_r0 * _r1) + (1 - mult) * _r1,
             r2=_r2+1)
         return new_registers
 

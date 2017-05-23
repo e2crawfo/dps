@@ -145,18 +145,48 @@ class TranslatedMnist(CoreNetwork):
 
         values = (
             [0., 0., 0., 0., 1., 0.] +
-            [np.zeros(self.N * self.N, dtype='f')] +
-            [np.zeros(self.W*self.W, dtype='f')])
+            [np.zeros(self.N * self.N, dtype='f')])
 
         self.register_bank = RegisterBank(
             'TranslatedMnistRB',
-            'outp fovea_x fovea_y vision delta t glimpse', 'inp', values=values,
-            input_names='inp', output_names='outp', no_display='inp glimpse')
+            'outp fovea_x fovea_y vision delta t glimpse', None, values=values,
+            output_names='outp', no_display='glimpse')
         super(TranslatedMnist, self).__init__()
 
-    def __call__(self, action_activations, r):
+    @property
+    def input_dim(self):
+        return self.W * self.W
 
-        _outp, _fovea_x, _fovea_y, _vision, _delta, _t, _glimpse, _inp = self.register_bank.as_tuple(r)
+    @property
+    def make_input_available(self):
+        return True
+
+    def init(self, r, inp):
+        outp, fovea_x, fovea_y, vision, delta, t, glimpse = self.register_bank.as_tuple(r)
+
+        inp = tf.reshape(inp, (-1, self.W, self.W))
+        classification, glimpse = self.classifier.build_pretrained(
+            inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta, sigma=1.0)
+
+        # batch_size = tf.shape(classification)[0]
+        # _vision = classification * tf.tile(tf.expand_dims(tf.range(10, dtype=tf.float32), 0), (batch_size, 1))
+        # vision = tf.reduce_sum(_vision, 1, keep_dims=True)
+        vision = tf.cast(tf.expand_dims(tf.argmax(classification, 1), 1), tf.float32)
+
+        with tf.name_scope("TranslatedMnist"):
+            new_registers = self.register_bank.wrap(
+                outp=tf.identity(outp, "outp"),
+                glimpse=tf.reshape(glimpse, (-1, self.N*self.N), name="glimpse"),
+                fovea_x=tf.identity(fovea_x, "fovea_x"),
+                fovea_y=tf.identity(fovea_y, "fovea_y"),
+                vision=tf.identity(vision, "vision"),
+                delta=tf.identity(delta, "delta"),
+                t=tf.identity(t, "t"))
+
+        return new_registers
+
+    def __call__(self, action_activations, r, inp):
+        _outp, _fovea_x, _fovea_y, _vision, _delta, _t, _glimpse = self.register_bank.as_tuple(r)
 
         (inc_fovea_x, dec_fovea_x, inc_fovea_x_big, dec_fovea_x_big,
          inc_fovea_y, dec_fovea_y, inc_fovea_y_big, dec_fovea_y_big,
@@ -197,7 +227,7 @@ class TranslatedMnist(CoreNetwork):
 
         outp = (1 - store) * _outp + store * _vision
 
-        inp = tf.reshape(_inp, (-1, self.W, self.W))
+        inp = tf.reshape(inp, (-1, self.W, self.W))
         classification, glimpse = self.classifier.build_pretrained(
             inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta, sigma=1.0)
 
@@ -210,7 +240,6 @@ class TranslatedMnist(CoreNetwork):
 
         with tf.name_scope("TranslatedMnist"):
             new_registers = self.register_bank.wrap(
-                inp=tf.identity(_inp, "inp"),
                 outp=tf.identity(outp, "outp"),
                 glimpse=tf.reshape(glimpse, (-1, self.N*self.N), name="glimpse"),
                 fovea_x=tf.identity(fovea_x, "fovea_x"),
@@ -222,7 +251,7 @@ class TranslatedMnist(CoreNetwork):
         return new_registers
 
 
-def render_rollouts(psystem, actions, registers, reward, external_step_lengths):
+def render_rollouts(psystem, actions, registers, reward, external_obs, external_step_lengths):
     """ Render rollouts from TranslatedMnist task. """
     config = default_config()
     if not config.save_display and not config.display:
@@ -240,7 +269,7 @@ def render_rollouts(psystem, actions, registers, reward, external_step_lengths):
     W = psystem.core_network.W
     N = psystem.core_network.N
 
-    raw_images = registers.inp[0].reshape((-1, W, W))
+    raw_images = external_obs[0].reshape((-1, W, W))
 
     [ax.imshow(raw_img, cmap='gray', origin='upper') for raw_img, ax in zip(raw_images, env_subplots)]
 
@@ -251,11 +280,15 @@ def render_rollouts(psystem, actions, registers, reward, external_step_lengths):
 
     glimpses = [ax.imshow(np.random.randint(256, size=(N, N)), cmap='gray', origin='upper') for ax in glimpse_subplots]
 
+    fovea_x = psystem.rb.get('fovea_x', registers)
+    fovea_y = psystem.rb.get('fovea_y', registers)
+    delta = psystem.rb.get('delta', registers)
+    glimpse = psystem.rb.get('glimpse', registers)
+
     def animate(i):
         # Find locations of bottom-left in fovea co-ordinate system, then transform to axis co-ordinate system.
-        delta = registers.delta[i, :, :]
-        fx = registers.fovea_x[i, :, :] - delta
-        fy = registers.fovea_y[i, :, :] + delta
+        fx = fovea_x[i, :, :] - delta[i, :, :]
+        fy = fovea_y[i, :, :] + delta[i, :, :]
         fx *= 0.5
         fy *= 0.5
         fy -= 0.5
@@ -263,20 +296,20 @@ def render_rollouts(psystem, actions, registers, reward, external_step_lengths):
         fy *= -1
 
         # use delta and fovea to modify the rectangles
-        for d, x, y, rect in zip(delta, fx, fy, rectangles):
+        for d, x, y, rect in zip(delta[i, :, :], fx, fy, rectangles):
             rect.set_x(x)
             rect.set_y(y)
             rect.set_width(d)
             rect.set_height(d)
 
-        for g, gimg in zip(registers.glimpse[i, :, :], glimpses):
+        for g, gimg in zip(glimpse[i, :, :], glimpses):
             gimg.set_data(g.reshape(N, N))
 
         return rectangles + glimpses
 
     _animation = animation.FuncAnimation(fig, animate, n_timesteps, blit=True, interval=1000, repeat=True)
 
-    if default_config().save_display:
+    if default_config().save_display and 0:
         Writer = animation.writers['ffmpeg']
         writer = Writer(fps=15, metadata=dict(artist='Me'), bitrate=1800)
         _animation.save(str(Path(default_config().path) / 'animation.mp4'), writer=writer)

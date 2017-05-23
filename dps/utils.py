@@ -11,6 +11,9 @@ import configparser
 import socket
 import re
 import os
+import traceback
+import sys
+import pdb
 
 import tensorflow as tf
 from tensorflow.python.ops import random_ops, math_ops
@@ -19,6 +22,16 @@ from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from tensorflow.contrib.slim import fully_connected
 
 import dps
+
+
+@contextmanager
+def pdb_postmortem():
+    try:
+        yield
+    except:
+        type, value, tb = sys.exc_info()
+        traceback.print_exc()
+        pdb.post_mortem(tb)
 
 
 def camel_to_snake(name):

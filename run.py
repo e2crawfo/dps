@@ -3,12 +3,15 @@ import argparse
 import clify
 
 from dps.test.config import algorithms, tasks
+from dps.utils import pdb_postmortem
 
 
 def run():
     parser = argparse.ArgumentParser()
     parser.add_argument('alg')
     parser.add_argument('task')
+    parser.add_argument('--pdb', action='store_true',
+                        help="If supplied, enter post-mortem debugging on error.")
     args, _ = parser.parse_known_args()
 
     task = [t for t in tasks if t.startswith(args.task)]
@@ -20,6 +23,14 @@ def run():
     assert len(alg) == 1, "Ambiguity in alg selection, possibilities are: {}.".format(alg)
     alg = alg[0]
 
+    if args.pdb:
+        with pdb_postmortem():
+            _run(alg, task)
+    else:
+        _run(alg, task)
+
+
+def _run(alg, task):
     config = tasks[task]
     if alg == 'visualize':
         config.display = True
