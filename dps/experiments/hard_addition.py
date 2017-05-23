@@ -1,9 +1,8 @@
-from collections import namedtuple
-
 import tensorflow as tf
 import numpy as np
 
-from dps import CoreNetwork, RegisterSpec
+from dps import CoreNetwork
+from dps.register import RegisterBank
 from dps.environment import RegressionDataset, RegressionEnv
 from dps.utils import default_config
 from dps.attention import gaussian_filter
@@ -47,7 +46,7 @@ class HardAdditionDataset(RegressionDataset):
             offset += width
         y = numbers_to_digits(y, width)
         if height > 2:
-            raise NotImplementedError("^^^ need to specify greater number of digits when adding > 2 numbers.")
+            raise NotImplementedError("Need to specify greater number of digits when adding > 2 numbers.")
 
         super(HardAdditionDataset, self).__init__(x, y, for_eval, shuffle)
 
@@ -66,28 +65,6 @@ class HardAdditionEnv(RegressionEnv):
         return "<HardAdditionEnv height={} width={} n_digits={}>".format(self.height, self.width, self.n_digits)
 
 
-# Define at top-level to enable pickling
-addition_nt = namedtuple('HardAdditionRegister', 'inp outp fovea_x fovea_y vision wm1 wm2 carry digit t'.split())
-
-
-class HardAdditionRegSpec(RegisterSpec):
-    _visible = [0, 0] + [1] * 8
-    _initial_values = None
-    _namedtuple = addition_nt
-    _input_names = ['inp']
-    _output_names = ['outp']
-
-    def __init__(self, height, width):
-        self.height = height
-        self.width = width
-        self._initial_values = (
-            [np.zeros(height*width, dtype='f')] +
-            [np.zeros(width, dtype='f')] +
-            [np.array([v], dtype='f') for v in [0.0] * 8])
-
-        super(HardAdditionRegSpec, self).__init__()
-
-
 class HardAddition(CoreNetwork):
     """ Top left is (x=0, y=0).
 
@@ -100,47 +77,57 @@ class HardAddition(CoreNetwork):
     def __init__(self, env):
         self.height = env.height
         self.width = env.width
-        self.register_spec = HardAdditionRegSpec(env.height, env.width)
+
+        values = (
+            ([0.0] * 8) +
+            [np.zeros(self.height*self.width, dtype='f')] +
+            [np.zeros(self.width, dtype='f')])
+
+        self.register_bank = RegisterBank(
+            'HardAdditionRB',
+            'fovea_x fovea_y vision wm1 wm2 carry digit t', 'inp outp',
+            values=values, input_names='inp', output_names='outp')
+
         super(HardAddition, self).__init__()
 
     def __call__(self, action_activations, r):
+
+        _fovea_x, _fovea_y, _vision, _wm1, _wm2, _carry, _digit, _t, _inp, _outp = self.register_bank.as_tuple(r)
+
         (inc_fovea_x, dec_fovea_x, inc_fovea_y, dec_fovea_y,
          vision_to_wm1, vision_to_wm2, add, write_digit, no_op) = (
             tf.split(action_activations, self.n_actions, axis=1))
 
-        fovea_x = (1 - inc_fovea_x - dec_fovea_x) * r.fovea_x + inc_fovea_x * (r.fovea_x + 1) + dec_fovea_x * (r.fovea_x - 1)
-        fovea_y = (1 - inc_fovea_y - dec_fovea_y) * r.fovea_y + inc_fovea_y * (r.fovea_y + 1) + dec_fovea_y * (r.fovea_y - 1)
-        wm1 = (1 - vision_to_wm1) * r.wm1 + vision_to_wm1 * r.vision
-        wm2 = (1 - vision_to_wm2) * r.wm2 + vision_to_wm2 * r.vision
+        fovea_x = (1 - inc_fovea_x - dec_fovea_x) * _fovea_x + inc_fovea_x * (_fovea_x + 1) + dec_fovea_x * (_fovea_x - 1)
+        fovea_y = (1 - inc_fovea_y - dec_fovea_y) * _fovea_y + inc_fovea_y * (_fovea_y + 1) + dec_fovea_y * (_fovea_y - 1)
+        wm1 = (1 - vision_to_wm1) * _wm1 + vision_to_wm1 * _vision
+        wm2 = (1 - vision_to_wm2) * _wm2 + vision_to_wm2 * _vision
 
-        add_result = r.wm1 + r.wm2 + r.carry
-        add_result = tf.round(add_result)
-        _carry = add_result // 10
-        _digit = tf.mod(add_result, 10)
+        add_result = tf.round(_wm1 + _wm2 + _carry)
 
-        carry = (1 - add) * r.carry + add * _carry
-        digit = (1 - add) * r.digit + add * _digit
+        carry = (1 - add) * _carry + add * (add_result // 10)
+        digit = (1 - add) * _digit + add * tf.mod(add_result, 10)
 
         # Read input
         fovea = tf.concat([fovea_y, fovea_x], 1)
         std = tf.fill(tf.shape(fovea), 0.01)
-        inp = tf.reshape(r.inp, (-1, self.height, self.width))
+        inp = tf.reshape(_inp, (-1, self.height, self.width))
         x_filter = gaussian_filter(fovea[:, 1:], std[:, 1:], np.arange(self.width, dtype='f'))
         y_filter = gaussian_filter(fovea[:, :1], std[:, :1], np.arange(self.height, dtype='f'))
         vision = tf.matmul(y_filter, tf.matmul(inp, x_filter, adjoint_b=True))
         vision = tf.reshape(vision, (-1, 1))
 
         # Store output
-        write_weighting = gaussian_filter(fovea_x, tf.fill(tf.shape(fovea_x), 0.01), np.arange(self.width, dtype='f'))
+        write_weighting = gaussian_filter(_fovea_x, tf.fill(tf.shape(_fovea_x), 0.01), np.arange(self.width, dtype='f'))
         write_weighting = tf.squeeze(write_weighting, axis=[1])
-        output = (1 - write_digit) * r.outp + write_digit * ((1 - write_weighting) * r.outp + write_weighting * digit)
+        outp = (1 - write_digit) * _outp + write_digit * ((1 - write_weighting) * _outp + write_weighting * _digit)
 
-        t = r.t + 1
+        t = _t + 1
 
         with tf.name_scope("HardAddition"):
-            new_registers = self.register_spec.wrap(
-                inp=tf.identity(r.inp, "inp"),
-                outp=tf.identity(output, "outp"),
+            new_registers = self.register_bank.wrap(
+                inp=tf.identity(_inp, "inp"),
+                outp=tf.identity(outp, "outp"),
                 fovea_x=tf.identity(fovea_x, "fovea_x"),
                 fovea_y=tf.identity(fovea_y, "fovea_y"),
                 vision=tf.identity(vision, "vision"),
@@ -161,7 +148,7 @@ def visualize(config):
     def build_psystem():
         _config = default_config()
         height = 2
-        width = 3
+        width = 2
         n_digits = 10
         env = HardAdditionEnv(height, width, n_digits, 10, 10, 10)
         cn = HardAddition(env)
@@ -171,7 +158,8 @@ def visualize(config):
         controller = FixedController([4, 2, 5, 6, 7, 0, 4, 3, 5, 6, 7, 0], cn.n_actions)
         action_selection = IdentitySelect()
 
-        exploration = build_decaying_value(_config.schedule(exploration), 'exploration')
+        exploration = build_decaying_value(
+            _config.schedule('exploration'), 'exploration')
         policy = Policy(
             controller, action_selection, exploration,
             cn.n_actions, cn.obs_dim, name="addition_policy")

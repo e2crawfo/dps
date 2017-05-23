@@ -27,6 +27,10 @@ params = 'env core_network policy use_act T'
 class ProductionSystem(namedtuple('ProductionSystem', params.split())):
     """ A production system."""
 
+    def __init__(self, env, core_network, policy, use_act, T):
+        super(ProductionSystem, self).__init__()
+        self.rb = core_network.register_bank
+
     def build_psystem_env(self):
         return ProductionSystemEnv(self)
 
@@ -53,7 +57,7 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
         env = self.env
         env.set_mode(mode, n_rollouts)
 
-        obs = env.reset()
+        external_obs = env.reset()
 
         final_registers = None
 
@@ -63,10 +67,10 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
         done = False
         while not done:
             if final_registers is None:
-                fd = ps_func.build_feeddict(inp=obs)
+                fd = ps_func.build_feeddict(inp=external_obs)
             else:
-                start_registers = copy.deepcopy(final_registers)
-                self.core_network.register_spec.set_input(start_registers, obs)
+                start_registers = final_registers.copy()
+                self.rb.set_input(start_registers, external_obs)
                 fd = ps_func.build_feeddict(registers=start_registers)
 
             sess = tf.get_default_session()
@@ -76,8 +80,8 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
                  ps_func.final_registers],
                 feed_dict=fd)
 
-            external_action = self.core_network.register_spec.get_output(final)
-            new_obs, reward, done, info = env.step(external_action)
+            external_action = self.rb.get_output(final)
+            external_obs, reward, done, info = env.step(external_action)
 
             registers.append(reg)
             actions.append(a)
@@ -86,16 +90,14 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
             _reward[-1, :, :] = reward
             rewards.append(_reward)
 
-            obs = new_obs
-
             print("info: ")
             info.update(t=t)
             pprint(info)
 
         external_step_lengths = [a.shape[0] for a in actions]
 
-        rspec = self.core_network.register_spec
-        registers = rspec.concatenate(registers + [rspec.expand_dims(final, 0)], axis=0)
+        registers = np.concatenate(list(registers) + [np.expand_dims(final, 0)], axis=0)
+
         actions = np.concatenate(actions, axis=0)
         rewards = np.concatenate(rewards, axis=0)
 
@@ -115,23 +117,24 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
 
         row_names = ['t=', 'i=', ''] + self.core_network.action_names
 
-        register_spec = self.core_network.register_spec
-        omit = set(getattr(self.core_network.register_spec, 'omit', []))
+        omit = set(self.rb.no_display)
         reg_ranges = {}
 
-        for n, s in zip(register_spec.names, register_spec.shapes()):
+        for n, s in zip(self.rb.names, self.rb.shapes):
             if n in omit:
                 continue
 
             row_names.append('')
             start = len(row_names)
-            for k in range(s[-1]):
+            for k in range(s):
                 row_names.append('{}[{}]'.format(n, k))
             end = len(row_names)
             reg_ranges[n] = (start, end)
         row_names.extend(['', 'reward'])
 
         n_timesteps, batch_size, n_actions = action_activations.shape
+
+        registers = self.rb.as_tuple(registers)
 
         for b in range(batch_size):
             print("\nElement {} of batch ".format(b) + "-" * 40)
@@ -142,7 +145,7 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
                 values[i, 0] = external_t
                 values[i, 1] = internal_t
                 values[i, 3:3+n_actions] = action_activations[i, b, :]
-                for n, v in zip(register_spec.names, registers):
+                for n, v in zip(self.rb.names, registers):
                     if n in omit:
                         continue
                     rr = reg_ranges[n]
@@ -156,7 +159,7 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
                     internal_t = 0
 
             # Print final values for the registers
-            for n, v in zip(register_spec.names, registers):
+            for n, v in zip(self.rb.names, registers):
                 if n in omit:
                     continue
                 rr = reg_ranges[n]
@@ -183,7 +186,7 @@ class CoreNetwork(object, metaclass=CoreNetworkMeta):
 
     """
     action_names = None
-    register_spec = None
+    register_bank = None
 
     def __init__(self):
         self._graph = None
@@ -199,14 +202,13 @@ class CoreNetwork(object, metaclass=CoreNetworkMeta):
 
     @property
     def obs_dim(self):
-        return sum(shape[1] for shape in self.register_spec.shapes(visible_only=True))
+        return self.register_bank.visible_width
 
-    def __call__(self, action_activations, egisters):
-        """ Accepts a tensor representing action activations and an object
-        created by calling ``instantiate`` on ``register_spec``
-        (which stores tensors representing register values) and outputs tensors
-        representing the new values of the registers after running the
-        core network for one step.
+    def __call__(self, action_activations, registers):
+        """ Accepts a tensor representing action activations, and an instance
+        of ``self.register_bank`` storing register contents, and
+        return a new instance of ``self.register_bank`` storing the
+        register contents for the next time step.
 
         """
         raise NotImplementedError()
@@ -215,15 +217,19 @@ class CoreNetwork(object, metaclass=CoreNetworkMeta):
         with tf.name_scope('core_network'):
             self._action_activations_ph = tf.placeholder(
                 tf.float32, shape=[None, self.n_actions], name='action_activations')
-            self._register_ph = self.register_spec.build_placeholders()
+            self._register_ph = self.register_bank.new_placeholder(None)
             self._graph = self(self._action_activations_ph, self._register_ph)
 
     def run(self, action_activations, registers):
+        if not isinstance(registers, self.register_bank):
+            registers = self.register_bank(registers)
+
         if self._graph is None:
             self._build_graph()
 
-        feed_dict = {ph: v for ph, v in zip(self._register_ph, registers)}
-        feed_dict[self._action_activations_ph] = action_activations
+        feed_dict = {
+            self._register_ph: registers,
+            self._action_activations_ph: action_activations}
 
         with tf.Session() as sess:
             output = sess.run(self._graph, feed_dict=feed_dict)
@@ -233,15 +239,14 @@ class CoreNetwork(object, metaclass=CoreNetworkMeta):
 class ProductionSystemCell(RNNCell):
     def __init__(self, psystem, sample):
         _, self.core_network, self.policy, _, _ = psystem
+        self.rb = psystem.rb
 
-        self._state_size = (
-            self.policy.state_size,
-            self.core_network.register_spec.state_size())
+        self._state_size = (self.policy.state_size, self.rb.width)
 
         self._output_size = (
             self.core_network.n_actions,
             self.policy.state_size,
-            self.core_network.register_spec.state_size())
+            self.rb.width)
 
         self._sample = sample
 
@@ -250,8 +255,9 @@ class ProductionSystemCell(RNNCell):
             policy_state, registers = state
 
             with tf.name_scope('policy'):
-                obs = self.core_network.register_spec.as_obs(registers, visible_only=1)
-                action_activations, new_policy_state = self.policy(obs, policy_state, sample=self._sample)
+                obs = self.rb.visible(registers)
+                action_activations, new_policy_state = self.policy(
+                    obs, policy_state, sample=self._sample)
 
             with tf.name_scope('core_network'):
                 new_registers = self.core_network(action_activations, registers)
@@ -271,8 +277,8 @@ class ProductionSystemCell(RNNCell):
 
     def zero_state(self, batch_size, dtype):
         policy_state = self.policy.zero_state(batch_size, dtype)
-        registers = self.core_network.register_spec.build_placeholders(dtype)
-        return (policy_state, registers)
+        ph = tf.placeholder(tf.float32, (None, self.rb.width))
+        return policy_state, ph
 
 
 class ProductionSystemFunction(object):
@@ -287,6 +293,7 @@ class ProductionSystemFunction(object):
     def __init__(self, psystem, scope=None, sample=False, initialize=True):
         self.psystem = psystem
         _, self.core_network, self.policy, self.use_act, self.T = psystem
+        self.rb = psystem.rb
         self._sample = sample
         self._initialize = initialize
 
@@ -302,26 +309,21 @@ class ProductionSystemFunction(object):
 
         if inp is not None:
             batch_size = inp.shape[0]
-            registers = self.core_network.register_spec.instantiate(batch_size=batch_size)
-            self.core_network.register_spec.set_input(registers, inp)
+            registers = self.rb.new_array(batch_size)
+            self.rb.set_input(registers, inp)
         else:
-            if not isinstance(registers, self.core_network.register_spec._namedtuple):
-                registers = self.core_network.register_spec.from_obs(registers)
+            if not isinstance(registers, self.core_network.register_bank):
+                registers = self.core_network.register_bank(registers)
 
-        fd = {}
-
+        fd = {self.register_ph: registers}
         T = T or self.T
         if not self.use_act:
             # first dim of this dummy input determines the number of time steps.
             fd[self.inputs] = np.zeros((T, batch_size, 1))
-
-        for ph, value in zip(self.register_ph, registers):
-            fd[ph] = value
-
         return fd
 
     def get_output(self):
-        return self.core_network.register_spec.get_output(self.final_registers)
+        return self.final_registers.get_output()
 
     @staticmethod
     def _build_ps_function(psystem, scope, sample, initialize):
@@ -367,13 +369,11 @@ class ProductionSystemFunction(object):
                         (tf.fill((batch_size, psystem.core_network.n_actions-1), 0.0),
                          tf.fill((batch_size, 1), 1.0)),
                         axis=1)
+                    # Run the core network once.
                     initial_registers = psystem.core_network(no_op, register_ph)
                 else:
                     initial_registers = register_ph
 
-                # ps_cell gives its internal state (at beginning of each time step)
-                # as output so that we have access to internal states from every time
-                # step, instead of just the final time step
                 output = dynamic_rnn(
                     ps_cell, inputs, initial_state=(policy_state, initial_registers),
                     parallel_iterations=1, swap_memory=False,
@@ -386,10 +386,6 @@ class ProductionSystemFunction(object):
             inputs, register_ph, ps_cell,
             action_activations, policy_states, registers,
             final_policy_states, final_registers)
-
-    def get_register_values(self, *names, as_obs=True):
-        return self.core_network.register_spec.get_register_values(
-            self.registers, *names, as_obs=as_obs, axis=2)
 
     def __str__(self):
         return ("<ProductionSystemFunction - core_network={}, policy={}, use_act={}>".format(
@@ -418,20 +414,20 @@ class ProductionSystemEnv(Env):
     """
     metadata = {"render.modes": ["human", "ansi"]}
 
-    def __init__(self, psystem):
+    def __init__(self, psystem, initialize=True):
         self.psystem = psystem
         self.env, self.core_network, _, self.use_act, self.T = psystem
+        self.rb = psystem.rb
         self.sampler = None
+        self.initialize = initialize
 
-        # Extra action is for stopping. If T is not 0, this action will be effectively ignored.
+        # Extra action is for stopping.
+        # If T is not 0, this action will be effectively ignored.
         self.n_actions = self.core_network.n_actions
         self.action_space = BatchBox(low=0.0, high=1.0, shape=(None, self.n_actions))
 
-        obs_dim = sum(
-            shape[1] for shape
-            in self.core_network.register_spec.shapes(visible_only=True))
         self.observation_space = BatchBox(
-            low=-np.inf, high=np.inf, shape=(None, obs_dim))
+            low=-np.inf, high=np.inf, shape=(None, self.core_network.obs_dim))
 
         self.reward_range = self.env.reward_range
 
@@ -449,37 +445,35 @@ class ProductionSystemEnv(Env):
         return "<ProductionSystemEnv, core_network={}, env={}, T={}>".format(self.core_network, self.env, self.T)
 
     def _step(self, action):
+        """ Run (not build) a single step of the environment. """
         assert self.action_space.contains(action), (
             "{} ({}) is not a valid action for env {}.".format(action, type(action), self))
 
-        # TODO: need to decide how to stop when not using discrete actions. Maybe the
-        # activation of the stop action should be interpreted as the probability of stopping,
-        # from which we then sample. Definitely something like this.
         step_external = (
             (not self.T and action == self.core_network.n_actions) or
             (self.T and self.t != 0 and self.t % self.T == 0))
 
         # Either update external or internal environment, never both.
         if step_external:
-            external_action = self.core_network.register_spec.get_output(self.registers)
+            external_action = self.registers.get_output()
             external_obs, reward, done, info = self.env.step(external_action)
-            self.core_network.register_spec.set_input(self.registers, external_obs)
+            self.rb.set_input(self.registers, external_obs)
         else:
             reward, done, info = np.zeros(action.shape[0]), False, {}
             self.registers = self.core_network.run(action, self.registers)
         self.t += 1
 
-        return self.core_network.register_spec.as_obs(self.registers, visible_only=True), reward, done, info
+        return self.rb.visible(self.registers), reward, done, info
 
     def _reset(self):
+        # TODO: respect ``self.initialize``
         self.t = 0
 
         external_obs = self.env.reset()
 
-        self.registers = self.core_network.register_spec.instantiate(
-            batch_size=external_obs.shape[0], np_random=self.np_random)
-        self.core_network.register_spec.set_input(self.registers, external_obs)
-        return self.core_network.register_spec.as_obs(self.registers, visible_only=True)
+        self.registers = self.rb.new_array(external_obs.shape[0])
+        self.rb.set_input(self.registers, external_obs)
+        return self.rb.visible(self.registers)
 
     def _render(self, mode='human', close=False):
         if not close:
@@ -499,7 +493,7 @@ class ProductionSystemEnv(Env):
             self.sampler = self.psystem.build_psystem_func(sample=True)
         self.set_mode(mode, n_rollouts)
 
-        obs = self.env.reset()
+        external_obs = self.env.reset()
 
         alg.start_episode()
         final_registers = None
@@ -507,10 +501,10 @@ class ProductionSystemEnv(Env):
         done = False
         while not done:
             if final_registers is None:
-                fd = self.sampler.build_feeddict(inp=obs)
+                fd = self.sampler.build_feeddict(inp=external_obs)
             else:
-                start_registers = copy.deepcopy(final_registers)
-                self.core_network.register_spec.set_input(start_registers, obs)
+                start_registers = final_registers.copy()
+                self.rb.set_input(start_registers, external_obs)
                 fd = self.sampler.build_feeddict(registers=start_registers)
 
             fd[alg.is_training] = mode == 'train'
@@ -522,16 +516,13 @@ class ProductionSystemEnv(Env):
                  self.sampler.final_registers],
                 feed_dict=fd)
 
-            external_action = self.core_network.register_spec.get_output(final_registers)
-            new_obs, reward, done, info = self.env.step(external_action)
+            external_action = self.rb.get_output(final_registers)
+            external_obs, reward, done, info = self.env.step(external_action)
 
             # record the trajectory
-            obs = self.core_network.register_spec.as_obs(registers, visible_only=True)
-            for t, (o, a) in enumerate(zip(obs, actions)):
-                r = np.zeros(reward.shape) if t < obs.shape[0]-1 else reward
+            for t, (o, a) in enumerate(zip(self.rb.visible(registers), actions)):
+                r = np.zeros(reward.shape) if t < actions.shape[0]-1 else reward
                 alg.remember(o, a, r)
-
-            obs = new_obs
 
         alg.end_episode()
 

@@ -1,9 +1,8 @@
-from collections import namedtuple
-
 import tensorflow as tf
 import numpy as np
 
-from dps import CoreNetwork, RegisterSpec
+from dps import CoreNetwork
+from dps.register import RegisterBank
 from dps.environment import RegressionDataset, RegressionEnv
 from dps.utils import default_config
 from dps.attention import apply_gaussian_filter
@@ -36,44 +35,31 @@ class PointerEnv(RegressionEnv):
         return "<PointerEnv width={} n_digits={}>".format(self.width, self.n_digits)
 
 
-# Define at top-level to enable pickling
-pointer_nt = namedtuple('PointerRegister', 'inp fovea vision wm t'.split())
-
-
-class PointerRegSpec(RegisterSpec):
-    _visible = [0, 1, 1, 1, 1]
-    _initial_values = None
-    _namedtuple = pointer_nt
-    _input_names = ['inp']
-    _output_names = ['wm']
-
-    def __init__(self, width):
-        self.width = width
-        self._initial_values = (
-            [np.zeros(2*width+1, dtype='f')] +
-            [np.array([v], dtype='f') for v in [0.0, 0.0, 0.0, 0.0]])
-        super(PointerRegSpec, self).__init__()
-
-
 class Pointer(CoreNetwork):
     action_names = ['fovea += 1', 'fovea -= 1', 'wm = vision', 'no-op/stop']
 
     def __init__(self, env):
         self.width = env.width
-        self.register_spec = PointerRegSpec(env.width)
+        self.register_bank = RegisterBank(
+            'PointerRB', 'fovea vision wm t', 'inp',
+            values=([0.0] * 4) + [np.zeros(2*self.width+1, dtype='f')],
+            input_names='inp', output_names='wm')
         super(Pointer, self).__init__()
 
     def __call__(self, action_activations, r):
+        _fovea, _vision, _wm, _t, _inp = self.register_bank.as_tuple(r)
+
         inc_fovea, dec_fovea, vision_to_wm, no_op = tf.split(action_activations, self.n_actions, axis=1)
-        fovea = (1 - inc_fovea - dec_fovea) * r.fovea + inc_fovea * (r.fovea + 1) + dec_fovea * (r.fovea - 1)
-        wm = (1 - vision_to_wm) * r.wm + vision_to_wm * r.vision
-        t = r.t + 1
 
-        diag_std = tf.fill(tf.shape(r.fovea), 0.01)
+        fovea = (1 - inc_fovea - dec_fovea) * _fovea + inc_fovea * (_fovea + 1) + dec_fovea * (_fovea - 1)
+        wm = (1 - vision_to_wm) * _wm + vision_to_wm * _vision
+        t = _t + 1
+
+        diag_std = tf.fill(tf.shape(fovea), 0.01)
         locations = tf.constant(np.linspace(-self.width, self.width, 2*self.width+1, dtype='f').reshape(-1, 1))
-        vision = apply_gaussian_filter(r.fovea, diag_std, locations, r.inp)
+        vision = apply_gaussian_filter(fovea, diag_std, locations, _inp)
 
-        new_registers = self.register_spec.wrap(inp=r.inp, fovea=fovea, vision=vision, wm=wm, t=t)
+        new_registers = self.register_bank.wrap(inp=_inp, fovea=fovea, vision=vision, wm=wm, t=t)
 
         return new_registers
 
@@ -93,7 +79,7 @@ def visualize(config):
         controller = FixedController([0, 2, 1], cn.n_actions)
         action_selection = IdentitySelect()
 
-        exploration = build_decaying_value(_config.schedule(exploration), 'exploration')
+        exploration = build_decaying_value(_config.schedule('exploration'), 'exploration')
         policy = Policy(
             controller, action_selection, exploration,
             cn.n_actions, cn.obs_dim, name="pointer_policy")

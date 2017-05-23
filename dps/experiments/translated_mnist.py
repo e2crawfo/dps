@@ -1,4 +1,3 @@
-from collections import namedtuple
 import matplotlib.pyplot as plt
 from matplotlib import animation, patches
 import os
@@ -7,7 +6,8 @@ from pathlib import Path
 import tensorflow as tf
 import numpy as np
 
-from dps import CoreNetwork, RegisterSpec
+from dps import CoreNetwork
+from dps.register import RegisterBank
 from dps.environment import RegressionEnv
 from dps.utils import default_config, MLP
 from dps.production_system import ProductionSystemTrainer
@@ -121,28 +121,6 @@ class MnistDrawPretrained(object):
         return inference
 
 
-# Define at top-level to enable pickling
-translated_mnist_nt = namedtuple('TranslatedMnistRegister', 'inp outp glimpse fovea_x fovea_y vision delta t'.split())
-
-
-class TranslatedMnistRegSpec(RegisterSpec):
-    _visible = [0, 1, 1, 1, 1, 1, 1, 1]
-    _initial_values = None
-    _namedtuple = translated_mnist_nt
-    _input_names = ['inp']
-    _output_names = ['outp']
-    omit = ['inp', 'glimpse']
-
-    def __init__(self, W, N):
-        self.W = W
-        self.N = N
-
-        self._initial_values = [
-            np.zeros(W*W, dtype='f'), np.array([0.0]), np.zeros(N*N, dtype='f'), np.array([0.0]),
-            np.array([0.0]), np.array([0.0]), np.array([1.0]), np.array([0.0])]
-        super(TranslatedMnistRegSpec, self).__init__()
-
-
 class TranslatedMnist(CoreNetwork):
     """ Top left is (y=0, x=0). Corresponds to using origin='upper' in plt.imshow. """
 
@@ -161,11 +139,25 @@ class TranslatedMnist(CoreNetwork):
 
         build_classifier = default_config().build_classifier
         classifier_str = default_config().classifier_str
-        self.classifier = MnistDrawPretrained(build_classifier, self.N, name='{}_N={}.chk'.format(classifier_str, self.N))
-        self.register_spec = TranslatedMnistRegSpec(env.W, env.N)
+        self.classifier = MnistDrawPretrained(
+            build_classifier, self.N,
+            name='{}_N={}.chk'.format(classifier_str, self.N))
+
+        values = (
+            [0., 0., 0., 0., 1., 0.] +
+            [np.zeros(self.N * self.N, dtype='f')] +
+            [np.zeros(self.W*self.W, dtype='f')])
+
+        self.register_bank = RegisterBank(
+            'TranslatedMnistRB',
+            'outp fovea_x fovea_y vision delta t glimpse', 'inp', values=values,
+            input_names='inp', output_names='outp', no_display='inp glimpse')
         super(TranslatedMnist, self).__init__()
 
     def __call__(self, action_activations, r):
+
+        _outp, _fovea_x, _fovea_y, _vision, _delta, _t, _glimpse, _inp = self.register_bank.as_tuple(r)
+
         (inc_fovea_x, dec_fovea_x, inc_fovea_x_big, dec_fovea_x_big,
          inc_fovea_y, dec_fovea_y, inc_fovea_y_big, dec_fovea_y_big,
          inc_delta, dec_delta, inc_delta_big, dec_delta_big,
@@ -173,39 +165,39 @@ class TranslatedMnist(CoreNetwork):
             tf.split(action_activations, self.n_actions, axis=1))
 
         if self.scaled:
-            fovea_x = (1 - inc_fovea_x - dec_fovea_x) * r.fovea_x + \
-                inc_fovea_x * (r.fovea_x + r.delta) + dec_fovea_x * (r.fovea_x - r.delta)
+            fovea_x = (1 - inc_fovea_x - dec_fovea_x) * _fovea_x + \
+                inc_fovea_x * (_fovea_x + _delta) + dec_fovea_x * (_fovea_x - _delta)
 
-            fovea_y = (1 - inc_fovea_y - dec_fovea_y) * r.fovea_y + \
-                inc_fovea_y * (r.fovea_y + r.delta) + dec_fovea_y * (r.fovea_y - r.delta)
+            fovea_y = (1 - inc_fovea_y - dec_fovea_y) * _fovea_y + \
+                inc_fovea_y * (_fovea_y + _delta) + dec_fovea_y * (_fovea_y - _delta)
 
-            delta = (1 - inc_delta - dec_delta - inc_delta_big - dec_delta_big) * r.delta + \
-                inc_delta * (r.delta + self.inc_delta) + \
-                inc_delta_big * (r.delta + 5 * self.inc_delta) + \
-                dec_delta * (r.delta - self.inc_delta) + \
-                dec_delta_big * (r.delta - 5 * self.inc_delta)
+            delta = (1 - inc_delta - dec_delta - inc_delta_big - dec_delta_big) * _delta + \
+                inc_delta * (_delta + self.inc_delta) + \
+                inc_delta_big * (_delta + 5 * self.inc_delta) + \
+                dec_delta * (_delta - self.inc_delta) + \
+                dec_delta_big * (_delta - 5 * self.inc_delta)
         else:
-            fovea_x = (1 - inc_fovea_x - dec_fovea_x - inc_fovea_x_big - dec_fovea_x_big) * r.fovea_x + \
-                inc_fovea_x * (r.fovea_x + self.inc_x) + \
-                inc_fovea_x_big * (r.fovea_x + 5 * self.inc_x) + \
-                dec_fovea_x * (r.fovea_x - self.inc_x) + \
-                dec_fovea_x_big * (r.fovea_x - 5 * self.inc_x)
+            fovea_x = (1 - inc_fovea_x - dec_fovea_x - inc_fovea_x_big - dec_fovea_x_big) * _fovea_x + \
+                inc_fovea_x * (_fovea_x + self.inc_x) + \
+                inc_fovea_x_big * (_fovea_x + 5 * self.inc_x) + \
+                dec_fovea_x * (_fovea_x - self.inc_x) + \
+                dec_fovea_x_big * (_fovea_x - 5 * self.inc_x)
 
-            fovea_y = (1 - inc_fovea_y - dec_fovea_y - inc_fovea_y_big - dec_fovea_y_big) * r.fovea_y + \
-                inc_fovea_y * (r.fovea_y + self.inc_y) + \
-                inc_fovea_y_big * (r.fovea_y + 5 * self.inc_y) + \
-                dec_fovea_y * (r.fovea_y - self.inc_y) + \
-                dec_fovea_y_big * (r.fovea_y - 5 * self.inc_y)
+            fovea_y = (1 - inc_fovea_y - dec_fovea_y - inc_fovea_y_big - dec_fovea_y_big) * _fovea_y + \
+                inc_fovea_y * (_fovea_y + self.inc_y) + \
+                inc_fovea_y_big * (_fovea_y + 5 * self.inc_y) + \
+                dec_fovea_y * (_fovea_y - self.inc_y) + \
+                dec_fovea_y_big * (_fovea_y - 5 * self.inc_y)
 
-            delta = (1 - inc_delta - dec_delta - inc_delta_big - dec_delta_big) * r.delta + \
-                inc_delta * (r.delta + self.inc_delta) + \
-                inc_delta_big * (r.delta + 5 * self.inc_delta) + \
-                dec_delta * (r.delta - self.inc_delta) + \
-                dec_delta_big * (r.delta - 5 * self.inc_delta)
+            delta = (1 - inc_delta - dec_delta - inc_delta_big - dec_delta_big) * _delta + \
+                inc_delta * (_delta + self.inc_delta) + \
+                inc_delta_big * (_delta + 5 * self.inc_delta) + \
+                dec_delta * (_delta - self.inc_delta) + \
+                dec_delta_big * (_delta - 5 * self.inc_delta)
 
-        outp = (1 - store) * r.outp + store * r.vision
+        outp = (1 - store) * _outp + store * _vision
 
-        inp = tf.reshape(r.inp, (-1, self.W, self.W))
+        inp = tf.reshape(_inp, (-1, self.W, self.W))
         classification, glimpse = self.classifier.build_pretrained(
             inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta, sigma=1.0)
 
@@ -214,18 +206,17 @@ class TranslatedMnist(CoreNetwork):
         # vision = tf.reduce_sum(_vision, 1, keep_dims=True)
         vision = tf.cast(tf.expand_dims(tf.argmax(classification, 1), 1), tf.float32)
 
-        t = r.t + 1
+        t = _t + 1
 
         with tf.name_scope("TranslatedMnist"):
-            new_registers = self.register_spec.wrap(
-                inp=tf.identity(r.inp, "inp"),
+            new_registers = self.register_bank.wrap(
+                inp=tf.identity(_inp, "inp"),
                 outp=tf.identity(outp, "outp"),
                 glimpse=tf.reshape(glimpse, (-1, self.N*self.N), name="glimpse"),
                 fovea_x=tf.identity(fovea_x, "fovea_x"),
                 fovea_y=tf.identity(fovea_y, "fovea_y"),
                 vision=tf.identity(vision, "vision"),
                 delta=tf.identity(delta, "delta"),
-                # sigma=tf.identity(sigma, "sigma"),
                 t=tf.identity(t, "t"))
 
         return new_registers
@@ -233,6 +224,11 @@ class TranslatedMnist(CoreNetwork):
 
 def render_rollouts(psystem, actions, registers, reward, external_step_lengths):
     """ Render rollouts from TranslatedMnist task. """
+    config = default_config()
+    if not config.save_display and not config.display:
+        print("Skipping rendering.")
+        return
+
     n_timesteps, batch_size, n_actions = actions.shape
     s = int(np.ceil(np.sqrt(batch_size)))
 
@@ -307,7 +303,7 @@ def visualize(config):
         # controller = FixedController([8], cn.n_actions)
         action_selection = IdentitySelect()
 
-        exploration = build_decaying_value(_config.schedule(exploration), 'exploration')
+        exploration = build_decaying_value(_config.schedule('exploration'), 'exploration')
         policy = Policy(
             controller, action_selection, exploration,
             cn.n_actions, cn.obs_dim, name="translated_mnist_policy")

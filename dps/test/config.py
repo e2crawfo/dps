@@ -8,8 +8,8 @@ from dps.qlearning import QLearning
 from dps.policy import SoftmaxSelect, EpsilonGreedySelect, GumbelSoftmaxSelect
 from dps.utils import Config, CompositeCell, FeedforwardCell, MLP, DpsConfig
 from dps.experiments import (
-    arithmetic, simple_addition, pointer_following,
-    hard_addition, lifted_addition, translated_mnist, mnist_arithmetic)
+    hello_world, simple_addition, pointer_following,
+    hard_addition, translated_mnist, mnist_arithmetic)
 
 
 class DefaultConfig(DpsConfig):
@@ -126,7 +126,7 @@ class DebugConfig(Config):
     debug = True
 
 
-class ArithmeticConfig(DefaultConfig):
+class HelloWorldConfig(DefaultConfig):
     T = 3
     curriculum = [
         dict(order=[0, 1], T=2),
@@ -136,9 +136,9 @@ class ArithmeticConfig(DefaultConfig):
         lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=32),
                                         MLP(),
                                         n_actions))
-    log_name = 'arithmetic'
-    trainer = arithmetic.ArithmeticTrainer()
-    visualize = arithmetic.visualize
+    log_name = 'hello_world'
+    trainer = hello_world.HelloWorldTrainer()
+    visualize = hello_world.visualize
 
 
 class SimpleAdditionConfig(DefaultConfig):
@@ -198,20 +198,6 @@ class HardAdditionConfig(DefaultConfig):
     trainer = hard_addition.HardAdditionTrainer()
     visualize = hard_addition.visualize
     preserve_policy = False
-
-
-class LiftedAdditionConfig(DefaultConfig):
-    T = 30
-    curriculum = [
-        dict(width=1, n_digits=10),
-        dict(width=2, n_digits=10),
-        dict(width=3, n_digits=10),
-        dict(width=4, n_digits=10),
-        dict(width=5, n_digits=10)]
-    log_name = 'lifted_addition'
-
-    trainer = lifted_addition.LiftedAdditionTrainer()
-    visualize = lifted_addition.visualize
 
 
 class TranslatedMnistConfig(DefaultConfig):
@@ -301,10 +287,9 @@ algorithms = dict(
 
 
 tasks = dict(
-    arithmetic=ArithmeticConfig(),
+    hello_world=HelloWorldConfig(),
     simple_addition=SimpleAdditionConfig(),
     pointer=PointerConfig(),
     hard_addition=HardAdditionConfig(),
-    lifted_addition=LiftedAdditionConfig(),
     translated_mnist=TranslatedMnistConfig(),
     mnist_arithmetic=MnistArithmeticConfig())

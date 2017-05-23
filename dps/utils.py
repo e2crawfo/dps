@@ -244,7 +244,7 @@ class FixedController(RNNCell):
 
 
 class CompositeCell(RNNCell):
-    """ A wrapper around a cell that adds an arithmetical transformation of the output.
+    """ A wrapper around a cell that adds an additional transformation of the output.
 
     Parameters
     ----------

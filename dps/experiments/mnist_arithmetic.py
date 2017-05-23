@@ -1,9 +1,8 @@
-from collections import namedtuple
-
 import tensorflow as tf
 import numpy as np
 
-from dps import CoreNetwork, RegisterSpec
+from dps import CoreNetwork
+from dps.register import RegisterBank
 from dps.environment import RegressionEnv
 from dps.utils import default_config, MLP
 from dps.production_system import ProductionSystemTrainer
@@ -53,33 +52,6 @@ def build_classifier(inp, outp_size):
     return tf.nn.softmax(logits)
 
 
-# Define at top-level to enable pickling
-mnist_arithmetic_nt = namedtuple(
-    'MnistArithmeticRegister',
-    'inp glimpse op acc fovea_x fovea_y delta vision op_vision t'.split())
-
-
-class MnistArithmeticRegSpec(RegisterSpec):
-    _visible = [0] + [1] * 9
-    _initial_values = None
-    _namedtuple = mnist_arithmetic_nt
-    _input_names = ['inp']
-    _output_names = ['acc']
-    omit = ['inp', 'glimpse']
-
-    def __init__(self, W, N):
-        self.W = W
-        self.N = N
-
-        self._initial_values = [
-            np.zeros(W*W, dtype='f'), np.zeros(N*N, dtype='f'),
-            np.array([0.0]), np.array([0.0]),
-            np.array([0.0]), np.array([0.0]),
-            np.array([1.0]), np.array([0.0]),
-            np.array([0.0]), np.array([0.0])]
-        super(MnistArithmeticRegSpec, self).__init__()
-
-
 class MnistArithmetic(CoreNetwork):
     """ Top left is (y=0, x=0). Corresponds to using origin='upper' in plt.imshow.
 
@@ -114,42 +86,52 @@ class MnistArithmetic(CoreNetwork):
         mnist_config = mnist.MnistConfig(symbols=op_symbols)
         self.op_classifier = MnistDrawPretrained(build_classifier, self.N, name=name, config=mnist_config, var_scope_name='op_classifier')
 
-        self.register_spec = MnistArithmeticRegSpec(env.W, env.N)
+        values = (
+            [0., 0., 0., 0., 1., 0., 0., 0.] +
+            [np.zeros(self.N * self.N, dtype='f')] +
+            [np.zeros(self.W * self.W, dtype='f')])
+
+        self.register_bank = RegisterBank(
+            'MnistArithmeticRB',
+            'op acc fovea_x fovea_y delta vision op_vision t glimpse', 'inp', values=values,
+            input_names='inp', output_names='acc', no_display='inp glimpse')
         super(MnistArithmetic, self).__init__()
 
     def __call__(self, action_activations, r):
+        _op, _acc, _fovea_x, _fovea_y, _delta, _vision, _op_vision, _t, _glimpse, _inp = self.register_bank.as_tuple(r)
+
         (inc_fovea_x, dec_fovea_x, inc_fovea_x_big, dec_fovea_x_big,
          inc_fovea_y, dec_fovea_y, inc_fovea_y_big, dec_fovea_y_big,
          inc_delta, dec_delta, inc_delta_big, dec_delta_big,
          store_op, add, inc, multiply, store, no_op) = (
             tf.split(action_activations, self.n_actions, axis=1))
 
-        acc = (1 - add - inc - multiply - store) * r.acc + \
-            add * (r.vision + r.acc) + \
-            multiply * (r.vision * r.acc) + \
-            inc * (r.acc + 1) + \
-            store * r.vision
-        op = (1 - store_op) * r.op + store_op * r.op_vision
+        acc = (1 - add - inc - multiply - store) * _acc + \
+            add * (_vision + _acc) + \
+            multiply * (_vision * _acc) + \
+            inc * (_acc + 1) + \
+            store * _vision
+        op = (1 - store_op) * _op + store_op * _op_vision
 
-        fovea_x = (1 - inc_fovea_x - dec_fovea_x - inc_fovea_x_big - dec_fovea_x_big) * r.fovea_x + \
-            inc_fovea_x * (r.fovea_x + self.inc_x) + \
-            inc_fovea_x_big * (r.fovea_x + 5 * self.inc_x) + \
-            dec_fovea_x * (r.fovea_x - self.inc_x) + \
-            dec_fovea_x_big * (r.fovea_x - 5 * self.inc_x)
+        fovea_x = (1 - inc_fovea_x - dec_fovea_x - inc_fovea_x_big - dec_fovea_x_big) * _fovea_x + \
+            inc_fovea_x * (_fovea_x + self.inc_x) + \
+            inc_fovea_x_big * (_fovea_x + 5 * self.inc_x) + \
+            dec_fovea_x * (_fovea_x - self.inc_x) + \
+            dec_fovea_x_big * (_fovea_x - 5 * self.inc_x)
 
-        fovea_y = (1 - inc_fovea_y - dec_fovea_y - inc_fovea_y_big - dec_fovea_y_big) * r.fovea_y + \
-            inc_fovea_y * (r.fovea_y + self.inc_y) + \
-            inc_fovea_y_big * (r.fovea_y + 5 * self.inc_y) + \
-            dec_fovea_y * (r.fovea_y - self.inc_y) + \
-            dec_fovea_y_big * (r.fovea_y - 5 * self.inc_y)
+        fovea_y = (1 - inc_fovea_y - dec_fovea_y - inc_fovea_y_big - dec_fovea_y_big) * _fovea_y + \
+            inc_fovea_y * (_fovea_y + self.inc_y) + \
+            inc_fovea_y_big * (_fovea_y + 5 * self.inc_y) + \
+            dec_fovea_y * (_fovea_y - self.inc_y) + \
+            dec_fovea_y_big * (_fovea_y - 5 * self.inc_y)
 
-        delta = (1 - inc_delta - dec_delta - inc_delta_big - dec_delta_big) * r.delta + \
-            inc_delta * (r.delta + self.inc_delta) + \
-            inc_delta_big * (r.delta + 5 * self.inc_delta) + \
-            dec_delta * (r.delta - self.inc_delta) + \
-            dec_delta_big * (r.delta - 5 * self.inc_delta)
+        delta = (1 - inc_delta - dec_delta - inc_delta_big - dec_delta_big) * _delta + \
+            inc_delta * (_delta + self.inc_delta) + \
+            inc_delta_big * (_delta + 5 * self.inc_delta) + \
+            dec_delta * (_delta - self.inc_delta) + \
+            dec_delta_big * (_delta - 5 * self.inc_delta)
 
-        inp = tf.reshape(r.inp, (-1, self.W, self.W))
+        inp = tf.reshape(_inp, (-1, self.W, self.W))
 
         digit_classification, glimpse = self.digit_classifier.build_pretrained(
             inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta)
@@ -158,18 +140,18 @@ class MnistArithmetic(CoreNetwork):
         # vision = tf.reduce_sum(_vision, 1, keep_dims=True)
         vision = tf.cast(tf.expand_dims(tf.argmax(digit_classification, 1), 1), tf.float32)
 
-        op_classification, glimpse = self.op_classifier.build_pretrained(
+        op_classification, _ = self.op_classifier.build_pretrained(
             inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta)
         # batch_size = tf.shape(classification)[0]
         # _op_vision = classification * tf.tile(tf.expand_dims(tf.range(10, dtype=tf.float32), 0), (batch_size, 1))
         # op_vision = tf.reduce_sum(_op_vision, 1, keep_dims=True)
         op_vision = tf.cast(tf.expand_dims(tf.argmax(op_classification, 1), 1), tf.float32)
 
-        t = r.t + 1
+        t = _t + 1
 
         with tf.name_scope("MnistArithmetic"):
-            new_registers = self.register_spec.wrap(
-                inp=tf.identity(r.inp, "inp"),
+            new_registers = self.register_bank.wrap(
+                inp=tf.identity(inp, "inp"),
                 glimpse=tf.reshape(glimpse, (-1, self.N*self.N), name="glimpse"),
                 acc=tf.identity(acc, "acc"),
                 op=tf.identity(op, "op"),
@@ -203,7 +185,7 @@ def visualize(config):
         # controller = FixedController([8], cn.n_actions)
         action_selection = IdentitySelect()
 
-        exploration = build_decaying_value(_config.schedule(exploration), 'exploration')
+        exploration = build_decaying_value(_config.schedule('exploration'), 'exploration')
         policy = Policy(
             controller, action_selection, exploration,
             cn.n_actions, cn.obs_dim, name="mnist_arithmetic_policy")

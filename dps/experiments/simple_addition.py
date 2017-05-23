@@ -1,9 +1,8 @@
-from collections import namedtuple
-
 import tensorflow as tf
 import numpy as np
 
-from dps import CoreNetwork, RegisterSpec
+from dps import CoreNetwork
+from dps.register import RegisterBank
 from dps.environment import RegressionDataset, RegressionEnv
 from dps.utils import default_config
 from dps.attention import apply_gaussian_filter
@@ -35,50 +34,39 @@ class SimpleAdditionEnv(RegressionEnv):
         return "<SimpleAdditionEnv width={} n_digits={}>".format(self.width, self.n_digits)
 
 
-# Define at top-level to enable pickling
-simple_addition_nt = namedtuple('SimpleAdditionRegister', 'inp fovea vision wm1 wm2 output t'.split())
-
-
-class SimpleAdditionRegSpec(RegisterSpec):
-    _visible = [0, 1, 1, 1, 1, 1, 1]
-    _initial_values = None
-    _namedtuple = simple_addition_nt
-    _input_names = ['inp']
-    _output_names = ['output']
-
-    def __init__(self, width):
-        self.width = width
-        self._initial_values = (
-            [np.zeros(2*width+1, dtype='f')] +
-            [np.array([v], dtype='f') for v in [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
-        super(SimpleAdditionRegSpec, self).__init__()
-
-
 class SimpleAddition(CoreNetwork):
     action_names = ['fovea += 1', 'fovea -= 1', 'wm1 = vision', 'wm2 = vision',
                     'output = vision', 'output = wm1 + wm2', 'no-op/stop']
 
     def __init__(self, env):
         self.width = env.width
-        self.register_spec = SimpleAdditionRegSpec(env.width)
+        self.register_bank = RegisterBank(
+            'SimpleAdditionRB',
+            'fovea vision wm1 wm2 output t', 'inp',
+            values=([0.] * 6) + [np.zeros(2*self.width+1, dtype='f')],
+            input_names='inp', output_names='output', no_display='inp')
         super(SimpleAddition, self).__init__()
 
     def __call__(self, action_activations, r):
+        _fovea, _vision, _wm1, _wm2, _output, _t, _inp = self.register_bank.as_tuple(r)
+
         inc_fovea, dec_fovea, vision_to_wm1, vision_to_wm2, vision_to_output, add, no_op = (
             tf.split(action_activations, self.n_actions, axis=1))
 
-        fovea = (1 - inc_fovea - dec_fovea) * r.fovea + inc_fovea * (r.fovea + 1) + dec_fovea * (r.fovea - 1)
-        wm1 = (1 - vision_to_wm1) * r.wm1 + vision_to_wm1 * r.vision
-        wm2 = (1 - vision_to_wm2) * r.wm2 + vision_to_wm2 * r.vision
+        fovea = (1 - inc_fovea - dec_fovea) * _fovea + inc_fovea * (_fovea + 1) + dec_fovea * (_fovea - 1)
+        wm1 = (1 - vision_to_wm1) * _wm1 + vision_to_wm1 * _vision
+        wm2 = (1 - vision_to_wm2) * _wm2 + vision_to_wm2 * _vision
+        output = (1 - vision_to_output - add) * _output + vision_to_output * _vision + add * (_wm1 + _wm2)
 
         std = tf.fill(tf.shape(fovea), 0.01)
         locations = tf.constant(np.linspace(-self.width, self.width, 2*self.width+1, dtype='f'), dtype=tf.float32)
-        vision = apply_gaussian_filter(fovea, std, locations, r.inp)
+        vision = apply_gaussian_filter(fovea, std, locations, _inp)
 
-        output = (1 - vision_to_output - add) * r.output + vision_to_output * r.vision + add * (r.wm1 + r.wm2)
-        t = r.t + 1
+        t = _t + 1
 
-        new_registers = self.register_spec.wrap(inp=r.inp, fovea=fovea, vision=vision, wm1=wm1, wm2=wm2, output=output, t=t)
+        new_registers = self.register_bank.wrap(
+            inp=_inp, fovea=fovea, vision=vision,
+            wm1=wm1, wm2=wm2, output=output, t=t)
 
         return new_registers
 
@@ -98,7 +86,7 @@ def visualize(config):
         controller = FixedController([0, 2, 1, 1, 3, 5, 0], cn.n_actions)
         action_selection = IdentitySelect()
 
-        exploration = build_decaying_value(_config.schedule(exploration), 'exploration')
+        exploration = build_decaying_value(_config.schedule('exploration'), 'exploration')
         policy = Policy(
             controller, action_selection, exploration,
             cn.n_actions, cn.obs_dim, name="simple_addition_policy")
