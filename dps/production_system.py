@@ -142,9 +142,12 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
 
         for b in range(batch_size):
             print("\nElement {} of batch ".format(b) + "-" * 40)
-            print("External observations: ")
-            for i, e in enumerate(external):
-                print("{}: {}".format(i, e[b, :]))
+
+            if external[0].shape[-1] < 40:
+                print("External observations: ")
+                for i, e in enumerate(external):
+                    print("{}: {}".format(i, e[b, :]))
+
             values = np.zeros((total_internal_steps+1, len(row_names)))
             external_t, internal_t = 0, 0
 

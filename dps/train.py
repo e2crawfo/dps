@@ -5,6 +5,7 @@ from contextlib import ExitStack
 import tensorflow as tf
 import numpy as np
 from pprint import pformat
+import datetime
 
 from spectral_dagger.utils.experiment import ExperimentStore
 from dps.utils import (
@@ -141,6 +142,9 @@ class TrainingLoop(object):
         threshold_reached = False
         val_loss = np.inf
         reason = None
+        total_train_time = 0.0
+
+        print("Starting stage {} at {}.".format(stage_idx, datetime.datetime.now()))
 
         while True:
             n_epochs = updater.n_experiences / stage_config.n_train
@@ -157,14 +161,18 @@ class TrainingLoop(object):
                     stage_config.batch_size, self.summary_op if evaluate else None)
                 duration = time.time() - start_time
 
+                total_train_time += duration
+                time_per_example = total_train_time / ((local_step+1) * stage_config.batch_size)
+                time_per_batch = total_train_time / (local_step+1)
+
                 if evaluate and self.config.save_summaries:
                     self.train_writer.add_summary(train_summary, self.global_step)
                     self.val_writer.add_summary(val_summary, self.global_step)
 
                 if display:
-                    print("Step(global: {}, local: {}): Minibatch Loss={:06.4f}, Validation Loss={:06.4f}, "
-                          "Minibatch Duration={:06.4f} seconds, Epoch={:04.2f}.".format(
-                              self.global_step, local_step, train_loss, val_loss, duration, updater.env.completion))
+                    print("Step(g: {}, l: {}): TLoss={:06.4f}, VLoss={:06.4f}, "
+                          "Sec/Batch={:06.10f}, Sec/Example={:06.10f}, Epoch={:04.2f}.".format(
+                              self.global_step, local_step, train_loss, val_loss, time_per_batch, time_per_example, updater.env.completion))
 
                 new_best, stop = self.curriculum.check(val_loss, self.global_step, local_step)
 
