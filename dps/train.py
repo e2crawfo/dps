@@ -9,7 +9,7 @@ import datetime
 
 from spectral_dagger.utils.experiment import ExperimentStore
 from dps.utils import (
-    restart_tensorboard, EarlyStopHook, gen_seed,
+    restart_tensorboard, EarlyStopHook, gen_seed, default_config,
     time_limit, uninitialized_variables_initializer)
 
 
@@ -59,16 +59,19 @@ class TrainingLoop(object):
                 print("Time limit exceeded.")
                 break
 
-            graph = tf.Graph()
-
-            if config.save_summaries:
-                self.train_writer = tf.summary.FileWriter(exp_dir.path_for('train'), graph)
-                self.val_writer = tf.summary.FileWriter(exp_dir.path_for('val'))
-                print("Writing summaries to {}.".format(exp_dir.path))
-
-            sess = tf.Session(graph=graph)
-
             with ExitStack() as stack:
+                graph = tf.Graph()
+
+                if not config.use_gpu:
+                    stack.enter_context(graph.device("/cpu:0"))
+
+                if config.save_summaries:
+                    self.train_writer = tf.summary.FileWriter(exp_dir.path_for('train'), graph)
+                    self.val_writer = tf.summary.FileWriter(exp_dir.path_for('val'))
+                    print("Writing summaries to {}.".format(exp_dir.path))
+
+                sess = tf.Session(graph=graph)
+
                 stack.enter_context(graph.as_default())
                 stack.enter_context(sess)
                 stack.enter_context(sess.as_default())
@@ -244,10 +247,15 @@ class Curriculum(object):
 
 
 def build_and_visualize(build_psystem, mode, n_rollouts, sample, render_rollouts=None):
-    graph = tf.Graph()
-    sess = tf.Session(graph=graph)
-
     with ExitStack() as stack:
+
+        graph = tf.Graph()
+
+        if not default_config().use_gpu:
+            stack.enter_context(graph.device("/cpu:0"))
+
+        sess = tf.Session(graph=graph, config=tf.ConfigProto(log_device_placement=True))
+
         stack.enter_context(graph.as_default())
         stack.enter_context(sess)
         stack.enter_context(sess.as_default())

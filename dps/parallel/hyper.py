@@ -121,7 +121,7 @@ def reduce_hyper_results(*results):
         # Losses reached on current stage.
         axis = subplots[stage, 0]
         axis.set_ylabel("stage {}".format(stage))
-        n, bins, patches = axis.hist(losses, 50, normed=1, facecolor='green', alpha=0.75)
+        n, bins, patches = axis.hist(losses, 'auto', normed=0, facecolor='green', edgecolor='black')
         axis.set_title('Individual')
 
         y_lim[0] = min(y_lim[0], min(n))
@@ -137,7 +137,7 @@ def reduce_hyper_results(*results):
 
         # Mean losses reached on current stage.
         axis = subplots[stage, 1]
-        n, bins, patches = axis.hist(mean_losses, 50, normed=1, facecolor='blue', alpha=0.75)
+        n, bins, patches = axis.hist(mean_losses, 'auto', normed=0, facecolor='blue', edgecolor='black')
         axis.set_title('Group Averages')
 
         y_lim[0] = min(y_lim[0], min(n))

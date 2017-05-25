@@ -1,15 +1,15 @@
 import pytest
-from dps.utils import Config
+from dps.utils import DpsConfig
 
 
 def pytest_configure(config):
-    assert len(Config._stack) == 1
-    dc = Config._stack[0]
+    dc = DpsConfig
     dc.start_tensorboard = False
     dc.mpl_backend = 'Agg'
     dc.display = False
     dc.save_display = False
     dc.update_latest = False
+    dc.use_gpu = False
 
 
 def pytest_addoption(parser):

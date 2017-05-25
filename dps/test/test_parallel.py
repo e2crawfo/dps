@@ -98,7 +98,7 @@ def run_cmd(cmd):
 def test_hyper():
     path = '/tmp/dps/test_hyper'
     with remove_tree(path):
-        cmd = 'dps-hyper build {} this_is_a_test 2 2 reinforce simple_addition'.format(path)
+        cmd = 'dps-hyper build {} this_is_a_test 3 3 reinforce hello_world --use-gpu=0 --n-train=200'.format(path)
         process = run_cmd(cmd)
 
         cmd = 'dps-hyper run {}/latest _'.format(path)
@@ -107,7 +107,7 @@ def test_hyper():
         cmd = 'dps-hyper view {}/latest'.format(path)
         process = run_cmd(cmd)
         output = process.stdout.decode()
-        assert "n_ops: 5" in output
-        assert "n_completed_ops: 5" in output
+        assert "n_ops: 10" in output
+        assert "n_completed_ops: 10" in output
         assert "n_ready_incomplete_ops: 0" in output
         assert "n_not_ready_incomplete_ops: 0" in output

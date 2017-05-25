@@ -542,39 +542,44 @@ class Config(object):
         return self.list_attrs()
 
 
+def _parse_config_from_file(cls, key=None):
+    config = configparser.ConfigParser()
+    location = Path(dps.__file__).parent
+    config.read(str(location / 'config.ini'))
+
+    if not key:
+        key = socket.gethostname().split('-')[0]
+
+    if key not in config:
+        key = 'DEFAULT'
+
+    # Load default configuration from a file
+    cls.hostname = socket.gethostname()
+    cls.start_tensorboard = config.getboolean(key, 'start_tensorboard')
+    cls.update_latest = config.getboolean(key, 'update_latest')
+    cls.save_summaries = config.getboolean(key, 'save_summaries')
+    cls.data_dir = process_path(config.get(key, 'data_dir'))
+    cls.log_root = process_path(config.get(key, 'log_root'))
+    cls.display = config.getboolean(key, 'display')
+    cls.save_display = config.getboolean(key, 'save_display')
+    cls.mpl_backend = config.get(key, 'mpl_backend')
+    cls.use_gpu = config.getboolean(key, 'use_gpu')
+
+    cls.max_experiments = config.getint(key, 'max_experiments')
+    if cls.max_experiments <= 0:
+        cls.max_experiments = np.inf
+    return cls
+
+
+@_parse_config_from_file
 class DpsConfig(Config):
     log_dir = None
     log_name = "dps"
 
     def __init__(self, **kwargs):
         super(DpsConfig, self).__init__(**kwargs)
-        self._parse_config_file()
         if self.log_dir is None:
             self.log_dir = str(Path(self.log_root) / self.log_name)
-
-    def _parse_config_file(self, key=None):
-        config = configparser.ConfigParser()
-        location = Path(dps.__file__).parent
-        config.read(str(location / 'config.ini'))
-
-        if not key:
-            key = socket.gethostname().split('-')[0]
-
-        if key not in config:
-            key = 'DEFAULT'
-
-        self.start_tensorboard = config.getboolean(key, 'start_tensorboard')
-        self.update_latest = config.getboolean(key, 'update_latest')
-        self.save_summaries = config.getboolean(key, 'save_summaries')
-        self.data_dir = process_path(config.get(key, 'data_dir'))
-        self.log_root = process_path(config.get(key, 'log_root'))
-        self.display = config.getboolean(key, 'display')
-        self.save_display = config.getboolean(key, 'save_display')
-        self.mpl_backend = config.get(key, 'mpl_backend')
-
-        self.max_experiments = config.getint(key, 'max_experiments')
-        if self.max_experiments <= 0:
-            self.max_experiments = np.inf
 
     def schedule(self, kind):
         schedule = [getattr(self, kind + '_' + s, None)
