@@ -5,10 +5,12 @@ from shutil import rmtree
 
 from dps.attention import DRAW_attention_2D
 from dps.utils import MLP, NumpySeed
-from dps.experiments.mnist import TranslatedMnistDataset, load_or_train, MnistConfig
+from dps.mnist import (
+    TranslatedMnistDataset, load_or_train, MnistConfig, MnistPretrained, DRAW, train_mnist)
 
 
 n_symbols = 20
+N = 14
 
 
 def _eval_model(sess, inference, x_ph):
@@ -24,12 +26,11 @@ def _eval_model(sess, inference, x_ph):
     x, y = test_dataset.next_batch()
     _loss, _accuracy = sess.run([loss, accuracy], {x_ph: x, y_ph: y})
     print("Loss: {}, accuracy: {}".format(_loss, _accuracy))
-    assert _accuracy > 0.5
+    assert _accuracy > 0.7
 
 
 def build_model(inp):
     batch_size = tf.shape(inp)[0]
-    N = 14
     glimpse = DRAW_attention_2D(
         tf.reshape(inp, (-1, 28, 28)),
         fovea_x=tf.zeros((batch_size, 1)),
@@ -42,14 +43,13 @@ def build_model(inp):
     return tf.nn.softmax(logits)
 
 
-def test_mnist_pretraining():
+def test_mnist_load_or_train():
     with NumpySeed(83849):
         config = MnistConfig(max_steps=10000, symbols=list(range(n_symbols)))
         g = tf.Graph()
         with g.as_default():
             with tf.variable_scope('mnist') as var_scope:
-                obs_dim = 28 ** 2
-                x_ph = tf.placeholder(tf.float32, (None, obs_dim))
+                x_ph = tf.placeholder(tf.float32, (None, 28**2))
                 inference = build_model(x_ph)
             sess = tf.Session()
 
@@ -62,7 +62,7 @@ def test_mnist_pretraining():
             checkpoint_dir.mkdir(parents=True, exist_ok=False)
 
             loaded = load_or_train(
-                sess, build_model, var_scope,
+                sess, build_model, train_mnist, var_scope,
                 str(checkpoint_dir / 'model.chk'), config=config)
             assert not loaded
             _eval_model(sess, inference, x_ph)
@@ -70,13 +70,58 @@ def test_mnist_pretraining():
         g = tf.Graph()
         with g.as_default():
             with tf.variable_scope('mnist') as var_scope:
-                obs_dim = 28 ** 2
-                x_ph = tf.placeholder(tf.float32, (None, obs_dim))
+                x_ph = tf.placeholder(tf.float32, (None, 28**2))
                 inference = build_model(x_ph)
             sess = tf.Session()
 
             loaded = load_or_train(
-                sess, build_model, var_scope,
+                sess, build_model, train_mnist, var_scope,
                 str(checkpoint_dir / 'model.chk'), config=config)
             assert loaded
             _eval_model(sess, inference, x_ph)
+
+
+def build_classifier(inp, outp_size):
+    logits = MLP([100, 100], activation_fn=tf.nn.sigmoid)(inp, outp_size)
+    return tf.nn.softmax(logits)
+
+
+def test_mnist_pretrained():
+    with NumpySeed(83849):
+        config = MnistConfig(max_steps=10000, symbols=list(range(n_symbols)))
+        g = tf.Graph()
+        with g.as_default():
+
+            sess = tf.Session()
+
+            checkpoint_dir = Path(config.log_root) / 'mnist_test/checkpoint'
+            try:
+                rmtree(str(checkpoint_dir))
+            except FileNotFoundError:
+                pass
+
+            checkpoint_dir.mkdir(parents=True, exist_ok=False)
+
+            with sess.as_default():
+                build_model = MnistPretrained(
+                    DRAW(N), build_classifier, model_dir=str(checkpoint_dir),
+                    preprocess=True, config=config)
+                x_ph = tf.placeholder(tf.float32, (None, 28**2))
+                inference = build_model(x_ph, preprocess=True)
+                assert not build_model.was_loaded
+
+                _eval_model(sess, inference, x_ph)
+
+        g = tf.Graph()
+        with g.as_default():
+            sess = tf.Session()
+
+            with sess.as_default():
+                build_model = MnistPretrained(
+                    DRAW(N), build_classifier, model_dir=str(checkpoint_dir),
+                    preprocess=True, config=config)
+                x_ph = tf.placeholder(tf.float32, (None, 28**2))
+                inference = build_model(x_ph, preprocess=True)
+                assert build_model.was_loaded
+
+                _eval_model(sess, inference, x_ph)

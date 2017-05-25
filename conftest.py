@@ -15,6 +15,7 @@ def pytest_configure(config):
 def pytest_addoption(parser):
     parser.addoption("--max-steps", default=None, help="Maximum number of steps to run.")
     parser.addoption("--display", action='store_true', help="Display any graphs that are created.")
+    parser.addoption("--run-slow", action="store_true", help="run slow tests")
 
 
 @pytest.fixture

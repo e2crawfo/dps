@@ -2,6 +2,7 @@ import time
 from contextlib import ExitStack
 from pathlib import Path
 import dill
+import os
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -9,9 +10,10 @@ import tensorflow as tf
 
 from spectral_dagger.utils.experiment import ExperimentStore
 from dps.environment import RegressionDataset
-from dps.utils import load_or_train as _load_or_train
 from dps.utils import (
-    build_decaying_value, EarlyStopHook, gen_seed, DpsConfig, default_config)
+    build_decaying_value, EarlyStopHook, gen_seed, DpsConfig,
+    default_config, load_or_train)
+from dps.attention import DRAW_attention_2D
 
 
 class Rect(object):
@@ -282,17 +284,6 @@ class MnistArithmeticDataset(RegressionDataset):
             s.set_title(str(self.y[i, 0]))
 
 
-if __name__ == "__main__":
-    W = 100
-    n_digits = 3
-    max_overlap = 100
-    n_examples = 400
-    symbols = [('A', lambda x: sum(x)), ('M', lambda x: np.product(x)), ('C', lambda x: len(x))]
-    dataset = MnistArithmeticDataset(symbols, W, n_digits, max_overlap, n_examples, base=2, for_eval=False, shuffle=True)
-    dataset.visualize()
-    plt.show()
-
-
 class MnistConfig(DpsConfig):
     batch_size = 64
     eval_step = 100
@@ -305,7 +296,7 @@ class MnistConfig(DpsConfig):
     n_train = 60000
     n_val = 1000
     symbols = list(range(10))
-    log_name = 'mnist_pretraining'
+    log_name = 'mnist_pretrained'
 
 
 def train_mnist(build_model, var_scope, path=None, config=None):
@@ -415,7 +406,102 @@ def train_mnist(build_model, var_scope, path=None, config=None):
             step += 1
 
 
-def load_or_train(sess, build_model, var_scope, path=None, config=None):
-    """ Load a pre-trained mnist model or train one and return it if none exists. """
-    loaded = _load_or_train(sess, build_model, train_mnist, var_scope, path, config)
-    return loaded
+class DRAW(object):
+    def __init__(self, N):
+        self.N = N
+
+    def __call__(self, inp, fovea_x=None, fovea_y=None, delta=None, sigma=None):
+        reshape = len(inp.shape) == 2
+        if reshape:
+            s = int(np.sqrt(int(inp.shape[1])))
+            inp = tf.reshape(inp, (-1, s, s))
+
+        batch_size = tf.shape(inp)[0]
+        if fovea_x is None:
+            fovea_x = tf.zeros((batch_size, 1))
+        if fovea_y is None:
+            fovea_y = tf.zeros((batch_size, 1))
+        if delta is None:
+            delta = tf.ones((batch_size, 1))
+        if sigma is None:
+            sigma = tf.ones((batch_size, 1))
+
+        glimpse = DRAW_attention_2D(
+            inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta,
+            std=tf.ones((batch_size, 1)), N=self.N)
+
+        if reshape:
+            glimpse = tf.reshape(glimpse, (-1, self.N*self.N))
+
+        return glimpse
+
+
+class MnistPretrained(object):
+    """ A wrapper around a classifier that initializes it with values stored on disk. """
+
+    def __init__(
+            self, build_preprocessor, build_classifier, var_scope_name='mnist',
+            model_dir=None, name='model.chk', config=None, preprocess=False):
+        """ If `preprocess` is False, preprocessor only applied during pre-training. """
+        self._build_preprocessor = build_preprocessor
+        self._build_classifier = build_classifier
+
+        self.var_scope_name = var_scope_name
+        self.var_scope = None
+        self.model_dir = str(model_dir or Path(default_config().log_dir))
+        self.name = name
+        self.path = os.path.join(self.model_dir, name)
+        self.n_builds = 0
+        self.config = config or MnistConfig()
+        self.preprocess = preprocess
+        self.was_loaded = None
+
+        self.n_symbols = len(self.config.symbols)
+
+    def __call__(self, inp, preprocess=False):
+        if preprocess and self._build_preprocessor is not None:
+            prepped = self._build_preprocessor(inp)
+        else:
+            prepped = inp
+
+        if self.n_builds == 0:
+            # Create the network so there are variables to load into
+            with tf.variable_scope(self.var_scope_name, reuse=False) as var_scope:
+                outp = self._build_classifier(prepped, self.n_symbols)
+
+            self.var_scope = var_scope
+
+            builder = _MnistPretrainedBuilder(self._build_preprocessor, self._build_classifier, self.n_symbols)
+
+            # Initializes created variables by loading from a file or training separately
+            self.was_loaded = load_or_train(
+                tf.get_default_session(), builder, train_mnist, self.var_scope, self.path, self.config)
+            self.n_builds += 1
+        else:
+            with tf.variable_scope(self.var_scope, reuse=True) as var_scope:
+                outp = self._build_classifier(prepped, self.n_symbols)
+
+        return outp
+
+
+class _MnistPretrainedBuilder(object):
+    def __init__(self, bp, bc, n_symbols):
+        self.bp, self.bc, self.n_symbols = bp, bc, n_symbols
+
+    def __call__(self, inp):
+        prepped = inp
+        if self.bp is not None:
+            prepped = self.bp(inp)
+        inference = self.bc(prepped, self.n_symbols)
+        return inference
+
+
+if __name__ == "__main__":
+    W = 100
+    n_digits = 3
+    max_overlap = 100
+    n_examples = 400
+    symbols = [('A', lambda x: sum(x)), ('M', lambda x: np.product(x)), ('C', lambda x: len(x))]
+    dataset = MnistArithmeticDataset(symbols, W, n_digits, max_overlap, n_examples, base=2, for_eval=False, shuffle=True)
+    dataset.visualize()
+    plt.show()

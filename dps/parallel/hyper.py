@@ -120,6 +120,7 @@ def reduce_hyper_results(*results):
 
         # Losses reached on current stage.
         axis = subplots[stage, 0]
+        axis.set_ylabel("stage {}".format(stage))
         n, bins, patches = axis.hist(losses, 50, normed=1, facecolor='green', alpha=0.75)
         axis.set_title('Individual')
 
@@ -177,8 +178,7 @@ def reduce_hyper_results(*results):
     print(mean_ranked[:3])
 
     plt.tight_layout()
-
-    plt.show()
+    plt.savefig('hyper_histogram.pdf')
 
 
 class RunTrainer(object):

@@ -202,7 +202,7 @@ class HardAdditionConfig(DefaultConfig):
 
 class TranslatedMnistConfig(DefaultConfig):
     T = 10
-    scaled = True
+    scaled = False
     curriculum = [
         dict(W=28, N=8, T=4),
         dict(W=28, N=8, T=10),

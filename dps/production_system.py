@@ -4,15 +4,13 @@ import os
 import copy
 import pandas as pd
 from tabulate import tabulate
-from pprint import pprint, pformat
+from pprint import pformat
 
 import tensorflow as tf
 from tensorflow.python.ops.rnn import dynamic_rnn
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 
-from gym.utils import seeding
-
-from dps.environment import BatchBox, Env
+from dps.environment import BatchBox
 from dps.updater import DifferentiableUpdater
 from dps.reinforce import REINFORCE
 from dps.qlearning import QLearning

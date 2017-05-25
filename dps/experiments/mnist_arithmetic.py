@@ -4,12 +4,13 @@ import numpy as np
 from dps import CoreNetwork
 from dps.register import RegisterBank
 from dps.environment import RegressionEnv
-from dps.utils import default_config, MLP
+from dps.utils import default_config
 from dps.production_system import ProductionSystemTrainer
 from dps.train import build_and_visualize
 from dps.policy import Policy
-from dps.experiments import mnist
-from dps.experiments.translated_mnist import MnistDrawPretrained, render_rollouts
+from dps.mnist import (
+    TranslatedMnistDataset, MnistArithmeticDataset, DRAW, MnistPretrained, MnistConfig)
+from dps.experiments.translated_mnist import render_rollouts
 
 
 class MnistArithmeticEnv(RegressionEnv):
@@ -27,16 +28,16 @@ class MnistArithmeticEnv(RegressionEnv):
         if simple:
             # We only learn about one function, addition, and there is no symbol to extract.
             super(MnistArithmeticEnv, self).__init__(
-                train=mnist.TranslatedMnistDataset(W, n_digits, max_overlap, n_train, for_eval=False),
-                val=mnist.TranslatedMnistDataset(W, n_digits, max_overlap, n_val, for_eval=True),
-                test=mnist.TranslatedMnistDataset(W, n_digits, max_overlap, n_test, for_eval=True))
+                train=TranslatedMnistDataset(W, n_digits, max_overlap, n_train, for_eval=False),
+                val=TranslatedMnistDataset(W, n_digits, max_overlap, n_val, for_eval=True),
+                test=TranslatedMnistDataset(W, n_digits, max_overlap, n_test, for_eval=True))
         else:
             symbols = [('A', lambda x: sum(x)), ('M', lambda x: np.product(x)), ('C', lambda x: len(x))]
-            train = mnist.MnistArithmeticDataset(
+            train = MnistArithmeticDataset(
                 symbols, W, n_digits, max_overlap, n_train, base=base, for_eval=False, shuffle=True)
-            val = mnist.MnistArithmeticDataset(
+            val = MnistArithmeticDataset(
                 symbols, W, n_digits, max_overlap, n_train, base=base, for_eval=True)
-            test = mnist.MnistArithmeticDataset(
+            test = MnistArithmeticDataset(
                 symbols, W, n_digits, max_overlap, n_train, base=base, for_eval=True)
             super(MnistArithmeticEnv, self).__init__(train=train, val=val, test=test)
 
@@ -45,11 +46,6 @@ class MnistArithmeticEnv(RegressionEnv):
 
     def _render(self, mode='human', close=False):
         pass
-
-
-def build_classifier(inp, outp_size):
-    logits = MLP([100, 100], activation_fn=tf.nn.sigmoid)(inp, outp_size)
-    return tf.nn.softmax(logits)
 
 
 class MnistArithmetic(CoreNetwork):
@@ -78,13 +74,19 @@ class MnistArithmetic(CoreNetwork):
         build_classifier = default_config().build_classifier
         classifier_str = default_config().classifier_str
 
+        self.build_attention = DRAW(self.N)
+
+        digit_config = MnistConfig(symbols=range(10))
         name = '{}_N={}_symbols={}.chk'.format(classifier_str, self.N, '_'.join(str(s) for s in range(10)))
-        self.digit_classifier = MnistDrawPretrained(build_classifier, self.N, name=name, var_scope_name='digit_classifier')
+        self.build_digit_classifier = MnistPretrained(
+            self.build_attention, build_classifier, name=name,
+            var_scope_name='digit_classifier', config=digit_config)
 
         op_symbols = [10, 12, 22]
+        op_config = MnistConfig(symbols=op_symbols)
         name = '{}_N={}_symbols={}.chk'.format(classifier_str, self.N, '_'.join(str(s) for s in op_symbols))
-        mnist_config = mnist.MnistConfig(symbols=op_symbols)
-        self.op_classifier = MnistDrawPretrained(build_classifier, self.N, name=name, config=mnist_config, var_scope_name='op_classifier')
+        self.build_op_classifier = MnistPretrained(
+            self.build_attention, build_classifier, name=name, var_scope_name='op_classifier', config=op_config)
 
         values = (
             [0., 0., 0., 0., 1., 0., 0., 0.] +
@@ -107,14 +109,12 @@ class MnistArithmetic(CoreNetwork):
     def init(self, r, inp):
         op, acc, fovea_x, fovea_y, delta, vision, op_vision, t, glimpse = self.register_bank.as_tuple(r)
 
-        inp = tf.reshape(inp, (-1, self.W, self.W))
+        glimpse = self.build_attention(inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta, sigma=1.0)
 
-        digit_classification, glimpse = self.digit_classifier.build_pretrained(
-            inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta)
+        digit_classification = tf.stop_gradient(self.build_digit_classifier(glimpse))
         vision = tf.cast(tf.expand_dims(tf.argmax(digit_classification, 1), 1), tf.float32)
 
-        op_classification, _ = self.op_classifier.build_pretrained(
-            inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta)
+        op_classification = tf.stop_gradient(self.build_op_classifier(glimpse))
         op_vision = tf.cast(tf.expand_dims(tf.argmax(op_classification, 1), 1), tf.float32)
 
         with tf.name_scope("MnistArithmetic"):
@@ -165,20 +165,12 @@ class MnistArithmetic(CoreNetwork):
             dec_delta * (_delta - self.inc_delta) + \
             dec_delta_big * (_delta - 5 * self.inc_delta)
 
-        inp = tf.reshape(inp, (-1, self.W, self.W))
+        glimpse = self.build_attention(inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta, sigma=1.0)
 
-        digit_classification, glimpse = self.digit_classifier.build_pretrained(
-            inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta)
-        # batch_size = tf.shape(digit_classification)[0]
-        # _vision = digit_classification * tf.tile(tf.expand_dims(tf.range(10, dtype=tf.float32), 0), (batch_size, 1))
-        # vision = tf.reduce_sum(_vision, 1, keep_dims=True)
+        digit_classification = tf.stop_gradient(self.build_digit_classifier(glimpse))
         vision = tf.cast(tf.expand_dims(tf.argmax(digit_classification, 1), 1), tf.float32)
 
-        op_classification, _ = self.op_classifier.build_pretrained(
-            inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta)
-        # batch_size = tf.shape(classification)[0]
-        # _op_vision = classification * tf.tile(tf.expand_dims(tf.range(10, dtype=tf.float32), 0), (batch_size, 1))
-        # op_vision = tf.reduce_sum(_op_vision, 1, keep_dims=True)
+        op_classification = tf.stop_gradient(self.build_op_classifier(glimpse))
         op_vision = tf.cast(tf.expand_dims(tf.argmax(op_classification, 1), 1), tf.float32)
 
         t = _t + 1

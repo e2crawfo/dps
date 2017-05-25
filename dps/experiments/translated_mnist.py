@@ -1,6 +1,5 @@
 import matplotlib.pyplot as plt
 from matplotlib import animation, patches
-import os
 from pathlib import Path
 
 import tensorflow as tf
@@ -9,12 +8,11 @@ import numpy as np
 from dps import CoreNetwork
 from dps.register import RegisterBank
 from dps.environment import RegressionEnv
-from dps.utils import default_config, MLP
+from dps.utils import default_config
 from dps.production_system import ProductionSystemTrainer
 from dps.train import build_and_visualize
 from dps.policy import Policy
-from dps.experiments import mnist
-from dps.attention import DRAW_attention_2D
+from dps.mnist import TranslatedMnistDataset, DRAW, MnistPretrained, MnistConfig
 
 
 class TranslatedMnistEnv(RegressionEnv):
@@ -28,97 +26,15 @@ class TranslatedMnistEnv(RegressionEnv):
         n_digits = 1
         max_overlap = 200
         super(TranslatedMnistEnv, self).__init__(
-            train=mnist.TranslatedMnistDataset(W, n_digits, max_overlap, n_train, for_eval=False),
-            val=mnist.TranslatedMnistDataset(W, n_digits, max_overlap, n_val, for_eval=True),
-            test=mnist.TranslatedMnistDataset(W, n_digits, max_overlap, n_test, for_eval=True))
+            train=TranslatedMnistDataset(W, n_digits, max_overlap, n_train, for_eval=False),
+            val=TranslatedMnistDataset(W, n_digits, max_overlap, n_val, for_eval=True),
+            test=TranslatedMnistDataset(W, n_digits, max_overlap, n_test, for_eval=True))
 
     def __str__(self):
         return "<TranslatedMnistEnv W={}>".format(self.W)
 
     def _render(self, mode='human', close=False):
         pass
-
-
-def build_classifier(inp):
-    logits = MLP([100, 100], activation_fn=tf.nn.sigmoid)(inp, 10)
-    return tf.nn.softmax(logits)
-
-
-class MnistDrawPretrained(object):
-    """ A wrapper around a classifier that initializes it with values stored on disk. """
-    def __init__(
-            self, build_classifier, N, var_scope_name='mnist', freeze_weights=True,
-            model_dir=None, name='model.chk', config=None):
-
-        self._build_classifier = build_classifier
-        self.N = N
-        self.var_scope_name = var_scope_name
-        self.var_scope = None
-        model_dir = model_dir or str(Path(default_config().log_root) / 'mnist_pretrained')
-        self.model_dir = model_dir
-        self.name = name
-        self.path = os.path.join(model_dir, name)
-        self.n_builds = 0
-        self.freeze_weights = freeze_weights
-        self.config = config or mnist.MnistConfig()
-
-    def build_classifier(self, inp):
-        """ Returns class probabilities given a glimpse. """
-        if len(inp.shape) == 3:
-            inp = tf.reshape(inp, (tf.shape(inp)[0], int(inp.shape[1]) * int(inp.shape[2])))
-        return self._build_classifier(inp, len(self.config.symbols))
-
-    def build_draw_plus_classifier(self, inp, fovea_x=None, fovea_y=None, delta=None, sigma=None):
-        """ Returns class probabilities and a glimpse given raw image, but doesn't load from disk. """
-        if self.N:
-            if len(inp.shape) == 2:
-                s = int(np.sqrt(int(inp.shape[1])))
-                inp = tf.reshape(inp, (-1, s, s))
-
-            batch_size = tf.shape(inp)[0]
-            if fovea_x is None:
-                fovea_x = tf.zeros((batch_size, 1))
-            if fovea_y is None:
-                fovea_y = tf.zeros((batch_size, 1))
-            if delta is None:
-                delta = tf.ones((batch_size, 1))
-            if sigma is None:
-                sigma = tf.ones((batch_size, 1))
-
-            glimpse = DRAW_attention_2D(
-                inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta,
-                std=tf.ones((batch_size, 1)), N=self.N)
-        else:
-            glimpse = inp
-
-        return self.build_classifier(glimpse), glimpse
-
-    def build_pretrained(self, inp, **build_kwargs):
-        """ Adds a draw layer and a classifier pretrained from data. """
-        if self.n_builds == 0:
-            # Create the network so there are variables to load into
-            with tf.variable_scope(self.var_scope_name, reuse=False) as var_scope:
-                outp, glimpse = self.build_draw_plus_classifier(inp, **build_kwargs)
-                if self.freeze_weights:
-                    outp = tf.stop_gradient(outp)
-
-            self.var_scope = var_scope
-
-            # Initializes created variables by loading from a file or training separately
-            mnist.load_or_train(
-                tf.get_default_session(), self, var_scope, self.path, self.config)
-            self.n_builds += 1
-        else:
-            with tf.variable_scope(self.var_scope, reuse=True) as var_scope:
-                outp, glimpse = self.build_draw_plus_classifier(inp, **build_kwargs)
-                if self.freeze_weights:
-                    outp = tf.stop_gradient(outp)
-
-        return outp, glimpse
-
-    def __call__(self, inp):
-        inference, glimpse = self.build_draw_plus_classifier(inp)
-        return inference
 
 
 class TranslatedMnist(CoreNetwork):
@@ -139,9 +55,15 @@ class TranslatedMnist(CoreNetwork):
 
         build_classifier = default_config().build_classifier
         classifier_str = default_config().classifier_str
-        self.classifier = MnistDrawPretrained(
-            build_classifier, self.N,
-            name='{}_N={}.chk'.format(classifier_str, self.N))
+
+        self.build_attention = DRAW(self.N)
+
+        config = MnistConfig()
+        self.build_classifier = MnistPretrained(
+            self.build_attention, build_classifier,
+            var_scope_name='digit_classifier',
+            name='{}_N={}.chk'.format(classifier_str, self.N),
+            config=config)
 
         values = (
             [0., 0., 0., 0., 1., 0.] +
@@ -164,19 +86,14 @@ class TranslatedMnist(CoreNetwork):
     def init(self, r, inp):
         outp, fovea_x, fovea_y, vision, delta, t, glimpse = self.register_bank.as_tuple(r)
 
-        inp = tf.reshape(inp, (-1, self.W, self.W))
-        classification, glimpse = self.classifier.build_pretrained(
-            inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta, sigma=1.0)
-
-        # batch_size = tf.shape(classification)[0]
-        # _vision = classification * tf.tile(tf.expand_dims(tf.range(10, dtype=tf.float32), 0), (batch_size, 1))
-        # vision = tf.reduce_sum(_vision, 1, keep_dims=True)
+        glimpse = self.build_attention(inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta, sigma=1.0)
+        classification = tf.stop_gradient(self.build_classifier(glimpse, preprocess=False))
         vision = tf.cast(tf.expand_dims(tf.argmax(classification, 1), 1), tf.float32)
 
         with tf.name_scope("TranslatedMnist"):
             new_registers = self.register_bank.wrap(
                 outp=tf.identity(outp, "outp"),
-                glimpse=tf.reshape(glimpse, (-1, self.N*self.N), name="glimpse"),
+                glimpse=tf.identity(glimpse, "glimpse"),
                 fovea_x=tf.identity(fovea_x, "fovea_x"),
                 fovea_y=tf.identity(fovea_y, "fovea_y"),
                 vision=tf.identity(vision, "vision"),
@@ -227,13 +144,8 @@ class TranslatedMnist(CoreNetwork):
 
         outp = (1 - store) * _outp + store * _vision
 
-        inp = tf.reshape(inp, (-1, self.W, self.W))
-        classification, glimpse = self.classifier.build_pretrained(
-            inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta, sigma=1.0)
-
-        # batch_size = tf.shape(classification)[0]
-        # _vision = classification * tf.tile(tf.expand_dims(tf.range(10, dtype=tf.float32), 0), (batch_size, 1))
-        # vision = tf.reduce_sum(_vision, 1, keep_dims=True)
+        glimpse = self.build_attention(inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta, sigma=1.0)
+        classification = self.build_classifier(glimpse, preprocess=False)
         vision = tf.cast(tf.expand_dims(tf.argmax(classification, 1), 1), tf.float32)
 
         t = _t + 1
@@ -241,7 +153,7 @@ class TranslatedMnist(CoreNetwork):
         with tf.name_scope("TranslatedMnist"):
             new_registers = self.register_bank.wrap(
                 outp=tf.identity(outp, "outp"),
-                glimpse=tf.reshape(glimpse, (-1, self.N*self.N), name="glimpse"),
+                glimpse=tf.identity(glimpse, "glimpse"),
                 fovea_x=tf.identity(fovea_x, "fovea_x"),
                 fovea_y=tf.identity(fovea_y, "fovea_y"),
                 vision=tf.identity(vision, "vision"),
@@ -327,7 +239,6 @@ def visualize(config):
         _config = default_config()
         W = 60
         N = 14
-        _config.display = True
         env = TranslatedMnistEnv(True, W, N, 10, 10, 10, inc_delta=0.1, inc_x=0.1, inc_y=0.1)
         cn = TranslatedMnist(env)
 
@@ -343,7 +254,8 @@ def visualize(config):
         return ProductionSystem(env, cn, policy, False, len(controller))
 
     with config.as_default():
-        build_and_visualize(build_psystem, 'train', 16, False, render_rollouts=render_rollouts)
+        build_and_visualize(
+            build_psystem, 'train', 16, False, render_rollouts=render_rollouts)
 
 
 class TranslatedMnistTrainer(ProductionSystemTrainer):
