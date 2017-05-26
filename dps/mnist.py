@@ -427,8 +427,7 @@ class DRAW(object):
             sigma = tf.ones((batch_size, 1))
 
         glimpse = DRAW_attention_2D(
-            inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta,
-            std=tf.ones((batch_size, 1)), N=self.N)
+            inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta, std=sigma, N=self.N)
 
         if reshape:
             glimpse = tf.reshape(glimpse, (-1, self.N*self.N))

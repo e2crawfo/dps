@@ -5,8 +5,6 @@ from dps import CoreNetwork
 from dps.register import RegisterBank
 from dps.environment import RegressionDataset, RegressionEnv
 from dps.utils import default_config
-from dps.train import build_and_visualize
-from dps.policy import Policy
 from dps.production_system import ProductionSystemTrainer
 
 
@@ -65,30 +63,6 @@ class HelloWorld(CoreNetwork):
             r1=mult * (_r0 * _r1) + (1 - mult) * _r1,
             r2=_r2+1)
         return new_registers
-
-
-def visualize(config):
-    from dps.production_system import ProductionSystem
-    from dps.policy import IdentitySelect
-    from dps.utils import build_decaying_value, FixedController
-
-    def build_psystem():
-        _config = default_config()
-        env = HelloWorldEnv([0, 1, 0], 10, 10, 10)
-        cn = HelloWorld(env)
-
-        controller = FixedController([0, 1, 0], cn.n_actions)
-        action_selection = IdentitySelect()
-
-        exploration = build_decaying_value(
-            _config.schedule('exploration'), 'exploration')
-        policy = Policy(
-            controller, action_selection, exploration,
-            cn.n_actions, cn.obs_dim, name="hello_world_policy")
-        return ProductionSystem(env, cn, policy, False, 3)
-
-    with config.as_default():
-        build_and_visualize(build_psystem, 'train', 1, False)
 
 
 class HelloWorldTrainer(ProductionSystemTrainer):

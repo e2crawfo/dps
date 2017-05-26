@@ -5,6 +5,8 @@ import copy
 import pandas as pd
 from tabulate import tabulate
 from pprint import pformat
+import time
+from contextlib import ExitStack
 
 import tensorflow as tf
 from tensorflow.python.ops.rnn import dynamic_rnn
@@ -14,7 +16,7 @@ from dps.environment import BatchBox
 from dps.updater import DifferentiableUpdater
 from dps.reinforce import REINFORCE
 from dps.qlearning import QLearning
-from dps.utils import default_config, build_decaying_value
+from dps.utils import default_config, build_decaying_value, uninitialized_variables_initializer, gen_seed
 from dps.train import Curriculum, training_loop
 from dps.policy import Policy
 
@@ -78,6 +80,13 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
             fd = ps_func.build_feeddict(inp=external_obs, registers=start_registers)
 
             sess = tf.get_default_session()
+
+            try:
+                sess.run(uninitialized_variables_initializer())
+                sess.run(tf.assert_variables_initialized())
+            except TypeError:
+                pass
+
             reg, a, final_registers = sess.run(
                 [ps_func.registers,
                  ps_func.action_activations,
@@ -558,3 +567,39 @@ class ProductionSystemTrainer(object):
         exp_name = "selection={}_updater={}_seed={}".format(
             config.action_selection.__class__.__name__, config.updater_class.__name__, config.seed)
         return training_loop(curriculum, config, exp_name=exp_name)
+
+
+def build_and_visualize(sample=False):
+    config = default_config()
+    with ExitStack() as stack:
+
+        graph = tf.Graph()
+
+        if not default_config().use_gpu:
+            stack.enter_context(graph.device("/cpu:0"))
+
+        sess = tf.Session(graph=graph)
+
+        stack.enter_context(graph.as_default())
+        stack.enter_context(sess)
+        stack.enter_context(sess.as_default())
+
+        tf_seed = gen_seed()
+        tf.set_random_seed(tf_seed)
+
+        env = config.trainer.build_env()
+        cn = config.trainer.build_core_network(env)
+
+        exploration = tf.constant(0.0)
+        policy = Policy(
+            config.controller_func(cn.n_actions), config.action_selection, exploration,
+            cn.n_actions, cn.obs_dim)
+        psystem = ProductionSystem(env, cn, policy, False, config.T)
+
+        render_rollouts = getattr(config, 'render_rollouts', None)
+
+        start_time = time.time()
+        psystem.visualize('train', config.batch_size, sample, render_rollouts)
+        duration = time.time() - start_time
+
+        print("Took {} seconds.".format(duration))

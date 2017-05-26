@@ -7,8 +7,6 @@ from dps.environment import RegressionDataset, RegressionEnv
 from dps.utils import default_config
 from dps.attention import apply_gaussian_filter
 from dps.production_system import ProductionSystemTrainer
-from dps.train import build_and_visualize
-from dps.policy import Policy
 
 
 class PointerDataset(RegressionDataset):
@@ -80,31 +78,6 @@ class Pointer(CoreNetwork):
         new_registers = self.register_bank.wrap(fovea=fovea, vision=vision, wm=wm, t=t)
 
         return new_registers
-
-
-def visualize(config):
-    from dps.production_system import ProductionSystem
-    from dps.policy import IdentitySelect
-    from dps.utils import build_decaying_value, FixedController
-
-    def build_psystem():
-        _config = default_config()
-        width = _config.curriculum[0]['width']
-        n_digits = _config.curriculum[0]['n_digits']
-        env = PointerEnv(width, n_digits, 10, 10, 10)
-        cn = Pointer(env)
-
-        controller = FixedController([0, 2, 1], cn.n_actions)
-        action_selection = IdentitySelect()
-
-        exploration = build_decaying_value(_config.schedule('exploration'), 'exploration')
-        policy = Policy(
-            controller, action_selection, exploration,
-            cn.n_actions, cn.obs_dim, name="pointer_policy")
-        return ProductionSystem(env, cn, policy, False, 3)
-
-    with config.as_default():
-        build_and_visualize(build_psystem, 'train', 1, False)
 
 
 class PointerTrainer(ProductionSystemTrainer):

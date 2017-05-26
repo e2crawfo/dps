@@ -2,7 +2,8 @@ import argparse
 
 import clify
 
-from dps.test.config import algorithms, tasks
+from dps.test.config import algorithms, tasks, test_configs
+from dps.production_system import build_and_visualize
 from dps.utils import pdb_postmortem
 
 
@@ -31,13 +32,15 @@ def run():
 
 
 def _run(alg, task):
-    config = tasks[task]
     if alg == 'visualize':
+        config = test_configs[task]
         config.display = True
         config.save_display = True
         config = clify.wrap_object(config).parse()
-        config.visualize()
+        with config.as_default():
+            build_and_visualize()
     else:
+        config = tasks[task]
         config.update(algorithms[alg])
         config = clify.wrap_object(config).parse()
         config.trainer.train(config=config)

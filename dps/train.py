@@ -9,7 +9,7 @@ import datetime
 
 from spectral_dagger.utils.experiment import ExperimentStore
 from dps.utils import (
-    restart_tensorboard, EarlyStopHook, gen_seed, default_config,
+    restart_tensorboard, EarlyStopHook, gen_seed,
     time_limit, uninitialized_variables_initializer)
 
 
@@ -244,31 +244,3 @@ class Curriculum(object):
 
     def history(self):
         return self.early_stop._history
-
-
-def build_and_visualize(build_psystem, mode, n_rollouts, sample, render_rollouts=None):
-    with ExitStack() as stack:
-
-        graph = tf.Graph()
-
-        if not default_config().use_gpu:
-            stack.enter_context(graph.device("/cpu:0"))
-
-        sess = tf.Session(graph=graph, config=tf.ConfigProto(log_device_placement=True))
-
-        stack.enter_context(graph.as_default())
-        stack.enter_context(sess)
-        stack.enter_context(sess.as_default())
-
-        tf_seed = gen_seed()
-        tf.set_random_seed(tf_seed)
-
-        psystem = build_psystem()
-
-        sess.run(uninitialized_variables_initializer())
-        sess.run(tf.assert_variables_initialized())
-
-        start_time = time.time()
-        psystem.visualize(mode, n_rollouts, sample, render_rollouts)
-        duration = time.time() - start_time
-        print("Took {} seconds.".format(duration))

@@ -5,8 +5,8 @@ import os
 from dps.updater import DifferentiableUpdater
 from dps.reinforce import REINFORCE
 from dps.qlearning import QLearning
-from dps.policy import SoftmaxSelect, EpsilonGreedySelect, GumbelSoftmaxSelect
-from dps.utils import Config, CompositeCell, FeedforwardCell, MLP, DpsConfig
+from dps.policy import SoftmaxSelect, EpsilonGreedySelect, GumbelSoftmaxSelect, IdentitySelect
+from dps.utils import Config, CompositeCell, FeedforwardCell, MLP, DpsConfig, FixedController
 from dps.experiments import (
     hello_world, simple_addition, pointer_following,
     hard_addition, translated_mnist, mnist_arithmetic)
@@ -127,7 +127,6 @@ class DebugConfig(Config):
 
 
 class HelloWorldConfig(DefaultConfig):
-    T = 3
     curriculum = [
         dict(order=[0, 1], T=2),
         dict(order=[0, 1, 0], T=3),
@@ -138,7 +137,6 @@ class HelloWorldConfig(DefaultConfig):
                                         n_actions))
     log_name = 'hello_world'
     trainer = hello_world.HelloWorldTrainer()
-    visualize = hello_world.visualize
 
 
 class SimpleAdditionConfig(DefaultConfig):
@@ -175,7 +173,6 @@ class SimpleAdditionConfig(DefaultConfig):
     log_name = 'simple_addition'
 
     trainer = simple_addition.SimpleAdditionTrainer()
-    visualize = simple_addition.visualize
 
 
 class PointerConfig(DefaultConfig):
@@ -186,7 +183,6 @@ class PointerConfig(DefaultConfig):
     log_name = 'pointer'
 
     trainer = pointer_following.PointerTrainer()
-    visualize = pointer_following.visualize
 
 
 class HardAdditionConfig(DefaultConfig):
@@ -196,7 +192,6 @@ class HardAdditionConfig(DefaultConfig):
         dict(height=2, width=3, n_digits=2, entropy_start=0.0)]
     log_name = 'hard_addition'
     trainer = hard_addition.HardAdditionTrainer()
-    visualize = hard_addition.visualize
     preserve_policy = False
 
 
@@ -241,7 +236,6 @@ class TranslatedMnistConfig(DefaultConfig):
     inc_y = 0.1
 
     trainer = translated_mnist.TranslatedMnistTrainer()
-    visualize = translated_mnist.visualize
 
 
 class MnistArithmeticConfig(DefaultConfig):
@@ -277,7 +271,102 @@ class MnistArithmeticConfig(DefaultConfig):
     inc_y = 0.1
 
     trainer = mnist_arithmetic.MnistArithmeticTrainer()
-    visualize = mnist_arithmetic.visualize
+
+
+class TestConfig(DefaultConfig):
+    n_val = 0
+    n_test = 0
+    batch_size = 1
+    action_selection = IdentitySelect()
+    verbose = 4
+
+    action_seq = None
+
+    @property
+    def controller_func(self):
+        return lambda n_actions: FixedController(self.action_seq, n_actions)
+
+    @property
+    def T(self):
+        return len(self.action_seq)
+
+    @property
+    def n_train(self):
+        return self.batch_size
+
+
+class HelloWorldTest(TestConfig, HelloWorldConfig):
+    order = [0, 1, 0]
+    T = 3
+    action_seq = [0, 1, 0]
+
+
+class SimpleAdditionTest(TestConfig, SimpleAdditionConfig):
+    width = 1
+    n_digits = 10
+    action_seq = [0, 2, 1, 1, 3, 5, 0]
+
+
+class PointerTest(TestConfig, PointerConfig):
+    width = 1
+    n_digits = 10
+    action_seq = [0, 2, 1]
+
+
+class HardAdditionTest(TestConfig, HardAdditionConfig):
+    width = 2
+    height = 2
+    n_digits = 10
+    action_seq = [4, 2, 5, 6, 7, 0, 4, 3, 5, 6, 7, 0]
+
+
+class TranslatedMnistTest(TestConfig, TranslatedMnistConfig):
+    W = 60
+    N = 14
+
+    reward_window = 0.5
+
+    inc_delta = 0.1
+    inc_x = 0.1
+    inc_y = 0.1
+
+    classifier_str = "MLP_30_30"
+
+    @staticmethod
+    def build_classifier(inp, outp_size):
+        logits = MLP([30, 30], activation_fn=tf.nn.sigmoid)(inp, outp_size)
+        return tf.nn.softmax(logits)
+
+    action_seq = range(14)
+    batch_size = 16
+
+    render_rollouts = staticmethod(translated_mnist.render_rollouts)
+
+
+class MnistArithmeticTest(TestConfig, MnistArithmeticConfig):
+    W = 100
+    N = 8
+    simple = False
+    base = 3
+    n_digits = 2
+
+    reward_window = 0.5
+
+    inc_delta = 0.1
+    inc_x = 0.1
+    inc_y = 0.1
+
+    classifier_str = "MLP_30_30"
+
+    @staticmethod
+    def build_classifier(inp, outp_size):
+        logits = MLP([30, 30], activation_fn=tf.nn.sigmoid)(inp, outp_size)
+        return tf.nn.softmax(logits)
+
+    action_seq = range(14)
+    batch_size = 16
+
+    render_rollouts = staticmethod(translated_mnist.render_rollouts)
 
 
 algorithms = dict(
@@ -293,3 +382,11 @@ tasks = dict(
     hard_addition=HardAdditionConfig(),
     translated_mnist=TranslatedMnistConfig(),
     mnist_arithmetic=MnistArithmeticConfig())
+
+test_configs = dict(
+    hello_world=HelloWorldTest(),
+    simple_addition=SimpleAdditionTest(),
+    pointer=PointerTest(),
+    hard_addition=HardAdditionTest(),
+    translated_mnist=TranslatedMnistTest(),
+    mnist_arithmetic=MnistArithmeticTest())

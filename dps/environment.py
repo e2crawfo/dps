@@ -147,6 +147,8 @@ class RegressionDataset(object):
 
         if batch_size is None:
             batch_size = self.n_examples - start
+        elif batch_size > self.n_examples:
+            raise Exception("Too few examples ({}) to satisfy batch size of {}.".format(self.n_examples, batch_size))
 
         # Shuffle for the first epoch
         if self._epochs_completed == 0 and start == 0 and self.shuffle:

@@ -1,6 +1,7 @@
 import pytest
 
-from dps.test.config import algorithms, tasks
+from dps.test.config import algorithms, tasks, test_configs
+from dps.production_system import build_and_visualize
 
 
 slow = pytest.mark.skipif(
@@ -26,9 +27,10 @@ def test_production_system(task, alg, max_steps, verbose, display):
     config.trainer.train(config=config, seed=100)
 
 
-@pytest.mark.parametrize('task', sorted(tasks.keys()))
+@pytest.mark.parametrize('task', sorted(test_configs.keys()))
 def test_visualize(task, display):
-    config = tasks[task]
+    config = test_configs[task]
     config.display = display
     config.save_display = False
-    config.visualize()
+    with config.as_default():
+        build_and_visualize()

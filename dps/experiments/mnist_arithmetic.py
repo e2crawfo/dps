@@ -6,11 +6,8 @@ from dps.register import RegisterBank
 from dps.environment import RegressionEnv
 from dps.utils import default_config
 from dps.production_system import ProductionSystemTrainer
-from dps.train import build_and_visualize
-from dps.policy import Policy
 from dps.mnist import (
     TranslatedMnistDataset, MnistArithmeticDataset, DRAW, MnistPretrained, MnistConfig)
-from dps.experiments.translated_mnist import render_rollouts
 
 
 class MnistArithmeticEnv(RegressionEnv):
@@ -188,36 +185,6 @@ class MnistArithmetic(CoreNetwork):
                 t=tf.identity(t, "t"))
 
         return new_registers
-
-
-def visualize(config):
-    from dps.production_system import ProductionSystem
-    from dps.policy import IdentitySelect
-    from dps.utils import build_decaying_value, FixedController
-
-    def build_psystem():
-        _config = default_config()
-        W = 100
-        base = 10
-        simple = False
-        N = 14
-        n_digits = 2
-        env = MnistArithmeticEnv(simple, base, n_digits, W, N, 10, 10, 10, inc_delta=0.1, inc_x=0.1, inc_y=0.1)
-        cn = MnistArithmetic(env)
-
-        controller = FixedController(list(range(cn.n_actions)), cn.n_actions)
-        # controller = FixedController([4, 2, 5, 6, 7, 0, 4, 3, 5, 6, 7, 0], cn.n_actions)
-        # controller = FixedController([8], cn.n_actions)
-        action_selection = IdentitySelect()
-
-        exploration = build_decaying_value(_config.schedule('exploration'), 'exploration')
-        policy = Policy(
-            controller, action_selection, exploration,
-            cn.n_actions, cn.obs_dim, name="mnist_arithmetic_policy")
-        return ProductionSystem(env, cn, policy, False, len(controller))
-
-    with config.as_default():
-        build_and_visualize(build_psystem, 'train', 16, False, render_rollouts=render_rollouts)
 
 
 class MnistArithmeticTrainer(ProductionSystemTrainer):

@@ -7,8 +7,6 @@ from dps.environment import RegressionDataset, RegressionEnv
 from dps.utils import default_config
 from dps.attention import gaussian_filter
 from dps.production_system import ProductionSystemTrainer
-from dps.train import build_and_visualize
-from dps.policy import Policy
 
 
 def digits_to_numbers(digits, base=10, axis=-1, keepdims=False):
@@ -169,36 +167,6 @@ class HardAddition(CoreNetwork):
                 t=tf.identity(t, "t"))
 
         return new_registers
-
-
-def visualize(config):
-    from dps.production_system import ProductionSystem
-    from dps.policy import IdentitySelect
-    from dps.utils import build_decaying_value, FixedController
-
-    def build_psystem():
-        _config = default_config()
-        height = 2
-        width = 2
-        n_digits = 10
-        env = HardAdditionEnv(height, width, n_digits, 10, 10, 10)
-        cn = HardAddition(env)
-
-        # controller = FixedController(list(range(cn.n_actions)), cn.n_actions)
-        # This is a perfect execution of the algo for width == height == 2.
-        controller = FixedController([4, 2, 5, 6, 7, 0, 4, 3, 5, 6, 7, 0], cn.n_actions)
-        action_selection = IdentitySelect()
-
-        exploration = build_decaying_value(
-            _config.schedule('exploration'), 'exploration')
-        policy = Policy(
-            controller, action_selection, exploration,
-            cn.n_actions, cn.obs_dim, name="addition_policy")
-        return ProductionSystem(env, cn, policy, False, 12)
-        # return ProductionSystem(env, cn, policy, False, cn.n_actions)
-
-    with config.as_default():
-        build_and_visualize(build_psystem, 'train', 1, False)
 
 
 class HardAdditionTrainer(ProductionSystemTrainer):
