@@ -198,6 +198,7 @@ class HardAdditionConfig(DefaultConfig):
 class TranslatedMnistConfig(DefaultConfig):
     T = 10
     scaled = False
+    discrete_attn = True
     curriculum = [
         dict(W=28, N=8, T=4),
         dict(W=28, N=8, T=10),
@@ -330,6 +331,8 @@ class TranslatedMnistTest(TestConfig, TranslatedMnistConfig):
     inc_x = 0.1
     inc_y = 0.1
 
+    discrete_attn = True
+
     classifier_str = "MLP_30_30"
 
     @staticmethod
@@ -337,7 +340,7 @@ class TranslatedMnistTest(TestConfig, TranslatedMnistConfig):
         logits = MLP([30, 30], activation_fn=tf.nn.sigmoid)(inp, outp_size)
         return tf.nn.softmax(logits)
 
-    action_seq = range(14)
+    action_seq = list(range(14))[::-1]
     batch_size = 16
 
     render_rollouts = staticmethod(translated_mnist.render_rollouts)

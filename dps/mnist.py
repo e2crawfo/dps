@@ -13,7 +13,7 @@ from dps.environment import RegressionDataset
 from dps.utils import (
     build_decaying_value, EarlyStopHook, gen_seed, DpsConfig,
     default_config, load_or_train)
-from dps.attention import DRAW_attention_2D
+from dps.attention import DRAW_attention_2D, discrete_attention
 
 
 class Rect(object):
@@ -428,6 +428,33 @@ class DRAW(object):
 
         glimpse = DRAW_attention_2D(
             inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta, std=sigma, N=self.N)
+
+        if reshape:
+            glimpse = tf.reshape(glimpse, (-1, self.N*self.N))
+
+        return glimpse
+
+
+class DiscreteAttn(object):
+    def __init__(self, N):
+        self.N = N
+
+    def __call__(self, inp, fovea_x=None, fovea_y=None, delta=None):
+        reshape = len(inp.shape) == 2
+        if reshape:
+            s = int(np.sqrt(int(inp.shape[1])))
+            inp = tf.reshape(inp, (-1, s, s))
+
+        batch_size = tf.shape(inp)[0]
+        if fovea_x is None:
+            fovea_x = tf.zeros((batch_size, 1))
+        if fovea_y is None:
+            fovea_y = tf.zeros((batch_size, 1))
+        if delta is None:
+            delta = tf.ones((batch_size, 1))
+
+        glimpse = discrete_attention(
+            inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta, N=self.N)
 
         if reshape:
             glimpse = tf.reshape(glimpse, (-1, self.N*self.N))

@@ -10,12 +10,14 @@ from dps.register import RegisterBank
 from dps.environment import RegressionEnv
 from dps.utils import default_config
 from dps.production_system import ProductionSystemTrainer
-from dps.mnist import TranslatedMnistDataset, DRAW, MnistPretrained, MnistConfig
+from dps.mnist import (
+    TranslatedMnistDataset, DRAW, DiscreteAttn, MnistPretrained, MnistConfig)
 
 
 class TranslatedMnistEnv(RegressionEnv):
-    def __init__(self, scaled, W, N, n_train, n_val, n_test, inc_delta, inc_x, inc_y):
+    def __init__(self, scaled, discrete_attn, W, N, n_train, n_val, n_test, inc_delta, inc_x, inc_y):
         self.scaled = scaled
+        self.discrete_attn = discrete_attn
         self.W = W
         self.N = N
         self.inc_delta = inc_delta
@@ -50,17 +52,21 @@ class TranslatedMnist(CoreNetwork):
         self.inc_delta = env.inc_delta
         self.inc_x = env.inc_x
         self.inc_y = env.inc_y
+        self.discrete_attn = env.discrete_attn
 
         build_classifier = default_config().build_classifier
         classifier_str = default_config().classifier_str
 
-        self.build_attention = DRAW(self.N)
+        if self.discrete_attn:
+            self.build_attention = DiscreteAttn(self.N)
+        else:
+            self.build_attention = DRAW(self.N)
 
         config = MnistConfig()
         self.build_classifier = MnistPretrained(
             self.build_attention, build_classifier,
             var_scope_name='digit_classifier',
-            name='{}_N={}.chk'.format(classifier_str, self.N),
+            name='{}_discrete={}_N={}.chk'.format(classifier_str, self.discrete_attn, self.N),
             config=config)
 
         values = (
@@ -143,7 +149,7 @@ class TranslatedMnist(CoreNetwork):
         outp = (1 - store) * _outp + store * _vision
 
         glimpse = self.build_attention(inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta)
-        classification = self.build_classifier(glimpse, preprocess=False)
+        classification = tf.stop_gradient(self.build_classifier(glimpse, preprocess=False))
         vision = tf.cast(tf.expand_dims(tf.argmax(classification, 1), 1), tf.float32)
 
         t = _t + 1
@@ -232,7 +238,7 @@ class TranslatedMnistTrainer(ProductionSystemTrainer):
     def build_env(self, **kwargs):
         config = default_config()
         return TranslatedMnistEnv(
-            config.scaled, config.W, config.N, config.n_train, config.n_val, config.n_test,
+            config.scaled, config.discrete_attn, config.W, config.N, config.n_train, config.n_val, config.n_test,
             config.inc_delta, config.inc_x, config.inc_y)
 
     def build_core_network(self, env):

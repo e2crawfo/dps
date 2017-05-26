@@ -3,7 +3,7 @@ import tensorflow as tf
 import matplotlib.pyplot as plt
 
 from dps.mnist import TranslatedMnistDataset
-from dps.attention import DRAW_attention_2D
+from dps.attention import DRAW_attention_2D, discrete_attention
 
 
 def test_draw_mnist(display):
@@ -103,3 +103,52 @@ def test_draw_parameter_effect(display):
 
     if display:
         plt.show()
+
+
+def test_discrete_mnist(display):
+    import pickle
+    import gzip
+    params = tf.constant([
+        [0.0, 0.0, 1.0, 1, 1],
+        [-1.0, 0.0, 1.0, 1, 1],
+        [0.0, 0.0, 1.0, 1, 1],
+        [1.0, 0.0, 1.0, 1, 1],
+
+        [0, 0, 0.1, 0.1, 1],
+        [0, 0, 0.1, 0.2, 1],
+        [0, 0, 0.1, 0.3, 1],
+        [0, 0, 0.1, 0.4, 1],
+
+        [0, 0, 0.1, 0.5, 1],
+        [0, 0, 0.5, 0.5, 1],
+        [0, 0, 1.0, 0.5, 1],
+        [0, 0, 2.0, 0.5, 1],
+
+        [0, 0, 0.1, 0.1, 1],
+        [0, 0, 0.1, 0.2, 1],
+        [0, 0, 0.1, 0.3, 1],
+        [0, 0, 0.1, 0.4, 1],
+    ], dtype=tf.float32)
+    batch_size = int(params.shape[0])
+
+    z = gzip.open('/data/mnist.pkl.gz', 'rb')
+    (train, _), (dev, _), (test, _) = pickle.load(z, encoding='bytes')
+    train = train[:batch_size, :]
+    W = int(np.sqrt(train[0].shape[0]))
+    train = tf.constant(train.reshape(-1, W, W))
+
+    N = 10
+    tf_attended_images = discrete_attention(train, params[:, 0:1], params[:, 1:2], params[:, 2:3], N)
+
+    sess = tf.Session()
+    sess.run(tf.global_variables_initializer())
+    attended_images = sess.run(tf_attended_images)
+
+    f, ax = plt.subplots(figsize=(10, 10))
+    ax.imshow(np.hstack(np.hstack(attended_images[:batch_size].reshape((4, 4, N, N))/255.)), cmap='gray')
+    if display:
+        plt.show()
+
+
+if __name__ == "__main__":
+    test_discrete_mnist(1)

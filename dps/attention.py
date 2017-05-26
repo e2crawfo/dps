@@ -2,6 +2,26 @@ import numpy as np
 import tensorflow as tf
 
 
+def discrete_attention(inp, fovea_x, fovea_y, delta, N):
+    top_left_x = (fovea_x - delta + 1) / 2.0
+    top_left_y = (fovea_y - delta + 1) / 2.0
+
+    bottom_right_x = (fovea_x + delta + 1) / 2.0
+    bottom_right_y = (fovea_y + delta + 1) / 2.0
+
+    boxes = tf.concat([top_left_y, top_left_x, bottom_right_y, bottom_right_x], axis=1)
+
+    inp = tf.expand_dims(inp, 3)
+
+    result = tf.image.crop_and_resize(
+        image=inp,
+        boxes=boxes,
+        box_ind=tf.range(tf.shape(inp)[0]),
+        crop_size=(N, N))
+    result = tf.squeeze(result, 3)
+    return result
+
+
 def DRAW_attention_2D(inp, fovea_x, fovea_y, delta, std, N, normalize=False):
     """
     Parameters
