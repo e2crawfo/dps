@@ -11,10 +11,11 @@ from dps.mnist import (
 
 
 class MnistArithmeticEnv(RegressionEnv):
-    def __init__(self, simple, base, n_digits, W, N, n_train, n_val, n_test, inc_delta, inc_x, inc_y):
+    def __init__(self, simple, base, n_digits, upper_bound, W, N, n_train, n_val, n_test, inc_delta, inc_x, inc_y):
         self.simple = simple
         self.base = base
         self.n_digits = n_digits
+        self.upper_bound = upper_bound
         self.W = W
         self.N = N
         self.inc_delta = inc_delta
@@ -31,11 +32,11 @@ class MnistArithmeticEnv(RegressionEnv):
         else:
             symbols = [('A', lambda x: sum(x)), ('M', lambda x: np.product(x)), ('C', lambda x: len(x))]
             train = MnistArithmeticDataset(
-                symbols, W, n_digits, max_overlap, n_train, base=base, for_eval=False, shuffle=True)
+                symbols, W, n_digits, max_overlap, n_train, upper_bound, base=base, for_eval=False, shuffle=True)
             val = MnistArithmeticDataset(
-                symbols, W, n_digits, max_overlap, n_train, base=base, for_eval=True)
+                symbols, W, n_digits, max_overlap, n_val, upper_bound, base=base, for_eval=True)
             test = MnistArithmeticDataset(
-                symbols, W, n_digits, max_overlap, n_train, base=base, for_eval=True)
+                symbols, W, n_digits, max_overlap, n_test, upper_bound, base=base, for_eval=True)
             super(MnistArithmeticEnv, self).__init__(train=train, val=val, test=test)
 
     def __str__(self):
@@ -64,6 +65,7 @@ class MnistArithmetic(CoreNetwork):
     def __init__(self, env):
         self.W = env.W
         self.N = env.N
+        self.upper_bound = env.upper_bound
         self.inc_delta = env.inc_delta
         self.inc_x = env.inc_x
         self.inc_y = env.inc_y
@@ -191,7 +193,7 @@ class MnistArithmeticTrainer(ProductionSystemTrainer):
     def build_env(self):
         config = default_config()
         return MnistArithmeticEnv(
-            config.simple, config.base, config.n_digits, config.W, config.N,
+            config.simple, config.base, config.n_digits, config.upper_bound, config.W, config.N,
             config.n_train, config.n_val, config.n_test,
             config.inc_delta, config.inc_x, config.inc_y)
 

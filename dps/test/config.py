@@ -241,14 +241,12 @@ class TranslatedMnistConfig(DefaultConfig):
 
 class MnistArithmeticConfig(DefaultConfig):
     curriculum = [
-        dict(W=100, N=8, T=10, n_digits=1),
+        dict(W=100, N=16, T=20, n_digits=3, base=10),
     ]
     simple = False
-    base = 3
     threshold = 0.15
     verbose = 4
-    base = 2
-    n_digits = 2
+    upper_bound = False
 
     classifier_str = "MLP_30_30"
 

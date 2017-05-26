@@ -194,7 +194,8 @@ def char_to_idx(c):
 
 
 class MnistArithmeticDataset(RegressionDataset):
-    def __init__(self, symbols, W, n_digits, max_overlap, n_examples, base=10, for_eval=False, shuffle=True):
+    def __init__(self, symbols, W, n_digits, max_overlap, n_examples,
+                 upper_bound=True, base=10, for_eval=False, shuffle=True):
         assert 1 <= base <= 10
         # symbols is a list of pairs of the form (letter, reduction function)
         self.symbols = symbols
@@ -202,6 +203,7 @@ class MnistArithmeticDataset(RegressionDataset):
         self.n_digits = n_digits
         self.max_overlap = max_overlap
         self.base = base
+        self.upper_bound = upper_bound
 
         mnist_x, mnist_y, symbol_map = load_emnist(list(range(base)))
         mnist_x = mnist_x.reshape(-1, 28, 28)
@@ -215,15 +217,14 @@ class MnistArithmeticDataset(RegressionDataset):
         functions = {symbol_map[k]: v for k, v in functions.items()}
 
         x, y = self.make_dataset(
-            self.n_digits, mnist_x, mnist_y, emnist_x, emnist_y, functions,
+            self.n_digits, self.upper_bound, mnist_x, mnist_y, emnist_x, emnist_y, functions,
             n_examples, self.W, self.max_overlap)
 
         super(MnistArithmeticDataset, self).__init__(x, y, for_eval, shuffle)
 
     @staticmethod
     def make_dataset(
-            n_digits, X, Y, eX, eY, functions, n_examples, W, max_overlap):
-        # n_digits is really max_digits.
+            n_digits, upper_bound, X, Y, eX, eY, functions, n_examples, W, max_overlap):
         assert n_digits > 0
 
         if n_examples == 0:
@@ -232,7 +233,11 @@ class MnistArithmeticDataset(RegressionDataset):
         new_X, new_Y = [], []
 
         for j in range(n_examples):
-            n = np.random.randint(1, n_digits+1)
+            if upper_bound:
+                n = np.random.randint(1, n_digits+1)
+            else:
+                n = n_digits
+
             i = 0
             # Sample rectangles
             while True:
