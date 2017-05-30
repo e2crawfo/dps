@@ -4,14 +4,14 @@ from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 import numpy as np
 
 from dps.updater import ReinforcementLearningUpdater
-from dps.utils import build_decaying_value
+from dps.utils import build_scheduled_value
 
 
 class REINFORCE(ReinforcementLearningUpdater):
     def __init__(self,
                  env,
                  policy,
-                 optimizer_class,
+                 optimizer_spec,
                  lr_schedule,
                  noise_schedule,
                  max_grad_norm,
@@ -20,7 +20,7 @@ class REINFORCE(ReinforcementLearningUpdater):
                  entropy_schedule):
         self.entropy_schedule = entropy_schedule
         super(REINFORCE, self).__init__(
-            env, policy, optimizer_class, lr_schedule,
+            env, policy, optimizer_spec, lr_schedule,
             noise_schedule, max_grad_norm, gamma, l2_norm_penalty)
         self.clear_buffers()
 
@@ -128,7 +128,7 @@ class REINFORCE(ReinforcementLearningUpdater):
 
             if self.entropy_schedule:
                 self.entropy_loss = -policy_mean_entropy
-                entropy_bonus = build_decaying_value(self.entropy_schedule, 'entropy_schedule')
+                entropy_bonus = build_scheduled_value(self.entropy_schedule, 'entropy_bonus')
                 loss += entropy_bonus * self.entropy_loss
 
             self.loss = loss

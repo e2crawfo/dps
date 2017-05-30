@@ -17,7 +17,7 @@ class DefaultConfig(DpsConfig):
 
     preserve_policy = True  # Whether to use the policy learned on the last stage of the curriculum for each new stage.
 
-    optimizer_class = tf.train.RMSPropOptimizer
+    optimizer_spec = "rmsprop"
     updater_class = None
 
     power_through = True  # Whether to complete the entire curriculum, even if threshold not reached.
@@ -40,8 +40,9 @@ class DefaultConfig(DpsConfig):
                                         MLP(),
                                         n_actions))
 
-    lr_start, lr_denom, lr_decay = 0.001, 1000, 0.96
-    exploration_start, exploration_denom, exploration_decay = 10.0, 1000, 0.96
+    lr_schedule = "exponential 0.001 1000 0.96"
+    exploration_schedule = "exponential 10.0 1000 0.96"
+    noise_schedule = None
 
     test_time_explore = None
 
@@ -70,7 +71,7 @@ class DiffConfig(Config):
     patience = np.inf
     T = 10
 
-    noise_start, noise_denom, noise_decay = 0.1, 1000, 0.96
+    noise_schedule = "exponential 0.1 1000 0.96"
 
 
 class ReinforceConfig(Config):
@@ -79,9 +80,8 @@ class ReinforceConfig(Config):
     test_time_explore = None
     patience = np.inf
 
-    entropy_start, entropy_denom, entropy_decay = 0.01, 1000, 0.96
-    lr_start, lr_denom, lr_decay = 0.01, 1000, 0.96
-    noise_start = None
+    entropy_schedule = "exponential 0.01 1000 0.96"
+    lr_schedule = "exponential 0.01 1000 0.96"
 
 
 class QLearningConfig(Config):
@@ -89,28 +89,78 @@ class QLearningConfig(Config):
     action_selection = EpsilonGreedySelect()
     double = False
 
-    entropy_start, entropy_denom, entropy_decay = 0.2, 1000, 0.98
-    lr_start, lr_denom, lr_decay = 0.01, 1000, 1.0
+    lr_schedule = "exponential 0.001 1000 1.0"
 
-    replay_max_size = 100000
+    replay_max_size = 1000
     replay_threshold = -0.5
     replay_proportion = None
 
     target_update_rate = 0.01
+    steps_per_target_update = 10000
     recurrent = True
     patience = np.inf
-    batch_size = 10
+    samples_per_update = 4  # Number of rollouts between parameter updates
+    update_batch_size = 16  # Number of sample rollouts to use for each parameter update
+    batch_size = 64  # Number of sample experiences to execute
     test_time_explore = 0.0
 
     l2_norm_penalty = 0.0
     max_grad_norm = 0.0
 
-    controller_func = staticmethod(
-        lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=64),
-                                        MLP(),
-                                        n_actions))
-    # controller_func = staticmethod(
-    #     lambda n_actions: FeedforwardCell(MLP([10, 10], activation_fn=tf.nn.sigmoid), n_actions))
+
+class DQNConfig(QLearningConfig):
+    # From Nature paper
+
+    # Rewards are clipped: all negative rewards set to -1, all positive set to 1, 0 unchanged.
+    batch_size = 32
+
+    lr_schedule = "0.00025"
+
+    # annealed linearly from 1 to 0.1 over first million frames,
+    # fixed at 0.1 thereafter "
+    exploration_schedule = "polynomial 1.0 10000 0.1 1"
+
+    replay_max_size = 1e6
+
+    # max number of frames/states: 10 million
+
+    test_time_explore = 0.05
+    # target_network_update Once every 10000 frames
+
+    gamma = 0.99
+
+    # 4 actions selected between each update
+    # RMS prop momentum: 0.95
+    # squared RMS prop gradient momentum: 0.95
+    # min squared gradient (RMSProp): 0.01
+    # exploration 1 to 0.1 over 1,000,000 frames
+    # total number of frames: 50,000,000, but because of frame skip, equivalent to 200,000,000 frames
+
+
+class FpsConfig(QLearningConfig):
+    gamma = 0.99
+    update_batch_size = 32
+    batch_size = 64
+
+    # Exploration: annealed linearly from 1 to 0.1 over first million steps, fixed at 0.1 thereafter
+
+    # Replay max size: 1million *frames*
+
+    # They actually update every 4 *steps*, rather than every 4 experiences
+    samples_per_update = 4
+
+
+class DuelingConfig(QLearningConfig):
+    max_grad_norm = 10.0
+    lr_schedule = "6.25e-5"  # when prioritized experience replay was used
+    test_time_explore = 0.001 # fixed at this value...this might also be the training exploration, its not clear
+
+
+class DoubleConfig(QLearningConfig):
+    double = True
+    exploration_start = 0.1 # Not totally clear, but seems like they use the same scheme as DQN, but go from 1 to 0.01, instead of 1 to 0.1
+    test_time_explore = 0.001
+    # Target network update rate: once every 30,000 frames (DQN apparently does it once every 10,000 frames).
 
 
 class DebugConfig(Config):

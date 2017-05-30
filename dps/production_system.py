@@ -16,7 +16,7 @@ from dps.environment import BatchBox
 from dps.updater import DifferentiableUpdater
 from dps.reinforce import REINFORCE
 from dps.qlearning import QLearning
-from dps.utils import default_config, build_decaying_value, uninitialized_variables_initializer, gen_seed
+from dps.utils import default_config, build_scheduled_value, uninitialized_variables_initializer, gen_seed
 from dps.train import Curriculum, training_loop
 from dps.policy import Policy
 
@@ -482,7 +482,7 @@ class ProductionSystemCurriculum(Curriculum):
 
         is_training = tf.placeholder_with_default(False, shape=(), name="is_training")
 
-        exploration = build_decaying_value(config.schedule('exploration'), 'exploration')
+        exploration = build_scheduled_value(config.exploration_schedule, 'exploration')
         if config.test_time_explore is not None:
             testing_exploration = tf.constant(config.test_time_explore, tf.float32, name='testing_exploration')
             exploration = tf.cond(is_training, lambda: exploration, lambda: testing_exploration)
@@ -508,19 +508,20 @@ class ProductionSystemCurriculum(Curriculum):
 
         if self.config.updater_class is DifferentiableUpdater:
             updater = DifferentiableUpdater(
-                psystem.env, ps_func, config.optimizer_class,
-                config.schedule('lr'), config.schedule('noise'), config.max_grad_norm)
+                psystem.env, ps_func, config.optimizer_spec,
+                config.lr_schedule, config.noise_schedule, config.max_grad_norm)
         elif self.config.updater_class is REINFORCE:
             updater = REINFORCE(
-                psystem, psystem.policy, config.optimizer_class,
-                config.schedule('lr'), config.schedule('noise'), config.max_grad_norm,
-                config.gamma, config.l2_norm_penalty, config.schedule('entropy'))
+                psystem, psystem.policy, config.optimizer_spec,
+                config.lr_schedule, config.noise_schedule, config.max_grad_norm,
+                config.gamma, config.l2_norm_penalty, config.entropy_schedule)
         elif self.config.updater_class is QLearning:
             updater = QLearning(
                 psystem, psystem.policy, target_policy, config.double,
                 config.replay_max_size, config.replay_threshold, config.replay_proportion,
-                config.target_update_rate, config.recurrent, config.optimizer_class,
-                config.schedule('lr'), config.schedule('noise'), config.max_grad_norm,
+                config.target_update_rate, config.samples_per_update, config.update_batch_size,
+                config.recurrent, config.optimizer_spec,
+                config.lr_schedule, config.noise_schedule, config.max_grad_norm,
                 config.gamma, config.l2_norm_penalty)
         else:
             raise NotImplementedError()

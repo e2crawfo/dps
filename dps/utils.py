@@ -469,7 +469,7 @@ def adj_inverse_time_decay(initial, global_step, decay_steps, decay_rate, gamma,
     if global_step is None:
         raise ValueError("global_step is required for adj_inverse_time_decay.")
 
-    with ops.name_scope(name, "InverseTimeDecay",
+    with ops.name_scope(name, "AdjInverseTimeDecay",
                         [initial, global_step, decay_rate]) as name:
         initial = ops.convert_to_tensor(initial, name="initial")
         dtype = initial.dtype
@@ -486,15 +486,160 @@ def adj_inverse_time_decay(initial, global_step, decay_steps, decay_rate, gamma,
         return math_ops.pow(quotient, gamma, name=name)
 
 
-def build_decaying_value(schedule, name=None, dtype=tf.float32):
-    global_step = tf.contrib.framework.get_or_create_global_step()
-    start, decay_steps, decay_rate, staircase = schedule
-    decaying_value = tf.train.exponential_decay(
-        start, global_step, decay_steps, decay_rate, staircase=staircase)
-    decaying_value = tf.cast(decaying_value, dtype)
+class _bool(object):
+    def __new__(cls, val):
+        if val in ("0", "False", "F", "false", "f"):
+            return False
+        return bool(val)
+
+
+def pop(l, default=None):
+    if default is not None:
+        try:
+            return l.pop()
+        except IndexError:
+            return default
+    else:
+        return l.pop()
+
+
+def build_scheduled_value(schedule, name, dtype=None):
+    """
+    Parameters
+    ----------
+    schedule: str
+        String of the form "kind arg1 arg2 ...". One exception is that
+        constants can be specified by simply supplying the constant value,
+        with no kind string.
+    name: str
+        Name to use for the output op. Also creates a summary that has this name.
+    dtype: object convertible to tf.DType
+        Will cast output value to this dtype.
+
+    Valid values for `kind`
+    -----------------------
+    constant value
+        schedule_value = value
+
+    exponential initial decay_steps decay_rate staircase(optional)
+        t = floor(global_step / decay_rate) if staircase else (global_step / decay_rate)
+        scheduled_value = learning_rate *
+                                decay_rate ^ (global_step / decay_steps)
+
+    polynomial initial decay_steps end power cycle(optional)
+        if cycle:
+            decay_steps = decay_steps * ceil(global_step / decay_steps)
+        else:
+            global_step = min(global_step, decay_steps)
+
+        scheduled_value = (learning_rate - end_learning_rate) *
+                                (1 - global_step / decay_steps) ^ (power) +
+                                end_learning_rate
+    inverse_time initial decay_steps decay_rate staircase(optional)
+        t = floor(global_step / decay_rate) if staircase else (global_step / decay_rate)
+        scheduled_value = learning_rate / (1 + decay_rate * t)
+
+    """
+    try:
+        schedule = "constant {}".format(float(schedule))
+    except (TypeError, ValueError):
+        pass
+
+    assert isinstance(schedule, str)
+    kind, *args = schedule.split()
+
+    if kind == "constant":
+        scheduled_value = tf.constant(float(args[0]), dtype=dtype)
+    elif kind == "exponential" or kind == "exp":
+        initial = float(pop(args))
+        decay_steps = int(pop(args))
+        decay_rate = float(pop(args))
+        staircase = _bool(pop(args, False))
+        global_step = tf.contrib.framework.get_or_create_global_step()
+
+        scheduled_value = tf.train.exponential_decay(
+            initial, global_step, decay_steps, decay_rate, staircase, name=name)
+
+    elif kind == "polynomial" or kind == "poly":
+        initial = float(pop(args))
+        decay_steps = int(pop(args))
+        end = float(pop(args))
+        power = float(pop(args))
+        cycle = _bool(pop(args, False))
+        global_step = tf.contrib.framework.get_or_create_global_step()
+
+        scheduled_value = tf.train.polynomial_decay(
+            initial, global_step, decay_steps, end, power, cycle, name=name)
+    elif kind == "inverse_time":
+        initial = float(pop(args))
+        decay_steps = int(pop(args))
+        decay_rate = float(pop(args))
+        staircase = _bool(pop(args, False))
+        global_step = tf.contrib.framework.get_or_create_global_step()
+
+        scheduled_value = tf.train.inverse_time_decay(
+            initial, global_step, decay_steps, decay_rate, staircase, name=name)
+
+    elif kind == "adj_inverse_time":
+        initial = float(pop(args))
+        decay_steps = int(pop(args))
+        decay_rate = float(pop(args))
+        gamma = float(pop(args))
+        staircase = _bool(pop(args, False))
+        global_step = tf.contrib.framework.get_or_create_global_step()
+
+        scheduled_value = adj_inverse_time_decay(
+            initial, global_step, decay_steps, decay_rate, gamma, staircase, name=name)
+    else:
+        raise NotImplementedError(
+            "No known schedule with kind `{}` and args `{}`.".format(kind, args))
+
+    if dtype is not None:
+        dtype = tf.as_dtype(np.dtype(dtype))
+        scheduled_value = tf.cast(scheduled_value, dtype, name=name+"_cast")
+
     if name is not None:
-        tf.summary.scalar(name, decaying_value)
-    return decaying_value
+        tf.summary.scalar(name, scheduled_value)
+
+    return scheduled_value
+
+
+def build_optimizer(spec, learning_rate):
+    """
+    `learning_rate` is always supplied as the first argument.
+
+    Parameters
+    ----------
+    spec: str
+        String of the form "kind arg1 arg2 ...".
+
+    """
+    assert isinstance(spec, str)
+    kind, *args = spec.split()
+    kind = kind.lower()
+
+    if kind == "adam":
+        beta1 = float(pop(args, 0.9))
+        beta2 = float(pop(args, 0.999))
+        epsilon = float(pop(args, 1e-08))
+        use_locking = _bool(pop(args, False))
+        opt = tf.train.AdamOptimizer(
+            learning_rate, beta1=beta1, beta2=beta2,
+            epsilon=epsilon, use_locking=use_locking)
+    elif kind == "rmsprop":
+        decay = float(pop(args, 0.9))
+        momentum = float(pop(args, 0.0))
+        epsilon = float(pop(args, 1e-10))
+        use_locking = _bool(pop(args, False))
+        centered = _bool(pop(args, False))
+        opt = tf.train.RMSPropOptimizer(
+            learning_rate, decay=decay, momentum=momentum,
+            epsilon=epsilon, use_locking=use_locking, centered=centered)
+    else:
+        raise NotImplementedError(
+            "No known optimizer with kind `{}` and args `{}`.".format(kind, args))
+
+    return opt
 
 
 class Config(object):
@@ -580,13 +725,6 @@ class DpsConfig(Config):
         super(DpsConfig, self).__init__(**kwargs)
         if self.log_dir is None:
             self.log_dir = str(Path(self.log_root) / self.log_name)
-
-    def schedule(self, kind):
-        schedule = [getattr(self, kind + '_' + s, None)
-                    for s in 'start denom decay'.split()] + [False]
-        if any([s is None for s in schedule]):
-            return None
-        return tuple(schedule)
 
 
 Config._stack.append(DpsConfig())

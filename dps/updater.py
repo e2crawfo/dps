@@ -5,7 +5,7 @@ import tensorflow as tf
 
 from dps.utils import (
     default_config, add_scaled_noise_to_gradients,
-    adj_inverse_time_decay, build_decaying_value)
+    adj_inverse_time_decay, build_scheduled_value, build_optimizer)
 
 
 class Updater(with_metaclass(abc.ABCMeta, object)):
@@ -44,9 +44,9 @@ class Updater(with_metaclass(abc.ABCMeta, object)):
 
         tf.summary.scalar('loss', self.loss)
 
-        lr = build_decaying_value(self.lr_schedule, 'learning_rate')
+        lr = build_scheduled_value(self.lr_schedule, 'learning_rate')
 
-        self.optimizer = self.optimizer_class(lr)
+        self.optimizer = build_optimizer(self.optimizer_spec, lr)
 
         tvars = tf.trainable_variables()
         self.pure_gradients = tf.gradients(self.loss, tvars)
@@ -110,13 +110,13 @@ class DifferentiableUpdater(Updater):
     def __init__(self,
                  env,
                  f,
-                 optimizer_class,
+                 optimizer_spec,
                  lr_schedule,
                  noise_schedule,
                  max_grad_norm):
 
         self.f = f
-        self.optimizer_class = optimizer_class
+        self.optimizer_spec = optimizer_spec
         self.lr_schedule = lr_schedule
         self.noise_schedule = noise_schedule
         self.max_grad_norm = max_grad_norm
@@ -175,7 +175,7 @@ class ReinforcementLearningUpdater(Updater):
     def __init__(self,
                  env,
                  policy,
-                 optimizer_class,
+                 optimizer_spec,
                  lr_schedule,
                  noise_schedule,
                  max_grad_norm,
@@ -185,7 +185,7 @@ class ReinforcementLearningUpdater(Updater):
         assert policy.action_selection.can_sample, (
             "Cannot sample when using action selection method {}".format(policy.action_selection))
         self.policy = policy
-        self.optimizer_class = optimizer_class
+        self.optimizer_spec = optimizer_spec
         self.lr_schedule = lr_schedule
         self.noise_schedule = noise_schedule
         self.max_grad_norm = max_grad_norm

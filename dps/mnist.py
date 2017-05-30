@@ -11,8 +11,8 @@ import tensorflow as tf
 from spectral_dagger.utils.experiment import ExperimentStore
 from dps.environment import RegressionDataset
 from dps.utils import (
-    build_decaying_value, EarlyStopHook, gen_seed, DpsConfig,
-    default_config, load_or_train)
+    build_scheduled_value, build_optimizer, EarlyStopHook,
+    gen_seed, DpsConfig, default_config, load_or_train)
 from dps.attention import DRAW_attention_2D, discrete_attention
 
 
@@ -295,7 +295,7 @@ class MnistConfig(DpsConfig):
     max_steps = 100000
     patience = 10000
     lr_start, lr_denom, lr_decay = 0.001, 1000, 96
-    optimizer_class = tf.train.AdamOptimizer
+    optimizer_spec = "adam"
     threshold = 0.05
 
     n_train = 60000
@@ -348,8 +348,8 @@ def train_mnist(build_model, var_scope, path=None, config=None):
         tf.summary.scalar('loss', loss)
         tf.summary.scalar('accuracy', accuracy)
 
-        lr = build_decaying_value(config.schedule('lr'), 'mnist_learning_rate')
-        optimizer = config.optimizer_class(lr)
+        lr = build_scheduled_value(config.lr_schedule, 'mnist_learning_rate')
+        optimizer = build_optimizer(config.optimizer_spec, lr)
 
         train_op = optimizer.minimize(loss)
 
