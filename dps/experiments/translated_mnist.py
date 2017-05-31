@@ -81,7 +81,7 @@ class TranslatedMnist(CoreNetwork):
 
     @property
     def input_shape(self):
-        return self.W * self.W
+        return (self.W * self.W,)
 
     @property
     def make_input_available(self):
@@ -167,7 +167,7 @@ class TranslatedMnist(CoreNetwork):
         return new_registers
 
 
-def render_rollouts(psystem, actions, registers, reward, external_obs, external_step_lengths):
+def render_rollouts(psystem, actions, registers, reward, external_obs, external_step_lengths, info):
     """ Render rollouts from TranslatedMnist task. """
     config = default_config()
     if not config.save_display and not config.display:

@@ -45,7 +45,7 @@ class Pointer(CoreNetwork):
 
     @property
     def input_shape(self):
-        return 2*self.width+1
+        return (2*self.width+1,)
 
     @property
     def make_input_available(self):

@@ -74,7 +74,7 @@ class HardAddition(CoreNetwork):
 
     @property
     def input_shape(self):
-        return self.width * self.height
+        return (self.width * self.height,)
 
     @property
     def make_input_available(self):

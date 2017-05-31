@@ -34,7 +34,7 @@ class HelloWorldEnv(RegressionEnv):
 
 class HelloWorld(CoreNetwork):
     action_names = ['r0 = r0 + r1', 'r1 = r0 * r1', 'no-op/stop']
-    input_shape = 3
+    input_shape = (3,)
     make_input_available = False
 
     def __init__(self, env):

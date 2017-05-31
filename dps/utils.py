@@ -636,7 +636,7 @@ def build_optimizer(spec, learning_rate):
         epsilon = float(popleft(args, 1e-10))
         use_locking = _bool(popleft(args, False))
         centered = _bool(popleft(args, False))
-        opt = tf.train.RMSPropoplefttimizer(
+        opt = tf.train.RMSPropOptimizer(
             learning_rate, decay=decay, momentum=momentum,
             epsilon=epsilon, use_locking=use_locking, centered=centered)
     else:
@@ -723,7 +723,7 @@ def _parse_config_from_file(cls, key=None):
 @_parse_config_from_file
 class DpsConfig(Config):
     log_dir = None
-    log_name = "dps"
+    log_name = "default"
 
     def __init__(self, **kwargs):
         super(DpsConfig, self).__init__(**kwargs)

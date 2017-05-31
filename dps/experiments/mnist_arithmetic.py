@@ -100,7 +100,7 @@ class MnistArithmetic(CoreNetwork):
 
     @property
     def input_shape(self):
-        return self.W * self.W
+        return (self.W * self.W,)
 
     @property
     def make_input_available(self):
