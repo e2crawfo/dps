@@ -44,7 +44,7 @@ class Pointer(CoreNetwork):
         super(Pointer, self).__init__()
 
     @property
-    def input_dim(self):
+    def input_shape(self):
         return 2*self.width+1
 
     @property

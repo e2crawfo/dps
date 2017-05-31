@@ -125,3 +125,42 @@ def test_mnist_pretrained():
                 assert build_model.was_loaded
 
                 _eval_model(sess, inference, x_ph)
+
+
+def test_mnist_pretrained_no_preprocess():
+    with NumpySeed(83849):
+        config = MnistConfig(max_steps=10000, symbols=list(range(n_symbols)))
+        g = tf.Graph()
+        with g.as_default():
+
+            sess = tf.Session()
+
+            checkpoint_dir = Path(config.log_root) / 'mnist_test/checkpoint'
+            try:
+                rmtree(str(checkpoint_dir))
+            except FileNotFoundError:
+                pass
+
+            checkpoint_dir.mkdir(parents=True, exist_ok=False)
+
+            with sess.as_default():
+                build_model = MnistPretrained(
+                    None, build_classifier, model_dir=str(checkpoint_dir), config=config)
+                x_ph = tf.placeholder(tf.float32, (None, 28**2))
+                inference = build_model(x_ph, preprocess=True)
+                assert not build_model.was_loaded
+
+                _eval_model(sess, inference, x_ph)
+
+        g = tf.Graph()
+        with g.as_default():
+            sess = tf.Session()
+
+            with sess.as_default():
+                build_model = MnistPretrained(
+                    None, build_classifier, model_dir=str(checkpoint_dir), config=config)
+                x_ph = tf.placeholder(tf.float32, (None, 28**2))
+                inference = build_model(x_ph, preprocess=True)
+                assert build_model.was_loaded
+
+                _eval_model(sess, inference, x_ph)

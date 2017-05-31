@@ -294,7 +294,7 @@ class MnistConfig(DpsConfig):
     eval_step = 100
     max_steps = 100000
     patience = 10000
-    lr_start, lr_denom, lr_decay = 0.001, 1000, 96
+    lr_schedule = "exp 0.001 1000 0.96"
     optimizer_spec = "adam"
     threshold = 0.05
 

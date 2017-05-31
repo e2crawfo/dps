@@ -14,6 +14,7 @@ import os
 import traceback
 import sys
 import pdb
+from collections import deque
 
 import tensorflow as tf
 from tensorflow.python.ops import random_ops, math_ops
@@ -493,14 +494,14 @@ class _bool(object):
         return bool(val)
 
 
-def pop(l, default=None):
+def popleft(l, default=None):
     if default is not None:
         try:
-            return l.pop()
+            return l.popleft()
         except IndexError:
             return default
     else:
-        return l.pop()
+        return l.popleft()
 
 
 def build_scheduled_value(schedule, name, dtype=None):
@@ -547,45 +548,47 @@ def build_scheduled_value(schedule, name, dtype=None):
 
     assert isinstance(schedule, str)
     kind, *args = schedule.split()
+    kind = kind.lower()
+    args = deque(args)
 
     if kind == "constant":
         scheduled_value = tf.constant(float(args[0]), dtype=dtype)
     elif kind == "exponential" or kind == "exp":
-        initial = float(pop(args))
-        decay_steps = int(pop(args))
-        decay_rate = float(pop(args))
-        staircase = _bool(pop(args, False))
+        initial = float(popleft(args))
+        decay_steps = int(popleft(args))
+        decay_rate = float(popleft(args))
+        staircase = _bool(popleft(args, False))
         global_step = tf.contrib.framework.get_or_create_global_step()
 
         scheduled_value = tf.train.exponential_decay(
             initial, global_step, decay_steps, decay_rate, staircase, name=name)
 
     elif kind == "polynomial" or kind == "poly":
-        initial = float(pop(args))
-        decay_steps = int(pop(args))
-        end = float(pop(args))
-        power = float(pop(args))
-        cycle = _bool(pop(args, False))
+        initial = float(popleft(args))
+        decay_steps = int(popleft(args))
+        end = float(popleft(args))
+        power = float(popleft(args))
+        cycle = _bool(popleft(args, False))
         global_step = tf.contrib.framework.get_or_create_global_step()
 
         scheduled_value = tf.train.polynomial_decay(
             initial, global_step, decay_steps, end, power, cycle, name=name)
     elif kind == "inverse_time":
-        initial = float(pop(args))
-        decay_steps = int(pop(args))
-        decay_rate = float(pop(args))
-        staircase = _bool(pop(args, False))
+        initial = float(popleft(args))
+        decay_steps = int(popleft(args))
+        decay_rate = float(popleft(args))
+        staircase = _bool(popleft(args, False))
         global_step = tf.contrib.framework.get_or_create_global_step()
 
         scheduled_value = tf.train.inverse_time_decay(
             initial, global_step, decay_steps, decay_rate, staircase, name=name)
 
     elif kind == "adj_inverse_time":
-        initial = float(pop(args))
-        decay_steps = int(pop(args))
-        decay_rate = float(pop(args))
-        gamma = float(pop(args))
-        staircase = _bool(pop(args, False))
+        initial = float(popleft(args))
+        decay_steps = int(popleft(args))
+        decay_rate = float(popleft(args))
+        gamma = float(popleft(args))
+        staircase = _bool(popleft(args, False))
         global_step = tf.contrib.framework.get_or_create_global_step()
 
         scheduled_value = adj_inverse_time_decay(
@@ -617,22 +620,23 @@ def build_optimizer(spec, learning_rate):
     assert isinstance(spec, str)
     kind, *args = spec.split()
     kind = kind.lower()
+    args = deque(args)
 
     if kind == "adam":
-        beta1 = float(pop(args, 0.9))
-        beta2 = float(pop(args, 0.999))
-        epsilon = float(pop(args, 1e-08))
-        use_locking = _bool(pop(args, False))
+        beta1 = float(popleft(args, 0.9))
+        beta2 = float(popleft(args, 0.999))
+        epsilon = float(popleft(args, 1e-08))
+        use_locking = _bool(popleft(args, False))
         opt = tf.train.AdamOptimizer(
             learning_rate, beta1=beta1, beta2=beta2,
             epsilon=epsilon, use_locking=use_locking)
     elif kind == "rmsprop":
-        decay = float(pop(args, 0.9))
-        momentum = float(pop(args, 0.0))
-        epsilon = float(pop(args, 1e-10))
-        use_locking = _bool(pop(args, False))
-        centered = _bool(pop(args, False))
-        opt = tf.train.RMSPropOptimizer(
+        decay = float(popleft(args, 0.9))
+        momentum = float(popleft(args, 0.0))
+        epsilon = float(popleft(args, 1e-10))
+        use_locking = _bool(popleft(args, False))
+        centered = _bool(popleft(args, False))
+        opt = tf.train.RMSPropoplefttimizer(
             learning_rate, decay=decay, momentum=momentum,
             epsilon=epsilon, use_locking=use_locking, centered=centered)
     else:

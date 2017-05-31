@@ -262,8 +262,7 @@ class CoreNetwork(object, metaclass=CoreNetworkMeta):
         return self.register_bank.visible_width
 
     @property
-    def input_dim(self):
-        """ Return a boolean. """
+    def input_shape(self):
         raise NotImplementedError()
 
     @property
@@ -415,7 +414,7 @@ class ProductionSystemFunction(object):
 
                 batch_size = tf.shape(inputs)[1]
                 policy_state, register_ph = ps_cell.zero_state(batch_size, tf.float32)
-                inp_ph = tf.placeholder(tf.float32, (None, psystem.core_network.input_dim), name='input')
+                inp_ph = tf.placeholder(tf.float32, (None,) + psystem.core_network.input_shape, name='input')
 
                 if psystem.core_network.make_input_available:
                     ps_cell.set_input(inp_ph)

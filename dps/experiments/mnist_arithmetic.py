@@ -69,14 +69,15 @@ class MnistArithmetic(CoreNetwork):
         self.inc_delta = env.inc_delta
         self.inc_x = env.inc_x
         self.inc_y = env.inc_y
+        self.base = env.base
 
         build_classifier = default_config().build_classifier
         classifier_str = default_config().classifier_str
 
         self.build_attention = DRAW(self.N)
 
-        digit_config = MnistConfig(symbols=range(10))
-        name = '{}_N={}_symbols={}.chk'.format(classifier_str, self.N, '_'.join(str(s) for s in range(10)))
+        digit_config = MnistConfig(symbols=range(self.base))
+        name = '{}_N={}_symbols={}.chk'.format(classifier_str, self.N, '_'.join(str(s) for s in range(self.base)))
         self.build_digit_classifier = MnistPretrained(
             self.build_attention, build_classifier, name=name,
             var_scope_name='digit_classifier', config=digit_config)
@@ -98,7 +99,7 @@ class MnistArithmetic(CoreNetwork):
         super(MnistArithmetic, self).__init__()
 
     @property
-    def input_dim(self):
+    def input_shape(self):
         return self.W * self.W
 
     @property

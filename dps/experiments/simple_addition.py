@@ -37,7 +37,7 @@ class SimpleAddition(CoreNetwork):
                     'output = vision', 'output = wm1 + wm2', 'no-op/stop']
 
     @property
-    def input_dim(self):
+    def input_shape(self):
         return 2*self.width+1
 
     @property

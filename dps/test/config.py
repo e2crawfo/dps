@@ -9,7 +9,7 @@ from dps.policy import SoftmaxSelect, EpsilonGreedySelect, GumbelSoftmaxSelect, 
 from dps.utils import Config, CompositeCell, FeedforwardCell, MLP, DpsConfig, FixedController
 from dps.experiments import (
     hello_world, simple_addition, pointer_following,
-    hard_addition, translated_mnist, mnist_arithmetic)
+    hard_addition, translated_mnist, mnist_arithmetic, simple_arithmetic)
 
 
 class DefaultConfig(DpsConfig):
@@ -322,6 +322,34 @@ class MnistArithmeticConfig(DefaultConfig):
     trainer = mnist_arithmetic.MnistArithmeticTrainer()
 
 
+class SimpleArithmeticConfig(DefaultConfig):
+    mnist = False
+    shape = (1, 4)
+    op_loc = (0, 0)
+    start_loc = (0, 0)
+    n_digits = 3
+    upper_bound = False
+    base = 10
+    batch_size = 2
+    n_train = 10
+    n_val = 2
+    n_test = 2
+
+    reward_window = 0.5
+
+    classifier_str = "MLP_30_30"
+
+    @staticmethod
+    def build_classifier(inp, outp_size):
+        logits = MLP([30, 30], activation_fn=tf.nn.sigmoid)(inp, outp_size)
+        return tf.nn.softmax(logits)
+
+    action_seq = range(14)
+    batch_size = 16
+
+    trainer = simple_arithmetic.SimpleArithmeticTrainer()
+
+
 class TestConfig(DefaultConfig):
     n_val = 0
     n_test = 0
@@ -420,6 +448,36 @@ class MnistArithmeticTest(TestConfig, MnistArithmeticConfig):
     render_rollouts = staticmethod(translated_mnist.render_rollouts)
 
 
+class SimpleArithmeticTest(TestConfig):
+    mnist = False
+    shape = (1, 4)
+    op_loc = (0, 0)
+    start_loc = (0, 0)
+    n_digits = 3
+    upper_bound = False
+    base = 10
+    batch_size = 16
+    n_train = 16
+    n_val = 0
+    n_test = 0
+
+    reward_window = 0.5
+
+    classifier_str = "MLP_30_30"
+
+    @staticmethod
+    def build_classifier(inp, outp_size):
+        logits = MLP([30, 30], activation_fn=tf.nn.sigmoid)(inp, outp_size)
+        return tf.nn.softmax(logits)
+
+    action_seq = range(14)
+    batch_size = 16
+
+    trainer = simple_arithmetic.SimpleArithmeticTrainer()
+
+    render_rollouts = staticmethod(simple_arithmetic.render_rollouts)
+
+
 algorithms = dict(
     diff=DiffConfig(),
     reinforce=ReinforceConfig(),
@@ -432,7 +490,8 @@ tasks = dict(
     pointer=PointerConfig(),
     hard_addition=HardAdditionConfig(),
     translated_mnist=TranslatedMnistConfig(),
-    mnist_arithmetic=MnistArithmeticConfig())
+    mnist_arithmetic=MnistArithmeticConfig(),
+    simple_arithmetic=SimpleArithmeticConfig())
 
 test_configs = dict(
     hello_world=HelloWorldTest(),
@@ -440,4 +499,5 @@ test_configs = dict(
     pointer=PointerTest(),
     hard_addition=HardAdditionTest(),
     translated_mnist=TranslatedMnistTest(),
-    mnist_arithmetic=MnistArithmeticTest())
+    mnist_arithmetic=MnistArithmeticTest(),
+    simple_arithmetic=SimpleArithmeticTest())

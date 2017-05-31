@@ -73,7 +73,7 @@ class HardAddition(CoreNetwork):
                     'wm1 = vision', 'wm2 = vision', 'add', 'write_digit', 'no-op/stop']
 
     @property
-    def input_dim(self):
+    def input_shape(self):
         return self.width * self.height
 
     @property

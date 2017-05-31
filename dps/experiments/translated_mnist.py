@@ -80,7 +80,7 @@ class TranslatedMnist(CoreNetwork):
         super(TranslatedMnist, self).__init__()
 
     @property
-    def input_dim(self):
+    def input_shape(self):
         return self.W * self.W
 
     @property
