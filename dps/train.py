@@ -26,7 +26,7 @@ class TrainingLoop(object):
 
     def run(self):
         if self.config.start_tensorboard:
-            restart_tensorboard(str(self.config.log_dir))
+            restart_tensorboard(str(self.config.log_dir), self.config.tbport)
 
         value = self._run_core()
 
@@ -102,7 +102,7 @@ class TrainingLoop(object):
                     reason = "Time limit reached."
 
                 if self.config.start_tensorboard:
-                    restart_tensorboard(str(self.config.log_dir))
+                    restart_tensorboard(str(self.config.log_dir), self.config.tbport)
 
                 print("Optimization complete. Reason: {}".format(reason))
 

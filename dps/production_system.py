@@ -533,8 +533,9 @@ class ProductionSystemCurriculum(Curriculum):
     def end_stage(self):
         super(ProductionSystemCurriculum, self).end_stage()
         sample = self.config.updater_class in [REINFORCE, QLearning]
-        if self.config.verbose:
-            self.current_psystem.visualize('train', 5, sample)
+        if self.config.visualize:
+            render_rollouts = getattr(self.config, 'render_rollouts', None)
+            self.current_psystem.visualize('train', 16, sample, render_rollouts)
 
         # Occurs inside the same default graph, session and config as the previous call to __call__.
         g = tf.get_default_graph()

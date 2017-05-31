@@ -372,14 +372,15 @@ def render_rollouts(psystem, actions, registers, reward, external_obs, external_
     n_timesteps, batch_size, n_actions = actions.shape
     s = int(np.ceil(np.sqrt(batch_size)))
 
-    fig, subplots = plt.subplots(2*s, s)
+    fig, subplots = plt.subplots(s, 2*s)
 
-    env_subplots = subplots[::2, :].flatten()
+    env_subplots = subplots[:, ::2].flatten()
     for i, ep in enumerate(env_subplots):
-        ep.set_ylabel(str(info[0]['y'][i]))
-        ep.yaxis.set_label_position('right')
+        ep.set_title(str(info[0]['y'][i]))
 
-    glimpse_subplots = subplots[1::2, :].flatten()
+    glimpse_subplots = subplots[:, 1::2].flatten()
+
+    plt.subplots_adjust(hspace=0.5)
 
     if psystem.env.mnist:
         images = []
@@ -402,6 +403,10 @@ def render_rollouts(psystem, actions, registers, reward, external_obs, external_
     offset = 0.1
     s = 1 - 2*offset
 
+    titles1 = [es.title for es in env_subplots]
+    titles2 = [gs.title for gs in glimpse_subplots]
+    actions_reduced = np.argmax(actions, axis=-1)
+
     # When specifying rectangles, you supply the bottom left corner, but not "bottom left" as your looking at it,
     # but bottom left in the co-ordinate system you're drawing in.
     rectangles = [
@@ -420,6 +425,11 @@ def render_rollouts(psystem, actions, registers, reward, external_obs, external_
     glimpses = [ax.imshow(im, cmap='gray', origin='upper') for im, ax in zip(images, glimpse_subplots)]
 
     def animate(i):
+        for n, t in enumerate(titles1):
+            t.set_text(psystem.core_network.action_names[actions_reduced[i, n]])
+        for n, t in enumerate(titles2):
+            t.set_text("t={},y={}".format(i, info[0]['y'][n][0]))
+
         # Find locations of bottom-left in fovea co-ordinate system, then transform to axis co-ordinate system.
         fx = fovea_x[i, :, :] + offset
         fy = fovea_y[i, :, :] + offset
@@ -431,9 +441,9 @@ def render_rollouts(psystem, actions, registers, reward, external_obs, external_
         for g, gimg in zip(glimpse[i, :, :], glimpses):
             gimg.set_data(g.reshape(glimpse_shape))
 
-        return rectangles + glimpses
+        return rectangles + glimpses + titles1 + titles2
 
-    _animation = animation.FuncAnimation(fig, animate, n_timesteps, blit=True, interval=1000, repeat=True)
+    _animation = animation.FuncAnimation(fig, animate, n_timesteps, blit=False, interval=1000, repeat=True)
 
     if default_config().save_display:
         Writer = animation.writers['ffmpeg']

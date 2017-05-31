@@ -400,15 +400,16 @@ class EarlyStopHook(object):
         return s
 
 
-def restart_tensorboard(logdir):
+def restart_tensorboard(logdir, port=6006):
     print("Killing old tensorboard process...")
     try:
-        sp.run("fuser 6006/tcp -k".split(), stdout=sp.DEVNULL, stderr=sp.DEVNULL)
+        command = "fuser {}/tcp -k".format(port)
+        sp.run(command.split(), stdout=sp.DEVNULL, stderr=sp.DEVNULL)
     except sp.CalledProcessError as e:
         print("Killing tensorboard failed:")
         print(e.output)
     print("Restarting tensorboard process...")
-    sp.Popen("tensorboard --logdir={}".format(logdir).split(), stdout=sp.DEVNULL, stderr=sp.DEVNULL)
+    sp.Popen("tensorboard --logdir={} --port={}".format(logdir, port).split(), stdout=sp.DEVNULL, stderr=sp.DEVNULL)
     print("Done restarting tensorboard.")
 
 
@@ -631,9 +632,9 @@ def build_optimizer(spec, learning_rate):
             learning_rate, beta1=beta1, beta2=beta2,
             epsilon=epsilon, use_locking=use_locking)
     elif kind == "rmsprop":
-        decay = float(popleft(args, 0.9))
-        momentum = float(popleft(args, 0.0))
-        epsilon = float(popleft(args, 1e-10))
+        decay = float(popleft(args, 0.95))
+        momentum = float(popleft(args, 0.95))
+        epsilon = float(popleft(args, 1e-8))
         use_locking = _bool(popleft(args, False))
         centered = _bool(popleft(args, False))
         opt = tf.train.RMSPropOptimizer(
@@ -713,6 +714,8 @@ def _parse_config_from_file(cls, key=None):
     cls.save_display = config.getboolean(key, 'save_display')
     cls.mpl_backend = config.get(key, 'mpl_backend')
     cls.use_gpu = config.getboolean(key, 'use_gpu')
+    cls.visualize = config.getboolean(key, 'visualize')
+    cls.tbport = config.getint(key, 'tbport')
 
     cls.max_experiments = config.getint(key, 'max_experiments')
     if cls.max_experiments <= 0:

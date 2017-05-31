@@ -75,12 +75,13 @@ class DiffConfig(Config):
 class ReinforceConfig(Config):
     updater_class = REINFORCE
     action_selection = SoftmaxSelect()
-    test_time_explore = None
+    test_time_explore = 0.1
     patience = np.inf
 
-    entropy_schedule = "exp 0.1 100000 0.1"
+    entropy_schedule = "exp 0.1 100000 1.0"
     lr_schedule = "exp 0.001 1000 1.0"
-    exploration_schedule = "poly 10.0 100000 1.0 1.0"
+    exploration_schedule = "exp 10.0 100000 1.0"
+    # exploration_schedule = "poly 10.0 100000 1.0 1.0"
     gamma = 0.99
 
 
@@ -96,20 +97,22 @@ class QLearningConfig(Config):
 
     replay_max_size = 1000000
     replay_threshold = -0.5
-    replay_proportion = None
+    replay_proportion = 0.0
     gamma = 0.99
 
     target_update_rate = None
     steps_per_target_update = 10000
     recurrent = True
     patience = np.inf
-    samples_per_update = 4  # Number of rollouts between parameter updates
+    samples_per_update = 32  # Number of rollouts between parameter updates
     update_batch_size = 32  # Number of sample rollouts to use for each parameter update
     batch_size = 64  # Number of sample experiences to execute
     test_time_explore = 0.05
 
     l2_norm_penalty = 0.0
     max_grad_norm = 0.0
+
+    n_controller_units = 256
 
 
 class DQNConfig(QLearningConfig):
@@ -330,9 +333,9 @@ class MnistArithmeticConfig(DefaultConfig):
 
 
 class SimpleArithmeticConfig(DefaultConfig):
-    curriculum = [dict(T=30)]
+    curriculum = [dict(T=5)]
     mnist = False
-    shape = (2, 2)
+    shape = (1, 2)
     op_loc = (0, 0)
     start_loc = (0, 0)
     n_digits = 1
@@ -358,6 +361,7 @@ class SimpleArithmeticConfig(DefaultConfig):
                                         MLP(),
                                         n_actions))
     log_name = 'simple_arithmetic'
+    render_rollouts = staticmethod(simple_arithmetic.render_rollouts)
 
 
 class TestConfig(DefaultConfig):

@@ -45,7 +45,7 @@ class QLearning(ReinforcementLearningUpdater):
         if not self.recurrent:
             raise NotImplementedError("Non-recurrent learning not available.")
 
-        self.n_rollouts = 0
+        self.n_rollouts_since_target_update = 0
 
         super(QLearning, self).__init__(
             env,
@@ -80,10 +80,12 @@ class QLearning(ReinforcementLearningUpdater):
             feed_dict = self.build_feeddict()
             sess.run([self.train_op], feed_dict=feed_dict)
 
-            if (self.steps_per_target_update is None) or (self.n_rollouts % self.steps_per_target_update == 0):
+            if (self.steps_per_target_update is None) or (self.n_rollouts_since_target_update > self.steps_per_target_update):
                 # Update target network
                 sess.run(self.target_network_update)
-            self.n_rollouts += n_rollouts
+                self.n_rollouts_since_target_update = 0
+            else:
+                self.n_rollouts_since_target_update += n_rollouts
 
         # Run some evaluation rollouts
         if summary_op is not None:
@@ -308,7 +310,7 @@ class PrioritizedReplayBuffer(object):
         return obs, actions, rewards
 
     def get_batch(self, batch_size):
-        if self.ro is not None and len(self.high_buffer) > 0:
+        if self.ro > 0 and len(self.high_buffer) > 0:
             n_high_priority = int(self.ro * batch_size)
             n_low_priority = batch_size - n_high_priority
 
@@ -329,7 +331,7 @@ class PrioritizedReplayBuffer(object):
         rewards = list(np.transpose(rewards, (1, 0, 2)))
 
         for o, a, r in zip(obs, actions, rewards):
-            buff = self.high_buffer if (r.sum() > self.threshold and self.ro is not None) else self.low_buffer
+            buff = self.high_buffer if (r.sum() > self.threshold and self.ro > 0) else self.low_buffer
             buff.append((o, a, r))
             while len(buff) > self.max_size:
                 buff.popleft()
