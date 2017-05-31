@@ -78,13 +78,14 @@ class SimpleArithmeticDataset(RegressionDataset):
             blank_element = np.zeros((28, 28))
         else:
             sorted_symbols = sorted(symbols, key=lambda x: x[0])
-            functions = {-(i+1): f for i, (_, f) in enumerate(sorted_symbols)}
+            # start at -2, move towards -inf
+            functions = {-(i+2): f for i, (_, f) in enumerate(sorted_symbols)}
             symbol_values = sorted(functions.keys())
 
             symbol_reps = Container(symbol_values, symbol_values)
             digit_reps = Container(np.arange(base), np.arange(base))
 
-            blank_element = np.array([0])
+            blank_element = np.array([-1])
 
         x, y = self.make_dataset(
             self.shape, self.n_digits, self.upper_bound, self.base,
@@ -325,6 +326,9 @@ class SimpleArithmetic(CoreNetwork):
             inc_fovea_y * (_fovea_y + 1) + \
             dec_fovea_y * (_fovea_y - 1)
 
+        fovea_y = tf.clip_by_value(fovea_y, 0, self.shape[0]-1)
+        fovea_x = tf.clip_by_value(fovea_x, 0, self.shape[1]-1)
+
         _fovea_x = tf.cast(fovea_x, tf.int32)
         _fovea_y = tf.cast(fovea_y, tf.int32)
 
@@ -358,7 +362,7 @@ class SimpleArithmetic(CoreNetwork):
         return new_registers
 
 
-def render_rollouts(psystem, actions, registers, reward, external_obs, external_step_lengths):
+def render_rollouts(psystem, actions, registers, reward, external_obs, external_step_lengths, info):
     """ Render rollouts from TranslatedMnist task. """
     config = default_config()
     if not config.save_display and not config.display:
@@ -371,6 +375,10 @@ def render_rollouts(psystem, actions, registers, reward, external_obs, external_
     fig, subplots = plt.subplots(2*s, s)
 
     env_subplots = subplots[::2, :].flatten()
+    for i, ep in enumerate(env_subplots):
+        ep.set_ylabel(str(info[0]['y'][i]))
+        ep.yaxis.set_label_position('right')
+
     glimpse_subplots = subplots[1::2, :].flatten()
 
     if psystem.env.mnist:
@@ -379,39 +387,49 @@ def render_rollouts(psystem, actions, registers, reward, external_obs, external_
             ri = [np.concatenate(r, axis=-1) for r in ri]
             ri = np.concatenate(ri, axis=0)
             images.append(ri)
+        images = np.array(images)
     else:
         images = np.squeeze(external_obs[0], axis=-1)
 
     shape = psystem.core_network.shape
 
+    mx = images.max()
+    mn = images.min()
+    images = (images - mn) / (mx - mn)
+
     [ax.imshow(im, cmap='gray', origin='upper', extent=(0, shape[1], shape[0], 0)) for im, ax in zip(images, env_subplots)]
 
+    offset = 0.1
+    s = 1 - 2*offset
+
+    # When specifying rectangles, you supply the bottom left corner, but not "bottom left" as your looking at it,
+    # but bottom left in the co-ordinate system you're drawing in.
     rectangles = [
-        ax.add_patch(patches.Rectangle(
-            (1.0, 0.0), 1.0, 1.0, alpha=0.6, transform=ax.transAxes))
+        ax.add_patch(patches.Rectangle((offset, offset), s, s, alpha=0.6, fill=True, transform=ax.transData))
         for ax in env_subplots]
 
     glimpse_shape = psystem.core_network.element_shape
     if len(glimpse_shape) == 1:
         glimpse_shape = glimpse_shape + (1,)
-    glimpses = [ax.imshow(np.random.randint(256, size=glimpse_shape), cmap='gray', origin='upper') for ax in glimpse_subplots]
 
     fovea_x = psystem.rb.get('fovea_x', registers)
     fovea_y = psystem.rb.get('fovea_y', registers)
     glimpse = psystem.rb.get('glimpse', registers)
+    glimpse = (glimpse - mn) / (mx - mn)
+
+    glimpses = [ax.imshow(im, cmap='gray', origin='upper') for im, ax in zip(images, glimpse_subplots)]
 
     def animate(i):
         # Find locations of bottom-left in fovea co-ordinate system, then transform to axis co-ordinate system.
-        fx = fovea_x[i, :, :]
-        fy = fovea_y[i, :, :] + 1.0
+        fx = fovea_x[i, :, :] + offset
+        fy = fovea_y[i, :, :] + offset
 
-        # use fovea to modify the rectangles
         for x, y, rect in zip(fx, fy, rectangles):
             rect.set_x(x)
             rect.set_y(y)
 
         for g, gimg in zip(glimpse[i, :, :], glimpses):
-            gimg.set_data(g.reshape(*glimpse_shape))
+            gimg.set_data(g.reshape(glimpse_shape))
 
         return rectangles + glimpses
 

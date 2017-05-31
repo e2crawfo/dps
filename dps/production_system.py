@@ -75,6 +75,8 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
         registers, actions, rewards = [], [], []
         external = [external_obs]
 
+        info = []
+
         done = False
         while not done:
             fd = ps_func.build_feeddict(inp=external_obs, registers=start_registers)
@@ -94,7 +96,8 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
                 feed_dict=fd)
 
             external_action = self.rb.get_output(final_registers)
-            external_obs, reward, done, info = self.env.step(external_action)
+            external_obs, reward, done, i = self.env.step(external_action)
+            info.append(i)
 
             registers.append(reg)
             actions.append(a)
@@ -115,7 +118,7 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
         self._pprint_rollouts(actions, registers, rewards, external, external_step_lengths)
 
         if render_rollouts is not None:
-            render_rollouts(self, actions, registers, rewards, external, external_step_lengths)
+            render_rollouts(self, actions, registers, rewards, external, external_step_lengths, info)
 
     def _pprint_rollouts(self, action_activations, registers, rewards, external, external_step_lengths):
         """ Prints a single rollout, which may consists of multiple external time steps.

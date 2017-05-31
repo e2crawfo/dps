@@ -323,17 +323,15 @@ class MnistArithmeticConfig(DefaultConfig):
 
 
 class SimpleArithmeticConfig(DefaultConfig):
+    curriculum = [dict(T=30)]
     mnist = False
-    shape = (1, 4)
+    shape = (2, 2)
     op_loc = (0, 0)
     start_loc = (0, 0)
-    n_digits = 3
-    upper_bound = False
+    n_digits = 2
+    upper_bound = True
     base = 10
-    batch_size = 2
-    n_train = 10
-    n_val = 2
-    n_test = 2
+    batch_size = 32
 
     reward_window = 0.5
 
@@ -344,10 +342,13 @@ class SimpleArithmeticConfig(DefaultConfig):
         logits = MLP([30, 30], activation_fn=tf.nn.sigmoid)(inp, outp_size)
         return tf.nn.softmax(logits)
 
-    action_seq = range(14)
-    batch_size = 16
-
     trainer = simple_arithmetic.SimpleArithmeticTrainer()
+
+    controller_func = staticmethod(
+        lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=64),
+                                        MLP(),
+                                        n_actions))
+    log_name = 'simple_arithmetic'
 
 
 class TestConfig(DefaultConfig):
@@ -450,11 +451,11 @@ class MnistArithmeticTest(TestConfig, MnistArithmeticConfig):
 
 class SimpleArithmeticTest(TestConfig):
     mnist = False
-    shape = (1, 4)
+    shape = (3, 3)
     op_loc = (0, 0)
     start_loc = (0, 0)
     n_digits = 3
-    upper_bound = False
+    upper_bound = True
     base = 10
     batch_size = 16
     n_train = 16
