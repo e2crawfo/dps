@@ -35,10 +35,8 @@ class DefaultConfig(DpsConfig):
     checkpoint_step = 1000
     n_controller_units = 32
 
-    controller_func = staticmethod(
-        lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=DefaultConfig.n_controller_units),
-                                        MLP(),
-                                        n_actions))
+    controller_func = lambda self, n_actions: CompositeCell(
+        tf.contrib.rnn.LSTMCell(num_units=self.n_controller_units), MLP(), n_actions)
 
     lr_schedule = "exponential 0.001 1000 0.96"
     exploration_schedule = "exponential 10.0 1000 0.96"
@@ -80,8 +78,10 @@ class ReinforceConfig(Config):
     test_time_explore = None
     patience = np.inf
 
-    entropy_schedule = "exponential 0.01 1000 0.96"
-    lr_schedule = "exponential 0.01 1000 0.96"
+    entropy_schedule = "exp 0.1 100000 0.1"
+    lr_schedule = "exp 0.001 1000 1.0"
+    exploration_schedule = "poly 10.0 100000 1.0 1.0"
+    gamma = 0.99
 
 
 class QLearningConfig(Config):
@@ -89,20 +89,24 @@ class QLearningConfig(Config):
     action_selection = EpsilonGreedySelect()
     double = False
 
-    lr_schedule = "exponential 0.001 1000 1.0"
+    lr_schedule = "exponential 0.00025 1000 1.0"
+    exploration_schedule = "polynomial 1.0 10000 0.1 1"
 
-    replay_max_size = 1000
+    optimizer_spec = "rmsprop"
+
+    replay_max_size = 1000000
     replay_threshold = -0.5
     replay_proportion = None
+    gamma = 0.99
 
-    target_update_rate = 0.01
+    target_update_rate = None
     steps_per_target_update = 10000
     recurrent = True
     patience = np.inf
     samples_per_update = 4  # Number of rollouts between parameter updates
-    update_batch_size = 16  # Number of sample rollouts to use for each parameter update
+    update_batch_size = 32  # Number of sample rollouts to use for each parameter update
     batch_size = 64  # Number of sample experiences to execute
-    test_time_explore = 0.0
+    test_time_explore = 0.05
 
     l2_norm_penalty = 0.0
     max_grad_norm = 0.0
@@ -126,6 +130,7 @@ class DQNConfig(QLearningConfig):
 
     test_time_explore = 0.05
     # target_network_update Once every 10000 frames
+    steps_per_target_update = 10000
 
     gamma = 0.99
 
@@ -196,6 +201,8 @@ class SimpleAdditionConfig(DefaultConfig):
         dict(width=2, n_digits=10),
         dict(width=3, n_digits=10),
     ]
+
+    n_controller_units = 64
 
     # curriculum = [
     #     dict(width=1, n_digits=10),
@@ -328,12 +335,14 @@ class SimpleArithmeticConfig(DefaultConfig):
     shape = (2, 2)
     op_loc = (0, 0)
     start_loc = (0, 0)
-    n_digits = 2
+    n_digits = 1
     upper_bound = True
     base = 10
     batch_size = 32
 
     reward_window = 0.5
+
+    n_controller_units = 128
 
     classifier_str = "MLP_30_30"
 

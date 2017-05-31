@@ -521,8 +521,8 @@ class ProductionSystemCurriculum(Curriculum):
             updater = QLearning(
                 psystem, psystem.policy, target_policy, config.double,
                 config.replay_max_size, config.replay_threshold, config.replay_proportion,
-                config.target_update_rate, config.samples_per_update, config.update_batch_size,
-                config.recurrent, config.optimizer_spec,
+                config.target_update_rate, config.steps_per_target_update, config.samples_per_update,
+                config.update_batch_size, config.recurrent, config.optimizer_spec,
                 config.lr_schedule, config.noise_schedule, config.max_grad_norm,
                 config.gamma, config.l2_norm_penalty)
         else:

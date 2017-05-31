@@ -21,6 +21,7 @@ class QLearning(ReinforcementLearningUpdater):
                  replay_threshold,
                  replay_proportion,
                  target_update_rate,
+                 steps_per_target_update,
                  samples_per_update,
                  update_batch_size,
                  recurrent,
@@ -37,11 +38,14 @@ class QLearning(ReinforcementLearningUpdater):
         self.replay_buffer = PrioritizedReplayBuffer(
             replay_max_size, replay_proportion, replay_threshold)
         self.target_update_rate = target_update_rate
+        self.steps_per_target_update = steps_per_target_update
         self.recurrent = recurrent
         self.samples_per_update = samples_per_update
         self.update_batch_size = update_batch_size
         if not self.recurrent:
             raise NotImplementedError("Non-recurrent learning not available.")
+
+        self.n_rollouts = 0
 
         super(QLearning, self).__init__(
             env,
@@ -74,18 +78,18 @@ class QLearning(ReinforcementLearningUpdater):
 
             # Perform the update
             feed_dict = self.build_feeddict()
-            feed_dict[self.is_training] = True
             sess.run([self.train_op], feed_dict=feed_dict)
 
-            # Update target network
-            sess.run(self.target_network_update)
+            if (self.steps_per_target_update is None) or (self.n_rollouts % self.steps_per_target_update == 0):
+                # Update target network
+                sess.run(self.target_network_update)
+            self.n_rollouts += n_rollouts
 
         # Run some evaluation rollouts
         if summary_op is not None:
             self.clear_buffers()
             self.env.do_rollouts(self, self.q_network, 'train', batch_size)
             feed_dict = self.build_feeddict()
-            feed_dict[self.is_training] = False
 
             train_summary, train_loss, train_reward = sess.run(
                 [summary_op, self.loss, self.reward_per_ep], feed_dict=feed_dict)
@@ -93,7 +97,6 @@ class QLearning(ReinforcementLearningUpdater):
             self.clear_buffers()
             self.env.do_rollouts(self, self.q_network, 'val', batch_size)
             feed_dict = self.build_feeddict()
-            feed_dict[self.is_training] = False
 
             val_summary, val_loss, val_reward = sess.run(
                 [summary_op, self.loss, self.reward_per_ep], feed_dict=feed_dict)
@@ -103,7 +106,6 @@ class QLearning(ReinforcementLearningUpdater):
             self.clear_buffers()
             self.env.do_rollouts(self, self.q_network, 'train', batch_size)
             feed_dict = self.build_feeddict()
-            feed_dict[self.is_training] = False
 
             train_reward, = sess.run([self.reward_per_ep], feed_dict=feed_dict)
 
@@ -185,15 +187,28 @@ class QLearning(ReinforcementLearningUpdater):
 
             self._build_train()
 
-        with tf.name_scope("update_target_network"):
-            q_network_variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=self.q_network.scope.name)
-            target_network_variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=self.target_network.scope.name)
-            target_network_update = []
+        if self.steps_per_target_update is None:
+            assert self.target_network_update is not None
 
-            for v_source, v_target in zip(q_network_variables, target_network_variables):
-                update_op = v_target.assign_sub(self.target_update_rate * (v_target - v_source))
-                target_network_update.append(update_op)
-            self.target_network_update = tf.group(*target_network_update)
+            with tf.name_scope("update_target_network"):
+                q_network_variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=self.q_network.scope.name)
+                target_network_variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=self.target_network.scope.name)
+                target_network_update = []
+
+                for v_source, v_target in zip(q_network_variables, target_network_variables):
+                    update_op = v_target.assign_sub(self.target_update_rate * (v_target - v_source))
+                    target_network_update.append(update_op)
+                self.target_network_update = tf.group(*target_network_update)
+        else:
+            with tf.name_scope("update_target_network"):
+                q_network_variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=self.q_network.scope.name)
+                target_network_variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=self.target_network.scope.name)
+                target_network_update = []
+
+                for v_source, v_target in zip(q_network_variables, target_network_variables):
+                    update_op = v_target.assign(v_source)
+                    target_network_update.append(update_op)
+                self.target_network_update = tf.group(*target_network_update)
 
 
 class QLearningCell(RNNCell):
