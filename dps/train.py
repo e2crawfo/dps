@@ -6,11 +6,12 @@ import tensorflow as tf
 import numpy as np
 from pprint import pformat
 import datetime
+import shutil
 
 from spectral_dagger.utils.experiment import ExperimentStore
 from dps.utils import (
     restart_tensorboard, EarlyStopHook, gen_seed,
-    time_limit, uninitialized_variables_initializer)
+    time_limit, uninitialized_variables_initializer, du)
 
 
 def training_loop(curriculum, config, exp_name=''):
@@ -29,6 +30,14 @@ class TrainingLoop(object):
             restart_tensorboard(str(self.config.log_dir), self.config.tbport)
 
         value = self._run_core()
+
+        if self.config.slim:
+            print("`slim` is True, so deleting experiment directory {}.".format(self.exp_dir.path))
+            try:
+                shutil.rmtree(self.exp_dir.path)
+            except FileNotFoundError:
+                pass
+            print("Size of {} after delete: {}.".format(self.config.log_dir, du(self.config.log_dir)))
 
         return value
 
@@ -98,6 +107,7 @@ class TrainingLoop(object):
                         threshold_reached, n_steps, reason = self._run_stage(stage, updater, stage_config)
                     except KeyboardInterrupt:
                         reason = "User interrupt."
+
                 if limiter.ran_out:
                     reason = "Time limit reached."
 
@@ -119,6 +129,7 @@ class TrainingLoop(object):
                           "of the curriculum, terminating.".format(stage))
                     break
 
+
         print(self.curriculum.summarize())
         history = self.curriculum.history()
         result = dict(
@@ -126,6 +137,7 @@ class TrainingLoop(object):
             output=history,
             n_stages=len(history)
         )
+
         return result
 
     @property
@@ -185,6 +197,7 @@ class TrainingLoop(object):
                           "with validation loss of {}.".format(
                               local_step, self.global_step, val_loss))
                     self.best_path = updater.save(checkpoint_file)
+
                 if stop:
                     reason = "Early stopping triggered."
                     break

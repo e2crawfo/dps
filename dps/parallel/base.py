@@ -38,21 +38,31 @@ class Operator(object):
     func_key: key
     inp_keys: list of key
     outp_keys: list of key
+    pass_store: bool
+        Whether to pass the store object as the first argument.
     metadata: dict
 
     """
-    def __init__(self, name, func_key, inp_keys, outp_keys, metadata=None):
+    def __init__(self, name, func_key, inp_keys, outp_keys, pass_store=False, metadata=None):
         self.name = name
         self.func_key = func_key
         self.inp_keys = inp_keys
         self.outp_keys = outp_keys
+        self.pass_store = pass_store
         self.metadata = metadata
 
     def __str__(self):
         from pprint import pformat
-        return "Operator(\n    name={},\n    func_key={},\n    inp_keys={},\n    outp_keys={},\n    metadata={})".format(
+        return """\
+Operator(
+    name={},
+    func_key={},
+    inp_keys={},
+    outp_keys={},
+    pass_store={},
+    metadata={})""".format(
             pformat(self.name), pformat(self.func_key), pformat(self.inp_keys),
-            pformat(self.outp_keys), pformat(self.metadata))
+            pformat(self.outp_keys), pformat(self.pass_store), pformat(self.metadata))
 
     def __repr__(self):
         return str(self)
@@ -116,6 +126,9 @@ class Operator(object):
                 if hasattr(inp, 'log_dir'):
                     inp.log_dir = str(store.directory)
 
+            if self.pass_store:
+                inputs.insert(0, store)
+
             print("Calling function for op {}".format(self.name))
             if output_to_files:
                 stdout = store.path_for('stdout')
@@ -127,6 +140,7 @@ class Operator(object):
                         outputs = func(*inputs)
             else:
                 outputs = func(*inputs)
+
             print("Saving output for op {}".format(self.name))
             if len(self.outp_keys) == 1:
                 store.save_object('data', self.outp_keys[0], outputs, force_unique=force_unique, clobber=True)
@@ -139,6 +153,16 @@ class Operator(object):
             return True
         finally:
             signal.signal(signal.SIGTERM, old_sigterm_handler)
+
+    def get_inputs(self, store):
+        if not self.is_ready(store):
+            raise Exception("Cannot get inputs, op is not ready to run.")
+        return [store.load_object('data', ik) for ik in self.inp_keys]
+
+    def get_outputs(self, store):
+        if not self.is_complete(store):
+            raise Exception("Cannot get outputs, op is not complete.")
+        return [store.load_object('data', ok) for ok in self.outp_keys]
 
 
 class Signal(object):
@@ -226,6 +250,10 @@ class ReadOnlyJob(object):
             n_ready_incomplete=len(ready_incomplete_ops),
             n_not_ready_incomplete=len(not_ready_incomplete_ops))
 
+    def completed_ops(self):
+        ops = list(self.get_ops(None, sort=False))
+        return [op for i, op in enumerate(ops) if op.is_complete(self.objects)]
+
 
 class Job(ReadOnlyJob):
     def __init__(self, path):
@@ -237,7 +265,7 @@ class Job(ReadOnlyJob):
     def save_object(self, kind, key, obj, force_unique=True, clobber=False):
         self.objects.save_object(kind, key, obj, force_unique, clobber)
 
-    def add_op(self, name, func, inputs, n_outputs):
+    def add_op(self, name, func, inputs, n_outputs, pass_store):
         if not callable(func):
             func_key = func
         else:
@@ -260,13 +288,14 @@ class Job(ReadOnlyJob):
 
         op = Operator(
             name=name, func_key=func_key,
-            inp_keys=inp_keys, outp_keys=outp_keys)
+            inp_keys=inp_keys, outp_keys=outp_keys,
+            pass_store=pass_store)
         op_key = self.objects.get_unique_key('operator')
         self.save_object('operator', op_key, op, force_unique=True)
 
         return outputs
 
-    def map(self, func, inputs, name=None):
+    def map(self, func, inputs, name=None, pass_store=False):
         """ Currently restricted to fns with one input and one output. """
         op_name = name or 'map:{}'.format(self.map_idx)
         results = []
@@ -275,16 +304,17 @@ class Job(ReadOnlyJob):
         self.save_object('function', func_key, func, force_unique=True)
 
         for idx, inp in enumerate(inputs):
-            op_result = self.add_op('{},app:{}'.format(op_name, idx), func_key, [inp], 1)
+            op_result = self.add_op(
+                '{},app:{}'.format(op_name, idx), func_key, [inp], 1, pass_store)
             results.append(op_result[0])
 
         self.map_idx += 1
 
         return results
 
-    def reduce(self, func, inputs, name=None):
+    def reduce(self, func, inputs, name=None, pass_store=False):
         op_name = name or 'reduce:{}'.format(self.reduce_idx)
-        op_result = self.add_op(op_name, func, inputs, 1)
+        op_result = self.add_op(op_name, func, inputs, 1, pass_store)
         self.reduce_idx += 1
 
         return op_result

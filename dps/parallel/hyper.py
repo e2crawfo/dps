@@ -4,6 +4,8 @@ import numpy as np
 from collections import defaultdict
 from pathlib import Path
 import clify
+import pandas as pd
+from pprint import pprint
 
 from dps.utils import gen_seed
 from dps.test.config import algorithms, tasks
@@ -85,6 +87,14 @@ def sample_configs(n, repeats, base_config, distributions):
         an array of samples with that shape).
 
     """
+    _distributions = {}
+    for k, d in distributions.items():
+        if not hasattr(d, 'rvs'):
+            _distributions[k] = ChoiceDist(list(d))
+        else:
+            _distributions[k] = d
+    distributions = _distributions
+
     samples = {k: d.rvs(n) for k, d in distributions.items()}
     configs = []
     for i in range(n):
@@ -101,84 +111,58 @@ def sample_configs(n, repeats, base_config, distributions):
     return configs
 
 
-def reduce_hyper_results(*results):
-    # Only take settings which got to the latest stage of the curriculum
-    deepest = max(r['n_stages'] for r in results)
-    results = [r for r in results if r['n_stages'] == deepest]
+def reduce_hyper_results(store, *results):
+    distributions = store.load_object('metadata', 'distributions')
+    keys = list(distributions.keys())
 
-    fig, subplots = plt.subplots(deepest, 2)
-    subplots = np.atleast_2d(subplots)
+    # Create a pandas dataframe storing the results
+    records = []
+    for r in results:
+        record = dict(
+            n_stages=r['n_stages'],
+            total_steps=sum(s[1] for s in r['output']),
+            final_stage_steps=r['output'][-1][1],
+            final_stage_loss=r['output'][-1][2])
 
-    x_lim = [np.inf, -np.inf]
-    y_lim = [np.inf, -np.inf]
-    for stage in range(deepest):
-        stage_results = [r for r in results if r['n_stages'] > stage]
-        n_reached = len(stage_results)
-        print("Num settings that reached stage {}: {}.".format(stage, n_reached))
+        for k in keys:
+            record[k] = r['config'][k]
+        record['seed'] = r['config']['seed']
+        records.append(record)
+    df = pd.DataFrame.from_records(records)
+    print(df.describe(percentiles=[.05, .25, .75, .95]))
 
-        losses = [sr['output'][stage][2] for sr in stage_results]
+    groups = df.groupby(keys)
 
-        # Losses reached on current stage.
-        axis = subplots[stage, 0]
-        axis.set_ylabel("stage {}".format(stage))
-        n, bins, patches = axis.hist(losses, 'auto', normed=0, facecolor='green', edgecolor='black')
-        axis.set_title('Individual')
+    _latest_stage = df.n_stages.max()
 
-        y_lim[0] = min(y_lim[0], min(n))
-        y_lim[1] = max(y_lim[1], max(n))
-        x_lim[0] = min(x_lim[0], min(bins))
-        x_lim[1] = max(x_lim[1], max(bins))
+    data = []
+    for k, _df in groups:
+        latest_stage = _df.n_stages.max()
+        if latest_stage == _latest_stage:
+            n_reached_latest = (_df.n_stages == latest_stage).sum()
+            data.append(dict(
+                data=_df,
+                keys=k,
+                n_stages=latest_stage,
+                percent_reached=n_reached_latest/len(_df),
+                n_reached=n_reached_latest,
+                final_stage_loss=_df.final_stage_loss.mean()))
 
-        grouped = defaultdict(list)
-        for sr in stage_results:
-            grouped[sr['config']['idx']].append(sr['output'][stage][2])
+    print('*' * 100)
+    print("BASE CONFIG")
+    print(store.load_object('metadata', 'config'))
+    print('*' * 100)
 
-        mean_losses = [np.mean(v) for v in grouped.values()]
+    print("DISTRIBUTIONS")
+    pprint(distributions)
 
-        # Mean losses reached on current stage.
-        axis = subplots[stage, 1]
-        n, bins, patches = axis.hist(mean_losses, 'auto', normed=0, facecolor='blue', edgecolor='black')
-        axis.set_title('Group Averages')
-
-        y_lim[0] = min(y_lim[0], min(n))
-        y_lim[1] = max(y_lim[1], max(n))
-        x_lim[0] = min(x_lim[0], min(bins))
-        x_lim[1] = max(x_lim[1], max(bins))
-
-    x_diff = (x_lim[1] - x_lim[0])
-    x_lim = (x_lim[0] - 0.05 * x_diff, x_lim[1] + 0.05 * x_diff)
-    y_diff = (y_lim[1] - y_lim[0])
-    y_lim = (y_lim[0] - 0.05 * y_diff, y_lim[1] + 0.05 * y_diff)
-
-    for ax in subplots.flatten():
-        ax.set_xlim(x_lim)
-        ax.set_ylim(y_lim)
-
-    # Rank settings by performance on the greatest curriculum stage reached by any setting.
-    reached_deepest = [r for r in results if r['n_stages'] == deepest]
-    ranked = sorted(reached_deepest, key=lambda r: r['output'][-1][2])
-    ranked = [(r['output'][-1][2], r['config']) for r in ranked]
-
-    print("Best 3 ranked: ")
-    print(ranked[:3])
-
-    grouped = defaultdict(list)
-    configs = {}
-    for sr in reached_deepest:
-        idx = sr['config']['idx']
-        grouped[idx].append(sr['output'][-1][2])
-        if idx not in configs:
-            configs[idx] = sr['config']
-
-    scores = {k: np.mean(v) for k, v in grouped.items()}
-    mean_ranked = sorted(scores, key=lambda k: scores[k])
-    mean_ranked = [(scores[idx], configs[idx]) for idx in mean_ranked]
-
-    print("Best 3 group ranked: ")
-    print(mean_ranked[:3])
-
-    plt.tight_layout()
-    plt.savefig('hyper_histogram.pdf')
+    data = sorted(
+        data, reverse=True, key=lambda x: (x['percent_reached'], x['n_reached'], -x['final_stage_loss']))
+    print("VARIANTS THAT REACHED FINAL STAGE AT LEAST ONCE, FROM BEST TO WORST: ")
+    for d in data:
+        print('*' * 100)
+        pprint({n: v for n, v in zip(keys, d['keys'])})
+        print(d['data'].drop(keys + ['seed'], axis=1))
 
 
 class RunTrainer(object):
@@ -190,36 +174,44 @@ class RunTrainer(object):
         config.start_tensorboard = False
         config.save_summaries = False
         config.update_latest = False
+        config.display = False
+        config.save_display = False
+        config.use_gpu = False
         config.max_experiments = np.inf
         return self.trainer.train(config)
 
 
-def build_search(path, name, n, repeats, alg, task, _zip):
-    config = tasks[task]
-    config.update(algorithms[alg])
+def build_search(path, name, n, repeats, alg, task, _zip, distributions=None, config=None):
+    _config = tasks[task]
+    _config.update(algorithms[alg])
 
-    distributions = dict()
-    if alg == 'reinforce' :
-        distributions.update(
-            lr_start=LogUniform(-3., 0., 1),
-            exploration_start=spdists.uniform(0, 0.5),
-            batch_size=ChoiceDist(10 * np.arange(1, 11)),
-            scaled=ChoiceDist([0, 1]),
-            entropy_start=ChoiceDist([0.0, LogUniform(-3., 0., 1)]),
-            max_grad_norm=ChoiceDist([0.0, 1.0, 2.0])
-        )
-    elif alg == 'qlearning':
-        distributions.update(
-            lr_start=LogUniform(-3., 0., 10),
-            exploration_start=spdists.uniform(0, 0.5),
-            batch_size=ChoiceDist(10 * np.arange(1, 11).astype('i')),
-            replay_max_size=ChoiceDist(2 ** np.arange(6, 14)),
-            double=ChoiceDist([0, 1])
-        )
-    elif alg == 'diff':
-        pass
-    else:
-        raise NotImplementedError("Unknown algorithm: {}.".format(alg))
+    if config:
+        _config.update(config)
+    config = _config
+
+    if not distributions:
+        distributions = dict()
+        if alg == 'reinforce' :
+            distributions.update(
+                lr_start=LogUniform(-3., 0., 1),
+                exploration_start=spdists.uniform(0, 0.5),
+                batch_size=ChoiceDist(10 * np.arange(1, 11)),
+                scaled=ChoiceDist([0, 1]),
+                entropy_start=ChoiceDist([0.0, LogUniform(-3., 0., 1)]),
+                max_grad_norm=ChoiceDist([0.0, 1.0, 2.0])
+            )
+        elif alg == 'qlearning':
+            distributions.update(
+                lr_start=LogUniform(-3., 0., 10),
+                exploration_start=spdists.uniform(0, 0.5),
+                batch_size=ChoiceDist(10 * np.arange(1, 11).astype('i')),
+                replay_max_size=ChoiceDist(2 ** np.arange(6, 14)),
+                double=ChoiceDist([0, 1])
+            )
+        elif alg == 'diff':
+            pass
+        else:
+            raise NotImplementedError("Unknown algorithm: {}.".format(alg))
 
     config = clify.wrap_object(config).parse()
     configs = sample_configs(n, repeats, config, distributions)
@@ -241,14 +233,26 @@ def build_search(path, name, n, repeats, alg, task, _zip):
 
     job = Job(exp_dir.path)
     summaries = job.map(RunTrainer(config.trainer), configs)
-    best = job.reduce(reduce_hyper_results, summaries)
+    best = job.reduce(reduce_hyper_results, summaries, pass_store=1)
+
+    job.save_object('metadata', 'distributions', distributions)
+    job.save_object('metadata', 'config', config)
 
     if _zip:
         job.zip(delete=False)
 
+    return job
+
 
 def _build_search(args):
     build_search(args.path, args.name, args.n, args.repeats, args.alg, args.task, not args.no_zip)
+
+
+def _plot_search(args):
+    # Get all completed jobs, get their outputs. Plot em.
+    job = Job(args.path)
+    results = [op.get_outputs(job.objects)[0] for op in job.completed_ops()]
+    reduce_hyper_results(job.objects, *results)
 
 
 def _zip_search(args):
@@ -270,6 +274,11 @@ def hyper_search_cl():
         ('--no-zip', dict(action='store_true', help="If True, no zip file is produced.")),
     )
 
+    plot_cmd = (
+        'plot', 'Plot a hyper-parameter search.', _plot_search,
+        ('path', dict(help="Location to save the built job.", type=str)),
+    )
+
     zip_cmd = (
         'zip', 'Zip up a job.', _zip_search,
         ('to_zip', dict(help="Path to the job we want to zip.", type=str)),
@@ -277,4 +286,4 @@ def hyper_search_cl():
         ('--delete', dict(help="If True, delete the original.", action='store_true'))
     )
 
-    parallel_cl('Build, run and view hyper-parameter searches.', [build_cmd, zip_cmd])
+    parallel_cl('Build, run and view hyper-parameter searches.', [build_cmd, plot_cmd, zip_cmd])

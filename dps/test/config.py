@@ -22,6 +22,7 @@ class DefaultConfig(DpsConfig):
     updater_class = None
 
     power_through = True  # Whether to complete the entire curriculum, even if threshold not reached.
+    slim = False  # If true, tries to use little disk space
     max_steps = 100
     batch_size = 100
     n_train = 10000
@@ -79,8 +80,9 @@ class ReinforceConfig(Config):
     test_time_explore = 0.1
     patience = np.inf
 
-    entropy_schedule = "exp 0.5 100000 1.0"
-    lr_schedule = "exp 0.001 1000 1.0"
+    entropy_schedule = "exp 0.01 100000 0.1"
+    # entropy_schedule = "exp 0.5 100000 1.0"
+    lr_schedule = "constant 0.001"
     exploration_schedule = "exp 10.0 100000 1.0"
     # exploration_schedule = "poly 10.0 100000 1.0 1.0"
     gamma = 0.99
@@ -335,12 +337,13 @@ class MnistArithmeticConfig(DefaultConfig):
 
 class SimpleArithmeticConfig(DefaultConfig):
     curriculum = [
-        dict(T=2),
-        dict(T=3),
-        dict(T=4),
-        dict(T=5),
-        dict(T=5, shape=(1, 3), display=True),
-        dict(T=5, n_digits=2, shape=(1, 3), display=True),
+        # dict(T=30),
+        dict(T=10, n_digits=2, shape=(1, 3), display=True),
+        # dict(T=3),
+        # dict(T=4),
+        # dict(T=5),
+        # dict(T=5, shape=(1, 3), display=True),
+        # dict(T=5, n_digits=2, shape=(1, 3), display=True),
         # dict(T=10, n_digits=2, shape=(1, 3), display=True),
         # dict(T=10, n_digits=2, shape=(2, 2), display=True),
         # dict(T=15, shape=(3, 3), n_digits=2, display=True),
@@ -367,14 +370,14 @@ class SimpleArithmeticConfig(DefaultConfig):
     op_loc = (0, 0)
     start_loc = (0, 0)
     n_digits = 1
-    upper_bound = True
+    upper_bound = False
     base = 10
-    batch_size = 32
+    batch_size = 64
     threshold = 0.04
 
     reward_window = 0.5
 
-    n_controller_units = 32
+    n_controller_units = 64
 
     # classifier_str = "MLP2_70_70"
     # @staticmethod
@@ -510,14 +513,8 @@ class SimpleArithmeticTest(TestConfig):
 
     reward_window = 0.5
 
-    classifier_str = "LeNet2_1024"
-
-    # @staticmethod
-    # def build_classifier(inp, outp_size, is_training=False):
-    #     logits = MLP([30, 30], activation_fn=tf.nn.sigmoid)(inp, outp_size)
-    #     return tf.nn.softmax(logits)
-
     mnist_config = MnistConfig(eval_step=100, max_steps=100000, patience=np.inf, threshold=0.01)
+    classifier_str = "LeNet2_1024"
 
     @staticmethod
     def build_classifier(inp, output_size, is_training=False):
@@ -525,10 +522,7 @@ class SimpleArithmeticTest(TestConfig):
         return tf.nn.softmax(logits)
 
     action_seq = range(simple_arithmetic.SimpleArithmetic.n_actions)
-    batch_size = 16
-
     trainer = simple_arithmetic.SimpleArithmeticTrainer()
-
     render_rollouts = staticmethod(simple_arithmetic.render_rollouts)
 
 

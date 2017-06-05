@@ -15,6 +15,7 @@ import traceback
 import sys
 import pdb
 from collections import deque
+import subprocess
 
 import tensorflow as tf
 from tensorflow.python.ops import random_ops, math_ops
@@ -23,6 +24,11 @@ from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from tensorflow.contrib.slim import fully_connected
 
 import dps
+
+
+def du(path):
+    """disk usage in human readable format (e.g. '2,1GB')"""
+    return subprocess.check_output(['du', '-sh', str(path)]).split()[0].decode('utf-8')
 
 
 @contextmanager
