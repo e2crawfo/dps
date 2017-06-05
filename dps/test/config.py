@@ -26,7 +26,7 @@ class DefaultConfig(DpsConfig):
     max_steps = 100
     batch_size = 100
     n_train = 10000
-    n_val = 200
+    n_val = 1000
     n_test = 0
 
     threshold = 1e-2

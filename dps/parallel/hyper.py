@@ -1,7 +1,6 @@
 import copy
 from scipy.stats import distributions as spdists
 import numpy as np
-from collections import defaultdict
 from pathlib import Path
 import clify
 import pandas as pd
@@ -11,7 +10,6 @@ from dps.utils import gen_seed
 from dps.test.config import algorithms, tasks
 from dps.parallel.base import Job
 from spectral_dagger.utils.experiment import ExperimentStore
-import matplotlib.pyplot as plt
 
 
 class TupleDist(object):
@@ -267,7 +265,8 @@ def hyper_search_cl():
         'build', 'Build a hyper-parameter search.', _build_search,
         ('path', dict(help="Location to save the built job.", type=str)),
         ('name', dict(help="Memorable name for the search.", type=str)),
-        ('n', dict(help="Number of parameter settings to try.", type=int)),
+        ('n', dict(help="Number of parameter settings to try. "
+                        "If 0, a grid search is performed in which all combinations are tried.", type=int)),
         ('repeats', dict(help="Number of repeats for each parameter setting.", type=int)),
         ('alg', dict(help="Algorithm to use for learning.", type=str)),
         ('task', dict(help="Task to test on.", type=str)),
