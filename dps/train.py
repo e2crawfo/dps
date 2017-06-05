@@ -197,7 +197,7 @@ class TrainingLoop(object):
             else:
                 updater.update(stage_config.batch_size)
 
-            if self.global_step % stage_config.checkpoint_step == 0:
+            if stage_config.checkpoint_step > 0 and self.global_step % stage_config.checkpoint_step == 0:
                 print("Checkpointing on global step {}.".format(self.global_step))
                 checkpoint_file = self.exp_dir.path_for('model_stage={}'.format(stage_idx))
                 updater.save(checkpoint_file, local_step)

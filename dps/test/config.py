@@ -7,6 +7,7 @@ from dps.reinforce import REINFORCE
 from dps.qlearning import QLearning
 from dps.policy import SoftmaxSelect, EpsilonGreedySelect, GumbelSoftmaxSelect, IdentitySelect
 from dps.utils import Config, CompositeCell, FeedforwardCell, MLP, DpsConfig, FixedController
+from dps.mnist import LeNet, MnistConfig
 from dps.experiments import (
     hello_world, simple_addition, pointer_following,
     hard_addition, translated_mnist, mnist_arithmetic, simple_arithmetic)
@@ -78,7 +79,7 @@ class ReinforceConfig(Config):
     test_time_explore = 0.1
     patience = np.inf
 
-    entropy_schedule = "exp 0.1 100000 1.0"
+    entropy_schedule = "exp 0.5 100000 1.0"
     lr_schedule = "exp 0.001 1000 1.0"
     exploration_schedule = "exp 10.0 100000 1.0"
     # exploration_schedule = "poly 10.0 100000 1.0 1.0"
@@ -278,7 +279,7 @@ class TranslatedMnistConfig(DefaultConfig):
     classifier_str = "MLP_50_50"
 
     @staticmethod
-    def build_classifier(inp, outp_size):
+    def build_classifier(inp, outp_size, is_training=False):
         logits = MLP([50, 50], activation_fn=tf.nn.sigmoid)(inp, outp_size)
         return tf.nn.softmax(logits)
 
@@ -311,7 +312,7 @@ class MnistArithmeticConfig(DefaultConfig):
     classifier_str = "MLP_30_30"
 
     @staticmethod
-    def build_classifier(inp, outp_size):
+    def build_classifier(inp, outp_size, is_training=False):
         logits = MLP([30, 30], activation_fn=tf.nn.sigmoid)(inp, outp_size)
         return tf.nn.softmax(logits)
 
@@ -333,8 +334,35 @@ class MnistArithmeticConfig(DefaultConfig):
 
 
 class SimpleArithmeticConfig(DefaultConfig):
-    curriculum = [dict(T=5)]
-    mnist = False
+    curriculum = [
+        dict(T=2),
+        dict(T=3),
+        dict(T=4),
+        dict(T=5),
+        dict(T=5, shape=(1, 3), display=True),
+        dict(T=5, n_digits=2, shape=(1, 3), display=True),
+        # dict(T=10, n_digits=2, shape=(1, 3), display=True),
+        # dict(T=10, n_digits=2, shape=(2, 2), display=True),
+        # dict(T=15, shape=(3, 3), n_digits=2, display=True),
+        # dict(T=5, shape=(1, 3)),
+        # dict(T=7, shape=(1, 3), display=False),
+        # dict(T=7, shape=(1, 3), n_digits=2, display=False),
+        # dict(T=7, shape=(1, 4), n_digits=2, display=False),
+        # dict(T=8, shape=(1, 5), n_digits=2, display=False),
+        # dict(T=9, shape=(1, 6), n_digits=2, display=False),
+        # dict(T=10, shape=(1, 7), n_digits=2, display=False),
+        # dict(T=11, shape=(1, 7), n_digits=2, display=False),
+        # dict(T=12, shape=(1, 7), n_digits=2, display=False),
+        # dict(T=13, shape=(1, 7), n_digits=2, display=False),
+        # dict(T=14, shape=(1, 7), n_digits=2, display=False),
+        # dict(T=15, shape=(1, 7), n_digits=2, display=False),
+        # dict(T=15, shape=(1, 7), n_digits=3, display=False),
+        # dict(T=15, shape=(1, 7), n_digits=4, display=False),
+        # dict(T=15, shape=(1, 7), n_digits=5, display=False),
+        # dict(T=15, shape=(1, 7), n_digits=6, display=True),
+    ]
+    display = False
+    mnist = True
     shape = (1, 2)
     op_loc = (0, 0)
     start_loc = (0, 0)
@@ -342,24 +370,29 @@ class SimpleArithmeticConfig(DefaultConfig):
     upper_bound = True
     base = 10
     batch_size = 32
+    threshold = 0.04
 
     reward_window = 0.5
 
-    n_controller_units = 128
+    n_controller_units = 32
 
-    classifier_str = "MLP_30_30"
+    # classifier_str = "MLP2_70_70"
+    # @staticmethod
+    # def build_classifier(inp, outp_size, is_training=False):
+    #     logits = MLP([70, 70], activation_fn=tf.nn.sigmoid)(inp, outp_size)
+    #     return tf.nn.softmax(logits)
 
+    classifier_str = "LeNet2_1024"
     @staticmethod
-    def build_classifier(inp, outp_size):
-        logits = MLP([30, 30], activation_fn=tf.nn.sigmoid)(inp, outp_size)
+    def build_classifier(inp, output_size, is_training=False):
+        logits = LeNet(1024, activation_fn=tf.nn.sigmoid)(inp, output_size, is_training)
         return tf.nn.softmax(logits)
+
+    mnist_config = MnistConfig(
+        eval_step=100, max_steps=100000, patience=np.inf, threshold=0.05, include_blank=True)
 
     trainer = simple_arithmetic.SimpleArithmeticTrainer()
 
-    controller_func = staticmethod(
-        lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=64),
-                                        MLP(),
-                                        n_actions))
     log_name = 'simple_arithmetic'
     render_rollouts = staticmethod(simple_arithmetic.render_rollouts)
 
@@ -426,7 +459,7 @@ class TranslatedMnistTest(TestConfig, TranslatedMnistConfig):
     classifier_str = "MLP_30_30"
 
     @staticmethod
-    def build_classifier(inp, outp_size):
+    def build_classifier(inp, outp_size, is_training=False):
         logits = MLP([30, 30], activation_fn=tf.nn.sigmoid)(inp, outp_size)
         return tf.nn.softmax(logits)
 
@@ -452,7 +485,7 @@ class MnistArithmeticTest(TestConfig, MnistArithmeticConfig):
     classifier_str = "MLP_30_30"
 
     @staticmethod
-    def build_classifier(inp, outp_size):
+    def build_classifier(inp, outp_size, is_training=False):
         logits = MLP([30, 30], activation_fn=tf.nn.sigmoid)(inp, outp_size)
         return tf.nn.softmax(logits)
 
@@ -463,7 +496,7 @@ class MnistArithmeticTest(TestConfig, MnistArithmeticConfig):
 
 
 class SimpleArithmeticTest(TestConfig):
-    mnist = False
+    mnist = True
     shape = (3, 3)
     op_loc = (0, 0)
     start_loc = (0, 0)
@@ -477,14 +510,21 @@ class SimpleArithmeticTest(TestConfig):
 
     reward_window = 0.5
 
-    classifier_str = "MLP_30_30"
+    classifier_str = "LeNet2_1024"
+
+    # @staticmethod
+    # def build_classifier(inp, outp_size, is_training=False):
+    #     logits = MLP([30, 30], activation_fn=tf.nn.sigmoid)(inp, outp_size)
+    #     return tf.nn.softmax(logits)
+
+    mnist_config = MnistConfig(eval_step=100, max_steps=100000, patience=np.inf, threshold=0.01)
 
     @staticmethod
-    def build_classifier(inp, outp_size):
-        logits = MLP([30, 30], activation_fn=tf.nn.sigmoid)(inp, outp_size)
+    def build_classifier(inp, output_size, is_training=False):
+        logits = LeNet(1024, activation_fn=tf.nn.sigmoid)(inp, output_size, is_training)
         return tf.nn.softmax(logits)
 
-    action_seq = range(14)
+    action_seq = range(simple_arithmetic.SimpleArithmetic.n_actions)
     batch_size = 16
 
     trainer = simple_arithmetic.SimpleArithmeticTrainer()

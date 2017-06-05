@@ -16,6 +16,9 @@ from dps.utils import (
 from dps.attention import DRAW_attention_2D, discrete_attention
 
 
+slim = tf.contrib.slim
+
+
 class Rect(object):
     def __init__(self, x, y, w, h):
         self.left = x
@@ -34,9 +37,10 @@ class Rect(object):
 
 
 class TranslatedMnistDataset(RegressionDataset):
-    def __init__(self, W, n_digits, max_overlap, n_examples, symbols=None, function=None, for_eval=False, shuffle=True):
+    def __init__(self, W, n_digits, max_overlap, n_examples, symbols=None, function=None, for_eval=False, shuffle=True, include_blank=False):
 
         self.W = W
+        self.include_blank = include_blank
         self.n_digits = n_digits
         self.max_overlap = max_overlap
         self.symbols = symbols or list(range(10))
@@ -45,7 +49,7 @@ class TranslatedMnistDataset(RegressionDataset):
             function = lambda inputs: sum(inputs)
         self.function = function
 
-        mnist_x, mnist_y, symbol_map = load_emnist(self.symbols)
+        mnist_x, mnist_y, symbol_map = load_emnist(self.symbols, include_blank=include_blank)
         mnist_x = mnist_x.reshape(-1, 28, 28)
 
         x, y = self.make_dataset(
@@ -128,9 +132,10 @@ def view_emnist(x, y, n):
         s.set_title(str(y[i, 0]))
 
 
-def load_emnist(classes, balance=False):
+def load_emnist(classes, balance=False, include_blank=False):
     """ maps the symbols down to range(0, len(classes)) """
     import gzip
+    classes = classes[:]
     data_dir = Path(default_config().data_dir).expanduser()
     emnist_dir = data_dir / 'emnist/emnist-byclass'
     y = []
@@ -144,16 +149,26 @@ def load_emnist(classes, balance=False):
     x = np.concatenate(x, axis=0)
     y = np.array(y).reshape(-1, 1)
 
+    if include_blank:
+        class_count = min([(y == symbol_map[c]).sum() for c in classes])
+        blanks = np.zeros((class_count, x.shape[1]))
+        x = np.concatenate((x, blanks), axis=0)
+        blank_idx = len(symbol_map)
+        y = np.concatenate((y, blank_idx * np.ones((class_count, 1))), axis=0)
+        blank_symbol = 62
+        symbol_map[blank_symbol] = blank_idx
+        classes.append(blank_symbol)
+
     order = np.random.permutation(x.shape[0])
 
     x = x[order, :]
     y = y[order, :]
 
     if balance:
-        class_count = min([(y == c).sum() for c in classes])
+        class_count = min([(y == symbol_map[c]).sum() for c in classes])
         keep_x, keep_y = [], []
         for i, cls in enumerate(classes):
-            keep_indices, _ = np.nonzero(i == cls)
+            keep_indices, _ = np.nonzero(y == symbol_map[cls])
             keep_indices = keep_indices[:class_count]
             keep_x.append(x[keep_indices, :])
             keep_y.append(y[keep_indices, :])
@@ -291,21 +306,20 @@ class MnistArithmeticDataset(RegressionDataset):
 
 class MnistConfig(DpsConfig):
     batch_size = 64
-    eval_step = 100
+    eval_step = 1000
     max_steps = 100000
     patience = 10000
     lr_schedule = "exp 0.001 1000 0.96"
     optimizer_spec = "adam"
-    threshold = 0.05
+    threshold = 0.02
 
     n_train = 60000
-    n_val = 1000
+    n_val = 5000
     symbols = list(range(10))
     log_name = 'mnist_pretrained'
 
 
 def train_mnist(build_model, var_scope, path=None, config=None):
-
     config = config or MnistConfig()
 
     es = ExperimentStore(str(config.log_dir), max_experiments=5, delete_old=1)
@@ -317,12 +331,20 @@ def train_mnist(build_model, var_scope, path=None, config=None):
     with open(exp_dir.path_for('config'), 'w') as f:
         f.write(str(config))
 
-    train_dataset = TranslatedMnistDataset(28, 1, np.inf, config.n_train, symbols=config.symbols)
-    val_dataset = TranslatedMnistDataset(28, 1, np.inf, config.n_val, for_eval=True, symbols=config.symbols)
+    train_dataset = TranslatedMnistDataset(
+        28, 1, np.inf, config.n_train, symbols=config.symbols, include_blank=config.include_blank)
+    val_dataset = TranslatedMnistDataset(
+        28, 1, np.inf, config.n_val, for_eval=True, symbols=config.symbols, include_blank=config.include_blank)
     obs_dim = 28 ** 2
 
-    g = tf.Graph()
+    output_size = len(config.symbols) + int(config.include_blank)
+
     with ExitStack() as stack:
+        g = tf.Graph()
+
+        if not config.use_gpu:
+            stack.enter_context(g.device("/cpu:0"))
+
         stack.enter_context(g.as_default())
         stack.enter_context(tf.variable_scope(var_scope))
 
@@ -334,8 +356,10 @@ def train_mnist(build_model, var_scope, path=None, config=None):
         val_writer = tf.summary.FileWriter(exp_dir.path_for('val'))
         print("Writing summaries to {}.".format(exp_dir.path))
 
+        is_training = tf.placeholder(tf.bool, shape=(), name="is_training")
+
         x_ph = tf.placeholder(tf.float32, (None, obs_dim))
-        inference = build_model(x_ph)
+        inference = build_model(x_ph, output_size, is_training=is_training)
         y_ph = tf.placeholder(tf.int64, (None))
         _y = tf.reshape(y_ph, (-1,))
         loss = tf.reduce_mean(
@@ -370,14 +394,14 @@ def train_mnist(build_model, var_scope, path=None, config=None):
                 then = time.time()
                 x, y = train_dataset.next_batch(config.batch_size)
                 train_summary, train_loss, train_acc, _ = sess.run(
-                    [summary_op, loss, accuracy, train_op], {x_ph: x, y_ph: y})
+                    [summary_op, loss, accuracy, train_op], {x_ph: x, y_ph: y, is_training: True})
 
                 duration = time.time() - then
                 train_writer.add_summary(train_summary, step)
 
                 x, y = val_dataset.next_batch(config.batch_size)
                 val_summary, val_loss, val_acc = sess.run(
-                    [summary_op, loss, accuracy], {x_ph: x, y_ph: y})
+                    [summary_op, loss, accuracy], {x_ph: x, y_ph: y, is_training: False})
                 val_writer.add_summary(val_summary, step)
 
                 print("Step={}, Train Loss/Acc={:06.4f}/{:06.4f}, Validation Loss/Acc={:06.4f}/{:06.4f}, "
@@ -390,7 +414,8 @@ def train_mnist(build_model, var_scope, path=None, config=None):
                 if new_best:
                     print("Storing new best on step {} "
                           "with validation loss of {}.".format(step, val_loss))
-                    saver.save(sess, checkpoint_path)
+                    best_path = saver.save(sess, checkpoint_path)
+                    print("Saved to location: {}".format(best_path))
 
                 if stop:
                     print("Optimization complete, early stopping triggered.")
@@ -406,7 +431,7 @@ def train_mnist(build_model, var_scope, path=None, config=None):
 
             else:
                 x, y = train_dataset.next_batch(config.batch_size)
-                train_loss, _ = sess.run([loss, train_op], {x_ph: x, y_ph: y})
+                train_loss, _ = sess.run([loss, train_op], {x_ph: x, y_ph: y, is_training: True})
 
             step += 1
 
@@ -487,9 +512,7 @@ class MnistPretrained(object):
         self.preprocess = preprocess
         self.was_loaded = None
 
-        self.n_symbols = len(self.config.symbols)
-
-    def __call__(self, inp, preprocess=False):
+    def __call__(self, inp, output_size, is_training=False, preprocess=False):
         if preprocess and self._build_preprocessor is not None:
             prepped = self._build_preprocessor(inp)
         else:
@@ -498,41 +521,64 @@ class MnistPretrained(object):
         if self.n_builds == 0:
             # Create the network so there are variables to load into
             with tf.variable_scope(self.var_scope_name, reuse=False) as var_scope:
-                outp = self._build_classifier(prepped, self.n_symbols)
+                outp = self._build_classifier(prepped, output_size, is_training)
 
             self.var_scope = var_scope
 
-            builder = _MnistPretrainedBuilder(self._build_preprocessor, self._build_classifier, self.n_symbols)
+            builder = _MnistPretrainedBuilder(self._build_preprocessor, self._build_classifier)
 
-            # Initializes created variables by loading from a file or training separately
+            # Initializes created variables by loading from a file or training) if file isn't found
             self.was_loaded = load_or_train(
-                tf.get_default_session(), builder, train_mnist, self.var_scope, self.path, self.config)
+                tf.get_default_session(), builder, train_mnist,
+                self.var_scope, self.path, self.config)
             self.n_builds += 1
         else:
             with tf.variable_scope(self.var_scope, reuse=True) as var_scope:
-                outp = self._build_classifier(prepped, self.n_symbols)
+                outp = self._build_classifier(prepped, output_size, is_training)
 
         return outp
 
 
 class _MnistPretrainedBuilder(object):
-    def __init__(self, bp, bc, n_symbols):
-        self.bp, self.bc, self.n_symbols = bp, bc, n_symbols
+    def __init__(self, bp, bc):
+        self.bp, self.bc = bp, bc
 
-    def __call__(self, inp):
+    def __call__(self, inp, output_size, is_training):
         prepped = inp
         if self.bp is not None:
             prepped = self.bp(inp)
-        inference = self.bc(prepped, self.n_symbols)
+        inference = self.bc(prepped, output_size, is_training)
         return inference
 
 
-if __name__ == "__main__":
-    W = 100
-    n_digits = 3
-    max_overlap = 100
-    n_examples = 400
-    symbols = [('A', lambda x: sum(x)), ('M', lambda x: np.product(x)), ('C', lambda x: len(x))]
-    dataset = MnistArithmeticDataset(symbols, W, n_digits, max_overlap, n_examples, base=2, for_eval=False, shuffle=True)
-    dataset.visualize()
-    plt.show()
+class LeNet(object):
+    def __init__(self, n_units=1024, dropout_keep_prob=0.5, scope='LeNet', **fc_kwargs):
+        self.n_units = n_units
+        self.dropout_keep_prob = dropout_keep_prob
+        self.scope = scope
+        self.fc_kwargs = fc_kwargs
+
+    def __call__(self, images, output_size, is_training=False):
+        if len(images.shape) == 2:
+            s = int(np.sqrt(int(images.shape[1])))
+            images = tf.reshape(images, (-1, s, s, 1))
+
+        if len(images.shape) == 3:
+            images = tf.expand_dims(images, -1)
+
+        net = images
+        with tf.variable_scope(self.scope, 'LeNet', [images, output_size]):
+            net = slim.conv2d(net, 32, 5, scope='conv1')
+            net = slim.max_pool2d(net, 2, 2, scope='pool1')
+            net = slim.conv2d(net, 64, 5, scope='conv2')
+            net = slim.max_pool2d(net, 2, 2, scope='pool2')
+            net = slim.flatten(net)
+
+            net = slim.fully_connected(net, self.n_units, scope='fc3', **self.fc_kwargs)
+            net = slim.dropout(net, self.dropout_keep_prob, is_training=is_training, scope='dropout3')
+
+            fc_kwargs = self.fc_kwargs.copy()
+            fc_kwargs['activation_fn'] = None
+
+            logits = slim.fully_connected(net, output_size, scope='fc4', **fc_kwargs)
+            return logits

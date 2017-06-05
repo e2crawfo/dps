@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import animation, patches
 from pathlib import Path
+import copy
 
 from dps import CoreNetwork
 from dps.register import RegisterBank
@@ -62,24 +63,25 @@ class SimpleArithmeticDataset(RegressionDataset):
         if self.mnist:
             functions = {char_to_idx(s): f for s, f in symbols}
 
-            emnist_x, emnist_y, symbol_map = load_emnist(list(functions.keys()))
+            emnist_x, emnist_y, symbol_map = load_emnist(list(functions.keys()), balance=True)
             emnist_x = emnist_x.reshape(-1, 28, 28)
+            emnist_x = np.uint8(255*np.minimum(emnist_x, 1))
             emnist_y = np.squeeze(emnist_y, 1)
 
             functions = {symbol_map[k]: v for k, v in functions.items()}
 
             symbol_reps = Container(emnist_x, emnist_y)
 
-            mnist_x, mnist_y, symbol_map = load_emnist(list(range(base)))
+            mnist_x, mnist_y, symbol_map = load_emnist(list(range(base)), balance=True)
             mnist_x = mnist_x.reshape(-1, 28, 28)
+            mnist_x = np.uint8(255*np.minimum(mnist_x, 1))
             mnist_y = np.squeeze(mnist_y, 1)
 
             digit_reps = Container(mnist_x, mnist_y)
             blank_element = np.zeros((28, 28))
         else:
             sorted_symbols = sorted(symbols, key=lambda x: x[0])
-            # start at -2, move towards -inf
-            functions = {-(i+2): f for i, (_, f) in enumerate(sorted_symbols)}
+            functions = {i: f for i, (_, f) in enumerate(sorted_symbols)}
             symbol_values = sorted(functions.keys())
 
             symbol_reps = Container(symbol_values, symbol_values)
@@ -112,7 +114,7 @@ class SimpleArithmeticDataset(RegressionDataset):
 
         for j in range(n_examples):
             if upper_bound:
-                n = np.random.randint(1, n_digits+1)
+                n = np.random.randint(0, n_digits+1)
             else:
                 n = n_digits
 
@@ -139,7 +141,6 @@ class SimpleArithmeticDataset(RegressionDataset):
                 ys.append(y)
                 env[loc] = x
 
-            # new_X.append(np.uint8(255*np.minimum(o, 1)))
             new_X.append(env)
             new_Y.append(func(ys))
 
@@ -177,13 +178,18 @@ class SimpleArithmeticEnv(RegressionEnv):
         return "<SimpleArithmeticEnv shape={} base={}>".format(self.height, self.shape, self.base)
 
 
-if __name__ == "__main__":
+class ClassifierFunc(object):
+    def __init__(self, f, output_size):
+        self.f = f
+        self.output_size = output_size
 
-    symbols = [
-        ('A', lambda x: sum(x)),
-        ('M', lambda x: np.product(x)),
-        ('C', lambda x: len(x))]
-    env = SimpleArithmeticEnv(True, symbols, (2, 2), 1, False, 2, 10, 1, 1)
+    def __call__(self, inp):
+        x = inp
+        x = self.f(x, self.output_size, is_training=False)
+        x = tf.stop_gradient(x)
+        x = tf.argmax(x, 1)
+        x = tf.expand_dims(x, 1)
+        return x
 
 
 class SimpleArithmetic(CoreNetwork):
@@ -224,26 +230,30 @@ class SimpleArithmetic(CoreNetwork):
 
         self.start_loc = env.start_loc
 
-        build_classifier = default_config().build_classifier
-        classifier_str = default_config().classifier_str
-
         if self.mnist:
-            digit_config = MnistConfig(symbols=range(self.base))
-            name = '{}_symbols={}.chk'.format(
-                classifier_str, '_'.join(str(s) for s in range(self.base)))
+            build_classifier = default_config().build_classifier
+            classifier_str = default_config().classifier_str
 
-            self.build_digit_classifier = MnistPretrained(
+            digit_config = copy.copy(default_config().mnist_config)
+            digit_config.symbols = list(range(self.base))
+
+            name = '{}_symbols={}.chk'.format(
+                classifier_str, '_'.join(str(s) for s in digit_config.symbols))
+            digit_pretrained = MnistPretrained(
                 None, build_classifier, name=name,
                 var_scope_name='digit_classifier', config=digit_config)
+            self.build_digit_classifier = ClassifierFunc(digit_pretrained, self.base + 1)
 
-            op_symbols = [10, 12, 22]
-            op_config = MnistConfig(symbols=op_symbols)
+            op_config = copy.copy(default_config().mnist_config)
+            op_config.symbols = [10, 12, 22]
+
             name = '{}_symbols={}.chk'.format(
-                classifier_str, '_'.join(str(s) for s in op_symbols))
+                classifier_str, '_'.join(str(s) for s in op_config.symbols))
 
-            self.build_op_classifier = MnistPretrained(
+            op_pretrained = MnistPretrained(
                 None, build_classifier, name=name,
                 var_scope_name='op_classifier', config=op_config)
+            self.build_op_classifier = ClassifierFunc(op_pretrained, len(op_config.symbols) + 1)
 
         else:
             self.build_digit_classifier = lambda x: tf.identity(x)
@@ -255,7 +265,7 @@ class SimpleArithmetic(CoreNetwork):
 
         self.register_bank = RegisterBank(
             'SimpleArithmeticRB',
-            'op acc fovea_x fovea_y vision op_vision t glimpse', None, values=values,
+            'op acc fovea_x fovea_y vision op_vision t', 'glimpse', values=values,
             output_names='acc', no_display='glimpse')
 
         super(SimpleArithmetic, self).__init__()
@@ -274,11 +284,11 @@ class SimpleArithmetic(CoreNetwork):
         glimpse = tf.gather_nd(inp, indices)
         glimpse = tf.reshape(glimpse, (-1, np.product(self.element_shape)), name="glimpse")
 
-        digit_classification = tf.stop_gradient(self.build_digit_classifier(glimpse))
-        vision = tf.cast(tf.expand_dims(tf.argmax(digit_classification, 1), 1), tf.float32)
+        digit_classification = self.build_digit_classifier(glimpse)
+        vision = tf.cast(digit_classification, tf.float32)
 
-        op_classification = tf.stop_gradient(self.build_op_classifier(glimpse))
-        op_vision = tf.cast(tf.expand_dims(tf.argmax(op_classification, 1), 1), tf.float32)
+        op_classification = self.build_op_classifier(glimpse)
+        op_vision = tf.cast(op_classification, tf.float32)
 
         if self.start_loc is not None:
             fovea_y = tf.fill((batch_size, 1), self.start_loc[0])
@@ -340,11 +350,11 @@ class SimpleArithmetic(CoreNetwork):
         glimpse = tf.gather_nd(inp, indices)
         glimpse = tf.reshape(glimpse, (-1, np.product(self.element_shape)), name="glimpse")
 
-        digit_classification = tf.stop_gradient(self.build_digit_classifier(glimpse))
-        vision = tf.cast(tf.expand_dims(tf.argmax(digit_classification, 1), 1), tf.float32)
+        digit_classification = self.build_digit_classifier(glimpse)
+        vision = tf.cast(digit_classification, tf.float32)
 
-        op_classification = tf.stop_gradient(self.build_op_classifier(glimpse))
-        op_vision = tf.cast(tf.expand_dims(tf.argmax(op_classification, 1), 1), tf.float32)
+        op_classification = self.build_op_classifier(glimpse)
+        op_vision = tf.cast(op_classification, tf.float32)
 
         t = _t + 1
 
@@ -398,7 +408,7 @@ def render_rollouts(psystem, actions, registers, reward, external_obs, external_
     mn = images.min()
     images = (images - mn) / (mx - mn)
 
-    [ax.imshow(im, cmap='gray', origin='upper', extent=(0, shape[1], shape[0], 0)) for im, ax in zip(images, env_subplots)]
+    [ax.imshow(im, cmap='gray', origin='upper', extent=(0, shape[1], shape[0], 0), vmin=0.0, vmax=1.0) for im, ax in zip(images, env_subplots)]
 
     offset = 0.1
     s = 1 - 2*offset
@@ -424,11 +434,13 @@ def render_rollouts(psystem, actions, registers, reward, external_obs, external_
 
     glimpses = [ax.imshow(im, cmap='gray', origin='upper') for im, ax in zip(images, glimpse_subplots)]
 
+    [ax.imshow(im, cmap='gray', origin='upper', extent=(0, shape[1], shape[0], 0), vmin=0.0, vmax=1.0) for im, ax in zip(images, env_subplots)]
+
     def animate(i):
         for n, t in enumerate(titles1):
             t.set_text(psystem.core_network.action_names[actions_reduced[i, n]])
         for n, t in enumerate(titles2):
-            t.set_text("t={},y={}".format(i, info[0]['y'][n][0]))
+            t.set_text("t={},y={},r={}".format(i, info[0]['y'][n][0], reward[i, n, 0]))
 
         # Find locations of bottom-left in fovea co-ordinate system, then transform to axis co-ordinate system.
         fx = fovea_x[i, :, :] + offset
