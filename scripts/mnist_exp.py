@@ -1,42 +1,24 @@
 from dps.utils import DpsConfig
+from dps.mnist import LeNet
+import tensorflow as tf
 
 
 distributions = dict(
-    n_controller_units=[32, 64, 128, 256],
+    n_controller_units=[128],
     batch_size=[16, 32, 64, 128, 256],
     entropy_schedule=[
-        'constant 0.0',
         'constant 0.01',
         'constant 0.1',
         'constant 1.0',
-
-        'exp 0.01 100000 0.1',
-        'exp 0.1 100000 0.1',
-        'exp 1 100000 0.1',
-
-        'exp 0.01 100000 0.01',
-        'exp 0.1 100000 0.01',
-        'exp 1 100000 0.01',
     ],
     exploration_schedule=[
-        'constant 1.0',
-        'constant 10.0',
-
         'exp 1.0 100000 0.01',
         'exp 1.0 100000 0.1',
-
         'exp 10.0 100000 0.01',
         'exp 10.0 100000 0.1',
-        'exp 10.0 100000 1.0',
     ],
     lr_schedule=[
         'constant 0.00025',
-        'constant 0.001',
-        'constant 0.01',
-
-        'exp 0.01 100000 0.00025',
-        'exp 0.1 100000 0.00025',
-        'exp 1 100000 0.00025',
     ],
 )
 
@@ -64,7 +46,7 @@ class Config(DpsConfig):
     base = 10
     gamma = 0.99
     upper_bound = True
-    mnist = 0
+    mnist = 1
     op_loc = (0, 0)
     start_loc = (0, 0)
 
@@ -86,9 +68,16 @@ class Config(DpsConfig):
     display_step = 1000
     eval_step = 100
     checkpoint_step = 0
-    use_gpu = 0
+    use_gpu = 1
     slim = True
-    n_val = 500
+    n_val = 1000
+
+    classifier_str = "LeNet_256"
+
+    @staticmethod
+    def build_classifier(inp, output_size, is_training=False):
+        logits = LeNet(256, activation_fn=tf.nn.sigmoid)(inp, output_size, is_training)
+        return tf.nn.softmax(logits)
 
 
 if __name__ == "__main__":

@@ -240,7 +240,7 @@ class SimpleArithmetic(CoreNetwork):
             name = '{}_symbols={}.chk'.format(
                 classifier_str, '_'.join(str(s) for s in digit_config.symbols))
             digit_pretrained = MnistPretrained(
-                None, build_classifier, name=name,
+                None, build_classifier, name=name, model_dir='/tmp/dps/mnist_pretrained/',
                 var_scope_name='digit_classifier', config=digit_config)
             self.build_digit_classifier = ClassifierFunc(digit_pretrained, self.base + 1)
 
@@ -251,7 +251,7 @@ class SimpleArithmetic(CoreNetwork):
                 classifier_str, '_'.join(str(s) for s in op_config.symbols))
 
             op_pretrained = MnistPretrained(
-                None, build_classifier, name=name,
+                None, build_classifier, name=name, model_dir='/tmp/dps/mnist_pretrained/',
                 var_scope_name='op_classifier', config=op_config)
             self.build_op_classifier = ClassifierFunc(op_pretrained, len(op_config.symbols) + 1)
 

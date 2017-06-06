@@ -174,7 +174,6 @@ class RunTrainer(object):
         config.update_latest = False
         config.display = False
         config.save_display = False
-        config.use_gpu = False
         config.max_experiments = np.inf
         return self.trainer.train(config)
 
