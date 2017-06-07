@@ -96,15 +96,17 @@ def sample_configs(n, repeats, base_config, distributions):
     samples = {k: d.rvs(n) for k, d in distributions.items()}
     configs = []
     for i in range(n):
-        _config = copy.copy(base_config)
+        new = dict()
         for k, s in samples.items():
-            setattr(_config, k, s[i])
-        _config.idx = i
+            new[k] = s[i]
+        new['idx'] = i
         for r in range(repeats):
-            config = copy.copy(_config)
-            config.repeat = r
-            config.seed = gen_seed()
-            configs.append(config)
+            _new = copy.copy(new)
+            _new['repeat'] = r
+            _new['seed'] = gen_seed()
+            config = copy.copy(base_config)
+            config.update(_new)
+            configs.append((_new, config))
 
     return configs
 
@@ -168,6 +170,9 @@ class RunTrainer(object):
         self.trainer = trainer
 
     def __call__(self, config):
+        new, config = config
+        print("Sampled values: ")
+        pprint(new)
         config = clify.wrap_object(config).parse()
         config.start_tensorboard = False
         config.save_summaries = False

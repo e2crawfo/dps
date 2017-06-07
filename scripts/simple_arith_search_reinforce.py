@@ -1,42 +1,29 @@
 from dps.utils import DpsConfig
+import numpy as np
 
 
 distributions = dict(
-    n_controller_units=[32, 64, 128, 256],
-    batch_size=[16, 32, 64, 128, 256],
+    n_controller_units=[128],
+    batch_size=[32],
     entropy_schedule=[
-        'constant 0.0',
-        'constant 0.01',
-        'constant 0.1',
-        'constant 1.0',
-
-        'exp 0.01 100000 0.1',
-        'exp 0.1 100000 0.1',
-        'exp 1 100000 0.1',
-
-        'exp 0.01 100000 0.01',
-        'exp 0.1 100000 0.01',
-        'exp 1 100000 0.01',
+        'constant {}'.format(x)
+        for x in 2.**(-np.arange(2, 6))
     ],
     exploration_schedule=[
-        'constant 1.0',
-        'constant 10.0',
-
         'exp 1.0 100000 0.01',
         'exp 1.0 100000 0.1',
-
         'exp 10.0 100000 0.01',
         'exp 10.0 100000 0.1',
-        'exp 10.0 100000 1.0',
     ],
     lr_schedule=[
         'constant 0.00025',
-        'constant 0.001',
-        'constant 0.01',
-
-        'exp 0.01 100000 0.00025',
-        'exp 0.1 100000 0.00025',
-        'exp 1 100000 0.00025',
+        'constant 1e-4',
+        'constant 1e-5',
+        'constant 1e-6',
+        'poly 0.00025 100000 1e-6 1',
+        'poly 1e-4 100000 1e-6 1',
+        'poly 1e-5 100000 1e-6 1',
+        'poly 1e-6 100000 0.0 1',
     ],
 )
 
@@ -97,7 +84,7 @@ if __name__ == "__main__":
     config = Config()
 
     path = '/tmp/dps/jobs'
-    name = 'simple_arithmetic_tues_after_guys_weekend'
+    name = 'simple_arithmetic_wed_after_guys_weekend'
     n = 300
     repeats = 10
     alg = 'reinforce'
