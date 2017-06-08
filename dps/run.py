@@ -31,20 +31,20 @@ def run():
         _run(alg, task)
 
 
-def _run(alg, task):
+def _run(alg, task, _config=None):
     if alg == 'visualize':
         config = test_configs[task]
+        if _config is not None:
+            config.update(_config)
+        config = clify.wrap_object(config).parse()
         config.display = True
         config.save_display = True
-        config = clify.wrap_object(config).parse()
         with config.as_default():
             build_and_visualize()
     else:
         config = tasks[task]
         config.update(algorithms[alg])
+        if _config is not None:
+            config.update(_config)
         config = clify.wrap_object(config).parse()
         config.trainer.train(config=config)
-
-
-if __name__ == "__main__":
-    run()
