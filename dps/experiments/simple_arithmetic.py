@@ -199,9 +199,7 @@ class SimpleArithmetic(CoreNetwork):
 
     """
     action_names = [
-        'fovea_x += ', 'fovea_x -= ',
-        'fovea_y += ', 'fovea_y -= ',
-        'store_op', 'add', 'inc', 'multiply', 'store', 'no-op/stop']
+        '>', '<', 'v', '^', 'store_op', '+', '+1', '*', 'store', 'noop']
 
     @property
     def input_shape(self):
@@ -384,11 +382,14 @@ def render_rollouts(psystem, actions, registers, reward, external_obs, external_
 
     fig, subplots = plt.subplots(s, 2*s)
 
-    env_subplots = subplots[:, ::2].flatten()
-    for i, ep in enumerate(env_subplots):
-        ep.set_title(str(info[0]['y'][i]))
-
-    glimpse_subplots = subplots[:, 1::2].flatten()
+    if batch_size == 1:
+        env_subplots = [subplots[0]]
+        glimpse_subplots = [subplots[1]]
+    else:
+        env_subplots = subplots[:, ::2].flatten()
+        for i, ep in enumerate(env_subplots):
+            ep.set_title(str(info[0]['y'][i]))
+        glimpse_subplots = subplots[:, 1::2].flatten()
 
     plt.subplots_adjust(hspace=0.5)
 
@@ -461,6 +462,84 @@ def render_rollouts(psystem, actions, registers, reward, external_obs, external_
         Writer = animation.writers['ffmpeg']
         writer = Writer(fps=15, metadata=dict(artist='Me'), bitrate=1800)
         _animation.save(str(Path(default_config().path) / 'animation.mp4'), writer=writer)
+
+    if default_config().display:
+        plt.show()
+
+
+def render_rollouts_static(psystem, actions, registers, reward, external_obs, external_step_lengths, info):
+    """ Render rollouts from TranslatedMnist task. """
+    config = default_config()
+    if not config.save_display and not config.display:
+        print("Skipping rendering.")
+        return
+
+    if psystem.env.mnist:
+        images = []
+        for ri in external_obs[0]:
+            ri = [np.concatenate(r, axis=-1) for r in ri]
+            ri = np.concatenate(ri, axis=0)
+            images.append(ri)
+        images = np.array(images)
+    else:
+        images = np.squeeze(external_obs[0], axis=-1)
+    mx = images.max()
+    mn = images.min()
+    images = (images - mn) / (mx - mn)
+
+    n_timesteps, batch_size, n_actions = actions.shape
+    fig, subplots = plt.subplots(batch_size, n_timesteps+1)
+
+    shape = psystem.core_network.shape
+
+    actions_reduced = np.argmax(actions, axis=-1)
+    offset = 0.1
+    s = 1 - 2*offset
+
+    fovea_x = psystem.rb.get('fovea_x', registers)
+    fovea_y = psystem.rb.get('fovea_y', registers)
+    acc = psystem.rb.get('acc', registers)
+
+    for i in range(batch_size):
+        for j in range(n_timesteps + 1):
+            ax = subplots[i, j]
+            ax.imshow(images[i], cmap='gray', origin='upper', extent=(0, shape[1], shape[0], 0), vmin=0.0, vmax=1.0)
+
+            # ax.set_title(str(info[0]['y'][i]))
+            # ax.set_title(psystem.core_network.action_names[actions_reduced[j, i]])
+            # ax.set_ylabel(
+            # ax.yaxis.set_label_position("right")
+            # ax.set_xlabel("t={},y={},r={}".format(j, info[0]['y'][i][0], reward[j, i, 0]))
+            ax.xaxis.set_visible(False)
+            ax.yaxis.set_visible(False)
+
+            if j < n_timesteps:
+                action_name = psystem.core_network.action_names[actions_reduced[j, i]]
+                if action_name == "store":
+                    action_name = "+"
+                elif action_name in ["noop", "store_op"]:
+                    action_name = "#"
+
+                text = "action: {}\nacc: {}".format(action_name, int(acc[j, i, 0]))
+
+                ax.text(
+                    0.5, 1.2, text, transform=ax.transAxes, horizontalalignment='center', verticalalignment='center')
+
+                # acc_str = str(int(acc[j, i, 0]))
+                # ax.text(
+                #     1.4, 0.2, acc_str, transform=ax.transAxes, horizontalalignment='center', verticalalignment='center')
+
+            # Find locations of bottom-left in fovea co-ordinate system, then transform to axis co-ordinate system.
+            fx = fovea_x[j, i, :] + offset
+            fy = fovea_y[j, i, :] + offset
+
+            rect = patches.Rectangle((fx, fy), s, s, alpha=0.6, fill=True, transform=ax.transData)
+            ax.add_patch(rect)
+
+    plt.subplots_adjust(left=0.01, right=0.99, top=0.94, bottom=0.00, wspace=0.03, hspace=0.0)
+
+    if default_config().save_display:
+        pass  # TODO
 
     if default_config().display:
         plt.show()

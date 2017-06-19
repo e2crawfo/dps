@@ -39,10 +39,15 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
 
         self.reward_range = env.reward_range
 
+        self.ps_func = None
         self.sampler = None
 
     def build_psystem_func(self, sample=False):
         return ProductionSystemFunction(self, sample=sample)
+
+    def build_sampler(self):
+        if self.sampler is None:
+            self.sampler = self.build_psystem_func(sample=True)
 
     @property
     def completion(self):
@@ -64,7 +69,8 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
             performs visualization.
 
         """
-        ps_func = self.build_psystem_func(sample=sample)
+        self.build_sampler()
+        ps_func = self.sampler
 
         self.env.set_mode(mode, n_rollouts)
         external_obs = self.env.reset()
@@ -194,8 +200,7 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
         # For now...
         assert policy is self.policy
 
-        if self.sampler is None:
-            self.sampler = self.build_psystem_func(sample=True)
+        self.build_sampler()
 
         self.env.set_mode(mode, n_rollouts)
         external_obs = self.env.reset()
@@ -573,7 +578,7 @@ class ProductionSystemTrainer(object):
         return training_loop(curriculum, config, exp_name=exp_name)
 
 
-def build_and_visualize(sample=False):
+def build_and_visualize(sample=False, load_from=None):
     config = default_config()
     with ExitStack() as stack:
 
@@ -594,11 +599,24 @@ def build_and_visualize(sample=False):
         env = config.trainer.build_env()
         cn = config.trainer.build_core_network(env)
 
-        exploration = tf.constant(0.0)
+        exploration = tf.constant(config.test_time_explore or 0.0)
         policy = Policy(
             config.controller_func(cn.n_actions), config.action_selection, exploration,
             cn.n_actions, cn.obs_dim)
+
+        policy_scope = getattr(config, 'policy_scope', None)
+        if policy_scope:
+            with tf.variable_scope(policy_scope) as scope:
+                policy.set_scope(scope)
+
         psystem = ProductionSystem(env, cn, policy, False, config.T)
+
+        psystem.build_sampler()
+
+        if load_from:
+            policy_variables = graph.get_collection('trainable_variables', scope=psystem.policy.scope.name)
+            saver = tf.train.Saver(policy_variables)
+            saver.restore(sess, load_from)
 
         render_rollouts = getattr(config, 'render_rollouts', None)
 

@@ -386,6 +386,7 @@ class SimpleArithmeticConfig(DefaultConfig):
     #     return tf.nn.softmax(logits)
 
     classifier_str = "LeNet2_1024"
+
     @staticmethod
     def build_classifier(inp, output_size, is_training=False):
         logits = LeNet(1024, activation_fn=tf.nn.sigmoid)(inp, output_size, is_training)
@@ -400,7 +401,18 @@ class SimpleArithmeticConfig(DefaultConfig):
     render_rollouts = staticmethod(simple_arithmetic.render_rollouts)
 
 
-class TestConfig(DefaultConfig):
+class TestConfigMeta(type):
+    def __new__(cls, name, bases, attrs):
+        action_seq = attrs.get('action_seq', None)
+        if action_seq:
+            attrs['T'] = len(action_seq)
+            attrs['controller_func'] = lambda self, n_actions: FixedController(action_seq, n_actions)
+        if 'batch_size' in attrs:
+            attrs['n_train'] = attrs['batch_size']
+        return super(TestConfigMeta, cls).__new__(cls, name, bases, attrs)
+
+
+class TestConfig(DefaultConfig, metaclass=TestConfigMeta):
     n_val = 0
     n_test = 0
     batch_size = 1
@@ -408,18 +420,6 @@ class TestConfig(DefaultConfig):
     verbose = 4
 
     action_seq = None
-
-    @property
-    def controller_func(self):
-        return lambda n_actions: FixedController(self.action_seq, n_actions)
-
-    @property
-    def T(self):
-        return len(self.action_seq)
-
-    @property
-    def n_train(self):
-        return self.batch_size
 
 
 class HelloWorldTest(TestConfig, HelloWorldConfig):
@@ -500,20 +500,22 @@ class MnistArithmeticTest(TestConfig, MnistArithmeticConfig):
 
 class SimpleArithmeticTest(TestConfig):
     mnist = True
-    shape = (3, 3)
+    shape = (5, 5)
     op_loc = (0, 0)
     start_loc = (0, 0)
     n_digits = 3
     upper_bound = True
     base = 10
-    batch_size = 16
-    n_train = 16
+    n_examples = 1
+    batch_size = n_examples
+    n_train = n_examples
     n_val = 0
     n_test = 0
 
     reward_window = 0.5
 
-    mnist_config = MnistConfig(eval_step=100, max_steps=100000, patience=np.inf, threshold=0.01)
+    mnist_config = MnistConfig(
+        eval_step=100, max_steps=100000, patience=np.inf, threshold=0.01, include_blank=True)
     classifier_str = "LeNet2_1024"
 
     @staticmethod

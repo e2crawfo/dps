@@ -31,7 +31,7 @@ def run():
         _run(alg, task)
 
 
-def _run(alg, task, _config=None):
+def _run(alg, task, _config=None, load_from=None):
     if alg == 'visualize':
         config = test_configs[task]
         if _config is not None:
@@ -40,7 +40,7 @@ def _run(alg, task, _config=None):
         config.display = True
         config.save_display = True
         with config.as_default():
-            build_and_visualize()
+            build_and_visualize(load_from=load_from)
     else:
         config = tasks[task]
         config.update(algorithms[alg])

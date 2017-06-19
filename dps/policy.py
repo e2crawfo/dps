@@ -208,10 +208,13 @@ class ActionSelection(object):
 
 
 class IdentitySelect(ActionSelection):
-    _can_sample = False  # TODO this depends on what it gets as input
+    _can_sample = True
 
     def __call__(self, inp, epsilon):
         return tf.identity(inp, name="IdentitySelect")
+
+    def sample(self, inp):
+        return tf.identity(inp, name="IdentitySelectSample")
 
 
 class ReluSelect(ActionSelection):

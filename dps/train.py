@@ -7,6 +7,7 @@ import numpy as np
 from pprint import pformat
 import datetime
 import shutil
+import dill
 
 from spectral_dagger.utils.experiment import ExperimentStore
 from dps.utils import (
@@ -47,14 +48,19 @@ class TrainingLoop(object):
         config = self.config
 
         es = ExperimentStore(str(config.log_dir), max_experiments=config.max_experiments, delete_old=1)
-        self.exp_dir = exp_dir = es.new_experiment(self.exp_name, use_time=1, force_fresh=1, update_latest=config.update_latest)
+        self.exp_dir = exp_dir = es.new_experiment(
+            self.exp_name, use_time=1, force_fresh=1, update_latest=config.update_latest)
+
         print("Scratch pad is {}.".format(exp_dir.path))
         config.path = exp_dir.path
 
         print(config)
 
-        with open(exp_dir.path_for('config'), 'w') as f:
+        with open(exp_dir.path_for('config.txt'), 'w') as f:
             f.write(str(config))
+
+        with open(exp_dir.path_for('config.pkl'), 'wb') as f:
+            dill.dump(config, f, protocol=dill.HIGHEST_PROTOCOL)
 
         batches_per_epoch = int(np.ceil(config.n_train / config.batch_size))
         self.max_epochs = int(np.ceil(config.max_steps / batches_per_epoch))
@@ -129,7 +135,6 @@ class TrainingLoop(object):
                           "of the curriculum, terminating.".format(stage))
                     break
 
-
         print(self.curriculum.summarize())
         history = self.curriculum.history()
         result = dict(
@@ -187,7 +192,8 @@ class TrainingLoop(object):
                 if display:
                     print("Step(g: {}, l: {}): TLoss={:06.4f}, VLoss={:06.4f}, "
                           "Sec/Batch={:06.10f}, Sec/Example={:06.10f}, Epoch={:04.2f}.".format(
-                              self.global_step, local_step, train_loss, val_loss, time_per_batch, time_per_example, updater.env.completion))
+                              self.global_step, local_step, train_loss, val_loss, time_per_batch,
+                              time_per_example, updater.env.completion))
 
                 new_best, stop = self.curriculum.check(val_loss, self.global_step, local_step)
 
