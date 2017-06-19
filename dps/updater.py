@@ -182,8 +182,6 @@ class ReinforcementLearningUpdater(Updater):
                  gamma,
                  l2_norm_penalty):
 
-        assert policy.action_selection.can_sample, (
-            "Cannot sample when using action selection method {}".format(policy.action_selection))
         self.policy = policy
         self.optimizer_spec = optimizer_spec
         self.lr_schedule = lr_schedule

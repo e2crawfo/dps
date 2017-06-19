@@ -20,7 +20,7 @@ def rnn_cell_placeholder(state_size, batch_size=None, dtype=tf.float32, name='')
 
 
 class Policy(RNNCell):
-    """ A map from (observation, internal state) pairs to action activations.
+    """ A map from (observation, internal_state) pairs to action activations.
 
     Each instance of this class can be thought of as owning a set of variables,
     because whenever ``build`` is called, it will try to use the same set of variables
@@ -65,16 +65,9 @@ class Policy(RNNCell):
     def __str__(self):
         return pformat(self)
 
-    def __call__(self, obs, policy_state, sample=False):
-        samples, action_activations, utils, next_policy_state = self.build(obs, policy_state)
-        if sample and not self.action_selection.can_sample:
-            raise ValueError(
-                "Requesting samples from policy, but cannot sample from "
-                "its action selection method: {}.".format(self.action_selection))
-        if sample:
-            return samples, next_policy_state
-        else:
-            return action_activations, next_policy_state
+    def __call__(self, obs, policy_state):
+        samples, _, next_policy_state = self.build(obs, policy_state)
+        return samples, next_policy_state
 
     def set_scope(self, scope):
         if self.n_builds > 0:
@@ -82,6 +75,7 @@ class Policy(RNNCell):
         self.scope = scope
 
     def capture_scope(self):
+        """ Creates a variable scope called self.name inside current active scope, and stores it. """
         with tf.variable_scope(self.name):
             self.set_scope(tf.get_variable_scope())
 
@@ -93,16 +87,23 @@ class Policy(RNNCell):
     def build(self, obs, policy_state):
         with tf.variable_scope(self.get_scope(), reuse=self.n_builds > 0):
             utils, next_policy_state = self.controller(obs, policy_state)
-            action_activations = self.action_selection(utils, self.exploration)
-
-            if self.action_selection.can_sample:
-                samples = self.action_selection.sample(action_activations)
-            else:
-                samples = None
+            samples = self.action_selection.sample(utils, self.exploration)
 
         self.n_builds += 1
 
-        return samples, action_activations, utils, next_policy_state
+        return samples, utils, next_policy_state
+
+    def build_sample(self, obs, policy_state):
+        return self.build(obs, policy_state)
+
+    def build_log_pdf(self, obs, policy_state, actions):
+        with tf.variable_scope(self.get_scope(), reuse=self.n_builds > 0):
+            utils, next_policy_state = self.controller(obs, policy_state)
+            log_action_probabilities = self.action_selection.log_pdf(utils, actions, self.exploration)
+
+        self.n_builds += 1
+
+        return log_action_probabilities, next_policy_state
 
     def zero_state(self, batch_size, dtype):
         return self.controller.zero_state(batch_size, dtype)
@@ -152,7 +153,7 @@ class Policy(RNNCell):
             self._obs = tf.placeholder(tf.float32, (None, self.obs_dim), name='obs')
 
             result = self.build(self._obs, self._policy_state)
-            self._samples, self._action_activations, self._utils, self._next_policy_state = result
+            self._samples, self._utils, self._next_policy_state = result
 
             self.act_is_built = True
 
@@ -161,12 +162,8 @@ class Policy(RNNCell):
         fd.update({self._obs: obs})
         return fd
 
-    def act(self, obs, policy_state, sample=False):
+    def act(self, obs, policy_state):
         """ Return action activations given an observation and the current policy state.
-
-        Perform additional step of sampling from activation activations
-        if ``sample`` is True and the activations represent a distribution
-        over actions (so ``self.action_selection.can_sample`` is True).
 
         """
         self.maybe_build_act()
@@ -174,74 +171,142 @@ class Policy(RNNCell):
         sess = tf.get_default_session()
         feed_dict = self.build_feeddict(obs, policy_state)
 
-        if sample:
-            if not self.action_selection.can_sample:
-                raise Exception("Attempting to sample from a policy that cannot be sampled from.")
-            actions, next_policy_state = sess.run(
-                [self._samples, self._next_policy_state], feed_dict)
+        actions, next_policy_state = sess.run([self._samples, self._next_policy_state], feed_dict)
 
-        else:
-            actions, next_policy_state = sess.run(
-                [self._action_activations, self._next_policy_state], feed_dict)
         return actions, next_policy_state
 
 
 class ActionSelection(object):
     """ A callable mapping from utilities and an exploration param to action activation values.
 
-    Attributes
-    ----------
-    can_sample: bool
-        If True, returned action activations always represent a multinomial probability dist.
-
     """
-    _can_sample = None
+    def __init__(self, n_actions):
+        self.n_actions = n_actions
+        self.n_params = n_actions
 
-    @property
-    def can_sample(self):
-        assert isinstance(self._can_sample, bool), (
-            "Subclasses of ActionSelection need to give boolean value to ``can_sample`` attribute.")
-        return self._can_sample
+    def sample(self, utils, exploration):
+        raise NotImplementedError()
 
-    def __call__(self, utils, exploration):
+    def log_pdf(self, utils, actions, exploration):
         raise NotImplementedError()
 
 
+class ProductSelection(object):
+    def __init__(self, components):
+        self.components = components
+        self.n_params_vector = [c.n_params for c in components]
+        self.n_params = sum(self.n_params_vector)
+        self.n_actions_vector = [c.n_actions for c in components]
+        self.n_actions = sum(self.n_actions_vector)
+
+    def sample(self, utils, exploration):
+        _utils = tf.split(utils, self.n_params_vector, axis=-1)
+        return tf.concat(
+            [c.sample(u, exploration) for u, c in zip(_utils, self.components)],
+            axis=-1)
+
+    def log_pdf(self, utils, actions, exploration):
+        _utils = tf.split(utils, self.n_params_vector, axis=-1)
+        _actions = tf.split(actions, self.n_actions_vector, axis=-1)
+        _log_pdf = tf.concat(
+            [c.log_pdf(u, a, exploration) for u, a, c in zip(_utils, _actions, self.components)],
+            axis=-1)
+        return tf.reduce_sum(_log_pdf, axis=-1, keep_dims=True)
+
+
+class Normal(ActionSelection):
+    def __init__(self):
+        self.n_actions = 1
+        self.n_params = 2
+
+    def _dist(self, utils, exploration):
+        mean = utils[:, 0:1]
+        # std = exploration * tf.exp(utils[:, 1:2])
+        std = tf.exp(utils[:, 1:2])
+        dist = tf.contrib.distributions.Normal(loc=mean, scale=std)
+        return dist
+
+    def sample(self, utils, exploration=1.0):
+        dist = self._dist(utils, exploration)
+        return dist.sample()
+
+    def log_pdf(self, utils, actions, exploration=1.0):
+        dist = self._dist(utils, exploration)
+        return dist.log_prob(actions)
+
+
+class NormalFixedStd(Normal):
+    def __init__(self, std):
+        assert std > 0
+        self.n_actions = 1
+        self.n_params = 1
+        self.std = std
+
+    def _dist(self, utils, exploration):
+        mean = utils[:, 0:1]
+        # std = exploration * self.std
+        std = self.std
+        dist = tf.contrib.distributions.Normal(loc=mean, scale=std)
+        return dist
+
+
 class IdentitySelect(ActionSelection):
-    _can_sample = True
-
-    def __call__(self, inp, epsilon):
+    def sample(self, inp, epsilon):
         return tf.identity(inp, name="IdentitySelect")
-
-    def sample(self, inp):
-        return tf.identity(inp, name="IdentitySelectSample")
 
 
 class ReluSelect(ActionSelection):
-    _can_sample = False
-
-    def __call__(self, utils, temperature):
+    def sample(self, utils, temperature):
         return tf.nn.relu(utils, name="relu_action_selection")
 
 
-class MultinomialSelect(ActionSelection):
-    _can_sample = True
-
-    def sample(self, action_activations):
-        logprobs = tf.log(action_activations)
-        samples = tf.cast(tf.multinomial(logprobs, 1), tf.int32)
-        n_actions = int(logprobs.shape[1])
-        actions = tf.one_hot(tf.reshape(samples, (-1,)), n_actions)
+class SoftmaxSelect(ActionSelection):
+    def sample(self, utils, temperature):
+        samples = tf.cast(tf.multinomial(utils, 1), tf.int32)
+        actions = tf.one_hot(tf.reshape(samples, (-1,)), self.n_actions)
         return actions
 
+    def log_pdf(self, utils, actions, temperature):
+        """ Assumes each row of `actions` is a one-hot vector. """
+        logits = utils / temperature
+        return (tf.reduce_sum(logits * actions, axis=-2, keep_dims=True) -
+                tf.reduce_logsumexp(logits, axis=-1, keep_dims=True))
 
-class SoftmaxSelect(MultinomialSelect):
-    def __call__(self, utils, temperature):
-        softmax = tf.nn.softmax(utils/temperature, name="softmax_action_selection")
-        return softmax
+
+class EpsilonGreedySelect(ActionSelection):
+    def _probs(self, utils, epsilon):
+        q_values = utils
+        mx = tf.reduce_max(q_values, axis=1, keep_dims=True)
+        bool_is_max = tf.equal(q_values, mx)
+        float_is_max = tf.cast(bool_is_max, tf.float32)
+        max_count = tf.reduce_sum(float_is_max, axis=1, keep_dims=True)
+        _probs = (float_is_max / max_count) * (1 - epsilon)
+        n_actions = tf.shape(q_values)[1]
+        probs = _probs + epsilon / tf.cast(n_actions, tf.float32)
+        return probs
+
+    def sample(self, utils, epsilon):
+        probs = self._probs(utils, epsilon)
+        logprobs = tf.log(probs)
+        samples = tf.cast(tf.multinomial(logprobs, 1), tf.int32)
+        actions = tf.one_hot(tf.reshape(samples, (-1,)), self.n_actions)
+        return actions
+
+    def log_pdf(self, utils, actions, epsilon):
+        """ Assumes each row of `action` is a one-hot vector. """
+        probs = self._probs(utils, epsilon)
+        action_probs = tf.reduce_sum(actions * probs, axis=-1, keep_dims=True)
+        return tf.log(action_probs)
 
 
-class GumbelSoftmaxSelect(MultinomialSelect):
+class BernoulliSelect(ActionSelection):
+    def sample(self, utils, exploration):
+        probs = tf.sigmoid(utils, name="bernoulli_select")
+        uniform = tf.random_uniform(tf.shape(probs))
+        return tf.cast(tf.less(uniform, probs), tf.float32)
+
+
+class GumbelSoftmaxSelect(ActionSelection):
     """Sample from the Gumbel-Softmax distribution and optionally discretize.
 
     Adapted from code by Eric Jang.
@@ -256,8 +321,9 @@ class GumbelSoftmaxSelect(MultinomialSelect):
         be a probabilitiy distribution that sums to 1 across classes
 
     """
-    def __init__(self, hard=False):
+    def __init__(self, n_actions, hard=False):
         self.hard = hard
+        super(GumbelSoftmaxSelect, self).__init__(n_actions)
 
     @staticmethod
     def _sample_gumbel(shape, eps=1e-20):
@@ -273,35 +339,9 @@ class GumbelSoftmaxSelect(MultinomialSelect):
         # probs = tf.Print(probs, [logits, y, probs], 'logits/noisy_logits/probs', summarize=7)
         return probs
 
-    def __call__(self, utils, temperature):
+    def sample(self, utils, temperature):
         y = self._gumbel_softmax_sample(utils, temperature)
         if self.hard:
             y_hard = tf.cast(tf.equal(y, tf.reduce_max(y, 1, keep_dims=True)), y.dtype)
-            # y_hard = tf.Print(y_hard, [y_hard], 'y_hard', summarize=7)
             y = tf.stop_gradient(y_hard - y) + y
         return y
-
-
-class EpsilonGreedySelect(MultinomialSelect):
-    def __call__(self, q_values, epsilon):
-        mx = tf.reduce_max(q_values, axis=1, keep_dims=True)
-        bool_is_max = tf.equal(q_values, mx)
-        float_is_max = tf.cast(bool_is_max, tf.float32)
-        max_count = tf.reduce_sum(float_is_max, axis=1, keep_dims=True)
-        _probs = (float_is_max / max_count) * (1 - epsilon)
-        n_actions = tf.shape(q_values)[1]
-        probs = _probs + epsilon / tf.cast(n_actions, tf.float32)
-        return probs
-
-
-class BernoulliSelect(ActionSelection):
-    _can_sample = True
-
-    def sample(self, action_activations):
-        uniform = tf.random_uniform(tf.shape(action_activations))
-        return tf.cast(tf.less(uniform, action_activations), tf.float32)
-
-
-class SigmoidSelect(BernoulliSelect):
-    def __call__(self, utils, temperature):
-        return tf.sigmoid(utils, name="sigmoid_action_selection")

@@ -80,7 +80,7 @@ class Env(with_metaclass(abc.ABCMeta, GymEnv)):
 
         done = False
         while not done:
-            action, policy_state = policy.act(obs, policy_state, sample=True)
+            action, policy_state = policy.act(obs, policy_state)
             new_obs, reward, done, info = self.step(action)
 
             alg.remember(obs, action, reward)

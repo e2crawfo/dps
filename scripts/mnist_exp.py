@@ -1,4 +1,4 @@
-from dps.utils import DpsConfig
+from dps.utils import DpsConfig, MLP
 from dps.mnist import LeNet
 import tensorflow as tf
 
@@ -54,29 +54,36 @@ class Config(DpsConfig):
     optimizer_spec = 'rmsprop'
     max_steps = 100000
     preserve_policy = True
-    start_tensorboard = False
+    start_tensorboard = True
     verbose = 0
     visualize = False
 
     reward_window = 0.5
     test_time_explore = 0.1
     threshold = 0.05
-    patience = 20000
+    patience = 10000
 
     noise_schedule = None
 
     display_step = 1000
     eval_step = 100
     checkpoint_step = 0
-    use_gpu = 1
-    slim = True
+    use_gpu = 0
+    slim = False
     n_val = 1000
 
-    classifier_str = "LeNet_256"
+    # classifier_str = "LeNet_256"
+
+    # @staticmethod
+    # def build_classifier(inp, output_size, is_training=False):
+    #     logits = LeNet(256, activation_fn=tf.nn.sigmoid)(inp, output_size, is_training)
+    #     return tf.nn.softmax(logits)
+
+    classifier_str = "MLP_50_50"
 
     @staticmethod
-    def build_classifier(inp, output_size, is_training=False):
-        logits = LeNet(256, activation_fn=tf.nn.sigmoid)(inp, output_size, is_training)
+    def build_classifier(inp, outp_size, is_training=False):
+        logits = MLP([50, 50], activation_fn=tf.nn.sigmoid)(inp, outp_size)
         return tf.nn.softmax(logits)
 
 

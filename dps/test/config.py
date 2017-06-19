@@ -2,11 +2,12 @@ import numpy as np
 import tensorflow as tf
 import os
 
+import dps
 from dps.updater import DifferentiableUpdater
 from dps.reinforce import REINFORCE
 from dps.qlearning import QLearning
 from dps.policy import SoftmaxSelect, EpsilonGreedySelect, GumbelSoftmaxSelect, IdentitySelect
-from dps.utils import Config, CompositeCell, FeedforwardCell, MLP, DpsConfig, FixedController
+from dps.utils import Config, CompositeCell, MLP, DpsConfig, FixedController
 from dps.mnist import LeNet, MnistConfig
 from dps.experiments import (
     hello_world, simple_addition, pointer_following,
@@ -37,8 +38,8 @@ class DefaultConfig(DpsConfig):
     checkpoint_step = 1000
     n_controller_units = 32
 
-    controller_func = lambda self, n_actions: CompositeCell(
-        tf.contrib.rnn.LSTMCell(num_units=self.n_controller_units), MLP(), n_actions)
+    controller = lambda n_actions: CompositeCell(
+        tf.contrib.rnn.LSTMCell(num_units=32), MLP(), n_actions)
 
     lr_schedule = "exponential 0.001 1000 0.96"
     exploration_schedule = "exponential 10.0 1000 0.96"
@@ -65,8 +66,7 @@ class DefaultConfig(DpsConfig):
 class DiffConfig(Config):
     updater_class = DifferentiableUpdater
     test_time_explore = None
-    # action_selection = SoftmaxSelect()
-    action_selection = GumbelSoftmaxSelect(hard=0)
+    action_selection = lambda n_actions: GumbelSoftmaxSelect(n_actions, hard=0)
     max_grad_norm = 1.0
     patience = np.inf
     T = 10
@@ -76,7 +76,7 @@ class DiffConfig(Config):
 
 class ReinforceConfig(Config):
     updater_class = REINFORCE
-    action_selection = SoftmaxSelect()
+    action_selection = lambda na: SoftmaxSelect(na)
     test_time_explore = 0.1
     patience = np.inf
 
@@ -90,7 +90,7 @@ class ReinforceConfig(Config):
 
 class QLearningConfig(Config):
     updater_class = QLearning
-    action_selection = EpsilonGreedySelect()
+    action_selection = lambda n_actions: EpsilonGreedySelect(n_actions)
     double = False
 
     lr_schedule = "exponential 0.00025 1000 1.0"
@@ -164,12 +164,12 @@ class FpsConfig(QLearningConfig):
 class DuelingConfig(QLearningConfig):
     max_grad_norm = 10.0
     lr_schedule = "6.25e-5"  # when prioritized experience replay was used
-    test_time_explore = 0.001 # fixed at this value...this might also be the training exploration, its not clear
+    test_time_explore = 0.001  # fixed at this value...this might also be the training exploration, its not clear
 
 
 class DoubleConfig(QLearningConfig):
     double = True
-    exploration_start = 0.1 # Not totally clear, but seems like they use the same scheme as DQN, but go from 1 to 0.01, instead of 1 to 0.1
+    exploration_start = 0.1  # Not totally clear, but seems like they use the same scheme as DQN, but go from 1 to 0.01, instead of 1 to 0.1
     test_time_explore = 0.001
     # Target network update rate: once every 30,000 frames (DQN apparently does it once every 10,000 frames).
 
@@ -192,10 +192,7 @@ class HelloWorldConfig(DefaultConfig):
         dict(order=[0, 1], T=2),
         dict(order=[0, 1, 0], T=3),
         dict(order=[0, 1, 0, 1], T=4)]
-    controller_func = staticmethod(
-        lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=32),
-                                        MLP(),
-                                        n_actions))
+    controller = lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=32), MLP(), n_actions)
     log_name = 'hello_world'
     trainer = hello_world.HelloWorldTrainer()
 
@@ -285,12 +282,10 @@ class TranslatedMnistConfig(DefaultConfig):
         logits = MLP([50, 50], activation_fn=tf.nn.sigmoid)(inp, outp_size)
         return tf.nn.softmax(logits)
 
-    # controller_func = staticmethod(
-    #     lambda n_actions: FeedforwardCell(MLP([100, 100], activation_fn=tf.nn.sigmoid), n_actions))
-    controller_func = staticmethod(
-        lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=256),
-                                        MLP(),
-                                        n_actions))
+    # controller = lambda self, n_actions: FeedforwardCell(
+    #     MLP([100, 100], activation_fn=tf.nn.sigmoid),
+    #     n_actions))
+    controller = lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=256), MLP(), n_actions)
     reward_window = 0.5
 
     log_name = 'translated_mnist'
@@ -318,12 +313,8 @@ class MnistArithmeticConfig(DefaultConfig):
         logits = MLP([30, 30], activation_fn=tf.nn.sigmoid)(inp, outp_size)
         return tf.nn.softmax(logits)
 
-    # controller_func = staticmethod(
-    #     lambda n_actions: FeedforwardCell(MLP([100, 100], activation_fn=tf.nn.sigmoid), n_actions))
-    controller_func = staticmethod(
-        lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=256),
-                                        MLP(),
-                                        n_actions))
+    controller = lambda n_actions: CompositeCell(
+        tf.contrib.rnn.LSTMCell(num_units=256), MLP(), n_actions)
     reward_window = 0.5
 
     log_name = 'mnist_arithmetic'
@@ -406,7 +397,7 @@ class TestConfigMeta(type):
         action_seq = attrs.get('action_seq', None)
         if action_seq:
             attrs['T'] = len(action_seq)
-            attrs['controller_func'] = lambda self, n_actions: FixedController(action_seq, n_actions)
+            attrs['controller'] = lambda n_actions: FixedController(action_seq, n_actions)
         if 'batch_size' in attrs:
             attrs['n_train'] = attrs['batch_size']
         return super(TestConfigMeta, cls).__new__(cls, name, bases, attrs)
@@ -416,7 +407,7 @@ class TestConfig(DefaultConfig, metaclass=TestConfigMeta):
     n_val = 0
     n_test = 0
     batch_size = 1
-    action_selection = IdentitySelect()
+    action_selection = lambda na: IdentitySelect(na)
     verbose = 4
 
     action_seq = None

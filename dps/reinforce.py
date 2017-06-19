@@ -149,12 +149,12 @@ class ReinforceCell(RNNCell):
             observations, actions, cumulative_rewards = inp
             accumulator, policy_state = state
 
-            _, action_probs, _, new_policy_state = self.policy.build(observations, policy_state)
+            log_action_probs, _, new_policy_state = self.policy.build_log_pdf(observations, policy_state, actions)
 
-            new_term = tf.log(tf.reduce_sum(action_probs * actions, axis=-1, keep_dims=True)) * cumulative_rewards
+            new_term = log_action_probs * cumulative_rewards
             new_accumulator = accumulator + new_term
 
-            return (new_accumulator, action_probs), (new_accumulator, new_policy_state)
+            return (new_accumulator, tf.exp(log_action_probs)), (new_accumulator, new_policy_state)
 
     @property
     def state_size(self):

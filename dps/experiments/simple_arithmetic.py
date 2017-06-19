@@ -370,6 +370,123 @@ class SimpleArithmetic(CoreNetwork):
         return new_registers
 
 
+class SimpleArithmeticA(CoreNetwork):
+    action_names = [
+        'fovea_x += ', 'fovea_x -= ', 'fovea_y += ', 'fovea_y -= ', 'no-op/stop']
+    cts_action_names = ['set_acc_value']
+
+    @property
+    def input_shape(self):
+        return self.shape + self.element_shape
+
+    @property
+    def element_shape(self):
+        return (28, 28) if self.mnist else (1,)
+
+    @property
+    def make_input_available(self):
+        return True
+
+    def __init__(self, env):
+        self.mnist = env.mnist
+        self.symbols = env.symbols
+        self.shape = env.shape
+
+        if not len(self.shape) == 2:
+            raise NotImplementedError("Shape must have length 2.")
+
+        self.n_digits = env.n_digits
+        self.upper_bound = env.upper_bound
+        self.base = env.base
+        self.blank_char = env.blank_char
+
+        self.start_loc = env.start_loc
+
+        values = [np.zeros(np.product(self.element_shape), dtype='f'), 0., 0.]
+
+        self.register_bank = RegisterBank(
+            'SimpleArithmeticARB', 'glimpse fovea_x fovea_y acc t', None, values=values,
+            output_names='acc', no_display='glimpse')
+        super(SimpleArithmeticA, self).__init__()
+
+    def init(self, r, inp):
+        glimpse, fovea_x, fovea_y, acc, t = self.register_bank.as_tuple(r)
+
+        _fovea_x = tf.cast(fovea_x, tf.int32)
+        _fovea_y = tf.cast(fovea_y, tf.int32)
+
+        batch_size = tf.shape(inp)[0]
+        indices = tf.concat([
+            tf.reshape(tf.range(batch_size), (-1, 1)),
+            _fovea_y,
+            _fovea_x], axis=1)
+        glimpse = tf.gather_nd(inp, indices)
+        glimpse = tf.reshape(glimpse, (-1, np.product(self.element_shape)), name="glimpse")
+
+        if self.start_loc is not None:
+            fovea_y = tf.fill((batch_size, 1), self.start_loc[0])
+            fovea_x = tf.fill((batch_size, 1), self.start_loc[1])
+        else:
+            fovea_y = tf.random_uniform(tf.shape(fovea_y), 0, self.shape[0], dtype=tf.int32)
+            fovea_x = tf.random_uniform(tf.shape(fovea_x), 0, self.shape[1], dtype=tf.int32)
+
+        fovea_x = tf.cast(fovea_x, tf.float32)
+        fovea_y = tf.cast(fovea_y, tf.float32)
+
+        with tf.name_scope("SimpleArithmeticA"):
+            new_registers = self.register_bank.wrap(
+                glimpse=glimpse,
+                acc=tf.identity(acc, "acc"),
+                fovea_x=tf.identity(fovea_x, "fovea_x"),
+                fovea_y=tf.identity(fovea_y, "fovea_y"),
+                t=tf.identity(t, "t"))
+
+        return new_registers
+
+    def __call__(self, action_activations, r, inp, ):
+        _glimpse, _fovea_x, _fovea_y, _acc, _t = self.register_bank.as_tuple(r)
+
+        (inc_fovea_x, dec_fovea_x,
+         inc_fovea_y, dec_fovea_y, no_op) = (
+            tf.split(action_activations, self.n_actions, axis=1))
+
+        acc = cts_action_activations[:, 0]
+
+        fovea_x = (1 - inc_fovea_x - dec_fovea_x) * _fovea_x + \
+            inc_fovea_x * (_fovea_x + 1) + \
+            dec_fovea_x * (_fovea_x - 1)
+
+        fovea_y = (1 - inc_fovea_y - dec_fovea_y) * _fovea_y + \
+            inc_fovea_y * (_fovea_y + 1) + \
+            dec_fovea_y * (_fovea_y - 1)
+
+        fovea_y = tf.clip_by_value(fovea_y, 0, self.shape[0]-1)
+        fovea_x = tf.clip_by_value(fovea_x, 0, self.shape[1]-1)
+
+        _fovea_x = tf.cast(fovea_x, tf.int32)
+        _fovea_y = tf.cast(fovea_y, tf.int32)
+
+        batch_size = tf.shape(inp)[0]
+        indices = tf.concat([
+            tf.reshape(tf.range(batch_size), (-1, 1)),
+            _fovea_y,
+            _fovea_x], axis=1)
+        glimpse = tf.gather_nd(inp, indices)
+        glimpse = tf.reshape(glimpse, (-1, np.product(self.element_shape)), name="glimpse")
+
+        t = _t + 1
+
+        with tf.name_scope("MnistArithmetic"):
+            new_registers = self.register_bank.wrap(
+                glimpse=glimpse,
+                acc=tf.identity(acc, "acc"),
+                fovea_x=tf.identity(fovea_x, "fovea_x"),
+                fovea_y=tf.identity(fovea_y, "fovea_y"),
+                t=tf.identity(t, "t"))
+
+        return new_registers
+
+
 def render_rollouts(psystem, actions, registers, reward, external_obs, external_step_lengths, info):
     """ Render rollouts from TranslatedMnist task. """
     config = default_config()

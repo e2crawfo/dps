@@ -42,18 +42,18 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
         self.ps_func = None
         self.sampler = None
 
-    def build_psystem_func(self, sample=False):
-        return ProductionSystemFunction(self, sample=sample)
+    def build_psystem_func(self):
+        return ProductionSystemFunction(self)
 
     def build_sampler(self):
         if self.sampler is None:
-            self.sampler = self.build_psystem_func(sample=True)
+            self.sampler = self.build_psystem_func()
 
     @property
     def completion(self):
         return self.env.completion
 
-    def visualize(self, mode, n_rollouts, sample, render_rollouts=None):
+    def visualize(self, mode, n_rollouts, render_rollouts=None):
         """ Visualize rollouts from a production system.
 
         Parameters
@@ -62,8 +62,6 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
             One of 'train', 'val', 'test', specifies mode for environment.
         n_rollouts: int
             Number of rollouts.
-        sample: bool
-            Whether to perform additional sampling step when rolling out.
         render_rollouts: fn (optional)
             Accepts actions, registers, rewards, and external_step_lengths and
             performs visualization.
@@ -97,7 +95,7 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
 
             reg, a, final_registers = sess.run(
                 [ps_func.registers,
-                 ps_func.action_activations,
+                 ps_func.actions,
                  ps_func.final_registers],
                 feed_dict=fd)
 
@@ -126,10 +124,10 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
         if render_rollouts is not None:
             render_rollouts(self, actions, registers, rewards, external, external_step_lengths, info)
 
-    def _pprint_rollouts(self, action_activations, registers, rewards, external, external_step_lengths):
+    def _pprint_rollouts(self, actions, registers, rewards, external, external_step_lengths):
         """ Prints a single rollout, which may consists of multiple external time steps.
 
-            Each of ``action_activations`` and ``registers`` has as many entries as there are external time steps.
+            Each of ``actions`` and ``registers`` has as many entries as there are external time steps.
             Each of THOSE entries has as many entries as there were internal time steps for that external time step.
 
         """
@@ -152,7 +150,7 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
             reg_ranges[n] = (start, end)
         row_names.extend(['', 'reward'])
 
-        n_timesteps, batch_size, n_actions = action_activations.shape
+        n_timesteps, batch_size, n_actions = actions.shape
 
         registers = self.rb.as_tuple(registers)
 
@@ -170,7 +168,7 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
             for i in range(total_internal_steps):
                 values[i, 0] = external_t
                 values[i, 1] = internal_t
-                values[i, 3:3+n_actions] = action_activations[i, b, :]
+                values[i, 3:3+n_actions] = actions[i, b, :]
                 for n, v in zip(self.rb.names, registers):
                     if n in omit:
                         continue
@@ -219,7 +217,7 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
             sess = tf.get_default_session()
             registers, actions, final_registers = sess.run(
                 [self.sampler.registers,
-                 self.sampler.action_activations,
+                 self.sampler.actions,
                  self.sampler.final_registers],
                 feed_dict=fd)
 
@@ -255,7 +253,7 @@ class CoreNetwork(object, metaclass=CoreNetworkMeta):
 
     def __init__(self):
         self._graph = None
-        self._action_activations_ph = None
+        self._actions_ph = None
         self._register_ph = None
 
         self.assert_defined('action_names')
@@ -282,7 +280,7 @@ class CoreNetwork(object, metaclass=CoreNetworkMeta):
         """ Note: this is done every time the function is applied, even on subsequent calls within the same episode. """
         raise NotImplementedError()
 
-    def __call__(self, action_activations, registers, inp=None):
+    def __call__(self, actions, registers, inp=None):
         """ Accepts a tensor representing action activations, and an instance
         of ``self.register_bank`` storing register contents, and
         return a new instance of ``self.register_bank`` storing the
@@ -297,7 +295,7 @@ class CoreNetwork(object, metaclass=CoreNetworkMeta):
 
 
 class ProductionSystemCell(RNNCell):
-    def __init__(self, psystem, sample):
+    def __init__(self, psystem):
         _, self.core_network, self.policy, _, _ = psystem
         self.rb = psystem.rb
 
@@ -308,7 +306,6 @@ class ProductionSystemCell(RNNCell):
             self.policy.state_size,
             self.rb.width)
 
-        self._sample = sample
         self._inp_tensor = None
 
     def set_input(self, inp_tensor):
@@ -324,20 +321,19 @@ class ProductionSystemCell(RNNCell):
 
             with tf.name_scope('policy'):
                 obs = self.rb.visible(registers)
-                action_activations, new_policy_state = self.policy(
-                    obs, policy_state, sample=self._sample)
+                actions, new_policy_state = self.policy(obs, policy_state)
 
             if self._inp_tensor is not None:
                 with tf.name_scope('core_network'):
-                    new_registers = self.core_network(action_activations, registers, self._inp_tensor)
+                    new_registers = self.core_network(actions, registers, self._inp_tensor)
             else:
                 with tf.name_scope('core_network'):
-                    new_registers = self.core_network(action_activations, registers)
+                    new_registers = self.core_network(actions, registers)
 
             # Return state as output since ProductionSystemCell has no other meaningful output,
             # and this has benefit of making all intermediate states accessible when using
             # used with tf function ``dynamic_rnn``
-            return (action_activations, policy_state, registers), (new_policy_state, new_registers)
+            return (actions, policy_state, registers), (new_policy_state, new_registers)
 
     @property
     def state_size(self):
@@ -362,15 +358,14 @@ class ProductionSystemFunction(object):
         The production system that we want to turn into a tensorflow function.
 
     """
-    def __init__(self, psystem, scope=None, sample=False):
+    def __init__(self, psystem, scope=None):
         self.psystem = psystem
         _, self.core_network, self.policy, self.use_act, self.T = psystem
         self.rb = psystem.rb
-        self._sample = sample
 
-        output = self._build_ps_function(psystem, scope, sample)
+        output = self._build_ps_function(psystem, scope)
         (self.inputs, self.inp_ph, self.register_ph, self.ps_cell,
-         self.action_activations, self.policy_states, self.registers,
+         self.actions, self.policy_states, self.registers,
          self.final_policy_states, self.final_registers) = output
 
     def build_feeddict(self, inp, registers, T=None):
@@ -386,7 +381,7 @@ class ProductionSystemFunction(object):
         return self.final_registers.get_output()
 
     @staticmethod
-    def _build_ps_function(psystem, scope, sample):
+    def _build_ps_function(psystem, scope):
         if psystem.use_act:
             raise NotImplemented()
             # Code for doing Adaptive Computation Time
@@ -418,7 +413,7 @@ class ProductionSystemFunction(object):
             with tf.name_scope(scope or "production_system_function"):
                 # (max_time, batch_size, 1)
                 inputs = tf.placeholder(tf.float32, shape=(None, None, 1), name="timestep")
-                ps_cell = ProductionSystemCell(psystem, sample=sample)
+                ps_cell = ProductionSystemCell(psystem)
 
                 batch_size = tf.shape(inputs)[1]
                 policy_state, register_ph = ps_cell.zero_state(batch_size, tf.float32)
@@ -434,12 +429,11 @@ class ProductionSystemFunction(object):
                     parallel_iterations=1, swap_memory=False,
                     time_major=True)
 
-                ((action_activations, policy_states, registers),
-                    (final_policy_states, final_registers)) = output
+                ((actions, policy_states, registers), (final_policy_states, final_registers)) = output
 
         return (
             inputs, inp_ph, register_ph, ps_cell,
-            action_activations, policy_states, registers,
+            actions, policy_states, registers,
             final_policy_states, final_registers)
 
     def __str__(self):
@@ -537,10 +531,9 @@ class ProductionSystemCurriculum(Curriculum):
 
     def end_stage(self):
         super(ProductionSystemCurriculum, self).end_stage()
-        sample = self.config.updater_class in [REINFORCE, QLearning]
         if self.config.visualize:
             render_rollouts = getattr(self.config, 'render_rollouts', None)
-            self.current_psystem.visualize('train', 16, sample, render_rollouts)
+            self.current_psystem.visualize('train', 16, render_rollouts)
 
         # Occurs inside the same default graph, session and config as the previous call to __call__.
         g = tf.get_default_graph()
@@ -557,7 +550,7 @@ class ProductionSystemTrainer(object):
     def build_policy(self, cn, exploration):
         config = default_config()
         return Policy(
-            config.controller_func(cn.n_actions), config.action_selection, exploration,
+            config.controller(cn.n_actions), config.action_selection(cn.n_actions), exploration,
             cn.n_actions, cn.obs_dim, name="{}_policy".format(cn.__class__.__name__))
 
     def build_env(self):
@@ -574,11 +567,11 @@ class ProductionSystemTrainer(object):
             config, self.build_env, self.build_core_network, self.build_policy)
 
         exp_name = "selection={}_updater={}_seed={}".format(
-            config.action_selection.__class__.__name__, config.updater_class.__name__, config.seed)
+            config.action_selection.__name__, config.updater_class.__name__, config.seed)
         return training_loop(curriculum, config, exp_name=exp_name)
 
 
-def build_and_visualize(sample=False, load_from=None):
+def build_and_visualize(load_from=None):
     config = default_config()
     with ExitStack() as stack:
 
@@ -601,7 +594,7 @@ def build_and_visualize(sample=False, load_from=None):
 
         exploration = tf.constant(config.test_time_explore or 0.0)
         policy = Policy(
-            config.controller_func(cn.n_actions), config.action_selection, exploration,
+            config.controller(cn.n_actions), config.action_selection(cn.n_actions), exploration,
             cn.n_actions, cn.obs_dim)
 
         policy_scope = getattr(config, 'policy_scope', None)
@@ -621,7 +614,7 @@ def build_and_visualize(sample=False, load_from=None):
         render_rollouts = getattr(config, 'render_rollouts', None)
 
         start_time = time.time()
-        psystem.visualize('train', config.batch_size, sample, render_rollouts)
+        psystem.visualize('train', config.batch_size, render_rollouts)
         duration = time.time() - start_time
 
         print("Took {} seconds.".format(duration))

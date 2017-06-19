@@ -37,7 +37,9 @@ class Rect(object):
 
 
 class TranslatedMnistDataset(RegressionDataset):
-    def __init__(self, W, n_digits, max_overlap, n_examples, symbols=None, function=None, for_eval=False, shuffle=True, include_blank=False):
+    def __init__(
+            self, W, n_digits, max_overlap, n_examples, symbols=None, function=None,
+            for_eval=False, shuffle=True, include_blank=False):
 
         self.W = W
         self.include_blank = include_blank
@@ -316,6 +318,7 @@ class MnistConfig(DpsConfig):
     n_train = 60000
     n_val = 5000
     symbols = list(range(10))
+    include_blank = True
     log_name = 'mnist_pretrained'
 
 
