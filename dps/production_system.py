@@ -1,7 +1,6 @@
 import numpy as np
 from collections import namedtuple
 import os
-import copy
 import pandas as pd
 from tabulate import tabulate
 from pprint import pformat
@@ -12,11 +11,13 @@ import tensorflow as tf
 from tensorflow.python.ops.rnn import dynamic_rnn
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 
+from dps import cfg
 from dps.environment import BatchBox
 from dps.updater import DifferentiableUpdater
 from dps.reinforce import REINFORCE
 from dps.qlearning import QLearning
-from dps.utils import default_config, build_scheduled_value, uninitialized_variables_initializer, gen_seed
+from dps.utils import (
+    build_scheduled_value, uninitialized_variables_initializer, gen_seed, Config)
 from dps.train import Curriculum, training_loop
 from dps.policy import Policy
 
@@ -195,7 +196,6 @@ class ProductionSystem(namedtuple('ProductionSystem', params.split())):
             print(tabulate(values, headers='keys', tablefmt='fancy_grid'))
 
     def do_rollouts(self, alg, policy, mode, n_rollouts=None):
-        # For now...
         assert policy is self.policy
 
         self.build_sampler()
@@ -273,7 +273,7 @@ class CoreNetwork(object, metaclass=CoreNetworkMeta):
 
     @property
     def make_input_available(self):
-        """ A boolean, whether to make pass the input as the third argument when calling self.__call__. """
+        """ A boolean, whether to pass the input as the third argument when calling self.__call__. """
         raise NotImplementedError()
 
     def init(self, registers, inp):
@@ -378,7 +378,7 @@ class ProductionSystemFunction(object):
         return fd
 
     def get_output(self):
-        return self.final_registers.get_output()
+        return self.rb.get_output(self.final_registers)
 
     @staticmethod
     def _build_ps_function(psystem, scope):
@@ -450,8 +450,8 @@ class ProductionSystemFunction(object):
 
 
 class ProductionSystemCurriculum(Curriculum):
-    def __init__(self, config, build_env, build_core_network, build_policy, verbose=False):
-        super(ProductionSystemCurriculum, self).__init__(config)
+    def __init__(self, build_env, build_core_network, build_policy, verbose=False):
+        super(ProductionSystemCurriculum, self).__init__()
         self.build_env = build_env
         self.build_core_network = build_core_network
         self.build_policy = build_policy
@@ -461,31 +461,29 @@ class ProductionSystemCurriculum(Curriculum):
         if self.stage == self.prev_stage:
             raise Exception("Need to call member function ``end_stage`` before getting next stage.")
 
-        if self.stage == len(self.config.curriculum):
+        if self.stage == len(cfg.curriculum):
             raise StopIteration()
 
-        config = copy.copy(self.config)
-        config.update(self.config.curriculum[self.stage])
+        new_cfg = Config(cfg.curriculum[self.stage])
 
         print("\nStarting stage {} of the curriculum. "
-              "New config values for this stage are: \n{}\n".format(
-                  self.stage, pformat(self.config.curriculum[self.stage])))
+              "New config values for this stage are: \n{}\n".format(self.stage, pformat(new_cfg)))
 
-        with config.as_default():
+        with new_cfg:
             updater = self._build_updater()
+
         self.prev_stage = self.stage
-        return config, updater
+        return new_cfg, updater
 
     def _build_updater(self):
-        config = default_config()
         env = self.build_env()
         core_network = self.build_core_network(env)
 
         is_training = tf.placeholder_with_default(False, shape=(), name="is_training")
 
-        exploration = build_scheduled_value(config.exploration_schedule, 'exploration')
-        if config.test_time_explore is not None:
-            testing_exploration = tf.constant(config.test_time_explore, tf.float32, name='testing_exploration')
+        exploration = build_scheduled_value(cfg.exploration_schedule, 'exploration')
+        if cfg.test_time_explore is not None:
+            testing_exploration = tf.constant(cfg.test_time_explore, tf.float32, name='testing_exploration')
             exploration = tf.cond(is_training, lambda: exploration, lambda: testing_exploration)
         policy = self.policy = self.build_policy(core_network, exploration)
         policy.capture_scope()
@@ -493,37 +491,37 @@ class ProductionSystemCurriculum(Curriculum):
         target_policy = policy.deepcopy("target_policy")
         target_policy.capture_scope()
 
-        if self.stage != 0 and config.preserve_policy:
+        if self.stage != 0 and cfg.preserve_policy:
             policy.maybe_build_act()
 
             g = tf.get_default_graph()
 
             policy_variables = g.get_collection('trainable_variables', scope=policy.scope.name)
             saver = tf.train.Saver(policy_variables)
-            saver.restore(tf.get_default_session(), os.path.join(default_config().path, 'policy.chk'))
+            saver.restore(tf.get_default_session(), os.path.join(cfg.path, 'policy.chk'))
 
-        psystem = ProductionSystem(env, core_network, policy, False, config.T)
+        psystem = ProductionSystem(env, core_network, policy, False, cfg.T)
         self.current_psystem = psystem
 
         ps_func = psystem.build_psystem_func()
 
-        if self.config.updater_class is DifferentiableUpdater:
+        if cfg.updater_class is DifferentiableUpdater:
             updater = DifferentiableUpdater(
-                psystem.env, ps_func, config.optimizer_spec,
-                config.lr_schedule, config.noise_schedule, config.max_grad_norm)
-        elif self.config.updater_class is REINFORCE:
+                psystem.env, ps_func, cfg.optimizer_spec,
+                cfg.lr_schedule, cfg.noise_schedule, cfg.max_grad_norm)
+        elif cfg.updater_class is REINFORCE:
             updater = REINFORCE(
-                psystem, psystem.policy, config.optimizer_spec,
-                config.lr_schedule, config.noise_schedule, config.max_grad_norm,
-                config.gamma, config.l2_norm_penalty, config.entropy_schedule)
-        elif self.config.updater_class is QLearning:
+                psystem, psystem.policy, cfg.optimizer_spec,
+                cfg.lr_schedule, cfg.noise_schedule, cfg.max_grad_norm,
+                cfg.gamma, cfg.l2_norm_penalty, cfg.entropy_schedule)
+        elif cfg.updater_class is QLearning:
             updater = QLearning(
-                psystem, psystem.policy, target_policy, config.double,
-                config.replay_max_size, config.replay_threshold, config.replay_proportion,
-                config.target_update_rate, config.steps_per_target_update, config.samples_per_update,
-                config.update_batch_size, config.recurrent, config.optimizer_spec,
-                config.lr_schedule, config.noise_schedule, config.max_grad_norm,
-                config.gamma, config.l2_norm_penalty)
+                psystem, psystem.policy, target_policy, cfg.double,
+                cfg.replay_max_size, cfg.replay_threshold, cfg.replay_proportion,
+                cfg.target_update_rate, cfg.steps_per_target_update, cfg.samples_per_update,
+                cfg.update_batch_size, cfg.recurrent, cfg.optimizer_spec,
+                cfg.lr_schedule, cfg.noise_schedule, cfg.max_grad_norm,
+                cfg.gamma, cfg.l2_norm_penalty)
         else:
             raise NotImplementedError()
         updater.is_training = is_training
@@ -531,15 +529,16 @@ class ProductionSystemCurriculum(Curriculum):
 
     def end_stage(self):
         super(ProductionSystemCurriculum, self).end_stage()
-        if self.config.visualize:
-            render_rollouts = getattr(self.config, 'render_rollouts', None)
+
+        if cfg.visualize:
+            render_rollouts = getattr(cfg, 'render_rollouts', None)
             self.current_psystem.visualize('train', 16, render_rollouts)
 
         # Occurs inside the same default graph, session and config as the previous call to __call__.
         g = tf.get_default_graph()
         policy_variables = g.get_collection('trainable_variables', scope=self.policy.scope.name)
         saver = tf.train.Saver(policy_variables)
-        saver.save(tf.get_default_session(), os.path.join(default_config().path, 'policy.chk'))
+        saver.save(tf.get_default_session(), os.path.join(cfg.path, 'policy.chk'))
         self.stage += 1
 
 
@@ -548,9 +547,8 @@ class ProductionSystemTrainer(object):
         pass
 
     def build_policy(self, cn, exploration):
-        config = default_config()
         return Policy(
-            config.controller(cn.n_actions), config.action_selection(cn.n_actions), exploration,
+            cfg.controller(cn.n_actions), cfg.action_selection(cn.n_actions), exploration,
             cn.n_actions, cn.obs_dim, name="{}_policy".format(cn.__class__.__name__))
 
     def build_env(self):
@@ -559,25 +557,24 @@ class ProductionSystemTrainer(object):
     def build_core_network(self, env):
         raise NotImplementedError("Abstract method.")
 
-    def train(self, config, seed=-1):
-        config.seed = config.seed if seed < 0 else seed
-        np.random.seed(config.seed)
+    def train(self, seed=-1):
+        cfg.seed = cfg.seed if seed < 0 else seed
+        np.random.seed(cfg.seed)
 
         curriculum = ProductionSystemCurriculum(
-            config, self.build_env, self.build_core_network, self.build_policy)
+            self.build_env, self.build_core_network, self.build_policy)
 
         exp_name = "selection={}_updater={}_seed={}".format(
-            config.action_selection.__name__, config.updater_class.__name__, config.seed)
-        return training_loop(curriculum, config, exp_name=exp_name)
+            cfg.action_selection.__name__, cfg.updater_class.__name__, cfg.seed)
+        return training_loop(curriculum, exp_name=exp_name)
 
 
 def build_and_visualize(load_from=None):
-    config = default_config()
     with ExitStack() as stack:
 
         graph = tf.Graph()
 
-        if not default_config().use_gpu:
+        if not cfg.use_gpu:
             stack.enter_context(graph.device("/cpu:0"))
 
         sess = tf.Session(graph=graph)
@@ -589,20 +586,20 @@ def build_and_visualize(load_from=None):
         tf_seed = gen_seed()
         tf.set_random_seed(tf_seed)
 
-        env = config.trainer.build_env()
-        cn = config.trainer.build_core_network(env)
+        env = cfg.trainer.build_env()
+        cn = cfg.trainer.build_core_network(env)
 
-        exploration = tf.constant(config.test_time_explore or 0.0)
+        exploration = tf.constant(cfg.test_time_explore or 0.0)
         policy = Policy(
-            config.controller(cn.n_actions), config.action_selection(cn.n_actions), exploration,
+            cfg.controller(cn.n_actions), cfg.action_selection(cn.n_actions), exploration,
             cn.n_actions, cn.obs_dim)
 
-        policy_scope = getattr(config, 'policy_scope', None)
+        policy_scope = getattr(cfg, 'policy_scope', None)
         if policy_scope:
             with tf.variable_scope(policy_scope) as scope:
                 policy.set_scope(scope)
 
-        psystem = ProductionSystem(env, cn, policy, False, config.T)
+        psystem = ProductionSystem(env, cn, policy, False, cfg.T)
 
         psystem.build_sampler()
 
@@ -611,10 +608,10 @@ def build_and_visualize(load_from=None):
             saver = tf.train.Saver(policy_variables)
             saver.restore(sess, load_from)
 
-        render_rollouts = getattr(config, 'render_rollouts', None)
+        render_rollouts = getattr(cfg, 'render_rollouts', None)
 
         start_time = time.time()
-        psystem.visualize('train', config.batch_size, render_rollouts)
+        psystem.visualize('train', cfg.batch_size, render_rollouts)
         duration = time.time() - start_time
 
         print("Took {} seconds.".format(duration))

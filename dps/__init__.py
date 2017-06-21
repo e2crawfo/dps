@@ -1,6 +1,10 @@
-from .utils import default_config
+from .utils import ConfigStack, DpsConfig
+
+cfg = ConfigStack()
+cfg.clear_stack(DpsConfig())
+
 import matplotlib
-matplotlib.use(default_config().mpl_backend)
+matplotlib.use(cfg.mpl_backend)
 from .production_system import (
     ProductionSystem, CoreNetwork, ProductionSystemFunction)
 from .updater import DifferentiableUpdater

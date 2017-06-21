@@ -5,6 +5,7 @@ from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from collections import deque
 
 from dps.updater import ReinforcementLearningUpdater
+from dps.utils import trainable_variables
 
 
 def clipped_error(x):
@@ -177,8 +178,7 @@ class QLearning(ReinforcementLearningUpdater):
             loss = self.q_loss
 
             if self.l2_norm_penalty > 0:
-                policy_network_variables = tf.get_collection(
-                    tf.GraphKeys.TRAINABLE_VARIABLES, scope=self.q_network.scope.name)
+                policy_network_variables = trainable_variables(self.q_network.scope.name)
                 self.reg_loss = tf.reduce_sum([tf.reduce_sum(tf.square(x)) for x in policy_network_variables])
                 tf.summary.scalar("loss_reg", self.reg_loss)
                 loss += self.l2_norm_penalty * self.reg_loss
@@ -193,8 +193,8 @@ class QLearning(ReinforcementLearningUpdater):
             assert self.target_network_update is not None
 
             with tf.name_scope("update_target_network"):
-                q_network_variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=self.q_network.scope.name)
-                target_network_variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=self.target_network.scope.name)
+                q_network_variables = trainable_variables(self.q_network.scope.name)
+                target_network_variables = trainable_variables(self.target_network.scope.name)
                 target_network_update = []
 
                 for v_source, v_target in zip(q_network_variables, target_network_variables):
@@ -203,8 +203,8 @@ class QLearning(ReinforcementLearningUpdater):
                 self.target_network_update = tf.group(*target_network_update)
         else:
             with tf.name_scope("update_target_network"):
-                q_network_variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=self.q_network.scope.name)
-                target_network_variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=self.target_network.scope.name)
+                q_network_variables = trainable_variables(self.q_network.scope.name)
+                target_network_variables = trainable_variables(self.target_network.scope.name)
                 target_network_update = []
 
                 for v_source, v_target in zip(q_network_variables, target_network_variables):
@@ -230,8 +230,8 @@ class QLearningCell(RNNCell):
             observations, actions, rewards = inp
             prev_q_value, qn_state, tn_state = state
 
-            _, _, target_values, new_tn_state = self.target_network.build(observations, tn_state)
-            _, _, q_values, new_qn_state = self.q_network.build(observations, qn_state)
+            _, target_values, new_tn_state = self.target_network.build(observations, tn_state)
+            _, q_values, new_qn_state = self.q_network.build(observations, qn_state)
 
             if self.double:
                 action_selection = tf.argmax(tf.stop_gradient(target_values), 1, name="action_selection")
@@ -264,8 +264,8 @@ class QLearningCell(RNNCell):
     def initial_state(self, first_obs, first_actions, batch_size, dtype):
         _, qn_state, tn_state = self.zero_state(batch_size, dtype)
 
-        _, _, _, new_tn_state = self.target_network.build(first_obs, tn_state)
-        _, _, q_values, new_qn_state = self.q_network.build(first_obs, qn_state)
+        _, _, new_tn_state = self.target_network.build(first_obs, tn_state)
+        _, q_values, new_qn_state = self.q_network.build(first_obs, qn_state)
         q_value_selected_action = tf.reduce_sum(first_actions * q_values, axis=1, keep_dims=True)
 
         return q_value_selected_action, new_qn_state, new_tn_state

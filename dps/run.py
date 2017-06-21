@@ -37,14 +37,17 @@ def _run(alg, task, _config=None, load_from=None):
         if _config is not None:
             config.update(_config)
         config = clify.wrap_object(config).parse()
-        config.display = True
-        config.save_display = True
-        with config.as_default():
+        config.update(display=True, save_display=True)
+
+        with config:
             build_and_visualize(load_from=load_from)
     else:
         config = tasks[task]
         config.update(algorithms[alg])
         if _config is not None:
             config.update(_config)
+
         config = clify.wrap_object(config).parse()
-        config.trainer.train(config=config)
+
+        with config:
+            config.trainer.train()

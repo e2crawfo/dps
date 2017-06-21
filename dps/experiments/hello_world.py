@@ -1,10 +1,9 @@
 import tensorflow as tf
 import numpy as np
 
-from dps import CoreNetwork
+from dps import CoreNetwork, cfg
 from dps.register import RegisterBank
 from dps.environment import RegressionDataset, RegressionEnv
-from dps.utils import default_config
 from dps.production_system import ProductionSystemTrainer
 
 
@@ -67,8 +66,7 @@ class HelloWorld(CoreNetwork):
 
 class HelloWorldTrainer(ProductionSystemTrainer):
     def build_env(self):
-        config = default_config()
-        return HelloWorldEnv(config.order, config.n_train, config.n_val, config.n_test)
+        return HelloWorldEnv(cfg.order, cfg.n_train, cfg.n_val, cfg.n_test)
 
     def build_core_network(self, env):
         return HelloWorld(env)

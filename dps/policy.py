@@ -269,7 +269,7 @@ class SoftmaxSelect(ActionSelection):
     def log_pdf(self, utils, actions, temperature):
         """ Assumes each row of `actions` is a one-hot vector. """
         logits = utils / temperature
-        return (tf.reduce_sum(logits * actions, axis=-2, keep_dims=True) -
+        return (tf.reduce_sum(logits * actions, axis=-1, keep_dims=True) -
                 tf.reduce_logsumexp(logits, axis=-1, keep_dims=True))
 
 

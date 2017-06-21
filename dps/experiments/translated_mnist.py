@@ -5,13 +5,13 @@ from pathlib import Path
 import tensorflow as tf
 import numpy as np
 
-from dps import CoreNetwork
+from dps import CoreNetwork, cfg
 from dps.register import RegisterBank
 from dps.environment import RegressionEnv
-from dps.utils import default_config
 from dps.production_system import ProductionSystemTrainer
 from dps.mnist import (
-    TranslatedMnistDataset, DRAW, DiscreteAttn, MnistPretrained, MnistConfig)
+    TranslatedMnistDataset, DRAW, DiscreteAttn,
+    MnistPretrained, MNIST_CONFIG, ClassifierFunc)
 
 
 class TranslatedMnistEnv(RegressionEnv):
@@ -54,20 +54,17 @@ class TranslatedMnist(CoreNetwork):
         self.inc_y = env.inc_y
         self.discrete_attn = env.discrete_attn
 
-        build_classifier = default_config().build_classifier
-        classifier_str = default_config().classifier_str
-
         if self.discrete_attn:
             self.build_attention = DiscreteAttn(self.N)
         else:
             self.build_attention = DRAW(self.N)
 
-        config = MnistConfig()
-        self.build_classifier = MnistPretrained(
-            self.build_attention, build_classifier,
-            var_scope_name='digit_classifier',
-            name='{}_discrete={}_N={}.chk'.format(classifier_str, self.discrete_attn, self.N),
-            config=config)
+        name = '{}_discrete={}_N={}.chk'.format(
+            cfg.classifier_str, self.discrete_attn, self.N)
+        pretrained = MnistPretrained(
+            self.build_attention, cfg.build_classifier, var_scope_name='classifier', name=name,
+            mnist_config=MNIST_CONFIG, model_dir='/tmp/dps/mnist_pretrained/')
+        self.build_digit_classifier = ClassifierFunc(pretrained, 11)
 
         values = (
             [0., 0., 0., 0., 1., 0.] +
@@ -91,8 +88,8 @@ class TranslatedMnist(CoreNetwork):
         outp, fovea_x, fovea_y, vision, delta, t, glimpse = self.register_bank.as_tuple(r)
 
         glimpse = self.build_attention(inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta)
-        classification = tf.stop_gradient(self.build_classifier(glimpse, preprocess=False))
-        vision = tf.cast(tf.expand_dims(tf.argmax(classification, 1), 1), tf.float32)
+        digit_classification = self.build_digit_classifier(glimpse)
+        vision = tf.cast(digit_classification, tf.float32)
 
         with tf.name_scope("TranslatedMnist"):
             new_registers = self.register_bank.wrap(
@@ -149,8 +146,8 @@ class TranslatedMnist(CoreNetwork):
         outp = (1 - store) * _outp + store * _vision
 
         glimpse = self.build_attention(inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta)
-        classification = tf.stop_gradient(self.build_classifier(glimpse, preprocess=False))
-        vision = tf.cast(tf.expand_dims(tf.argmax(classification, 1), 1), tf.float32)
+        digit_classification = self.build_digit_classifier(glimpse)
+        vision = tf.cast(digit_classification, tf.float32)
 
         t = _t + 1
 
@@ -169,8 +166,7 @@ class TranslatedMnist(CoreNetwork):
 
 def render_rollouts(psystem, actions, registers, reward, external_obs, external_step_lengths, info):
     """ Render rollouts from TranslatedMnist task. """
-    config = default_config()
-    if not config.save_display and not config.display:
+    if not cfg.save_display and not cfg.display:
         print("Skipping rendering.")
         return
 
@@ -225,21 +221,20 @@ def render_rollouts(psystem, actions, registers, reward, external_obs, external_
 
     _animation = animation.FuncAnimation(fig, animate, n_timesteps, blit=True, interval=1000, repeat=True)
 
-    if default_config().save_display:
+    if cfg.save_display:
         Writer = animation.writers['ffmpeg']
         writer = Writer(fps=15, metadata=dict(artist='Me'), bitrate=1800)
-        _animation.save(str(Path(default_config().path) / 'animation.mp4'), writer=writer)
+        _animation.save(str(Path(cfg.path) / 'animation.mp4'), writer=writer)
 
-    if default_config().display:
+    if cfg.display:
         plt.show()
 
 
 class TranslatedMnistTrainer(ProductionSystemTrainer):
     def build_env(self, **kwargs):
-        config = default_config()
         return TranslatedMnistEnv(
-            config.scaled, config.discrete_attn, config.W, config.N, config.n_train, config.n_val, config.n_test,
-            config.inc_delta, config.inc_x, config.inc_y)
+            cfg.scaled, cfg.discrete_attn, cfg.W, cfg.N, cfg.n_train, cfg.n_val, cfg.n_test,
+            cfg.inc_delta, cfg.inc_x, cfg.inc_y)
 
     def build_core_network(self, env):
         return TranslatedMnist(env)

@@ -7,11 +7,10 @@ from shutil import rmtree
 from dps.attention import DRAW_attention_2D
 from dps.utils import MLP, NumpySeed
 from dps.mnist import (
-    TranslatedMnistDataset, load_or_train, MnistConfig,
+    TranslatedMnistDataset, load_or_train, MNIST_CONFIG,
     MnistPretrained, DRAW, LeNet, train_mnist)
 
 
-n_symbols = 10
 N = 14
 
 
@@ -48,15 +47,25 @@ def build_model(inp, output_size, is_training):
 
 def test_mnist_load_or_train():
     with NumpySeed(83849):
+        n_symbols = 10
         symbols = list(np.random.choice(20, n_symbols, replace=False))
-        config = MnistConfig(threshold=0.05, patience=np.inf, max_steps=10000000, symbols=symbols)
-        config.eval_step = 100
+
+        config = MNIST_CONFIG.copy(
+            threshold=0.05,
+            patience=np.inf,
+            max_steps=10000000,
+            symbols=symbols,
+            eval_step=100,
+            include_blank=True)
+
+        output_size = n_symbols + 1
+
         g = tf.Graph()
         with g.device("/cpu:0"):
             with g.as_default():
                 with tf.variable_scope('mnist') as var_scope:
                     x_ph = tf.placeholder(tf.float32, (None, 28**2))
-                    inference = build_model(x_ph, n_symbols, is_training=False)
+                    inference = build_model(x_ph, output_size, is_training=False)
                 sess = tf.Session()
 
                 checkpoint_dir = Path(config.log_root) / 'mnist_test/checkpoint'
@@ -69,8 +78,9 @@ def test_mnist_load_or_train():
 
                 loaded = load_or_train(
                     sess, build_model, train_mnist, var_scope,
-                    str(checkpoint_dir / 'model.chk'), config=config)
+                    str(checkpoint_dir / 'model.chk'), train_config=config)
                 assert not loaded
+
                 _eval_model(sess, inference, x_ph, symbols)
 
         g = tf.Graph()
@@ -78,12 +88,12 @@ def test_mnist_load_or_train():
             with g.as_default():
                 with tf.variable_scope('mnist') as var_scope:
                     x_ph = tf.placeholder(tf.float32, (None, 28**2))
-                    inference = build_model(x_ph, n_symbols, is_training=False)
+                    inference = build_model(x_ph, output_size, is_training=False)
                 sess = tf.Session()
 
                 loaded = load_or_train(
                     sess, build_model, train_mnist, var_scope,
-                    str(checkpoint_dir / 'model.chk'), config=config)
+                    str(checkpoint_dir / 'model.chk'), train_config=config)
                 assert loaded
                 _eval_model(sess, inference, x_ph, symbols)
 
@@ -112,8 +122,13 @@ def test_mnist_pretrained(preprocess, classifier):
         build_classifier = lenet
 
     with NumpySeed(83849):
+        n_symbols = 10
         symbols = list(np.random.choice(20, n_symbols, replace=False))
-        config = MnistConfig(eval_step=100, max_steps=10000, symbols=list(symbols))
+        output_size = n_symbols + 1
+
+        config = MNIST_CONFIG.copy(
+            eval_step=100, max_steps=10000, symbols=list(symbols), include_blank=True)
+
         g = tf.Graph()
         with g.as_default():
 
@@ -129,10 +144,9 @@ def test_mnist_pretrained(preprocess, classifier):
 
             with sess.as_default():
                 build_model = MnistPretrained(
-                    prepper, build_classifier, model_dir=str(checkpoint_dir),
-                    preprocess=True, config=config)
+                    prepper, build_classifier, model_dir=str(checkpoint_dir), mnist_config=config)
                 x_ph = tf.placeholder(tf.float32, (None, 28**2))
-                inference = build_model(x_ph, n_symbols, is_training=False, preprocess=True)
+                inference = build_model(x_ph, output_size, is_training=False, preprocess=True)
                 assert not build_model.was_loaded
                 _eval_model(sess, inference, x_ph, symbols)
 
@@ -142,10 +156,9 @@ def test_mnist_pretrained(preprocess, classifier):
 
             with sess.as_default():
                 build_model = MnistPretrained(
-                    prepper, build_classifier, model_dir=str(checkpoint_dir),
-                    preprocess=True, config=config)
+                    prepper, build_classifier, model_dir=str(checkpoint_dir), mnist_config=config)
                 x_ph = tf.placeholder(tf.float32, (None, 28**2))
-                inference = build_model(x_ph, n_symbols, is_training=False, preprocess=True)
+                inference = build_model(x_ph, output_size, is_training=False, preprocess=True)
                 assert build_model.was_loaded
 
                 _eval_model(sess, inference, x_ph, symbols)

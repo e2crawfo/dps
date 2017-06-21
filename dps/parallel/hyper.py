@@ -104,9 +104,7 @@ def sample_configs(n, repeats, base_config, distributions):
             _new = copy.copy(new)
             _new['repeat'] = r
             _new['seed'] = gen_seed()
-            config = copy.copy(base_config)
-            config.update(_new)
-            configs.append((_new, config))
+            configs.append(_new)
 
     return configs
 
@@ -166,21 +164,30 @@ def reduce_hyper_results(store, *results):
 
 
 class RunTrainer(object):
-    def __init__(self, trainer):
-        self.trainer = trainer
+    def __init__(self, base_config):
+        self.base_config = base_config
 
-    def __call__(self, config):
-        new, config = config
+    def __call__(self, new):
         print("Sampled values: ")
         pprint(new)
+
+        config = copy.copy(self.base_config)
+        config.update(new)
+
         config = clify.wrap_object(config).parse()
-        config.start_tensorboard = False
-        config.save_summaries = False
-        config.update_latest = False
-        config.display = False
-        config.save_display = False
-        config.max_experiments = np.inf
-        return self.trainer.train(config)
+        config.update(
+            start_tensorboard=False,
+            save_summaries=False,
+            update_latest=False,
+            display=False,
+            save_display=False,
+            max_experiments=np.inf,
+        )
+
+        with config:
+            val = config.trainer.train()
+
+        return val
 
 
 def build_search(path, name, n, repeats, alg, task, _zip, distributions=None, config=None):
@@ -216,7 +223,6 @@ def build_search(path, name, n, repeats, alg, task, _zip, distributions=None, co
             raise NotImplementedError("Unknown algorithm: {}.".format(alg))
 
     config = clify.wrap_object(config).parse()
-    configs = sample_configs(n, repeats, config, distributions)
 
     es = ExperimentStore(str(path), max_experiments=10, delete_old=1)
     count = 0
@@ -234,8 +240,10 @@ def build_search(path, name, n, repeats, alg, task, _zip, distributions=None, co
     print("Building parameter search at {}.".format(exp_dir.path))
 
     job = Job(exp_dir.path)
-    summaries = job.map(RunTrainer(config.trainer), configs)
-    best = job.reduce(reduce_hyper_results, summaries, pass_store=1)
+
+    new_configs = sample_configs(n, repeats, config, distributions)
+    summaries = job.map(RunTrainer(config), new_configs)
+    job.reduce(reduce_hyper_results, summaries, pass_store=1)
 
     job.save_object('metadata', 'distributions', distributions)
     job.save_object('metadata', 'config', config)

@@ -2,8 +2,6 @@ import subprocess as sp
 from pprint import pformat
 from contextlib import contextmanager
 import numpy as np
-import inspect
-import types
 from pathlib import Path
 import signal
 import time
@@ -16,6 +14,7 @@ import sys
 import pdb
 from collections import deque
 import subprocess
+import copy
 
 import tensorflow as tf
 from tensorflow.python.ops import random_ops, math_ops
@@ -183,7 +182,7 @@ class NumpySeed(object):
         np.random.set_state(self.state)
 
 
-def load_or_train(sess, build_model, train, var_scope, path=None, config=None):
+def load_or_train(sess, build_model, train, var_scope, path=None, train_config=None):
     """ Attempts to load variables into ``var_scope`` from checkpoint stored at ``path``.
 
     If said variables are not found, trains a model using the function
@@ -206,7 +205,8 @@ def load_or_train(sess, build_model, train, var_scope, path=None, config=None):
         print("Load successful.")
     except tf.errors.NotFoundError:
         print("Loading failed, training a model...")
-        train(build_model, var_scope, path, config)
+        with train_config:
+            train(build_model, var_scope, path)
         saver.restore(sess, path)
         print("Training successful.")
     return success
@@ -653,131 +653,174 @@ def build_optimizer(spec, learning_rate):
     return opt
 
 
-class Config(object):
-    _stack = []
+def trainable_variables(scope=None):
+    return tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope)
 
-    def __init__(self, **kwargs):
+
+class Config(dict):
+    _reserved_keys = None
+
+    def __init__(self, _d=None, **kwargs):
+        if _d:
+            self.update(_d)
         self.update(kwargs)
 
     def __str__(self):
-        attrs = {attr: getattr(self, attr) for attr in self.list_attrs()}
-        s = "<{} -\n{}\n>".format(self.__class__.__name__, pformat(attrs))
+        items = {k: v for k, v in self.items()}
+        s = "<{} -\n{}\n>".format(self.__class__.__name__, pformat(items))
         return s
 
     def __repr__(self):
         return str(self)
 
-    def as_default(self):
-        return context(self.__class__, self)
+    def __getattr__(self, key):
+        try:
+            return self.__getitem__(key)
+        except KeyError:
+            return super(Config, self).__getattr__(key)
 
-    def update(self, other, clobber=True):
-        if isinstance(other, Config):
-            for attr in other.list_attrs():
-                if not hasattr(self, attr) or clobber:
-                    setattr(self, attr, getattr(other, attr))
-        elif isinstance(other, dict):
-            for attr, value in other.items():
-                if not hasattr(self, attr) or clobber:
-                    setattr(self, attr, value)
-        else:
-            raise NotImplementedError()
-
-    def list_attrs(self):
-        return (
-            attr for attr in dir(self)
-            if (not attr.startswith('_') and
-                not isinstance(getattr(self, attr), types.MethodType)))
-
-    def __getitem__(self, key):
-        return getattr(self, key)
+    def __setattr__(self, key, value):
+        super(Config, self).__setitem__(key, value)
 
     def __setitem__(self, key, value):
+        assert self._validate_key(key), "Invalid key: {}.".format(key)
         setattr(self, key, value)
 
-    def keys(self):
-        return self.list_attrs()
+    def __enter__(self):
+        ConfigStack._stack.append(self)
+
+    def __exit__(self, exc_type, exc, exc_tb):
+        popped = ConfigStack._stack.pop()
+        assert popped == self, "Something is wrong with the config stack."
+        return False
+
+    def _validate_key(self, key):
+        return (
+            isinstance(key, str) and
+            key.isidentifier() and
+            not key.startswith('_') and
+            key not in self._reserved_keys)
+
+    def copy(self, _d=None, **kwargs):
+        """ Copy and update at the same time. """
+        new = copy.copy(self)
+        if _d:
+            new.update(_d)
+        new.update(**kwargs)
+        return new
 
 
-def _parse_config_from_file(cls, key=None):
-    config = configparser.ConfigParser()
-    location = Path(dps.__file__).parent
-    config.read(str(location / 'config.ini'))
-
-    if not key:
-        key = socket.gethostname().split('-')[0]
-
-    if key not in config:
-        key = 'DEFAULT'
-
-    # Load default configuration from a file
-    cls.hostname = socket.gethostname()
-    cls.start_tensorboard = config.getboolean(key, 'start_tensorboard')
-    cls.update_latest = config.getboolean(key, 'update_latest')
-    cls.save_summaries = config.getboolean(key, 'save_summaries')
-    cls.data_dir = process_path(config.get(key, 'data_dir'))
-    cls.log_root = process_path(config.get(key, 'log_root'))
-    cls.display = config.getboolean(key, 'display')
-    cls.save_display = config.getboolean(key, 'save_display')
-    cls.mpl_backend = config.get(key, 'mpl_backend')
-    cls.use_gpu = config.getboolean(key, 'use_gpu')
-    cls.visualize = config.getboolean(key, 'visualize')
-    cls.tbport = config.getint(key, 'tbport')
-
-    cls.max_experiments = config.getint(key, 'max_experiments')
-    if cls.max_experiments <= 0:
-        cls.max_experiments = np.inf
-    return cls
+Config._reserved_keys = dir(Config())
 
 
-@_parse_config_from_file
 class DpsConfig(Config):
-    log_dir = None
-    log_name = "default"
+    def __init__(self, _d=None, **kwargs):
+        self.update(_parse_dps_config_from_file())
+        kwargs['log_dir'] = None
+        kwargs['log_name'] = 'default'
 
-    def __init__(self, **kwargs):
-        super(DpsConfig, self).__init__(**kwargs)
+        super(DpsConfig, self).__init__(_d, **kwargs)
+
         if self.log_dir is None:
             self.log_dir = str(Path(self.log_root) / self.log_name)
 
 
-Config._stack.append(DpsConfig())
+def _parse_dps_config_from_file(key=None):
+    _config = configparser.ConfigParser()
+    location = Path(dps.__file__).parent
+    _config.read(str(location / 'config.ini'))
+
+    if not key:
+        key = socket.gethostname().split('-')[0]
+
+    if key not in _config:
+        key = 'DEFAULT'
+
+    # Load default configuration from a file
+    config = Config(
+        hostname=socket.gethostname(),
+        start_tensorboard=_config.getboolean(key, 'start_tensorboard'),
+        update_latest=_config.getboolean(key, 'update_latest'),
+        save_summaries=_config.getboolean(key, 'save_summaries'),
+        data_dir=process_path(_config.get(key, 'data_dir')),
+        log_root=process_path(_config.get(key, 'log_root')),
+        display=_config.getboolean(key, 'display'),
+        save_display=_config.getboolean(key, 'save_display'),
+        mpl_backend=_config.get(key, 'mpl_backend'),
+        use_gpu=_config.getboolean(key, 'use_gpu'),
+        visualize=_config.getboolean(key, 'visualize'),
+        tbport=_config.getint(key, 'tbport'),
+    )
+
+    config.max_experiments = _config.getint(key, 'max_experiments')
+    if config.max_experiments <= 0:
+        config.max_experiments = np.inf
+    return config
 
 
-@contextmanager
-def context(cls, obj):
-    cls._stack.append(obj)
-    yield
-    cls._stack.pop()
+class Singleton(type):
+    _instances = {}
+
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
+        return cls._instances[cls]
 
 
-def default_config():
-    if not Config._stack:
-        raise ValueError("Trying to get default config, but config stack is empty.")
-    return Config._stack[-1]
+class ConfigStack(metaclass=Singleton):
+    _stack = []
 
+    def clear_stack(self, default=None):
+        self._stack.clear()
+        if default is not None:
+            self._stack.append(default)
 
-def get_config(f, name):
-    """ ``f`` is the name of the file where the relevant configs are defined, usually stored in __file__.
-        name is the lowercase prefix of the config class we want to retrieve and instantiate.
+    def __str__(self):
+        items = {k: v for k, v in self.items()}
+        s = "<{} -\n{}\n>".format(self.__class__.__name__, pformat(items))
+        return s
 
-    """
-    config_classes = get_all_subclasses(Config)
-    config_classes = list(set([c for c in config_classes if inspect.getfile(c) == f]))
-    names = [c.__name__ for c in config_classes]
-    assert len(names) == len(set(names)), "Duplicate config names: {}.".format(names)
-    d = {n.split("Config")[0].lower(): c for n, c in zip(names, config_classes)}
-    name = name.lower()
-    try:
-        return d[name]()
-    except KeyError:
-        raise KeyError("Unknown config name {}.".format(name))
+    def __repr__(self):
+        return str(self)
 
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
 
-def get_all_subclasses(cls):
-    all_subclasses = []
+    def __getitem__(self, key):
+        for config in reversed(ConfigStack._stack):
+            if key in config:
+                return config[key]
+        raise KeyError("Cannot find a value for key `{}`".format(key))
 
-    for subclass in cls.__subclasses__():
-        all_subclasses.append(subclass)
-        all_subclasses.extend(get_all_subclasses(subclass))
+    def __getattr__(self, key):
+        try:
+            return self.__getitem__(key)
+        except KeyError:
+            raise AttributeError("No attribute named `{}`.".format(key))
 
-    return all_subclasses
+    def __setattr__(self, key, value):
+        setattr(self._stack[-1], key, value)
+
+    def __setitem__(self, key, value):
+        self._stack[-1][key] = value
+
+    def keys(self):
+        keys = set()
+        for config in ConfigStack._stack:
+            keys |= config.keys()
+        return keys
+
+    def values(self):
+        return [self[key] for key in self.keys()]
+
+    def items(self):
+        return [(key, self[key]) for key in self.keys()]
+
+    def freeze(self):
+        cfg = Config()
+        for key in self.keys():
+            cfg[key] = self[key]
+        return cfg

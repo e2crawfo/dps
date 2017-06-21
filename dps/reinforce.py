@@ -149,7 +149,7 @@ class ReinforceCell(RNNCell):
             observations, actions, cumulative_rewards = inp
             accumulator, policy_state = state
 
-            log_action_probs, _, new_policy_state = self.policy.build_log_pdf(observations, policy_state, actions)
+            log_action_probs, new_policy_state = self.policy.build_log_pdf(observations, policy_state, actions)
 
             new_term = log_action_probs * cumulative_rewards
             new_accumulator = accumulator + new_term
@@ -162,7 +162,7 @@ class ReinforceCell(RNNCell):
 
     @property
     def output_size(self):
-        return (1, self.policy.n_actions)
+        return (1, 1)
 
     def zero_state(self, batch_size, dtype):
         initial_state = (

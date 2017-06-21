@@ -1,10 +1,9 @@
 import tensorflow as tf
 import numpy as np
 
-from dps import CoreNetwork
+from dps import CoreNetwork, cfg
 from dps.register import RegisterBank
 from dps.environment import RegressionDataset, RegressionEnv
-from dps.utils import default_config
 from dps.attention import apply_gaussian_filter
 from dps.production_system import ProductionSystemTrainer
 
@@ -82,8 +81,7 @@ class Pointer(CoreNetwork):
 
 class PointerTrainer(ProductionSystemTrainer):
     def build_env(self):
-        config = default_config()
-        return PointerEnv(config.width, config.n_digits, config.n_train, config.n_val, config.n_test)
+        return PointerEnv(cfg.width, cfg.n_digits, cfg.n_train, cfg.n_val, cfg.n_test)
 
     def build_core_network(self, env):
         return Pointer(env)

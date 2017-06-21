@@ -1,13 +1,13 @@
 import tensorflow as tf
 import numpy as np
 
-from dps import CoreNetwork
+from dps import CoreNetwork, cfg
 from dps.register import RegisterBank
 from dps.environment import RegressionEnv
-from dps.utils import default_config
 from dps.production_system import ProductionSystemTrainer
 from dps.mnist import (
-    TranslatedMnistDataset, MnistArithmeticDataset, DRAW, MnistPretrained, MnistConfig)
+    TranslatedMnistDataset, MnistArithmeticDataset, DRAW,
+    MnistPretrained, MNIST_CONFIG, ClassifierFunc)
 
 
 class MnistArithmeticEnv(RegressionEnv):
@@ -71,22 +71,23 @@ class MnistArithmetic(CoreNetwork):
         self.inc_y = env.inc_y
         self.base = env.base
 
-        build_classifier = default_config().build_classifier
-        classifier_str = default_config().classifier_str
-
         self.build_attention = DRAW(self.N)
 
-        digit_config = MnistConfig(symbols=range(self.base))
-        name = '{}_N={}_symbols={}.chk'.format(classifier_str, self.N, '_'.join(str(s) for s in range(self.base)))
-        self.build_digit_classifier = MnistPretrained(
-            self.build_attention, build_classifier, name=name,
-            var_scope_name='digit_classifier', config=digit_config)
+        digit_config = MNIST_CONFIG.copy(symbols=range(self.base))
 
-        op_symbols = [10, 12, 22]
-        op_config = MnistConfig(symbols=op_symbols)
-        name = '{}_N={}_symbols={}.chk'.format(classifier_str, self.N, '_'.join(str(s) for s in op_symbols))
-        self.build_op_classifier = MnistPretrained(
-            self.build_attention, build_classifier, name=name, var_scope_name='op_classifier', config=op_config)
+        name = '{}_N={}_symbols={}.chk'.format(cfg.classifier_str, self.N, '_'.join(str(s) for s in range(self.base)))
+        digit_pretrained = MnistPretrained(
+            self.build_attention, cfg.build_classifier, name=name,
+            var_scope_name='digit_classifier', mnist_config=digit_config)
+        self.build_digit_classifier = ClassifierFunc(digit_pretrained, self.base + 1)
+
+        op_config = MNIST_CONFIG.copy(symbols=[10, 12, 22])
+
+        name = '{}_N={}_symbols={}.chk'.format(cfg.classifier_str, self.N, '_'.join(str(s) for s in op_config.symbols))
+        op_pretrained = MnistPretrained(
+            self.build_attention, cfg.build_classifier, name=name,
+            var_scope_name='op_classifier', mnist_config=op_config)
+        self.build_op_classifier = ClassifierFunc(op_pretrained, len(op_config.symbols) + 1)
 
         values = (
             [0., 0., 0., 0., 1., 0., 0., 0.] +
@@ -192,11 +193,10 @@ class MnistArithmetic(CoreNetwork):
 
 class MnistArithmeticTrainer(ProductionSystemTrainer):
     def build_env(self):
-        config = default_config()
         return MnistArithmeticEnv(
-            config.simple, config.base, config.n_digits, config.upper_bound, config.W, config.N,
-            config.n_train, config.n_val, config.n_test,
-            config.inc_delta, config.inc_x, config.inc_y)
+            cfg.simple, cfg.base, cfg.n_digits, cfg.upper_bound, cfg.W, cfg.N,
+            cfg.n_train, cfg.n_val, cfg.n_test,
+            cfg.inc_delta, cfg.inc_x, cfg.inc_y)
 
     def build_core_network(self, env):
         return MnistArithmetic(env)

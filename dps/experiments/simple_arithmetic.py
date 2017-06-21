@@ -3,14 +3,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import animation, patches
 from pathlib import Path
-import copy
 
-from dps import CoreNetwork
+from dps import CoreNetwork, cfg
 from dps.register import RegisterBank
 from dps.environment import RegressionDataset, RegressionEnv
-from dps.utils import default_config
 from dps.production_system import ProductionSystemTrainer
-from dps.mnist import char_to_idx, load_emnist, MnistPretrained, MnistConfig
+from dps.mnist import char_to_idx, load_emnist, MnistPretrained, ClassifierFunc
 
 
 def digits_to_numbers(digits, base=10, axis=-1, keepdims=False):
@@ -178,20 +176,6 @@ class SimpleArithmeticEnv(RegressionEnv):
         return "<SimpleArithmeticEnv shape={} base={}>".format(self.height, self.shape, self.base)
 
 
-class ClassifierFunc(object):
-    def __init__(self, f, output_size):
-        self.f = f
-        self.output_size = output_size
-
-    def __call__(self, inp):
-        x = inp
-        x = self.f(x, self.output_size, is_training=False)
-        x = tf.stop_gradient(x)
-        x = tf.argmax(x, 1)
-        x = tf.expand_dims(x, 1)
-        return x
-
-
 class SimpleArithmetic(CoreNetwork):
     """ Top left is (x=0, y=0). Sign is in the bottom left of the input grid.
 
@@ -229,28 +213,26 @@ class SimpleArithmetic(CoreNetwork):
         self.start_loc = env.start_loc
 
         if self.mnist:
-            build_classifier = default_config().build_classifier
-            classifier_str = default_config().classifier_str
+            build_classifier = cfg.build_classifier
+            classifier_str = cfg.classifier_str
 
-            digit_config = copy.copy(default_config().mnist_config)
-            digit_config.symbols = list(range(self.base))
+            digit_config = cfg.mnist_config.copy(symbol=list(range(self.base)))
 
             name = '{}_symbols={}.chk'.format(
                 classifier_str, '_'.join(str(s) for s in digit_config.symbols))
             digit_pretrained = MnistPretrained(
                 None, build_classifier, name=name, model_dir='/tmp/dps/mnist_pretrained/',
-                var_scope_name='digit_classifier', config=digit_config)
+                var_scope_name='digit_classifier', mnist_config=digit_config)
             self.build_digit_classifier = ClassifierFunc(digit_pretrained, self.base + 1)
 
-            op_config = copy.copy(default_config().mnist_config)
-            op_config.symbols = [10, 12, 22]
+            op_config = cfg.mnist_config.copy(symbols=[10, 12, 22])
 
             name = '{}_symbols={}.chk'.format(
                 classifier_str, '_'.join(str(s) for s in op_config.symbols))
 
             op_pretrained = MnistPretrained(
                 None, build_classifier, name=name, model_dir='/tmp/dps/mnist_pretrained/',
-                var_scope_name='op_classifier', config=op_config)
+                var_scope_name='op_classifier', mnist_config=op_config)
             self.build_op_classifier = ClassifierFunc(op_pretrained, len(op_config.symbols) + 1)
 
         else:
@@ -489,8 +471,7 @@ class SimpleArithmeticA(CoreNetwork):
 
 def render_rollouts(psystem, actions, registers, reward, external_obs, external_step_lengths, info):
     """ Render rollouts from TranslatedMnist task. """
-    config = default_config()
-    if not config.save_display and not config.display:
+    if not cfg.save_display and not cfg.display:
         print("Skipping rendering.")
         return
 
@@ -575,19 +556,18 @@ def render_rollouts(psystem, actions, registers, reward, external_obs, external_
 
     _animation = animation.FuncAnimation(fig, animate, n_timesteps, blit=False, interval=1000, repeat=True)
 
-    if default_config().save_display:
+    if cfg.save_display:
         Writer = animation.writers['ffmpeg']
         writer = Writer(fps=15, metadata=dict(artist='Me'), bitrate=1800)
-        _animation.save(str(Path(default_config().path) / 'animation.mp4'), writer=writer)
+        _animation.save(str(Path(cfg.path) / 'animation.mp4'), writer=writer)
 
-    if default_config().display:
+    if cfg.display:
         plt.show()
 
 
 def render_rollouts_static(psystem, actions, registers, reward, external_obs, external_step_lengths, info):
     """ Render rollouts from TranslatedMnist task. """
-    config = default_config()
-    if not config.save_display and not config.display:
+    if not cfg.save_display and not cfg.display:
         print("Skipping rendering.")
         return
 
@@ -655,20 +635,18 @@ def render_rollouts_static(psystem, actions, registers, reward, external_obs, ex
 
     plt.subplots_adjust(left=0.01, right=0.99, top=0.94, bottom=0.00, wspace=0.03, hspace=0.0)
 
-    if default_config().save_display:
+    if cfg.save_display:
         pass  # TODO
 
-    if default_config().display:
+    if cfg.display:
         plt.show()
 
 
 class SimpleArithmeticTrainer(ProductionSystemTrainer):
     def build_env(self):
-        config = default_config()
         return SimpleArithmeticEnv(
-            config.mnist, config.shape, config.n_digits,
-            config.upper_bound, config.base, config.n_train, config.n_val, config.n_test,
-            config.op_loc, config.start_loc)
+            cfg.mnist, cfg.shape, cfg.n_digits, cfg.upper_bound, cfg.base,
+            cfg.n_train, cfg.n_val, cfg.n_test, cfg.op_loc, cfg.start_loc)
 
     def build_core_network(self, env):
         return SimpleArithmetic(env)

@@ -2,143 +2,141 @@ import numpy as np
 import tensorflow as tf
 import os
 
-import dps
 from dps.updater import DifferentiableUpdater
 from dps.reinforce import REINFORCE
 from dps.qlearning import QLearning
 from dps.policy import SoftmaxSelect, EpsilonGreedySelect, GumbelSoftmaxSelect, IdentitySelect
-from dps.utils import Config, CompositeCell, MLP, DpsConfig, FixedController
-from dps.mnist import LeNet, MnistConfig
+from dps.utils import CompositeCell, MLP, DpsConfig, FixedController
+from dps.mnist import LeNet, MNIST_CONFIG
 from dps.experiments import (
     hello_world, simple_addition, pointer_following,
     hard_addition, translated_mnist, mnist_arithmetic, simple_arithmetic)
 
 
-class DefaultConfig(DpsConfig):
-    seed = 12
+DEFAULT_CONFIG = DpsConfig(
+    seed=12,
 
-    preserve_policy = True  # Whether to use the policy learned on the last stage of the curriculum for each new stage.
+    preserve_policy=True,  # Whether to use the policy learned on the last stage of the curriculum for each new stage.
 
-    optimizer_spec = "rmsprop"
-    updater_class = None
+    optimizer_spec="rmsprop",
+    updater_class=None,
 
-    power_through = True  # Whether to complete the entire curriculum, even if threshold not reached.
-    slim = False  # If true, tries to use little disk space
-    max_steps = 100
-    batch_size = 100
-    n_train = 10000
-    n_val = 1000
-    n_test = 0
+    power_through=True,  # Whether to complete the entire curriculum, even if threshold not reached.
+    slim=False,  # If true, tries to use little disk space
+    max_steps=100,
+    batch_size=100,
+    n_train=10000,
+    n_val=1000,
+    n_test=0,
 
-    threshold = 1e-2
-    patience = np.inf
+    threshold=1e-2,
+    patience=np.inf,
 
-    display_step = 100
-    eval_step = 10
-    checkpoint_step = 1000
-    n_controller_units = 32
+    display_step=100,
+    eval_step=10,
+    checkpoint_step=1000,
+    n_controller_units=32,
 
-    controller = lambda n_actions: CompositeCell(
-        tf.contrib.rnn.LSTMCell(num_units=32), MLP(), n_actions)
+    controller=lambda n_actions: CompositeCell(
+        tf.contrib.rnn.LSTMCell(num_units=32), MLP(), n_actions),
 
-    lr_schedule = "exponential 0.001 1000 0.96"
-    exploration_schedule = "exponential 10.0 1000 0.96"
-    noise_schedule = None
+    lr_schedule="exponential 0.001 1000 0.96",
+    exploration_schedule="exponential 10.0 1000 0.96",
+    noise_schedule=None,
 
-    test_time_explore = None
+    test_time_explore=None,
 
-    max_grad_norm = 0.0
-    l2_norm_penalty = 0.0
-    gamma = 1.0
-    reward_window = 0.1
+    max_grad_norm=0.0,
+    l2_norm_penalty=0.0,
+    gamma=1.0,
+    reward_window=0.1,
 
-    n_auxiliary_tasks = 0
-    auxiliary_coef = 0
+    n_auxiliary_tasks=0,
+    auxiliary_coef=0,
 
-    debug = False
-    verbose = False
-    display = False
-    save_display = False
-    path = os.getcwd()
-    max_time = 0
-
-
-class DiffConfig(Config):
-    updater_class = DifferentiableUpdater
-    test_time_explore = None
-    action_selection = lambda n_actions: GumbelSoftmaxSelect(n_actions, hard=0)
-    max_grad_norm = 1.0
-    patience = np.inf
-    T = 10
-
-    noise_schedule = "exponential 0.1 1000 0.96"
+    debug=False,
+    verbose=False,
+    display=False,
+    save_display=False,
+    path=os.getcwd(),
+    max_time=0,
+)
 
 
-class ReinforceConfig(Config):
-    updater_class = REINFORCE
-    action_selection = lambda na: SoftmaxSelect(na)
-    test_time_explore = 0.1
-    patience = np.inf
+DIFF_CONFIG = DpsConfig(
+    updater_class=DifferentiableUpdater,
+    test_time_explore=None,
+    action_selection=lambda n_actions: GumbelSoftmaxSelect(n_actions, hard=0),
+    max_grad_norm=1.0,
+    patience=np.inf,
+    T=10,
+    noise_schedule="exponential 0.1 1000 0.96",
+)
 
-    entropy_schedule = "exp 0.01 100000 0.1"
-    # entropy_schedule = "exp 0.5 100000 1.0"
-    lr_schedule = "constant 0.001"
-    exploration_schedule = "exp 10.0 100000 1.0"
-    # exploration_schedule = "poly 10.0 100000 1.0 1.0"
-    gamma = 0.99
-
-
-class QLearningConfig(Config):
-    updater_class = QLearning
-    action_selection = lambda n_actions: EpsilonGreedySelect(n_actions)
-    double = False
-
-    lr_schedule = "exponential 0.00025 1000 1.0"
-    exploration_schedule = "polynomial 1.0 10000 0.1 1"
-
-    optimizer_spec = "rmsprop"
-
-    replay_max_size = 1000000
-    replay_threshold = -0.5
-    replay_proportion = 0.0
-    gamma = 0.99
-
-    target_update_rate = None
-    steps_per_target_update = 10000
-    recurrent = True
-    patience = np.inf
-    samples_per_update = 32  # Number of rollouts between parameter updates
-    update_batch_size = 32  # Number of sample rollouts to use for each parameter update
-    batch_size = 64  # Number of sample experiences to execute
-    test_time_explore = 0.05
-
-    l2_norm_penalty = 0.0
-    max_grad_norm = 0.0
-
-    n_controller_units = 256
+REINFORCE_CONFIG = DpsConfig(
+    updater_class=REINFORCE,
+    action_selection=lambda na: SoftmaxSelect(na),
+    test_time_explore=0.1,
+    patience=np.inf,
+    entropy_schedule="exp 0.01 100000 0.1",
+    lr_schedule="constant 0.001",
+    exploration_schedule="exp 10.0 100000 1.0",
+    gamma=0.99,
+)
 
 
-class DQNConfig(QLearningConfig):
+QLEARNING_CONFIG = DpsConfig(
+    updater_class=QLearning,
+    action_selection=lambda n_actions: EpsilonGreedySelect(n_actions),
+    double=False,
+
+    lr_schedule="exponential 0.00025 1000 1.0",
+    exploration_schedule="polynomial 1.0 10000 0.1 1",
+
+    optimizer_spec="rmsprop",
+
+    replay_max_size=1000000,
+    replay_threshold=-0.5,
+    replay_proportion=0.0,
+    gamma=0.99,
+
+    target_update_rate=None,
+    steps_per_target_update=10000,
+    recurrent=True,
+    patience=np.inf,
+    samples_per_update=32,  # Number of rollouts between parameter updates
+    update_batch_size=32,  # Number of sample rollouts to use for each parameter update
+    batch_size=64,  # Number of sample experiences to execute
+    test_time_explore=0.05,
+
+    l2_norm_penalty=0.0,
+    max_grad_norm=0.0,
+
+    n_controller_units=256,
+)
+
+
+DQN_CONFIG = QLEARNING_CONFIG.copy(
     # From Nature paper
 
     # Rewards are clipped: all negative rewards set to -1, all positive set to 1, 0 unchanged.
-    batch_size = 32
+    batch_size=32,
 
-    lr_schedule = "0.00025"
+    lr_schedule="0.00025",
 
     # annealed linearly from 1 to 0.1 over first million frames,
     # fixed at 0.1 thereafter "
-    exploration_schedule = "polynomial 1.0 10000 0.1 1"
+    exploration_schedule="polynomial 1.0 10000 0.1 1",
 
-    replay_max_size = 1e6
+    replay_max_size=1e6,
 
     # max number of frames/states: 10 million
 
-    test_time_explore = 0.05
+    test_time_explore=0.05,
     # target_network_update Once every 10000 frames
-    steps_per_target_update = 10000
+    steps_per_target_update=10000,
 
-    gamma = 0.99
+    gamma=0.99,
 
     # 4 actions selected between each update
     # RMS prop momentum: 0.95
@@ -146,68 +144,74 @@ class DQNConfig(QLearningConfig):
     # min squared gradient (RMSProp): 0.01
     # exploration 1 to 0.1 over 1,000,000 frames
     # total number of frames: 50,000,000, but because of frame skip, equivalent to 200,000,000 frames
+)
 
 
-class FpsConfig(QLearningConfig):
-    gamma = 0.99
-    update_batch_size = 32
-    batch_size = 64
+FPS_CONFIG = QLEARNING_CONFIG.copy(
+    gamma=0.99,
+    update_batch_size=32,
+    batch_size=64,
 
     # Exploration: annealed linearly from 1 to 0.1 over first million steps, fixed at 0.1 thereafter
 
     # Replay max size: 1million *frames*
 
     # They actually update every 4 *steps*, rather than every 4 experiences
-    samples_per_update = 4
+    samples_per_update=4,
+)
 
 
-class DuelingConfig(QLearningConfig):
-    max_grad_norm = 10.0
-    lr_schedule = "6.25e-5"  # when prioritized experience replay was used
-    test_time_explore = 0.001  # fixed at this value...this might also be the training exploration, its not clear
+DUELING_CONFIG = QLEARNING_CONFIG.copy(
+    max_grad_norm=10.0,
+    lr_schedule="6.25e-5",  # when prioritized experience replay was used
+    test_time_explore=0.001,  # fixed at this value...this might also be the training exploration, its not clear
+)
 
 
-class DoubleConfig(QLearningConfig):
-    double = True
-    exploration_start = 0.1  # Not totally clear, but seems like they use the same scheme as DQN, but go from 1 to 0.01, instead of 1 to 0.1
-    test_time_explore = 0.001
+DOUBLE_CONFIG = QLEARNING_CONFIG.copy(
+    double=True,
+    exploration_start=0.1, # Not totally clear, but seems like they use the same scheme as DQN, but go from 1 to 0.01, instead of 1 to 0.1
+    test_time_explore=0.001,
     # Target network update rate: once every 30,000 frames (DQN apparently does it once every 10,000 frames).
+)
 
 
-class DebugConfig(Config):
-    max_steps = 4
-    batch_size = 2
-    n_train = 10
-    n_val = 10
-    n_test = 0
+DEBUG_CONFIG = DpsConfig(
+    max_steps=4,
+    batch_size=2,
+    n_train=10,
+    n_val=10,
+    n_test=0,
 
-    display_step = 1
-    eval_step = 1
+    display_step=1,
+    eval_step=1,
 
-    debug = True
+    debug=True,
+)
 
 
-class HelloWorldConfig(DefaultConfig):
-    curriculum = [
+HELLO_WORLD_CONFIG = DEFAULT_CONFIG.copy(
+    curriculum=[
         dict(order=[0, 1], T=2),
         dict(order=[0, 1, 0], T=3),
-        dict(order=[0, 1, 0, 1], T=4)]
-    controller = lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=32), MLP(), n_actions)
-    log_name = 'hello_world'
-    trainer = hello_world.HelloWorldTrainer()
+        dict(order=[0, 1, 0, 1], T=4)],
+    controller=lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=32), MLP(), n_actions),
+    log_name='hello_world',
+    trainer=hello_world.HelloWorldTrainer(),
+)
 
 
-class SimpleAdditionConfig(DefaultConfig):
-    T = 30
-    curriculum = [
+SIMPLE_ADDITION_CONFIG = DEFAULT_CONFIG.copy(
+    T=30,
+    curriculum=[
         dict(width=1, n_digits=10),
         dict(width=2, n_digits=10),
         dict(width=3, n_digits=10),
-    ]
+    ],
 
-    n_controller_units = 64
+    n_controller_units=64,
 
-    # curriculum = [
+    # curriculum=[
     #     dict(width=1, n_digits=10),
     #     dict(width=2, n_digits=10),
     #     dict(width=3, n_digits=10),
@@ -230,36 +234,39 @@ class SimpleAdditionConfig(DefaultConfig):
     #     dict(width=35, n_digits=10, T=110),
     # ]
 
-    log_name = 'simple_addition'
+    log_name='simple_addition',
 
-    trainer = simple_addition.SimpleAdditionTrainer()
+    trainer=simple_addition.SimpleAdditionTrainer(),
+)
 
 
-class PointerConfig(DefaultConfig):
-    T = 30
-    curriculum = [
+POINTER_CONFIG = DEFAULT_CONFIG.copy(
+    T=30,
+    curriculum=[
         dict(width=1, n_digits=10),
-        dict(width=2, n_digits=10)]
-    log_name = 'pointer'
+        dict(width=2, n_digits=10)],
+    log_name='pointer',
 
-    trainer = pointer_following.PointerTrainer()
+    trainer=pointer_following.PointerTrainer(),
+)
 
 
-class HardAdditionConfig(DefaultConfig):
-    T = 40
-    curriculum = [
+HARD_ADDITION_CONFIG = DEFAULT_CONFIG.copy(
+    T=40,
+    curriculum=[
         dict(height=2, width=3, n_digits=2, entropy_start=1.0),
-        dict(height=2, width=3, n_digits=2, entropy_start=0.0)]
-    log_name = 'hard_addition'
-    trainer = hard_addition.HardAdditionTrainer()
-    preserve_policy = False
+        dict(height=2, width=3, n_digits=2, entropy_start=0.0)],
+    log_name='hard_addition',
+    trainer=hard_addition.HardAdditionTrainer(),
+    preserve_policy=False,
+)
 
 
-class TranslatedMnistConfig(DefaultConfig):
-    T = 10
-    scaled = False
-    discrete_attn = True
-    curriculum = [
+TRANSLATED_MNIST_CONFIG = DEFAULT_CONFIG.copy(
+    T=10,
+    scaled=False,
+    discrete_attn=True,
+    curriculum=[
         dict(W=28, N=8, T=4),
         dict(W=28, N=8, T=10),
         dict(W=35, N=8, T=10),
@@ -271,65 +278,58 @@ class TranslatedMnistConfig(DefaultConfig):
         dict(W=75, N=8, T=20),
         dict(W=85, N=8, T=20),
         dict(W=95, N=8, T=20)
-    ]
-    threshold = 0.10
-    verbose = 4
+    ],
+    threshold=0.10,
+    verbose=4,
 
-    classifier_str = "MLP_50_50"
+    classifier_str="MLP_50_50",
+    build_classifier=lambda inp, outp_size, is_training=False: tf.nn.softmax(
+        MLP([50, 50], activation_fn=tf.nn.sigmoid)(inp, outp_size)),
 
-    @staticmethod
-    def build_classifier(inp, outp_size, is_training=False):
-        logits = MLP([50, 50], activation_fn=tf.nn.sigmoid)(inp, outp_size)
-        return tf.nn.softmax(logits)
+    controller=lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=256), MLP(), n_actions),
+    reward_window=0.5,
 
-    # controller = lambda self, n_actions: FeedforwardCell(
-    #     MLP([100, 100], activation_fn=tf.nn.sigmoid),
-    #     n_actions))
-    controller = lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=256), MLP(), n_actions)
-    reward_window = 0.5
+    log_name='translated_mnist',
 
-    log_name = 'translated_mnist'
+    inc_delta=0.1,
+    inc_x=0.1,
+    inc_y=0.1,
 
-    inc_delta = 0.1
-    inc_x = 0.1
-    inc_y = 0.1
-
-    trainer = translated_mnist.TranslatedMnistTrainer()
+    trainer=translated_mnist.TranslatedMnistTrainer(),
+)
 
 
-class MnistArithmeticConfig(DefaultConfig):
-    curriculum = [
+MNIST_ARITHMETIC_CONFIG = DEFAULT_CONFIG.copy(
+    curriculum=[
         dict(W=100, N=16, T=20, n_digits=3, base=10),
-    ]
-    simple = False
-    threshold = 0.15
-    verbose = 4
-    upper_bound = False
+    ],
+    simple=False,
+    threshold=0.15,
+    verbose=4,
+    upper_bound=False,
 
-    classifier_str = "MLP_30_30"
+    classifier_str="MLP_30_30",
+    build_classifier=lambda inp, outp_size, is_training=False: tf.nn.softmax(
+        MLP([30, 30], activation_fn=tf.nn.sigmoid)(inp, outp_size)),
 
-    @staticmethod
-    def build_classifier(inp, outp_size, is_training=False):
-        logits = MLP([30, 30], activation_fn=tf.nn.sigmoid)(inp, outp_size)
-        return tf.nn.softmax(logits)
+    controller=lambda n_actions: CompositeCell(
+        tf.contrib.rnn.LSTMCell(num_units=256), MLP(), n_actions),
+    reward_window=0.5,
 
-    controller = lambda n_actions: CompositeCell(
-        tf.contrib.rnn.LSTMCell(num_units=256), MLP(), n_actions)
-    reward_window = 0.5
+    log_name='mnist_arithmetic',
 
-    log_name = 'mnist_arithmetic'
+    inc_delta=0.1,
+    inc_x=0.1,
+    inc_y=0.1,
 
-    inc_delta = 0.1
-    inc_x = 0.1
-    inc_y = 0.1
-
-    trainer = mnist_arithmetic.MnistArithmeticTrainer()
+    trainer=mnist_arithmetic.MnistArithmeticTrainer(),
+)
 
 
-class SimpleArithmeticConfig(DefaultConfig):
-    curriculum = [
+SIMPLE_ARITHMETIC_CONFIG = DEFAULT_CONFIG.copy(
+    curriculum=[
         # dict(T=30),
-        dict(T=10, n_digits=2, shape=(1, 3), display=True),
+        dict(T=10, n_digits=2, shape=(1, 3)),
         # dict(T=3),
         # dict(T=4),
         # dict(T=5),
@@ -354,191 +354,186 @@ class SimpleArithmeticConfig(DefaultConfig):
         # dict(T=15, shape=(1, 7), n_digits=4, display=False),
         # dict(T=15, shape=(1, 7), n_digits=5, display=False),
         # dict(T=15, shape=(1, 7), n_digits=6, display=True),
-    ]
-    display = False
-    mnist = True
-    shape = (1, 2)
-    op_loc = (0, 0)
-    start_loc = (0, 0)
-    n_digits = 1
-    upper_bound = False
-    base = 10
-    batch_size = 64
-    threshold = 0.04
+    ],
+    display=False,
+    mnist=True,
+    shape=(1, 2),
+    op_loc=(0, 0),
+    start_loc=(0, 0),
+    n_digits=1,
+    upper_bound=False,
+    base=10,
+    batch_size=64,
+    threshold=0.04,
 
-    reward_window = 0.5
+    reward_window=0.5,
 
-    n_controller_units = 64
+    n_controller_units=64,
 
-    # classifier_str = "MLP2_70_70"
-    # @staticmethod
-    # def build_classifier(inp, outp_size, is_training=False):
-    #     logits = MLP([70, 70], activation_fn=tf.nn.sigmoid)(inp, outp_size)
-    #     return tf.nn.softmax(logits)
+    classifier_str="LeNet2_1024",
+    build_classifier=lambda inp, output_size, is_training=False: tf.nn.softmax(
+        LeNet(1024, activation_fn=tf.nn.sigmoid)(inp, output_size, is_training)),
 
-    classifier_str = "LeNet2_1024"
+    mnist_config=MNIST_CONFIG.copy(
+        eval_step=100,
+        max_steps=100000,
+        patience=np.inf,
+        threshold=0.05,
+        include_blank=True),
 
-    @staticmethod
-    def build_classifier(inp, output_size, is_training=False):
-        logits = LeNet(1024, activation_fn=tf.nn.sigmoid)(inp, output_size, is_training)
-        return tf.nn.softmax(logits)
+    trainer=simple_arithmetic.SimpleArithmeticTrainer(),
 
-    mnist_config = MnistConfig(
-        eval_step=100, max_steps=100000, patience=np.inf, threshold=0.05, include_blank=True)
-
-    trainer = simple_arithmetic.SimpleArithmeticTrainer()
-
-    log_name = 'simple_arithmetic'
-    render_rollouts = staticmethod(simple_arithmetic.render_rollouts)
+    log_name='simple_arithmetic',
+    render_rollouts=simple_arithmetic.render_rollouts,
+)
 
 
-class TestConfigMeta(type):
-    def __new__(cls, name, bases, attrs):
-        action_seq = attrs.get('action_seq', None)
-        if action_seq:
-            attrs['T'] = len(action_seq)
-            attrs['controller'] = lambda n_actions: FixedController(action_seq, n_actions)
-        if 'batch_size' in attrs:
-            attrs['n_train'] = attrs['batch_size']
-        return super(TestConfigMeta, cls).__new__(cls, name, bases, attrs)
+def adjust_for_test(config):
+    config.T = len(config.action_seq)
+    config.controller = lambda n_actions: FixedController(config.action_seq, n_actions)
+    config.n_train = config.batch_size
+    config.update(
+        n_val=0,
+        n_test=0,
+        batch_size=1,
+        action_selection=lambda na: IdentitySelect(na),
+        verbose=4,
+    )
 
 
-class TestConfig(DefaultConfig, metaclass=TestConfigMeta):
-    n_val = 0
-    n_test = 0
-    batch_size = 1
-    action_selection = lambda na: IdentitySelect(na)
-    verbose = 4
-
-    action_seq = None
+HELLO_WORLD_TEST = HELLO_WORLD_CONFIG.copy(
+    order=[0, 1, 0],
+    T=3,
+    action_seq=[0, 1, 0],
+)
+adjust_for_test(HELLO_WORLD_TEST)
 
 
-class HelloWorldTest(TestConfig, HelloWorldConfig):
-    order = [0, 1, 0]
-    T = 3
-    action_seq = [0, 1, 0]
+SIMPLE_ADDITION_TEST = SIMPLE_ADDITION_CONFIG.copy(
+    width=1,
+    n_digits=10,
+    action_seq=[0, 2, 1, 1, 3, 5, 0],
+)
+adjust_for_test(SIMPLE_ADDITION_TEST)
 
 
-class SimpleAdditionTest(TestConfig, SimpleAdditionConfig):
-    width = 1
-    n_digits = 10
-    action_seq = [0, 2, 1, 1, 3, 5, 0]
+POINTER_TEST = POINTER_CONFIG.copy(
+    width=1,
+    n_digits=10,
+    action_seq=[0, 2, 1],
+)
+adjust_for_test(POINTER_TEST)
 
 
-class PointerTest(TestConfig, PointerConfig):
-    width = 1
-    n_digits = 10
-    action_seq = [0, 2, 1]
+HARD_ADDITION_TEST = HARD_ADDITION_CONFIG.copy(
+    width=2,
+    height=2,
+    n_digits=10,
+    action_seq=[4, 2, 5, 6, 7, 0, 4, 3, 5, 6, 7, 0],
+)
+adjust_for_test(HARD_ADDITION_TEST)
 
 
-class HardAdditionTest(TestConfig, HardAdditionConfig):
-    width = 2
-    height = 2
-    n_digits = 10
-    action_seq = [4, 2, 5, 6, 7, 0, 4, 3, 5, 6, 7, 0]
+TRANSLATED_MNIST_TEST = TRANSLATED_MNIST_CONFIG.copy(
+    W=60,
+    N=14,
+
+    reward_window=0.5,
+
+    inc_delta=0.1,
+    inc_x=0.1,
+    inc_y=0.1,
+
+    discrete_attn=True,
+
+    classifier_str="MLP_30_30",
+    build_classifier=lambda inp, outp_size, is_training=False: tf.nn.softmax(
+        MLP([30, 30], activation_fn=tf.nn.sigmoid)(inp, outp_size)),
+
+    action_seq=list(range(14))[::-1],
+    batch_size=16,
+
+    render_rollouts=translated_mnist.render_rollouts,
+)
+adjust_for_test(TRANSLATED_MNIST_TEST)
 
 
-class TranslatedMnistTest(TestConfig, TranslatedMnistConfig):
-    W = 60
-    N = 14
+MNIST_ARITHMETIC_TEST = MNIST_ARITHMETIC_CONFIG.copy(
+    W=100,
+    N=8,
+    simple=False,
+    base=3,
+    n_digits=2,
 
-    reward_window = 0.5
+    reward_window=0.5,
 
-    inc_delta = 0.1
-    inc_x = 0.1
-    inc_y = 0.1
+    inc_delta=0.1,
+    inc_x=0.1,
+    inc_y=0.1,
 
-    discrete_attn = True
+    classifier_str="MLP_30_30",
+    build_classifier=lambda inp, outp_size, is_training=False: tf.nn.softmax(
+        MLP([30, 30], activation_fn=tf.nn.sigmoid)(inp, outp_size)),
 
-    classifier_str = "MLP_30_30"
+    action_seq=range(14),
+    batch_size=16,
 
-    @staticmethod
-    def build_classifier(inp, outp_size, is_training=False):
-        logits = MLP([30, 30], activation_fn=tf.nn.sigmoid)(inp, outp_size)
-        return tf.nn.softmax(logits)
-
-    action_seq = list(range(14))[::-1]
-    batch_size = 16
-
-    render_rollouts = staticmethod(translated_mnist.render_rollouts)
-
-
-class MnistArithmeticTest(TestConfig, MnistArithmeticConfig):
-    W = 100
-    N = 8
-    simple = False
-    base = 3
-    n_digits = 2
-
-    reward_window = 0.5
-
-    inc_delta = 0.1
-    inc_x = 0.1
-    inc_y = 0.1
-
-    classifier_str = "MLP_30_30"
-
-    @staticmethod
-    def build_classifier(inp, outp_size, is_training=False):
-        logits = MLP([30, 30], activation_fn=tf.nn.sigmoid)(inp, outp_size)
-        return tf.nn.softmax(logits)
-
-    action_seq = range(14)
-    batch_size = 16
-
-    render_rollouts = staticmethod(translated_mnist.render_rollouts)
+    render_rollouts=translated_mnist.render_rollouts,
+)
+adjust_for_test(MNIST_ARITHMETIC_TEST)
 
 
-class SimpleArithmeticTest(TestConfig):
-    mnist = True
-    shape = (5, 5)
-    op_loc = (0, 0)
-    start_loc = (0, 0)
-    n_digits = 3
-    upper_bound = True
-    base = 10
-    n_examples = 1
-    batch_size = n_examples
-    n_train = n_examples
-    n_val = 0
-    n_test = 0
+SIMPLE_ARITHMETIC_TEST = SIMPLE_ARITHMETIC_CONFIG.copy(
+    mnist=True,
+    shape=(5, 5),
+    op_loc=(0, 0),
+    start_loc=(0, 0),
+    n_digits=3,
+    upper_bound=True,
+    base=10,
+    n_examples=1,
+    batch_size=1,
+    n_train=1,
+    n_val=0,
+    n_test=0,
+    curriculum=[dict(T=10, n_digits=2, shape=(1, 3))],
 
-    reward_window = 0.5
+    reward_window=0.5,
 
-    mnist_config = MnistConfig(
-        eval_step=100, max_steps=100000, patience=np.inf, threshold=0.01, include_blank=True)
-    classifier_str = "LeNet2_1024"
+    mnist_config=MNIST_CONFIG.copy(
+        eval_step=100, max_steps=100000, patience=np.inf, threshold=0.01, include_blank=True),
 
-    @staticmethod
-    def build_classifier(inp, output_size, is_training=False):
-        logits = LeNet(1024, activation_fn=tf.nn.sigmoid)(inp, output_size, is_training)
-        return tf.nn.softmax(logits)
+    classifier_str="LeNet2_1024",
+    build_classifier=lambda inp, output_size, is_training=False: tf.nn.softmax(
+        LeNet(1024, activation_fn=tf.nn.sigmoid)(inp, output_size, is_training)),
 
-    action_seq = range(simple_arithmetic.SimpleArithmetic.n_actions)
-    trainer = simple_arithmetic.SimpleArithmeticTrainer()
-    render_rollouts = staticmethod(simple_arithmetic.render_rollouts)
+    action_seq=range(simple_arithmetic.SimpleArithmetic.n_actions),
+    trainer=simple_arithmetic.SimpleArithmeticTrainer(),
+    render_rollouts=simple_arithmetic.render_rollouts,
+)
+adjust_for_test(SIMPLE_ARITHMETIC_TEST)
 
 
 algorithms = dict(
-    diff=DiffConfig(),
-    reinforce=ReinforceConfig(),
-    qlearning=QLearningConfig())
+    # diff=DIFF_CONFIG,  # Not in a working state
+    reinforce=REINFORCE_CONFIG,
+    qlearning=QLEARNING_CONFIG)
 
 
 tasks = dict(
-    hello_world=HelloWorldConfig(),
-    simple_addition=SimpleAdditionConfig(),
-    pointer=PointerConfig(),
-    hard_addition=HardAdditionConfig(),
-    translated_mnist=TranslatedMnistConfig(),
-    mnist_arithmetic=MnistArithmeticConfig(),
-    simple_arithmetic=SimpleArithmeticConfig())
+    hello_world=HELLO_WORLD_CONFIG,
+    simple_addition=SIMPLE_ADDITION_CONFIG,
+    pointer=POINTER_CONFIG,
+    hard_addition=HARD_ADDITION_CONFIG,
+    translated_mnist=TRANSLATED_MNIST_CONFIG,
+    mnist_arithmetic=MNIST_ARITHMETIC_CONFIG,
+    simple_arithmetic=SIMPLE_ARITHMETIC_CONFIG)
 
 test_configs = dict(
-    hello_world=HelloWorldTest(),
-    simple_addition=SimpleAdditionTest(),
-    pointer=PointerTest(),
-    hard_addition=HardAdditionTest(),
-    translated_mnist=TranslatedMnistTest(),
-    mnist_arithmetic=MnistArithmeticTest(),
-    simple_arithmetic=SimpleArithmeticTest())
+    hello_world=HELLO_WORLD_TEST,
+    simple_addition=SIMPLE_ADDITION_TEST,
+    pointer=POINTER_TEST,
+    hard_addition=HARD_ADDITION_TEST,
+    translated_mnist=TRANSLATED_MNIST_TEST,
+    mnist_arithmetic=MNIST_ARITHMETIC_TEST,
+    simple_arithmetic=SIMPLE_ARITHMETIC_TEST)

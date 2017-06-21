@@ -3,8 +3,9 @@ from future.utils import with_metaclass
 
 import tensorflow as tf
 
+from dps import cfg
 from dps.utils import (
-    default_config, add_scaled_noise_to_gradients,
+    add_scaled_noise_to_gradients,
     adj_inverse_time_decay, build_scheduled_value, build_optimizer)
 
 
@@ -75,7 +76,7 @@ class Updater(with_metaclass(abc.ABCMeta, object)):
         grads_and_vars = list(zip(self.noisy_gradients, tvars))
         self.train_op = self.optimizer.apply_gradients(grads_and_vars, global_step=global_step)
 
-        # if default_config().debug:
+        # if cfg.debug:
         #     for grad, var in self.gradients:
         #         tf.histogram_summary(var.name, var)
 
@@ -127,7 +128,7 @@ class DifferentiableUpdater(Updater):
         sess = tf.get_default_session()
 
         train_x, train_y = self.env.train.next_batch(batch_size)
-        if default_config().debug:
+        if cfg.debug:
             print("x", train_x)
             print("y", train_y)
 
