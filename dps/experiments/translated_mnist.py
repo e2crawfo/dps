@@ -5,10 +5,10 @@ from pathlib import Path
 import tensorflow as tf
 import numpy as np
 
-from dps import CoreNetwork, cfg
+from dps import cfg
 from dps.register import RegisterBank
-from dps.environment import RegressionEnv
-from dps.production_system import ProductionSystemTrainer
+from dps.environment import (
+    RegressionEnv, CompositeEnv, TensorFlowEnv)
 from dps.mnist import (
     TranslatedMnistDataset, DRAW, DiscreteAttn,
     MnistPretrained, MNIST_CONFIG, ClassifierFunc)
@@ -37,7 +37,7 @@ class TranslatedMnistEnv(RegressionEnv):
         pass
 
 
-class TranslatedMnist(CoreNetwork):
+class TranslatedMnist(TensorFlowEnv):
     """ Top left is (y=0, x=0). Corresponds to using origin='upper' in plt.imshow. """
 
     action_names = [
@@ -67,50 +67,46 @@ class TranslatedMnist(CoreNetwork):
         self.build_digit_classifier = ClassifierFunc(pretrained, 11)
 
         values = (
-            [0., 0., 0., 0., 1., 0.] +
+            [0., 0., 0., 0., 1.] +
             [np.zeros(self.N * self.N, dtype='f')])
 
-        self.register_bank = RegisterBank(
+        self.rb = RegisterBank(
             'TranslatedMnistRB',
-            'outp fovea_x fovea_y vision delta t glimpse', None, values=values,
+            'outp fovea_x fovea_y vision delta glimpse', None, values=values,
             output_names='outp', no_display='glimpse')
         super(TranslatedMnist, self).__init__()
 
-    @property
-    def input_shape(self):
-        return (self.W * self.W,)
+    def static_inp_type_and_shape(self):
+        return (tf.float32, (self.W*self.W,))
 
-    @property
-    def make_input_available(self):
-        return True
+    make_input_available = True
 
-    def init(self, r, inp):
-        outp, fovea_x, fovea_y, vision, delta, t, glimpse = self.register_bank.as_tuple(r)
+    def build_init(self, r, inp):
+        outp, fovea_x, fovea_y, vision, delta, glimpse = self.rb.as_tuple(r)
 
         glimpse = self.build_attention(inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta)
         digit_classification = self.build_digit_classifier(glimpse)
         vision = tf.cast(digit_classification, tf.float32)
 
         with tf.name_scope("TranslatedMnist"):
-            new_registers = self.register_bank.wrap(
+            new_registers = self.rb.wrap(
                 outp=tf.identity(outp, "outp"),
                 glimpse=tf.identity(glimpse, "glimpse"),
                 fovea_x=tf.identity(fovea_x, "fovea_x"),
                 fovea_y=tf.identity(fovea_y, "fovea_y"),
                 vision=tf.identity(vision, "vision"),
-                delta=tf.identity(delta, "delta"),
-                t=tf.identity(t, "t"))
+                delta=tf.identity(delta, "delta"))
 
         return new_registers
 
-    def __call__(self, action_activations, r, inp):
-        _outp, _fovea_x, _fovea_y, _vision, _delta, _t, _glimpse = self.register_bank.as_tuple(r)
+    def build_step(self, t, r, a, inp):
+        _outp, _fovea_x, _fovea_y, _vision, _delta, _glimpse = self.rb.as_tuple(r)
 
         (inc_fovea_x, dec_fovea_x, inc_fovea_x_big, dec_fovea_x_big,
          inc_fovea_y, dec_fovea_y, inc_fovea_y_big, dec_fovea_y_big,
          inc_delta, dec_delta, inc_delta_big, dec_delta_big,
          store, no_op) = (
-            tf.split(action_activations, self.n_actions, axis=1))
+            tf.split(a, self.n_actions, axis=1))
 
         if self.scaled:
             fovea_x = (1 - inc_fovea_x - dec_fovea_x) * _fovea_x + \
@@ -149,23 +145,21 @@ class TranslatedMnist(CoreNetwork):
         digit_classification = self.build_digit_classifier(glimpse)
         vision = tf.cast(digit_classification, tf.float32)
 
-        t = _t + 1
-
         with tf.name_scope("TranslatedMnist"):
-            new_registers = self.register_bank.wrap(
+            new_registers = self.rb.wrap(
                 outp=tf.identity(outp, "outp"),
                 glimpse=tf.identity(glimpse, "glimpse"),
                 fovea_x=tf.identity(fovea_x, "fovea_x"),
                 fovea_y=tf.identity(fovea_y, "fovea_y"),
                 vision=tf.identity(vision, "vision"),
-                delta=tf.identity(delta, "delta"),
-                t=tf.identity(t, "t"))
+                delta=tf.identity(delta, "delta"))
 
-        return new_registers
+        return tf.fill((tf.shape(r)[0], 1), 0.0), new_registers
 
 
-def render_rollouts(psystem, actions, registers, reward, external_obs, external_step_lengths, info):
-    """ Render rollouts from TranslatedMnist task. """
+def render_rollouts(env, actions, registers, reward, info):
+    external_obs = [i['external_obs'] for i in info]
+
     if not cfg.save_display and not cfg.display:
         print("Skipping rendering.")
         return
@@ -178,8 +172,8 @@ def render_rollouts(psystem, actions, registers, reward, external_obs, external_
     env_subplots = subplots[::2, :].flatten()
     glimpse_subplots = subplots[1::2, :].flatten()
 
-    W = psystem.core_network.W
-    N = psystem.core_network.N
+    W = env.core_network.W
+    N = env.core_network.N
 
     raw_images = external_obs[0].reshape((-1, W, W))
 
@@ -192,10 +186,10 @@ def render_rollouts(psystem, actions, registers, reward, external_obs, external_
 
     glimpses = [ax.imshow(np.random.randint(256, size=(N, N)), cmap='gray', origin='upper') for ax in glimpse_subplots]
 
-    fovea_x = psystem.rb.get('fovea_x', registers)
-    fovea_y = psystem.rb.get('fovea_y', registers)
-    delta = psystem.rb.get('delta', registers)
-    glimpse = psystem.rb.get('glimpse', registers)
+    fovea_x = env.rb.get('fovea_x', registers)
+    fovea_y = env.rb.get('fovea_y', registers)
+    delta = env.rb.get('delta', registers)
+    glimpse = env.rb.get('glimpse', registers)
 
     def animate(i):
         # Find locations of bottom-left in fovea co-ordinate system, then transform to axis co-ordinate system.
@@ -230,11 +224,9 @@ def render_rollouts(psystem, actions, registers, reward, external_obs, external_
         plt.show()
 
 
-class TranslatedMnistTrainer(ProductionSystemTrainer):
-    def build_env(self, **kwargs):
-        return TranslatedMnistEnv(
-            cfg.scaled, cfg.discrete_attn, cfg.W, cfg.N, cfg.n_train, cfg.n_val, cfg.n_test,
-            cfg.inc_delta, cfg.inc_x, cfg.inc_y)
-
-    def build_core_network(self, env):
-        return TranslatedMnist(env)
+def build_env():
+    external = TranslatedMnistEnv(
+        cfg.scaled, cfg.discrete_attn, cfg.W, cfg.N, cfg.n_train, cfg.n_val, cfg.n_test,
+        cfg.inc_delta, cfg.inc_x, cfg.inc_y)
+    internal = TranslatedMnist(external)
+    return CompositeEnv(external, internal)

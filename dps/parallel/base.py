@@ -339,19 +339,19 @@ class ObjectStore(object):
         pass
 
     def object_exists(self, kind, key):
-        raise NotImplementedError("Abstract method.")
+        raise Exception("Abstract method.")
 
     def save_object(self, kind, key, obj, force_unique=True, clobber=False):
-        raise NotImplementedError("Abstract method.")
+        raise Exception("Abstract method.")
 
     def load_object(self, kind, key):
-        raise NotImplementedError("Abstract method.")
+        raise Exception("Abstract method.")
 
     def load_objects(self, kind):
-        raise NotImplementedError("Abstract method.")
+        raise Exception("Abstract method.")
 
     def n_objects(self, kind=None):
-        raise NotImplementedError("Abstract method.")
+        raise Exception("Abstract method.")
 
 
 def split_path(path, root):
@@ -479,7 +479,7 @@ class ZipObjectStore(ObjectStore):
         return str(self.path_for(kind, key)) in self._zip.namelist()
 
     def save_object(self, kind, key, obj, force_unique, clobber):
-        raise NotImplementedError("Read-only object store.")
+        raise Exception("Read-only object store.")
 
     def load_object(self, kind, key):
         path = self.path_for(kind, key)
@@ -502,7 +502,7 @@ class ZipObjectStore(ObjectStore):
         return objects
 
     def n_objects(self, kind=None):
-        raise NotImplementedError("Abstract method.")
+        raise Exception("Abstract method.")
 
     def keys(self, kind):
         directory = str(self.path_for(kind))

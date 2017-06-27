@@ -1,7 +1,7 @@
 import pytest
 
 from dps import cfg
-from dps.utils import Config, DpsConfig
+from dps.utils import Config, ConfigStack
 
 
 def test_basic():
@@ -29,78 +29,80 @@ def test_basic():
 
 
 def test_config_stack():
+    old_stack = cfg._stack + []
     cfg.clear_stack()
 
-    with pytest.raises(KeyError):
-        cfg['1']
+    try:
+        with pytest.raises(KeyError):
+            cfg['1']
 
-    with pytest.raises(KeyError):
-        cfg['a']
+        with pytest.raises(KeyError):
+            cfg['a']
 
-    with pytest.raises(AttributeError):
-        cfg.a
+        with pytest.raises(AttributeError):
+            cfg.a
 
-    with Config(a=1, b=2, c=lambda x: x + 1):
-        assert cfg['a'] == 1
-        assert cfg.a == 1
-
-        assert cfg['b'] == 2
-        assert cfg.b == 2
-
-        assert cfg['c'](2) == 3
-        assert cfg.c(2) == 3
-
-        with Config(a=10, c=100, d='a', e=100):
-            assert cfg['a'] == 10
-            assert cfg.a == 10
+        with Config(a=1, b=2, c=lambda x: x + 1):
+            assert cfg['a'] == 1
+            assert cfg.a == 1
 
             assert cfg['b'] == 2
             assert cfg.b == 2
 
-            assert cfg['c'] == 100
-            assert cfg.c == 100
+            assert cfg['c'](2) == 3
+            assert cfg.c(2) == 3
 
-            assert cfg['d'] == 'a'
-            assert cfg.d == 'a'
+            with Config(a=10, c=100, d='a', e=100):
+                assert cfg['a'] == 10
+                assert cfg.a == 10
 
-            assert cfg['e'] == 100
-            assert cfg.e == 100
+                assert cfg['b'] == 2
+                assert cfg.b == 2
 
-            assert set(cfg.keys()) == set('a b c d e'.split())
+                assert cfg['c'] == 100
+                assert cfg.c == 100
 
-        assert cfg['a'] == 1
-        assert cfg.a == 1
+                assert cfg['d'] == 'a'
+                assert cfg.d == 'a'
 
-        assert cfg['b'] == 2
-        assert cfg.b == 2
+                assert cfg['e'] == 100
+                assert cfg.e == 100
 
-        assert cfg['c'](2) == 3
-        assert cfg.c(2) == 3
+                assert set(cfg.keys()) == set('a b c d e'.split())
 
-        assert set(cfg.keys()) == set('a b c'.split())
+            assert cfg['a'] == 1
+            assert cfg.a == 1
+
+            assert cfg['b'] == 2
+            assert cfg.b == 2
+
+            assert cfg['c'](2) == 3
+            assert cfg.c(2) == 3
+
+            assert set(cfg.keys()) == set('a b c'.split())
+
+            with pytest.raises(KeyError):
+                cfg['d']
+            with pytest.raises(AttributeError):
+                cfg.d
+
+            with pytest.raises(KeyError):
+                cfg['e']
+            with pytest.raises(AttributeError):
+                cfg.e
 
         with pytest.raises(KeyError):
-            cfg['d']
+            cfg['a']
         with pytest.raises(AttributeError):
-            cfg.d
-
+            cfg.a
         with pytest.raises(KeyError):
-            cfg['e']
+            cfg['b']
         with pytest.raises(AttributeError):
-            cfg.e
-
-    with pytest.raises(KeyError):
-        cfg['a']
-    with pytest.raises(AttributeError):
-        cfg.a
-    with pytest.raises(KeyError):
-        cfg['b']
-    with pytest.raises(AttributeError):
-        cfg.b
-    with pytest.raises(KeyError):
-        cfg['c']
-    with pytest.raises(AttributeError):
-        cfg.c
-    assert set(cfg.keys()) == set()
-
-    cfg.clear_stack(DpsConfig())
+            cfg.b
+        with pytest.raises(KeyError):
+            cfg['c']
+        with pytest.raises(AttributeError):
+            cfg.c
+        assert set(cfg.keys()) == set()
+    finally:
+        ConfigStack._stack = old_stack

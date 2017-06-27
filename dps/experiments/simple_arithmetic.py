@@ -4,10 +4,10 @@ import matplotlib.pyplot as plt
 from matplotlib import animation, patches
 from pathlib import Path
 
-from dps import CoreNetwork, cfg
+from dps import cfg
 from dps.register import RegisterBank
-from dps.environment import RegressionDataset, RegressionEnv
-from dps.production_system import ProductionSystemTrainer
+from dps.environment import (
+    RegressionDataset, RegressionEnv, CompositeEnv, TensorFlowEnv)
 from dps.mnist import char_to_idx, load_emnist, MnistPretrained, ClassifierFunc
 
 
@@ -176,7 +176,7 @@ class SimpleArithmeticEnv(RegressionEnv):
         return "<SimpleArithmeticEnv shape={} base={}>".format(self.height, self.shape, self.base)
 
 
-class SimpleArithmetic(CoreNetwork):
+class SimpleArithmetic(TensorFlowEnv):
     """ Top left is (x=0, y=0). Sign is in the bottom left of the input grid.
 
     For now, the location of the write head is the same as the x location of the read head.
@@ -186,16 +186,13 @@ class SimpleArithmetic(CoreNetwork):
         '>', '<', 'v', '^', 'store_op', '+', '+1', '*', 'store', 'noop']
 
     @property
-    def input_shape(self):
-        return self.shape + self.element_shape
-
-    @property
     def element_shape(self):
         return (28, 28) if self.mnist else (1,)
 
-    @property
-    def make_input_available(self):
-        return True
+    def static_inp_type_and_shape(self):
+        return (tf.float32, self.shape + self.element_shape)
+
+    make_input_available = True
 
     def __init__(self, env):
         self.mnist = env.mnist
@@ -203,7 +200,7 @@ class SimpleArithmetic(CoreNetwork):
         self.shape = env.shape
 
         if not len(self.shape) == 2:
-            raise NotImplementedError("Shape must have length 2.")
+            raise Exception("Shape must have length 2.")
 
         self.n_digits = env.n_digits
         self.upper_bound = env.upper_bound
@@ -240,18 +237,18 @@ class SimpleArithmetic(CoreNetwork):
             self.build_op_classifier = lambda x: tf.identity(x)
 
         values = (
-            [0., 0., 0., 0., 0., 0., 0.] +
+            [0., 0., 0., 0., 0., 0.] +
             [np.zeros(np.product(self.element_shape), dtype='f')])
 
-        self.register_bank = RegisterBank(
+        self.rb = RegisterBank(
             'SimpleArithmeticRB',
-            'op acc fovea_x fovea_y vision op_vision t', 'glimpse', values=values,
+            'op acc fovea_x fovea_y vision op_vision', 'glimpse', values=values,
             output_names='acc', no_display='glimpse')
 
         super(SimpleArithmetic, self).__init__()
 
-    def init(self, r, inp):
-        op, acc, fovea_x, fovea_y, vision, op_vision, t, glimpse = self.register_bank.as_tuple(r)
+    def build_init(self, r, inp):
+        op, acc, fovea_x, fovea_y, vision, op_vision, glimpse = self.rb.as_tuple(r)
 
         _fovea_x = tf.cast(fovea_x, tf.int32)
         _fovea_y = tf.cast(fovea_y, tf.int32)
@@ -281,25 +278,24 @@ class SimpleArithmetic(CoreNetwork):
         fovea_y = tf.cast(fovea_y, tf.float32)
 
         with tf.name_scope("SimpleArithmetic"):
-            new_registers = self.register_bank.wrap(
+            new_registers = self.rb.wrap(
                 glimpse=glimpse,
                 acc=tf.identity(acc, "acc"),
                 op=tf.identity(op, "op"),
                 fovea_x=tf.identity(fovea_x, "fovea_x"),
                 fovea_y=tf.identity(fovea_y, "fovea_y"),
                 vision=tf.identity(vision, "vision"),
-                op_vision=tf.identity(op_vision, "op_vision"),
-                t=tf.identity(t, "t"))
+                op_vision=tf.identity(op_vision, "op_vision"))
 
         return new_registers
 
-    def __call__(self, action_activations, r, inp):
-        _op, _acc, _fovea_x, _fovea_y, _vision, _op_vision, _t, _glimpse = self.register_bank.as_tuple(r)
+    def build_step(self, t, r, a, inp):
+        _op, _acc, _fovea_x, _fovea_y, _vision, _op_vision, _glimpse = self.rb.as_tuple(r)
 
         (inc_fovea_x, dec_fovea_x,
          inc_fovea_y, dec_fovea_y,
          store_op, add, inc, multiply, store, no_op) = (
-            tf.split(action_activations, self.n_actions, axis=1))
+            tf.split(a, self.n_actions, axis=1))
 
         acc = (1 - add - inc - multiply - store) * _acc + \
             add * (_vision + _acc) + \
@@ -336,144 +332,25 @@ class SimpleArithmetic(CoreNetwork):
         op_classification = self.build_op_classifier(glimpse)
         op_vision = tf.cast(op_classification, tf.float32)
 
-        t = _t + 1
-
         with tf.name_scope("MnistArithmetic"):
-            new_registers = self.register_bank.wrap(
+            new_registers = self.rb.wrap(
                 glimpse=glimpse,
                 acc=tf.identity(acc, "acc"),
                 op=tf.identity(op, "op"),
                 fovea_x=tf.identity(fovea_x, "fovea_x"),
                 fovea_y=tf.identity(fovea_y, "fovea_y"),
                 vision=tf.identity(vision, "vision"),
-                op_vision=tf.identity(op_vision, "op_vision"),
-                t=tf.identity(t, "t"))
+                op_vision=tf.identity(op_vision, "op_vision"))
 
-        return new_registers
-
-
-class SimpleArithmeticA(CoreNetwork):
-    action_names = [
-        'fovea_x += ', 'fovea_x -= ', 'fovea_y += ', 'fovea_y -= ', 'no-op/stop']
-    cts_action_names = ['set_acc_value']
-
-    @property
-    def input_shape(self):
-        return self.shape + self.element_shape
-
-    @property
-    def element_shape(self):
-        return (28, 28) if self.mnist else (1,)
-
-    @property
-    def make_input_available(self):
-        return True
-
-    def __init__(self, env):
-        self.mnist = env.mnist
-        self.symbols = env.symbols
-        self.shape = env.shape
-
-        if not len(self.shape) == 2:
-            raise NotImplementedError("Shape must have length 2.")
-
-        self.n_digits = env.n_digits
-        self.upper_bound = env.upper_bound
-        self.base = env.base
-        self.blank_char = env.blank_char
-
-        self.start_loc = env.start_loc
-
-        values = [np.zeros(np.product(self.element_shape), dtype='f'), 0., 0.]
-
-        self.register_bank = RegisterBank(
-            'SimpleArithmeticARB', 'glimpse fovea_x fovea_y acc t', None, values=values,
-            output_names='acc', no_display='glimpse')
-        super(SimpleArithmeticA, self).__init__()
-
-    def init(self, r, inp):
-        glimpse, fovea_x, fovea_y, acc, t = self.register_bank.as_tuple(r)
-
-        _fovea_x = tf.cast(fovea_x, tf.int32)
-        _fovea_y = tf.cast(fovea_y, tf.int32)
-
-        batch_size = tf.shape(inp)[0]
-        indices = tf.concat([
-            tf.reshape(tf.range(batch_size), (-1, 1)),
-            _fovea_y,
-            _fovea_x], axis=1)
-        glimpse = tf.gather_nd(inp, indices)
-        glimpse = tf.reshape(glimpse, (-1, np.product(self.element_shape)), name="glimpse")
-
-        if self.start_loc is not None:
-            fovea_y = tf.fill((batch_size, 1), self.start_loc[0])
-            fovea_x = tf.fill((batch_size, 1), self.start_loc[1])
-        else:
-            fovea_y = tf.random_uniform(tf.shape(fovea_y), 0, self.shape[0], dtype=tf.int32)
-            fovea_x = tf.random_uniform(tf.shape(fovea_x), 0, self.shape[1], dtype=tf.int32)
-
-        fovea_x = tf.cast(fovea_x, tf.float32)
-        fovea_y = tf.cast(fovea_y, tf.float32)
-
-        with tf.name_scope("SimpleArithmeticA"):
-            new_registers = self.register_bank.wrap(
-                glimpse=glimpse,
-                acc=tf.identity(acc, "acc"),
-                fovea_x=tf.identity(fovea_x, "fovea_x"),
-                fovea_y=tf.identity(fovea_y, "fovea_y"),
-                t=tf.identity(t, "t"))
-
-        return new_registers
-
-    def __call__(self, action_activations, r, inp, ):
-        _glimpse, _fovea_x, _fovea_y, _acc, _t = self.register_bank.as_tuple(r)
-
-        (inc_fovea_x, dec_fovea_x,
-         inc_fovea_y, dec_fovea_y, no_op) = (
-            tf.split(action_activations, self.n_actions, axis=1))
-
-        acc = cts_action_activations[:, 0]
-
-        fovea_x = (1 - inc_fovea_x - dec_fovea_x) * _fovea_x + \
-            inc_fovea_x * (_fovea_x + 1) + \
-            dec_fovea_x * (_fovea_x - 1)
-
-        fovea_y = (1 - inc_fovea_y - dec_fovea_y) * _fovea_y + \
-            inc_fovea_y * (_fovea_y + 1) + \
-            dec_fovea_y * (_fovea_y - 1)
-
-        fovea_y = tf.clip_by_value(fovea_y, 0, self.shape[0]-1)
-        fovea_x = tf.clip_by_value(fovea_x, 0, self.shape[1]-1)
-
-        _fovea_x = tf.cast(fovea_x, tf.int32)
-        _fovea_y = tf.cast(fovea_y, tf.int32)
-
-        batch_size = tf.shape(inp)[0]
-        indices = tf.concat([
-            tf.reshape(tf.range(batch_size), (-1, 1)),
-            _fovea_y,
-            _fovea_x], axis=1)
-        glimpse = tf.gather_nd(inp, indices)
-        glimpse = tf.reshape(glimpse, (-1, np.product(self.element_shape)), name="glimpse")
-
-        t = _t + 1
-
-        with tf.name_scope("MnistArithmetic"):
-            new_registers = self.register_bank.wrap(
-                glimpse=glimpse,
-                acc=tf.identity(acc, "acc"),
-                fovea_x=tf.identity(fovea_x, "fovea_x"),
-                fovea_y=tf.identity(fovea_y, "fovea_y"),
-                t=tf.identity(t, "t"))
-
-        return new_registers
+        return tf.fill((tf.shape(r)[0], 1), 0.0), new_registers
 
 
-def render_rollouts(psystem, actions, registers, reward, external_obs, external_step_lengths, info):
-    """ Render rollouts from TranslatedMnist task. """
+def render_rollouts(env, actions, registers, reward, info):
     if not cfg.save_display and not cfg.display:
         print("Skipping rendering.")
         return
+
+    external_obs = [i['external_obs'] for i in info]
 
     n_timesteps, batch_size, n_actions = actions.shape
     s = int(np.ceil(np.sqrt(batch_size)))
@@ -491,7 +368,7 @@ def render_rollouts(psystem, actions, registers, reward, external_obs, external_
 
     plt.subplots_adjust(hspace=0.5)
 
-    if psystem.env.mnist:
+    if env.env.mnist:
         images = []
         for ri in external_obs[0]:
             ri = [np.concatenate(r, axis=-1) for r in ri]
@@ -501,7 +378,7 @@ def render_rollouts(psystem, actions, registers, reward, external_obs, external_
     else:
         images = np.squeeze(external_obs[0], axis=-1)
 
-    shape = psystem.core_network.shape
+    shape = env.internal.shape
 
     mx = images.max()
     mn = images.min()
@@ -522,13 +399,13 @@ def render_rollouts(psystem, actions, registers, reward, external_obs, external_
         ax.add_patch(patches.Rectangle((offset, offset), s, s, alpha=0.6, fill=True, transform=ax.transData))
         for ax in env_subplots]
 
-    glimpse_shape = psystem.core_network.element_shape
+    glimpse_shape = env.internal.element_shape
     if len(glimpse_shape) == 1:
         glimpse_shape = glimpse_shape + (1,)
 
-    fovea_x = psystem.rb.get('fovea_x', registers)
-    fovea_y = psystem.rb.get('fovea_y', registers)
-    glimpse = psystem.rb.get('glimpse', registers)
+    fovea_x = env.rb.get('fovea_x', registers)
+    fovea_y = env.rb.get('fovea_y', registers)
+    glimpse = env.rb.get('glimpse', registers)
     glimpse = (glimpse - mn) / (mx - mn)
 
     glimpses = [ax.imshow(im, cmap='gray', origin='upper') for im, ax in zip(images, glimpse_subplots)]
@@ -537,7 +414,7 @@ def render_rollouts(psystem, actions, registers, reward, external_obs, external_
 
     def animate(i):
         for n, t in enumerate(titles1):
-            t.set_text(psystem.core_network.action_names[actions_reduced[i, n]])
+            t.set_text(env.internal.action_names[actions_reduced[i, n]])
         for n, t in enumerate(titles2):
             t.set_text("t={},y={},r={}".format(i, info[0]['y'][n][0], reward[i, n, 0]))
 
@@ -565,13 +442,14 @@ def render_rollouts(psystem, actions, registers, reward, external_obs, external_
         plt.show()
 
 
-def render_rollouts_static(psystem, actions, registers, reward, external_obs, external_step_lengths, info):
-    """ Render rollouts from TranslatedMnist task. """
+def render_rollouts_static(env, actions, registers, reward, info):
     if not cfg.save_display and not cfg.display:
         print("Skipping rendering.")
         return
 
-    if psystem.env.mnist:
+    external_obs = [i['external_obs'] for i in info]
+
+    if env.env.mnist:
         images = []
         for ri in external_obs[0]:
             ri = [np.concatenate(r, axis=-1) for r in ri]
@@ -587,31 +465,26 @@ def render_rollouts_static(psystem, actions, registers, reward, external_obs, ex
     n_timesteps, batch_size, n_actions = actions.shape
     fig, subplots = plt.subplots(batch_size, n_timesteps+1)
 
-    shape = psystem.core_network.shape
+    shape = env.internal.shape
 
     actions_reduced = np.argmax(actions, axis=-1)
     offset = 0.1
     s = 1 - 2*offset
 
-    fovea_x = psystem.rb.get('fovea_x', registers)
-    fovea_y = psystem.rb.get('fovea_y', registers)
-    acc = psystem.rb.get('acc', registers)
+    fovea_x = env.rb.get('fovea_x', registers)
+    fovea_y = env.rb.get('fovea_y', registers)
+    acc = env.rb.get('acc', registers)
 
     for i in range(batch_size):
         for j in range(n_timesteps + 1):
             ax = subplots[i, j]
             ax.imshow(images[i], cmap='gray', origin='upper', extent=(0, shape[1], shape[0], 0), vmin=0.0, vmax=1.0)
 
-            # ax.set_title(str(info[0]['y'][i]))
-            # ax.set_title(psystem.core_network.action_names[actions_reduced[j, i]])
-            # ax.set_ylabel(
-            # ax.yaxis.set_label_position("right")
-            # ax.set_xlabel("t={},y={},r={}".format(j, info[0]['y'][i][0], reward[j, i, 0]))
             ax.xaxis.set_visible(False)
             ax.yaxis.set_visible(False)
 
             if j < n_timesteps:
-                action_name = psystem.core_network.action_names[actions_reduced[j, i]]
+                action_name = env.internal.action_names[actions_reduced[j, i]]
                 if action_name == "store":
                     action_name = "+"
                 elif action_name in ["noop", "store_op"]:
@@ -621,10 +494,6 @@ def render_rollouts_static(psystem, actions, registers, reward, external_obs, ex
 
                 ax.text(
                     0.5, 1.2, text, transform=ax.transAxes, horizontalalignment='center', verticalalignment='center')
-
-                # acc_str = str(int(acc[j, i, 0]))
-                # ax.text(
-                #     1.4, 0.2, acc_str, transform=ax.transAxes, horizontalalignment='center', verticalalignment='center')
 
             # Find locations of bottom-left in fovea co-ordinate system, then transform to axis co-ordinate system.
             fx = fovea_x[j, i, :] + offset
@@ -642,11 +511,9 @@ def render_rollouts_static(psystem, actions, registers, reward, external_obs, ex
         plt.show()
 
 
-class SimpleArithmeticTrainer(ProductionSystemTrainer):
-    def build_env(self):
-        return SimpleArithmeticEnv(
-            cfg.mnist, cfg.shape, cfg.n_digits, cfg.upper_bound, cfg.base,
-            cfg.n_train, cfg.n_val, cfg.n_test, cfg.op_loc, cfg.start_loc)
-
-    def build_core_network(self, env):
-        return SimpleArithmetic(env)
+def build_env():
+    external = SimpleArithmeticEnv(
+        cfg.mnist, cfg.shape, cfg.n_digits, cfg.upper_bound, cfg.base,
+        cfg.n_train, cfg.n_val, cfg.n_test, cfg.op_loc, cfg.start_loc)
+    internal = SimpleArithmetic(external)
+    return CompositeEnv(external, internal)

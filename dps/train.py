@@ -8,15 +8,24 @@ from pprint import pformat
 import datetime
 import shutil
 import dill
+import os
 
 from spectral_dagger.utils.experiment import ExperimentStore
 from dps import cfg
+from dps.policy import Policy
 from dps.utils import (
-    restart_tensorboard, EarlyStopHook, gen_seed,
-    time_limit, uninitialized_variables_initializer, du)
+    restart_tensorboard, EarlyStopHook, gen_seed, build_scheduled_value,
+    time_limit, uninitialized_variables_initializer, du, Config)
 
 
-def training_loop(curriculum, exp_name=''):
+def training_loop(exp_name=''):
+    np.random.seed(cfg.seed)
+
+    curriculum = Curriculum()
+
+    exp_name = exp_name or "selection={}_updater={}_seed={}".format(
+        cfg.action_selection.__name__, cfg.build_updater.__name__, cfg.seed)
+
     loop = TrainingLoop(curriculum, exp_name)
     return loop.run()
 
@@ -161,8 +170,6 @@ class TrainingLoop(object):
         reason = None
         total_train_time = 0.0
 
-        print("Starting stage {} at {}.".format(stage_idx, datetime.datetime.now()))
-
         while True:
             n_epochs = updater.n_experiences / cfg.n_train
             if n_epochs >= self.max_epochs:
@@ -237,15 +244,68 @@ class Curriculum(object):
         return self.__call__()
 
     def __call__(self):
-        pass
+        if self.stage == self.prev_stage:
+            raise Exception("Need to call member function ``end_stage`` before getting next stage.")
+
+        if self.stage == len(cfg.curriculum):
+            raise StopIteration()
+
+        new_cfg = Config(cfg.curriculum[self.stage])
+
+        print("\nStarting stage {} of the curriculum at {}.\n"
+              "New config values for this stage are: \n{}\n".format(self.stage, datetime.datetime.now(), pformat(new_cfg)))
+
+        with new_cfg:
+            self.env = env = cfg.build_env()
+            is_training = tf.placeholder_with_default(False, shape=(), name="is_training")
+
+            exploration = build_scheduled_value(cfg.exploration_schedule, 'exploration')
+            if cfg.test_time_explore is not None:
+                testing_exploration = tf.constant(cfg.test_time_explore, tf.float32, name='testing_exploration')
+                exploration = tf.cond(is_training, lambda: exploration, lambda: testing_exploration)
+
+            self.policy = policy = Policy(
+                cfg.controller(env.n_actions), cfg.action_selection(env.n_actions), exploration,
+                env.n_actions, env.obs_dim, name="{}_policy".format(env.__class__.__name__))
+
+            policy.capture_scope()
+
+            target_policy = policy.deepcopy("target_policy")
+            target_policy.capture_scope()
+
+            if self.stage != 0 and cfg.preserve_policy:
+                policy.maybe_build_act()
+
+                g = tf.get_default_graph()
+
+                policy_variables = g.get_collection('trainable_variables', scope=policy.scope.name)
+                saver = tf.train.Saver(policy_variables)
+                saver.restore(tf.get_default_session(), os.path.join(cfg.path, 'policy.chk'))
+
+            updater = cfg.build_updater(env, policy)
+            updater.is_training = is_training
+
+        self.prev_stage = self.stage
+        return new_cfg, updater
 
     def check(self, validation_loss, global_step, local_step=None):
         return self.early_stop.check(validation_loss, global_step, local_step)
 
     def end_stage(self):
-        """ Should be called inside the same default graph, session
+        """ Must be called inside the same default graph, session
             and config as the previous call to ``__call__``. """
         self.early_stop.end_stage()
+
+        if cfg.visualize:
+            render_rollouts = getattr(cfg, 'render_rollouts', None)
+            self.env.visualize(self.policy, 16, cfg.T, 'train', render_rollouts)
+
+        # Occurs inside the same default graph, session and config as the previous call to __call__.
+        g = tf.get_default_graph()
+        policy_variables = g.get_collection('trainable_variables', scope=self.policy.scope.name)
+        saver = tf.train.Saver(policy_variables)
+        saver.save(tf.get_default_session(), os.path.join(cfg.path, 'policy.chk'))
+        self.stage += 1
 
     def summarize(self):
         s = "\n"
@@ -259,3 +319,51 @@ class Curriculum(object):
 
     def history(self):
         return self.early_stop._history
+
+
+def build_and_visualize(load_from=None):
+    with ExitStack() as stack:
+        graph = tf.Graph()
+
+        if not cfg.use_gpu:
+            stack.enter_context(graph.device("/cpu:0"))
+
+        sess = tf.Session(graph=graph)
+
+        stack.enter_context(graph.as_default())
+        stack.enter_context(sess)
+        stack.enter_context(sess.as_default())
+
+        tf_seed = gen_seed()
+        tf.set_random_seed(tf_seed)
+
+        env = cfg.build_env()
+
+        exploration = tf.constant(cfg.test_time_explore or 0.0)
+        policy = Policy(
+            cfg.controller(env.n_actions), cfg.action_selection(env.n_actions), exploration,
+            env.n_actions, env.obs_dim)
+
+        policy_scope = getattr(cfg, 'policy_scope', None)
+        if policy_scope:
+            with tf.variable_scope(policy_scope) as scope:
+                policy.set_scope(scope)
+
+        if load_from:
+            # TODO: might have to make sure the policy gets instantiated before we do this.
+            policy_variables = graph.get_collection('trainable_variables', scope=policy.scope.name)
+            saver = tf.train.Saver(policy_variables)
+            saver.restore(sess, load_from)
+
+        try:
+            sess.run(uninitialized_variables_initializer())
+            sess.run(tf.assert_variables_initialized())
+        except TypeError:
+            pass
+
+        render_rollouts = getattr(cfg, 'render_rollouts', None)
+        start_time = time.time()
+        env.visualize(policy, cfg.batch_size, cfg.T, 'train', render_rollouts)
+        duration = time.time() - start_time
+
+        print("Visualization took {} seconds.".format(duration))

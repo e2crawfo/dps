@@ -4,6 +4,21 @@ import numpy as np
 from keyword import iskeyword
 
 
+def convert_dtype(lib, dtype):
+    if lib == 'tf':
+        if not isinstance(dtype, tf.DType):
+            dtype = tf.as_dtype(np.dtype(dtype))
+    elif lib == 'np':
+        if not isinstance(dtype, np.dtype):
+            if isinstance(dtype, tf.DType):
+                dtype = dtype.as_numpy_dtype()
+            else:
+                dtype = np.dtype(dtype)
+    else:
+        raise Exception()
+    return dtype
+
+
 def concat(values, axis=-1, lib=None):
     if isinstance(values[0], tf.Tensor):
         return tf.concat(values, -1)
@@ -120,20 +135,22 @@ class RegisterBank(object):
         s.append(")")
         return '\n'.join(s)
 
-    def new_array(self, leading_shape, lib='np'):
+    def new_array(self, leading_shape, lib='np', dtype='f'):
         """ Create a new register bank using stored initial values. """
         try:
             leading_shape = tuple(leading_shape)
         except TypeError:
             leading_shape = (leading_shape,)
 
+        dtype = convert_dtype(lib, dtype)
+
         bcast_shape = tuple([1] * len(leading_shape)) + (-1,)
         values = []
         for k, v in zip(self.names, self.values):
             if lib == 'tf':
-                value = tf.tile(v.reshape(bcast_shape), leading_shape + (1,))
+                value = tf.tile(tf.constant(v.reshape(bcast_shape), dtype), leading_shape + (1,))
             elif lib == 'np':
-                value = np.tile(v.reshape(bcast_shape), leading_shape + (1,))
+                value = np.tile(v.reshape(bcast_shape).as_type(dtype), leading_shape + (1,))
             else:
                 raise Exception("Unknown lib {}.".format(lib))
             values.append(value)

@@ -1,7 +1,7 @@
 import pytest
 
-from dps.test.config import algorithms, tasks, test_configs
-from dps.production_system import build_and_visualize
+from dps.config import algorithms, tasks, test_configs
+from dps.train import training_loop, build_and_visualize
 
 
 slow = pytest.mark.skipif(
@@ -16,13 +16,14 @@ slow = pytest.mark.skipif(
 def test_train(task, alg, max_steps, verbose, display):
 
     config = tasks[task]
-    config.update(algorithms[alg], verbose=verbose, display=display)
+    config.update(algorithms[alg], verbose=verbose, display=display, seed=100)
 
     if max_steps is not None:
         config.max_steps = int(max_steps)
 
     with config:
-        config.trainer.train(seed=100)
+        val = training_loop()
+        print(val)
 
 
 @pytest.mark.parametrize('task', sorted(test_configs.keys()))

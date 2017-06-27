@@ -9,13 +9,29 @@ from dps.utils import (
     adj_inverse_time_decay, build_scheduled_value, build_optimizer)
 
 
+class Param(object):
+    pass
+
+
 class Updater(with_metaclass(abc.ABCMeta, object)):
 
-    def __init__(self, env):
+    def __init__(self, env, **kwargs):
         self.env = env
         self._n_experiences = 0
+        self._resolve_params(kwargs)
 
         self.build_graph()
+
+    def _resolve_params(self, kwargs):
+        for p in self.params:
+            value = kwargs.get(p)
+            if value is None:
+                value = getattr(cfg, p)
+            setattr(self, p, value)
+
+    @property
+    def params(self):
+        return [p for p in dir(self) if p != 'params' and isinstance(getattr(self, p), Param)]
 
     @property
     def stage(self):
@@ -31,14 +47,14 @@ class Updater(with_metaclass(abc.ABCMeta, object)):
 
     @abc.abstractmethod
     def _update(self, batch_size, summary_op=None):
-        raise NotImplementedError()
+        raise Exception()
 
     def build_graph(self):
         self._build_graph()
 
     @abc.abstractmethod
     def _build_graph(self):
-        raise NotImplementedError()
+        raise Exception()
 
     def _build_train(self):
         """ Add ops to implement training. ``self.loss`` must already be defined. """
@@ -93,73 +109,6 @@ class Updater(with_metaclass(abc.ABCMeta, object)):
         saver.restore(tf.get_default_session(), path)
 
 
-class DifferentiableUpdater(Updater):
-    """ Update parameters of a function ``f`` using vanilla gradient descent.
-
-    The function must be differentiable to apply this updater.
-
-    Should be used in the context of a default graph, default session and default config.
-
-    Parameters
-    ----------
-    env: gym Env
-        The environment we're trying to learn about.
-    f: callable
-        Also needs to provide member functions ``build_feeddict`` and ``get_output``.
-
-    """
-    def __init__(self,
-                 env,
-                 f,
-                 optimizer_spec,
-                 lr_schedule,
-                 noise_schedule,
-                 max_grad_norm):
-
-        self.f = f
-        self.optimizer_spec = optimizer_spec
-        self.lr_schedule = lr_schedule
-        self.noise_schedule = noise_schedule
-        self.max_grad_norm = max_grad_norm
-
-        super(DifferentiableUpdater, self).__init__(env)
-
-    def _update(self, batch_size, summary_op=None):
-        sess = tf.get_default_session()
-
-        train_x, train_y = self.env.train.next_batch(batch_size)
-        if cfg.debug:
-            print("x", train_x)
-            print("y", train_y)
-
-        feed_dict = self.f.build_feeddict(train_x)
-        feed_dict[self.target_placeholders] = train_y
-        feed_dict[self.is_training] = True
-
-        if summary_op is not None:
-            train_summary, train_loss, _ = sess.run([summary_op, self.loss, self.train_op], feed_dict=feed_dict)
-
-            val_x, val_y = self.env.val.next_batch()
-            val_feed_dict = self.f.build_feeddict(val_x)
-            val_feed_dict[self.target_placeholders] = val_y
-            val_feed_dict[self.is_training] = False
-
-            val_summary, val_loss = sess.run([summary_op, self.loss], feed_dict=val_feed_dict)
-            return train_summary, train_loss, val_summary, val_loss
-        else:
-            train_loss, _ = sess.run([self.loss, self.train_op], feed_dict=feed_dict)
-            return train_loss
-
-    def _build_graph(self):
-        with tf.name_scope("train"):
-            loss, self.target_placeholders = self.env.build_loss(self.f.get_output())
-            self.loss = tf.reduce_mean(loss)
-
-            tf.summary.scalar("reward_per_ep", -self.loss)
-
-            self._build_train()
-
-
 class ReinforcementLearningUpdater(Updater):
     """ Update parameters of a policy using reinforcement learning.
 
@@ -173,28 +122,24 @@ class ReinforcementLearningUpdater(Updater):
         Needs to provide member functions ``build_feeddict`` and ``get_output``.
 
     """
+    optimizer_spec = Param()
+    lr_schedule = Param()
+    noise_schedule = Param()
+    max_grad_norm = Param()
+    gamma = Param()
+    l2_norm_penalty = Param()
+
     def __init__(self,
                  env,
                  policy,
-                 optimizer_spec,
-                 lr_schedule,
-                 noise_schedule,
-                 max_grad_norm,
-                 gamma,
-                 l2_norm_penalty):
+                 **kwargs):
 
         self.policy = policy
-        self.optimizer_spec = optimizer_spec
-        self.lr_schedule = lr_schedule
-        self.noise_schedule = noise_schedule
-        self.max_grad_norm = max_grad_norm
-        self.gamma = gamma
-        self.l2_norm_penalty = l2_norm_penalty
 
         self.obs_dim = env.observation_space.shape[1]
         self.n_actions = env.action_space.shape[1]
 
-        super(ReinforcementLearningUpdater, self).__init__(env)
+        super(ReinforcementLearningUpdater, self).__init__(env, **kwargs)
 
     def start_episode(self):
         pass
@@ -208,6 +153,5 @@ class ReinforcementLearningUpdater(Updater):
         If behaviour_policy==None, assumes that data was generated by self.policy.
 
         """
-        # Note to self: Make it so every argument can be a batch.
         if not self.policy:
             raise ValueError("Policy has not been set using ``set_policy``.")

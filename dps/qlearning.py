@@ -4,7 +4,8 @@ from tensorflow.python.ops.rnn import dynamic_rnn
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from collections import deque
 
-from dps.updater import ReinforcementLearningUpdater
+from dps import cfg
+from dps.updater import ReinforcementLearningUpdater, Param
 from dps.utils import trainable_variables
 
 
@@ -13,50 +14,34 @@ def clipped_error(x):
 
 
 class QLearning(ReinforcementLearningUpdater):
+    double = Param()
+    replay_max_size = Param()
+    replay_threshold = Param()
+    replay_proportion = Param()
+    target_update_rate = Param()
+    steps_per_target_update = Param()
+    samples_per_update = Param()
+    update_batch_size = Param()
+
     def __init__(self,
                  env,
                  q_network,
                  target_network,
-                 double,
-                 replay_max_size,
-                 replay_threshold,
-                 replay_proportion,
-                 target_update_rate,
-                 steps_per_target_update,
-                 samples_per_update,
-                 update_batch_size,
-                 recurrent,
-                 optimizer_spec,
-                 lr_schedule,
-                 noise_schedule,
-                 max_grad_norm,
-                 gamma,
-                 l2_norm_penalty):
+                 **kwargs):
 
         self.q_network = q_network
         self.target_network = target_network
-        self.double = double
-        self.replay_buffer = PrioritizedReplayBuffer(
-            replay_max_size, replay_proportion, replay_threshold)
-        self.target_update_rate = target_update_rate
-        self.steps_per_target_update = steps_per_target_update
-        self.recurrent = recurrent
-        self.samples_per_update = samples_per_update
-        self.update_batch_size = update_batch_size
-        if not self.recurrent:
-            raise NotImplementedError("Non-recurrent learning not available.")
-
-        self.n_rollouts_since_target_update = 0
 
         super(QLearning, self).__init__(
             env,
             q_network,
-            optimizer_spec,
-            lr_schedule,
-            noise_schedule,
-            max_grad_norm,
-            gamma,
-            l2_norm_penalty)
+            **kwargs)
+
+        self.n_rollouts_since_target_update = 0
+
+        self.replay_buffer = PrioritizedReplayBuffer(
+            self.replay_max_size, self.replay_proportion, self.replay_threshold)
+
         self.clear_buffers()
 
     def _update(self, batch_size, summary_op=None):
@@ -69,7 +54,7 @@ class QLearning(ReinforcementLearningUpdater):
 
             # Collect experiences
             self.clear_buffers()
-            self.env.do_rollouts(self, self.q_network, 'train', n_rollouts)
+            self.env.do_rollouts(self, self.q_network, n_rollouts, mode='train')
             self.replay_buffer.add(self.obs_buffer, self.action_buffer, self.reward_buffer)
 
             # Get a batch from replay buffer for performing update
@@ -91,14 +76,14 @@ class QLearning(ReinforcementLearningUpdater):
         # Run some evaluation rollouts
         if summary_op is not None:
             self.clear_buffers()
-            self.env.do_rollouts(self, self.q_network, 'train', batch_size)
+            self.env.do_rollouts(self, self.q_network, batch_size, mode='train')
             feed_dict = self.build_feeddict()
 
             train_summary, train_loss, train_reward = sess.run(
                 [summary_op, self.loss, self.reward_per_ep], feed_dict=feed_dict)
 
             self.clear_buffers()
-            self.env.do_rollouts(self, self.q_network, 'val', batch_size)
+            self.env.do_rollouts(self, self.q_network, batch_size, mode='val')
             feed_dict = self.build_feeddict()
 
             val_summary, val_loss, val_reward = sess.run(
@@ -107,7 +92,7 @@ class QLearning(ReinforcementLearningUpdater):
             return_value = train_summary, -train_reward, val_summary, -val_reward
         else:
             self.clear_buffers()
-            self.env.do_rollouts(self, self.q_network, 'train', batch_size)
+            self.env.do_rollouts(self, self.q_network, batch_size, mode='train')
             feed_dict = self.build_feeddict()
 
             train_reward, = sess.run([self.reward_per_ep], feed_dict=feed_dict)

@@ -3,30 +3,24 @@ from tensorflow.python.ops.rnn import dynamic_rnn
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 import numpy as np
 
-from dps.updater import ReinforcementLearningUpdater
+from dps.updater import ReinforcementLearningUpdater, Param
 from dps.utils import build_scheduled_value
 
 
 class REINFORCE(ReinforcementLearningUpdater):
+    entropy_schedule = Param()
+
     def __init__(self,
                  env,
                  policy,
-                 optimizer_spec,
-                 lr_schedule,
-                 noise_schedule,
-                 max_grad_norm,
-                 gamma,
-                 l2_norm_penalty,
-                 entropy_schedule):
-        self.entropy_schedule = entropy_schedule
-        super(REINFORCE, self).__init__(
-            env, policy, optimizer_spec, lr_schedule,
-            noise_schedule, max_grad_norm, gamma, l2_norm_penalty)
+                 **kwargs):
+
+        super(REINFORCE, self).__init__(env, policy, **kwargs)
         self.clear_buffers()
 
     def _update(self, batch_size, summary_op=None):
         self.clear_buffers()
-        self.env.do_rollouts(self, self.policy, 'train', batch_size)
+        self.env.do_rollouts(self, self.policy, batch_size, mode='train')
         feed_dict = self.build_feeddict()
         feed_dict[self.is_training] = True
         sess = tf.get_default_session()
@@ -37,7 +31,7 @@ class REINFORCE(ReinforcementLearningUpdater):
 
             # Run some validation rollouts
             self.clear_buffers()
-            self.env.do_rollouts(self, self.policy, 'val')
+            self.env.do_rollouts(self, self.policy, mode='val')
             feed_dict = self.build_feeddict()
             feed_dict[self.is_training] = False
 

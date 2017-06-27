@@ -1,10 +1,10 @@
 import tensorflow as tf
 import numpy as np
 
-from dps import CoreNetwork, cfg
+from dps import cfg
 from dps.register import RegisterBank
-from dps.environment import RegressionEnv
-from dps.production_system import ProductionSystemTrainer
+from dps.environment import (
+    RegressionEnv, CompositeEnv, TensorFlowEnv)
 from dps.mnist import (
     TranslatedMnistDataset, MnistArithmeticDataset, DRAW,
     MnistPretrained, MNIST_CONFIG, ClassifierFunc)
@@ -46,7 +46,7 @@ class MnistArithmeticEnv(RegressionEnv):
         pass
 
 
-class MnistArithmetic(CoreNetwork):
+class MnistArithmetic(TensorFlowEnv):
     """ Top left is (y=0, x=0). Corresponds to using origin='upper' in plt.imshow.
 
     Need 2 working memories: one for operation, one for accumulator.
@@ -90,25 +90,22 @@ class MnistArithmetic(CoreNetwork):
         self.build_op_classifier = ClassifierFunc(op_pretrained, len(op_config.symbols) + 1)
 
         values = (
-            [0., 0., 0., 0., 1., 0., 0., 0.] +
+            [0., 0., 0., 0., 1., 0., 0.] +
             [np.zeros(self.N * self.N, dtype='f')])
 
-        self.register_bank = RegisterBank(
+        self.rb = RegisterBank(
             'MnistArithmeticRB',
-            'op acc fovea_x fovea_y delta vision op_vision t glimpse', None, values=values,
+            'op acc fovea_x fovea_y delta vision op_vision glimpse', None, values=values,
             output_names='acc', no_display='glimpse')
         super(MnistArithmetic, self).__init__()
 
-    @property
-    def input_shape(self):
-        return (self.W * self.W,)
+    def static_inp_type_and_shape(self):
+        return (tf.float32, (self.W*self.W,))
 
-    @property
-    def make_input_available(self):
-        return True
+    make_input_available = True
 
-    def init(self, r, inp):
-        op, acc, fovea_x, fovea_y, delta, vision, op_vision, t, glimpse = self.register_bank.as_tuple(r)
+    def build_init(self, r, inp):
+        op, acc, fovea_x, fovea_y, delta, vision, op_vision, glimpse = self.rb.as_tuple(r)
 
         glimpse = self.build_attention(inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta, sigma=1.0)
 
@@ -119,7 +116,7 @@ class MnistArithmetic(CoreNetwork):
         op_vision = tf.cast(tf.expand_dims(tf.argmax(op_classification, 1), 1), tf.float32)
 
         with tf.name_scope("MnistArithmetic"):
-            new_registers = self.register_bank.wrap(
+            new_registers = self.rb.wrap(
                 glimpse=tf.reshape(glimpse, (-1, self.N*self.N), name="glimpse"),
                 acc=tf.identity(acc, "acc"),
                 op=tf.identity(op, "op"),
@@ -127,19 +124,18 @@ class MnistArithmetic(CoreNetwork):
                 fovea_y=tf.identity(fovea_y, "fovea_y"),
                 vision=tf.identity(vision, "vision"),
                 op_vision=tf.identity(op_vision, "op_vision"),
-                delta=tf.identity(delta, "delta"),
-                t=tf.identity(t, "t"))
+                delta=tf.identity(delta, "delta"))
 
         return new_registers
 
-    def __call__(self, action_activations, r, inp):
-        _op, _acc, _fovea_x, _fovea_y, _delta, _vision, _op_vision, _t, _glimpse = self.register_bank.as_tuple(r)
+    def build_step(self, t, r, a, inp):
+        _op, _acc, _fovea_x, _fovea_y, _delta, _vision, _op_vision, _glimpse = self.rb.as_tuple(r)
 
         (inc_fovea_x, dec_fovea_x, inc_fovea_x_big, dec_fovea_x_big,
          inc_fovea_y, dec_fovea_y, inc_fovea_y_big, dec_fovea_y_big,
          inc_delta, dec_delta, inc_delta_big, dec_delta_big,
          store_op, add, inc, multiply, store, no_op) = (
-            tf.split(action_activations, self.n_actions, axis=1))
+            tf.split(a, self.n_actions, axis=1))
 
         acc = (1 - add - inc - multiply - store) * _acc + \
             add * (_vision + _acc) + \
@@ -174,10 +170,8 @@ class MnistArithmetic(CoreNetwork):
         op_classification = tf.stop_gradient(self.build_op_classifier(glimpse))
         op_vision = tf.cast(tf.expand_dims(tf.argmax(op_classification, 1), 1), tf.float32)
 
-        t = _t + 1
-
         with tf.name_scope("MnistArithmetic"):
-            new_registers = self.register_bank.wrap(
+            new_registers = self.rb.wrap(
                 glimpse=tf.reshape(glimpse, (-1, self.N*self.N), name="glimpse"),
                 acc=tf.identity(acc, "acc"),
                 op=tf.identity(op, "op"),
@@ -185,18 +179,15 @@ class MnistArithmetic(CoreNetwork):
                 fovea_y=tf.identity(fovea_y, "fovea_y"),
                 vision=tf.identity(vision, "vision"),
                 op_vision=tf.identity(op_vision, "op_vision"),
-                delta=tf.identity(delta, "delta"),
-                t=tf.identity(t, "t"))
+                delta=tf.identity(delta, "delta"))
 
-        return new_registers
+        return tf.fill((tf.shape(r)[0], 1), 0.0), new_registers
 
 
-class MnistArithmeticTrainer(ProductionSystemTrainer):
-    def build_env(self):
-        return MnistArithmeticEnv(
-            cfg.simple, cfg.base, cfg.n_digits, cfg.upper_bound, cfg.W, cfg.N,
-            cfg.n_train, cfg.n_val, cfg.n_test,
-            cfg.inc_delta, cfg.inc_x, cfg.inc_y)
-
-    def build_core_network(self, env):
-        return MnistArithmetic(env)
+def build_env():
+    external = MnistArithmeticEnv(
+        cfg.simple, cfg.base, cfg.n_digits, cfg.upper_bound, cfg.W, cfg.N,
+        cfg.n_train, cfg.n_val, cfg.n_test,
+        cfg.inc_delta, cfg.inc_x, cfg.inc_y)
+    internal = MnistArithmetic(external)
+    return CompositeEnv(external, internal)

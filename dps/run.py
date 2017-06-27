@@ -2,8 +2,9 @@ import argparse
 
 import clify
 
-from dps.test.config import algorithms, tasks, test_configs
-from dps.production_system import build_and_visualize
+from dps import cfg
+from dps.config import algorithms, tasks, test_configs
+from dps.train import training_loop, build_and_visualize
 from dps.utils import pdb_postmortem
 
 
@@ -31,23 +32,28 @@ def run():
         _run(alg, task)
 
 
-def _run(alg, task, _config=None, load_from=None):
+def _run(alg, task, _config=None, load_from=None, **kwargs):
     if alg == 'visualize':
         config = test_configs[task]
         if _config is not None:
             config.update(_config)
-        config = clify.wrap_object(config).parse()
         config.update(display=True, save_display=True)
+        config.update(kwargs)
 
         with config:
+            cl_args = clify.wrap_object(cfg).parse()
+            config.update(cl_args)
+
             build_and_visualize(load_from=load_from)
     else:
         config = tasks[task]
         config.update(algorithms[alg])
         if _config is not None:
             config.update(_config)
-
-        config = clify.wrap_object(config).parse()
+        config.update(kwargs)
 
         with config:
-            config.trainer.train()
+            cl_args = clify.wrap_object(cfg).parse()
+            cfg.update(cl_args)
+
+            training_loop()

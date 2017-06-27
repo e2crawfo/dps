@@ -10,7 +10,6 @@ import socket
 import re
 import os
 import traceback
-import sys
 import pdb
 from collections import deque
 import subprocess
@@ -30,14 +29,15 @@ def du(path):
     return subprocess.check_output(['du', '-sh', str(path)]).split()[0].decode('utf-8')
 
 
-@contextmanager
-def pdb_postmortem():
-    try:
-        yield
-    except:
-        type, value, tb = sys.exc_info()
-        traceback.print_exc()
-        pdb.post_mortem(tb)
+class pdb_postmortem(object):
+    def __enter__(self):
+        pass
+
+    def __exit__(self, type_, value, tb):
+        if type_:
+            traceback.print_exc()
+            pdb.post_mortem(tb)
+        return True
 
 
 def camel_to_snake(name):
@@ -601,7 +601,7 @@ def build_scheduled_value(schedule, name, dtype=None):
         scheduled_value = adj_inverse_time_decay(
             initial, global_step, decay_steps, decay_rate, gamma, staircase, name=name)
     else:
-        raise NotImplementedError(
+        raise Exception(
             "No known schedule with kind `{}` and args `{}`.".format(kind, args))
 
     if dtype is not None:
@@ -647,7 +647,7 @@ def build_optimizer(spec, learning_rate):
             learning_rate, decay=decay, momentum=momentum,
             epsilon=epsilon, use_locking=use_locking, centered=centered)
     else:
-        raise NotImplementedError(
+        raise Exception(
             "No known optimizer with kind `{}` and args `{}`.".format(kind, args))
 
     return opt
@@ -677,14 +677,17 @@ class Config(dict):
         try:
             return self.__getitem__(key)
         except KeyError:
-            return super(Config, self).__getattr__(key)
+            raise AttributeError("Could not find attribute called `{}`.".format(key))
 
     def __setattr__(self, key, value):
-        super(Config, self).__setitem__(key, value)
+        if key == '_reserved_keys':
+            super(Config, self).__setattr__(key, value)
+        else:
+            self[key] = value
 
     def __setitem__(self, key, value):
-        assert self._validate_key(key), "Invalid key: {}.".format(key)
-        setattr(self, key, value)
+        self._validate_key(key)
+        super(Config, self).__setitem__(key, value)
 
     def __enter__(self):
         ConfigStack._stack.append(self)
@@ -695,11 +698,11 @@ class Config(dict):
         return False
 
     def _validate_key(self, key):
-        return (
-            isinstance(key, str) and
-            key.isidentifier() and
-            not key.startswith('_') and
-            key not in self._reserved_keys)
+        msg = "Bad key for config: `{}`.".format(key)
+        assert isinstance(key, str), msg
+        assert key.isidentifier(), msg
+        assert not key.startswith('_'), msg
+        assert key not in self._reserved_keys, msg
 
     def copy(self, _d=None, **kwargs):
         """ Copy and update at the same time. """
@@ -710,19 +713,16 @@ class Config(dict):
         return new
 
 
-Config._reserved_keys = dir(Config())
+Config._reserved_keys = dir(Config)
 
 
 class DpsConfig(Config):
     def __init__(self, _d=None, **kwargs):
-        self.update(_parse_dps_config_from_file())
-        kwargs['log_dir'] = None
-        kwargs['log_name'] = 'default'
-
-        super(DpsConfig, self).__init__(_d, **kwargs)
-
-        if self.log_dir is None:
-            self.log_dir = str(Path(self.log_root) / self.log_name)
+        config = _parse_dps_config_from_file()
+        if _d:
+            config.update(_d)
+        config.update(kwargs)
+        super(DpsConfig, self).__init__(**config)
 
 
 def _parse_dps_config_from_file(key=None):
@@ -767,7 +767,7 @@ class Singleton(type):
         return cls._instances[cls]
 
 
-class ConfigStack(metaclass=Singleton):
+class ConfigStack(dict, metaclass=Singleton):
     _stack = []
 
     def clear_stack(self, default=None):
@@ -807,6 +807,9 @@ class ConfigStack(metaclass=Singleton):
     def __setitem__(self, key, value):
         self._stack[-1][key] = value
 
+    def update(self, *args, **kwargs):
+        self._stack[-1].update(*args, **kwargs)
+
     def keys(self):
         keys = set()
         for config in ConfigStack._stack:
@@ -824,3 +827,7 @@ class ConfigStack(metaclass=Singleton):
         for key in self.keys():
             cfg[key] = self[key]
         return cfg
+
+    @property
+    def log_dir(self):
+        return str(Path(self.log_root) / self.log_name)

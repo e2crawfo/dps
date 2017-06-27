@@ -4,6 +4,10 @@ import time
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.python.ops.rnn import dynamic_rnn
+from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
+import pandas as pd
+from tabulate import tabulate
 
 import gym
 from gym import Env as GymEnv
@@ -11,6 +15,7 @@ from gym.utils import seeding
 from gym.spaces import prng
 
 from dps import cfg
+from dps.utils import uninitialized_variables_initializer
 
 
 class BatchBox(gym.Space):
@@ -62,13 +67,12 @@ class BatchBox(gym.Space):
 
 class Env(with_metaclass(abc.ABCMeta, GymEnv)):
     def set_mode(self, kind, batch_size):
-        # It would be preferable to have these be passed to ``reset``, but
-        # the gym interface do not allow extra args to ``reset``.
         assert kind in ['train', 'val', 'test'], "Unknown kind {}.".format(kind)
         self._kind = kind
         self._batch_size = batch_size
 
-    def do_rollouts(self, alg, policy, mode, n_rollouts=None):
+    def do_rollouts(self, alg, policy, n_rollouts=None, T=None, mode='train'):
+        T = T or cfg.T
         start_time = time.time()
         self.set_mode(mode, n_rollouts)
         obs = self.reset()
@@ -89,26 +93,6 @@ class Env(with_metaclass(abc.ABCMeta, GymEnv)):
         alg.end_episode()
 
         print("Took {} seconds to do {} rollouts.".format(time.time() - start_time, n_rollouts))
-
-
-class DifferentiableEnv(with_metaclass(abc.ABCMeta, Env)):
-    """ An environment which, when provided with a differentiable policy,
-        has a loss that is a differentiable function of its input. """
-
-    @abc.abstractmethod
-    def build_loss(self, actions):
-        """
-
-        Parameters
-        ----------
-        actions: Tensor (batch_size, n_actions)
-
-        Returns
-        -------
-        loss: Tensor(batch_size, 1)
-
-        """
-        raise NotImplementedError("Abstract method.")
 
 
 class RegressionDataset(object):
@@ -194,7 +178,7 @@ class RegressionDataset(object):
         return x, y
 
 
-class RegressionEnv(DifferentiableEnv):
+class RegressionEnv(Env):
     metadata = {"render.modes": ["human", "ansi"]}
 
     def __init__(self, train, val, test):
@@ -223,13 +207,7 @@ class RegressionEnv(DifferentiableEnv):
     def completion(self):
         return self.train.completion
 
-    def build_loss(self, actions):
-        target_ph = tf.placeholder(tf.float32, shape=actions.shape, name='target')
-        loss = tf.reduce_mean((actions - target_ph)**2, axis=-1, keep_dims=True)
-        return loss, target_ph
-
-    def build_rl_loss(self, actions, idx=0):
-        """ A separate loss used in the RL setting where things are not required to be differentiable. """
+    def build_loss(self, actions, idx=0):
         target_ph = tf.placeholder(tf.float32, shape=actions.shape, name='target')
         error = tf.reduce_sum(tf.abs(actions - target_ph), axis=-1, keep_dims=True)
         loss = tf.cast(error > cfg.reward_window, tf.float32)
@@ -245,8 +223,7 @@ class RegressionEnv(DifferentiableEnv):
 
         if self.action_ph is None:
             self.action_ph = tf.placeholder(tf.float32, (None, self.n_actions))
-            build_loss = getattr(self, 'build_rl_loss', self.build_loss)
-            self.loss, self.target_ph = build_loss(self.action_ph)
+            self.loss, self.target_ph = self.build_loss(self.action_ph)
 
         sess = tf.get_default_session()
         reward = -sess.run(self.loss, {self.action_ph: action, self.target_ph: self.y})
@@ -271,3 +248,399 @@ class RegressionEnv(DifferentiableEnv):
     def _seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
+
+
+class SamplerCell(RNNCell):
+    def __init__(self, env, policy):
+        self.env, self.policy = env, policy
+        self._state_size = (self.env.rb.width, self.policy.state_size)
+
+        self._output_size = (
+            self.env.rb.width,
+            self.env.n_actions,
+            1,
+            self.policy.state_size)
+
+        self._static_inp = None
+
+    def set_static_input(self, static_inp):
+        """ Provide a batched tensor that is the same every time step,
+            and which can be accessed by the environment.
+
+        """
+        self._static_inp = static_inp
+
+    def __call__(self, t, state, scope=None):
+        with tf.name_scope(scope or 'sampler_cell'):
+            registers, policy_state = state
+
+            with tf.name_scope('policy'):
+                obs = self.env.rb.visible(registers)
+                action, _, new_policy_state = self.policy.build_sample(obs, policy_state)
+
+            with tf.name_scope('env_step'):
+                reward, new_registers = self.env.build_step(t, registers, action, self._static_inp)
+
+            return (registers, action, reward, policy_state), (new_registers, new_policy_state)
+
+    @property
+    def state_size(self):
+        return self._state_size
+
+    @property
+    def output_size(self):
+        return self._output_size
+
+    def zero_state(self, batch_size, dtype):
+        registers = self.env.rb.new_array(batch_size)
+        policy_state = self.policy.zero_state(batch_size, dtype)
+        return registers, policy_state
+
+
+def timestep_tensor(batch_size, T):
+    return tf.tile(tf.reshape(tf.range(T), (T, 1, 1)), (1, batch_size, 1))
+
+
+class Sampler(object):
+    """ An object that stores an env and a policy.
+        Its build function creates operations that sample rollouts using the env and policy.
+
+        Calling its __call__ method builds the graph.
+
+    """
+    def __init__(self, env, policy, scope=None):
+        self.env, self.policy, self.scope = env, policy, scope
+        self._sampler_cell = None
+
+    def __str__(self):
+        return "<Sampler - env={}, policy={}, scope={}>".format(self.env, self.policy)
+
+    @property
+    def sampler_cell(self):
+        if self._sampler_cell is None:
+            self._sampler_cell = SamplerCell(self.env, self.policy)
+        return self._sampler_cell
+
+    def __call__(self, n_rollouts, T, initial_policy_state, initial_registers, static_inp):
+        with tf.name_scope(self.scope or "sampler"):
+            self.sampler_cell.set_static_input(static_inp)
+
+            initial_registers = self.env.build_init(initial_registers, static_inp)
+
+            t = timestep_tensor(n_rollouts, T)
+
+            _output = dynamic_rnn(
+                self.sampler_cell, t, initial_state=(initial_registers, initial_policy_state),
+                parallel_iterations=1, swap_memory=False, time_major=True)
+
+            (
+                (registers, actions, rewards, policy_states),
+                (final_registers, final_policy_state)) = _output
+
+            output = dict(
+                registers=registers,
+                actions=actions,
+                rewards=rewards,
+                policy_states=policy_states,
+                final_registers=final_registers,
+                final_policy_state=final_policy_state)
+
+        return output
+
+
+class TensorFlowEnvMeta(abc.ABCMeta):
+    def __init__(cls, *args, **kwargs):
+        super(TensorFlowEnvMeta, cls).__init__(*args, **kwargs)
+        if hasattr(cls.action_names, '__len__'):
+            cls.n_actions = len(cls.action_names)
+
+
+class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
+    rb = None
+    action_names = None
+
+    def __init__(self):
+        self._samplers = {}
+        self._assert_defined('action_names')
+        self._assert_defined('rb')
+
+    @property
+    def obs_dim(self):
+        return self.rb.visible_width
+
+    def _assert_defined(self, attr):
+        assert getattr(self, attr) is not None, (
+            "Subclasses of TensorFlowEnv must "
+            "specify a value for attr {}.".format(attr))
+
+    @abc.abstractmethod
+    def static_inp_type_and_shape(self):
+        # For a single example - so doesn't include batch size.
+        raise Exception("NotImplemented")
+
+    @abc.abstractmethod
+    def build_init(self):
+        raise Exception("NotImplemented")
+
+    @abc.abstractmethod
+    def build_step(self, t, registers, action, static_inp):
+        # return reward, new_registers
+        raise Exception("NotImplemented")
+
+    def get_sampler(self, policy):
+        sampler = self._samplers.get(id(policy))
+        if not sampler:
+            sampler = Sampler(self, policy)
+            n_rollouts_ph = tf.placeholder(tf.int32, ())
+            T_ph = tf.placeholder(tf.int32, ())
+
+            initial_policy_state = policy.zero_state(n_rollouts_ph, tf.float32)
+            initial_registers = self.rb.new_array(n_rollouts_ph, lib='tf')
+
+            si_type, si_shape = self.static_inp_type_and_shape()
+            static_inp_ph = tf.placeholder(si_type, (None,) + si_shape)
+
+            outputs = sampler(n_rollouts_ph, T_ph, initial_policy_state, initial_registers, static_inp_ph)
+
+            self._samplers[id(policy)] = (
+                sampler, n_rollouts_ph, T_ph,
+                initial_policy_state, initial_registers,
+                static_inp_ph, outputs)
+            sampler = self._samplers[id(policy)]
+
+        return sampler
+
+    def do_rollouts(self, alg, policy, n_rollouts=None, T=None, mode='train'):
+        T = T or cfg.T
+        sampler = self.get_sampler(policy)
+
+        self.set_mode(mode)
+        static_inp = self.get_static_input(n_rollouts)
+
+        sampler, n_rollouts_ph, T_ph, _, _, static_inp_ph, output = self.get_sampler(policy)
+
+        feed_dict = {
+            n_rollouts_ph: n_rollouts,
+            T_ph: T,
+            static_inp_ph: static_inp,
+            alg.is_training: mode == 'train'
+        }
+
+        sess = tf.get_default_session()
+
+        # sample rollouts
+        registers, final_registers, actions, rewards = sess.run(
+            [output['registers'],
+             output['final_registers'],
+             output['actions'],
+             output['rewards']],
+            feed_dict=feed_dict)
+
+        # record rollouts
+        alg.start_episode()
+
+        for t, (o, a, r) in enumerate(zip(self.rb.visible(registers), actions, rewards)):
+            alg.remember(o, a, r)
+
+        alg.end_episode()
+
+        info = []
+
+        return registers, actions, rewards, info
+
+
+class DummyAlg(object):
+    def start_episode(self):
+        pass
+
+    def remember(self, o, a, r):
+        pass
+
+    def end_episode(self):
+        pass
+
+    @property
+    def is_training(self):
+        return tf.constant(np.array(False))
+
+
+class CompositeEnv(Env):
+    def __init__(self, external, internal):
+        super(CompositeEnv, self).__init__()
+        assert isinstance(internal, TensorFlowEnv)
+        self.external, self.internal = external, internal
+        self.rb = internal.rb
+
+        self.n_actions = self.internal.n_actions
+        self.action_space = BatchBox(low=0.0, high=1.0, shape=(None, self.n_actions))
+
+        self.obs_dim = self.rb.visible_width
+        self.observation_space = BatchBox(low=-np.inf, high=np.inf, shape=(None, self.obs_dim))
+
+        self.reward_range = external.reward_range
+        self.sampler = None
+
+    @property
+    def completion(self):
+        return self.external.completion
+
+    def do_rollouts(self, alg, policy, n_rollouts=None, T=None, mode='train'):
+        T = T or cfg.T
+        (sampler, n_rollouts_ph, T_ph,
+         initial_policy_state, initial_registers,
+         static_inp_ph, output) = self.internal.get_sampler(policy)
+
+        self.external.set_mode(mode, n_rollouts)
+        external_obs = self.external.reset()
+        n_rollouts = external_obs.shape[0]
+
+        alg.start_episode()
+
+        final_registers = None
+        final_policy_state = None
+
+        done = False
+        e = 0
+        registers, actions, rewards, info = [], [], [], []
+
+        while not done:
+            if e > 0:
+                feed_dict = {
+                    n_rollouts_ph: n_rollouts,
+                    T_ph: T,
+                    initial_registers: final_registers,
+                    static_inp_ph: external_obs,
+                    alg.is_training: mode == 'train'
+                }
+
+                feed_dict.update(
+                    tf.python.util.nest.flatten_dict_items(
+                        {initial_policy_state: final_policy_state})
+                )
+            else:
+                feed_dict = {
+                    n_rollouts_ph: n_rollouts,
+                    T_ph: T,
+                    static_inp_ph: external_obs,
+                    alg.is_training: mode == 'train'
+                }
+
+            sess = tf.get_default_session()
+
+            _registers, final_registers, final_policy_state, _actions, _rewards = sess.run(
+                [output['registers'],
+                 output['final_registers'],
+                 output['final_policy_state'],
+                 output['actions'],
+                 output['rewards']],
+                feed_dict=feed_dict)
+
+            registers.append(_registers)
+            actions.append(_actions)
+            rewards.append(_rewards)
+
+            _info = dict(external_obs=external_obs)
+
+            external_action = self.rb.get_output(final_registers)
+            external_obs, external_reward, done, i = self.external.step(external_action)
+
+            _rewards[-1, :, :] += external_reward
+
+            _info.update(
+                i,
+                external_action=external_action,
+                external_reward=external_reward,
+                done=done,
+                length=_actions.shape[0])
+
+            info.append(_info)
+
+            # record the trajectory
+            for t, (o, a, r) in enumerate(zip(self.rb.visible(_registers), _actions, _rewards)):
+                alg.remember(o, a, r)
+
+            e += 1
+
+        alg.end_episode()
+
+        registers = np.concatenate(list(registers) + [np.expand_dims(final_registers, 0)], axis=0)
+        actions = np.concatenate(actions, axis=0)
+        rewards = np.concatenate(rewards, axis=0)
+
+        info.append(dict(external_obs=external_obs))
+
+        return registers, actions, rewards, info
+
+    def visualize(self, policy, n_rollouts=None, T=None, mode='train', render_rollouts=None):
+        """ Visualize rollouts. """
+        rollout_results = self.do_rollouts(DummyAlg(), policy, n_rollouts, T, mode)
+        self._pprint_rollouts(*rollout_results)
+        if render_rollouts is not None:
+            render_rollouts(self, *rollout_results)
+
+    def _pprint_rollouts(self, registers, actions, rewards, info):
+        external_step_lengths = [i['length'] for i in info[:-1]]
+        external_obs = [i['external_obs'] for i in info]
+
+        total_internal_steps = sum(external_step_lengths)
+
+        row_names = ['t=', 'i=', ''] + self.internal.action_names
+
+        omit = set(self.rb.no_display)
+        reg_ranges = {}
+
+        for n, s in zip(self.rb.names, self.rb.shapes):
+            if n in omit:
+                continue
+
+            row_names.append('')
+            start = len(row_names)
+            for k in range(s):
+                row_names.append('{}[{}]'.format(n, k))
+            end = len(row_names)
+            reg_ranges[n] = (start, end)
+        row_names.extend(['', 'reward'])
+
+        n_timesteps, batch_size, n_actions = actions.shape
+
+        registers = self.rb.as_tuple(registers)
+
+        for b in range(batch_size):
+            print("\nElement {} of batch ".format(b) + "-" * 40)
+
+            if external_obs[0].shape[-1] < 40:
+                print("External observations: ")
+                for i, e in enumerate(external_obs):
+                    print("{}: {}".format(i, e[b, :]))
+
+            values = np.zeros((total_internal_steps+1, len(row_names)))
+            external_t, internal_t = 0, 0
+
+            for i in range(total_internal_steps):
+                values[i, 0] = external_t
+                values[i, 1] = internal_t
+                values[i, 3:3+n_actions] = actions[i, b, :]
+                for n, v in zip(self.rb.names, registers):
+                    if n in omit:
+                        continue
+                    rr = reg_ranges[n]
+                    values[i, rr[0]:rr[1]] = v[i, b, :]
+                values[i, -1] = rewards[i, b]
+
+                internal_t += 1
+
+                if internal_t == external_step_lengths[external_t]:
+                    external_t += 1
+                    internal_t = 0
+
+            # Print final values for the registers
+            for n, v in zip(self.rb.names, registers):
+                if n in omit:
+                    continue
+                rr = reg_ranges[n]
+                values[-1, rr[0]:rr[1]] = v[-1, b, :]
+
+            values = pd.DataFrame(values.T)
+            values.insert(0, 'name', row_names)
+            values = values.set_index('name')
+            print(tabulate(values, headers='keys', tablefmt='fancy_grid'))

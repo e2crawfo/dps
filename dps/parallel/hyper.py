@@ -6,8 +6,10 @@ import clify
 import pandas as pd
 from pprint import pprint
 
+from dps import cfg
+from dps.train import training_loop
 from dps.utils import gen_seed
-from dps.test.config import algorithms, tasks
+from dps.config import algorithms, tasks
 from dps.parallel.base import Job
 from spectral_dagger.utils.experiment import ExperimentStore
 
@@ -163,7 +165,7 @@ def reduce_hyper_results(store, *results):
         print(d['data'].drop(keys + ['seed'], axis=1))
 
 
-class RunTrainer(object):
+class RunTrainingLoop(object):
     def __init__(self, base_config):
         self.base_config = base_config
 
@@ -173,8 +175,6 @@ class RunTrainer(object):
 
         config = copy.copy(self.base_config)
         config.update(new)
-
-        config = clify.wrap_object(config).parse()
         config.update(
             start_tensorboard=False,
             save_summaries=False,
@@ -185,7 +185,9 @@ class RunTrainer(object):
         )
 
         with config:
-            val = config.trainer.train()
+            cl_args = clify.wrap_object(cfg).parse()
+            config.update(cl_args)
+            val = training_loop()
 
         return val
 
@@ -220,9 +222,11 @@ def build_search(path, name, n, repeats, alg, task, _zip, distributions=None, co
         elif alg == 'diff':
             pass
         else:
-            raise NotImplementedError("Unknown algorithm: {}.".format(alg))
+            raise Exception("Unknown algorithm: {}.".format(alg))
 
-    config = clify.wrap_object(config).parse()
+    with config:
+        cl_args = clify.wrap_object(cfg).parse()
+        config.update(cl_args)
 
     es = ExperimentStore(str(path), max_experiments=10, delete_old=1)
     count = 0
@@ -242,7 +246,7 @@ def build_search(path, name, n, repeats, alg, task, _zip, distributions=None, co
     job = Job(exp_dir.path)
 
     new_configs = sample_configs(n, repeats, config, distributions)
-    summaries = job.map(RunTrainer(config), new_configs)
+    summaries = job.map(RunTrainingLoop(config), new_configs)
     job.reduce(reduce_hyper_results, summaries, pass_store=1)
 
     job.save_object('metadata', 'distributions', distributions)

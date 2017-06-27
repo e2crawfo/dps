@@ -185,10 +185,13 @@ class ActionSelection(object):
         self.n_params = n_actions
 
     def sample(self, utils, exploration):
-        raise NotImplementedError()
+        raise Exception()
 
     def log_pdf(self, utils, actions, exploration):
-        raise NotImplementedError()
+        raise Exception()
+
+    def kl_divergence(self, utils1, utils2, exploration):
+        raise Exception()
 
 
 class ProductSelection(object):
@@ -213,6 +216,16 @@ class ProductSelection(object):
             axis=-1)
         return tf.reduce_sum(_log_pdf, axis=-1, keep_dims=True)
 
+    def kl_divergence(self, utils1, utils2, exploration):
+        _utils1 = tf.split(utils1, self.n_params_vector, axis=-1)
+        _utils2 = tf.split(utils2, self.n_params_vector, axis=-1)
+
+        _splitwise_kl = tf.concate(
+            [c.kl_divergence(u1, u2, exploration) for u1, u2, c in zip(_utils1, _utils2, self.components)],
+            axis=-1)
+
+        return tf.reduce_sum(_splitwise_kl, axis=-1, keep_dims=True)
+
 
 class Normal(ActionSelection):
     def __init__(self):
@@ -234,20 +247,40 @@ class Normal(ActionSelection):
         dist = self._dist(utils, exploration)
         return dist.log_prob(actions)
 
+    def kl_divergence(self, utils1, utils2, exploration):
+        mean1, std1 = utils1[:, 0:1], tf.exp(utils1[:, 1:2])
+        mean2, std2 = utils2[:, 0:1], tf.exp(utils2[:, 1:2])
+        return tf.log(std2/std1) + (std1**2 + (mean1 - mean2)**2) / 2*std2**2 - 0.5
 
-class NormalFixedStd(Normal):
-    def __init__(self, std):
-        assert std > 0
+
+class Gamma(ActionSelection):
+    """ alpha, beta """
+    def __init__(self):
         self.n_actions = 1
-        self.n_params = 1
-        self.std = std
+        self.n_params = 2
 
     def _dist(self, utils, exploration):
-        mean = utils[:, 0:1]
-        # std = exploration * self.std
-        std = self.std
-        dist = tf.contrib.distributions.Normal(loc=mean, scale=std)
+        alpha = tf.exp(utils[:, 0:1])
+        beta = exploration * tf.exp(utils[:, 1:2])
+        dist = tf.contrib.distributions.Gamma(concentration=alpha, rate=beta)
         return dist
+
+    def sample(self, utils, exploration=1.0):
+        dist = self._dist(utils, exploration)
+        return dist.sample()
+
+    def log_pdf(self, utils, actions, exploration=1.0):
+        dist = self._dist(utils, exploration)
+        return dist.log_prob(actions)
+
+    def kl_divergence(self, utils1, utils2, exploration):
+        alpha1, beta1 = utils1[:, 0:1], exploration * tf.exp(utils1[:, 1:2])
+        alpha2, beta2 = utils2[:, 0:1], exploration * tf.exp(utils2[:, 1:2])
+        return (
+            (alpha1 - alpha2) * tf.digamma(alpha1) -
+            tf.lgamma(alpha1) + tf.lgamma(alpha2) +
+            alpha2 * (tf.log(beta1) - tf.log(beta2)) +
+            alpha1 * (beta2 - beta1) / beta1)
 
 
 class IdentitySelect(ActionSelection):
@@ -262,7 +295,8 @@ class ReluSelect(ActionSelection):
 
 class SoftmaxSelect(ActionSelection):
     def sample(self, utils, temperature):
-        samples = tf.cast(tf.multinomial(utils, 1), tf.int32)
+        logits = utils / temperature
+        samples = tf.cast(tf.multinomial(logits, 1), tf.int32)
         actions = tf.one_hot(tf.reshape(samples, (-1,)), self.n_actions)
         return actions
 
@@ -271,6 +305,16 @@ class SoftmaxSelect(ActionSelection):
         logits = utils / temperature
         return (tf.reduce_sum(logits * actions, axis=-1, keep_dims=True) -
                 tf.reduce_logsumexp(logits, axis=-1, keep_dims=True))
+
+    def kl_divergence(self, utils1, utils2, temperature):
+        logits1 = utils1 / temperature
+        logits2 = utils2 / temperature
+
+        log_norm1 = tf.reduce_logsumexp(logits1, axis=-1, keep_dims=True)
+        norm1 = tf.exp(log_norm1)
+        log_norm2 = tf.reduce_logsumexp(logits2, axis=-1, keep_dims=True)
+
+        return -tf.reduce_sum(tf.exp(logits1) * (logits1 - logits2)) / norm1 - log_norm2 + log_norm1
 
 
 class EpsilonGreedySelect(ActionSelection):

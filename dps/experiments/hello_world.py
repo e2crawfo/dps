@@ -1,10 +1,10 @@
 import tensorflow as tf
 import numpy as np
 
-from dps import CoreNetwork, cfg
+from dps import cfg
 from dps.register import RegisterBank
-from dps.environment import RegressionDataset, RegressionEnv
-from dps.production_system import ProductionSystemTrainer
+from dps.environment import (
+    RegressionDataset, RegressionEnv, CompositeEnv, TensorFlowEnv)
 
 
 class HelloWorldDataset(RegressionDataset):
@@ -31,42 +31,43 @@ class HelloWorldEnv(RegressionEnv):
             test=HelloWorldDataset(order, n_test, for_eval=True))
 
 
-class HelloWorld(CoreNetwork):
+class HelloWorld(TensorFlowEnv):
     action_names = ['r0 = r0 + r1', 'r1 = r0 * r1', 'no-op/stop']
     input_shape = (3,)
     make_input_available = False
 
     def __init__(self, env):
-        self.register_bank = RegisterBank(
+        self.rb = RegisterBank(
             'HelloWorldRB', 'r0 r1 r2', None, [1.0, 0.0, 0.0], 'r0 r1')
         super(HelloWorld, self).__init__()
 
-    def init(self, r, inp):
+    def static_inp_type_and_shape(self):
+        return (tf.float32, (3,))
+
+    def build_init(self, r, inp):
         r0 = inp[:, :1]
         r1 = inp[:, 1:2]
         r2 = inp[:, 2:]
-        return self.register_bank.wrap(r0=r0, r1=r1, r2=r2)
+        return self.rb.wrap(r0=r0, r1=r1, r2=r2)
 
-    def __call__(self, action_activations, r):
+    def build_step(self, t, r, a, static_inp):
         """ Action 0: add the variables in the registers, store in r0.
             Action 1: multiply the variables in the registers, store in r1.
             Action 2: no-op
 
         """
-        _r0, _r1, _r2 = self.register_bank.as_tuple(r)
+        _r0, _r1, _r2 = self.rb.as_tuple(r)
 
-        add, mult, noop = tf.split(action_activations, self.n_actions, axis=1)
+        add, mult, noop = tf.split(a, self.n_actions, axis=1)
 
-        new_registers = self.register_bank.wrap(
+        new_registers = self.rb.wrap(
             r0=add * (_r0 + _r1) + (1 - add) * _r0,
             r1=mult * (_r0 * _r1) + (1 - mult) * _r1,
             r2=_r2+1)
-        return new_registers
+        return tf.fill((tf.shape(r)[0], 1), 0.0), new_registers
 
 
-class HelloWorldTrainer(ProductionSystemTrainer):
-    def build_env(self):
-        return HelloWorldEnv(cfg.order, cfg.n_train, cfg.n_val, cfg.n_test)
-
-    def build_core_network(self, env):
-        return HelloWorld(env)
+def build_env():
+    external = HelloWorldEnv(cfg.order, cfg.n_train, cfg.n_val, cfg.n_test)
+    internal = HelloWorld(external)
+    return CompositeEnv(external, internal)

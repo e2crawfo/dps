@@ -1,11 +1,11 @@
 import tensorflow as tf
 import numpy as np
 
-from dps import CoreNetwork, cfg
+from dps import cfg
 from dps.register import RegisterBank
-from dps.environment import RegressionDataset, RegressionEnv
+from dps.environment import (
+    RegressionDataset, RegressionEnv, CompositeEnv, TensorFlowEnv)
 from dps.attention import apply_gaussian_filter
-from dps.production_system import ProductionSystemTrainer
 
 
 class PointerDataset(RegressionDataset):
@@ -32,56 +32,50 @@ class PointerEnv(RegressionEnv):
         return "<PointerEnv width={} n_digits={}>".format(self.width, self.n_digits)
 
 
-class Pointer(CoreNetwork):
+class Pointer(TensorFlowEnv):
     action_names = ['fovea += 1', 'fovea -= 1', 'wm = vision', 'no-op/stop']
 
     def __init__(self, env):
         self.width = env.width
-        self.register_bank = RegisterBank(
-            'PointerRB', 'fovea vision wm t', None,
-            values=([0.0] * 4), output_names='wm')
+        self.rb = RegisterBank(
+            'PointerRB', 'fovea vision wm', None,
+            values=([0.0] * 3), output_names='wm')
         super(Pointer, self).__init__()
 
-    @property
-    def input_shape(self):
-        return (2*self.width+1,)
+    def static_inp_type_and_shape(self):
+        return (tf.float32, (2*self.width+1,))
 
-    @property
-    def make_input_available(self):
-        return True
+    make_input_available = True
 
-    def init(self, r, inp):
-        fovea, vision, wm, t = self.register_bank.as_tuple(r)
+    def build_init(self, r, static_inp):
+        fovea, vision, wm = self.rb.as_tuple(r)
 
         diag_std = tf.fill(tf.shape(fovea), 0.01)
         locations = tf.constant(np.linspace(-self.width, self.width, 2*self.width+1, dtype='f').reshape(-1, 1))
-        vision = apply_gaussian_filter(fovea, diag_std, locations, inp)
+        vision = apply_gaussian_filter(fovea, diag_std, locations, static_inp)
 
-        new_registers = self.register_bank.wrap(fovea=fovea, vision=vision, wm=wm, t=t)
+        new_registers = self.rb.wrap(fovea=fovea, vision=vision, wm=wm)
 
         return new_registers
 
-    def __call__(self, action_activations, r, inp):
-        _fovea, _vision, _wm, _t = self.register_bank.as_tuple(r)
+    def build_step(self, t, r, a, static_inp):
+        _fovea, _vision, _wm = self.rb.as_tuple(r)
 
-        inc_fovea, dec_fovea, vision_to_wm, no_op = tf.split(action_activations, self.n_actions, axis=1)
+        inc_fovea, dec_fovea, vision_to_wm, no_op = tf.split(a, self.n_actions, axis=1)
 
         fovea = (1 - inc_fovea - dec_fovea) * _fovea + inc_fovea * (_fovea + 1) + dec_fovea * (_fovea - 1)
         wm = (1 - vision_to_wm) * _wm + vision_to_wm * _vision
-        t = _t + 1
 
         diag_std = tf.fill(tf.shape(fovea), 0.01)
         locations = tf.constant(np.linspace(-self.width, self.width, 2*self.width+1, dtype='f').reshape(-1, 1))
-        vision = apply_gaussian_filter(fovea, diag_std, locations, inp)
+        vision = apply_gaussian_filter(fovea, diag_std, locations, static_inp)
 
-        new_registers = self.register_bank.wrap(fovea=fovea, vision=vision, wm=wm, t=t)
+        new_registers = self.rb.wrap(fovea=fovea, vision=vision, wm=wm)
 
-        return new_registers
+        return tf.fill((tf.shape(r)[0], 1), 0.0), new_registers
 
 
-class PointerTrainer(ProductionSystemTrainer):
-    def build_env(self):
-        return PointerEnv(cfg.width, cfg.n_digits, cfg.n_train, cfg.n_val, cfg.n_test)
-
-    def build_core_network(self, env):
-        return Pointer(env)
+def build_env():
+    external = PointerEnv(cfg.width, cfg.n_digits, cfg.n_train, cfg.n_val, cfg.n_test)
+    internal = Pointer(external)
+    return CompositeEnv(external, internal)

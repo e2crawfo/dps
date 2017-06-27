@@ -1,6 +1,7 @@
 import time
 
-from dps.test.config import algorithms, tasks
+from dps.train import training_loop
+from dps.config import algorithms, tasks
 
 
 def test_time_limit():
@@ -10,6 +11,6 @@ def test_time_limit():
 
     start = time.time()
     with config:
-        config.trainer.train()
+        training_loop()
     elapsed = start - time.time()
     assert elapsed < config.max_time + 1

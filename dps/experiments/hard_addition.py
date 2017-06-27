@@ -1,11 +1,11 @@
 import tensorflow as tf
 import numpy as np
 
-from dps import CoreNetwork, cfg
+from dps import cfg
 from dps.register import RegisterBank
-from dps.environment import RegressionDataset, RegressionEnv
+from dps.environment import (
+    RegressionDataset, RegressionEnv, CompositeEnv, TensorFlowEnv)
 from dps.attention import gaussian_filter
-from dps.production_system import ProductionSystemTrainer
 
 
 def digits_to_numbers(digits, base=10, axis=-1, keepdims=False):
@@ -43,7 +43,7 @@ class HardAdditionDataset(RegressionDataset):
             offset += width
         y = numbers_to_digits(y, width)
         if height > 2:
-            raise NotImplementedError("Need to specify greater number of digits when adding > 2 numbers.")
+            raise Exception("Need to specify greater number of digits when adding > 2 numbers.")
 
         super(HardAdditionDataset, self).__init__(x, y, for_eval, shuffle)
 
@@ -62,7 +62,7 @@ class HardAdditionEnv(RegressionEnv):
         return "<HardAdditionEnv height={} width={} n_digits={}>".format(self.height, self.width, self.n_digits)
 
 
-class HardAddition(CoreNetwork):
+class HardAddition(TensorFlowEnv):
     """ Top left is (x=0, y=0).
 
     For now, the location of the write head is the same as the x location of the read head.
@@ -71,43 +71,40 @@ class HardAddition(CoreNetwork):
     action_names = ['fovea_x += 1', 'fovea_x -= 1', 'fovea_y += 1', 'fovea_y -= 1',
                     'wm1 = vision', 'wm2 = vision', 'add', 'write_digit', 'no-op/stop']
 
-    @property
-    def input_shape(self):
-        return (self.width * self.height,)
+    def static_inp_type_and_shape(self):
+        return (tf.float32, (self.width*self.height,))
 
-    @property
-    def make_input_available(self):
-        return True
+    make_input_available = True
 
     def __init__(self, env):
         self.height = env.height
         self.width = env.width
 
         values = (
-            ([0.0] * 8) +
+            ([0.0] * 7) +
             [np.zeros(self.width, dtype='f')])
 
-        self.register_bank = RegisterBank(
+        self.rb = RegisterBank(
             'HardAdditionRB',
-            'fovea_x fovea_y vision wm1 wm2 carry digit t', 'outp',
+            'fovea_x fovea_y vision wm1 wm2 carry digit', 'outp',
             values=values, output_names='outp')
 
         super(HardAddition, self).__init__()
 
-    def init(self, r, inp):
-        fovea_x, fovea_y, _vision, wm1, wm2, carry, digit, t, outp = self.register_bank.as_tuple(r)
+    def build_init(self, r, static_inp):
+        fovea_x, fovea_y, _vision, wm1, wm2, carry, digit, outp = self.rb.as_tuple(r)
 
         # Read input
         fovea = tf.concat([fovea_y, fovea_x], 1)
         std = tf.fill(tf.shape(fovea), 0.01)
-        inp = tf.reshape(inp, (-1, self.height, self.width))
+        static_inp = tf.reshape(static_inp, (-1, self.height, self.width))
         x_filter = gaussian_filter(fovea[:, 1:], std[:, 1:], np.arange(self.width, dtype='f'))
         y_filter = gaussian_filter(fovea[:, :1], std[:, :1], np.arange(self.height, dtype='f'))
-        vision = tf.matmul(y_filter, tf.matmul(inp, x_filter, adjoint_b=True))
+        vision = tf.matmul(y_filter, tf.matmul(static_inp, x_filter, adjoint_b=True))
         vision = tf.reshape(vision, (-1, 1))
 
         with tf.name_scope("HardAddition"):
-            new_registers = self.register_bank.wrap(
+            new_registers = self.rb.wrap(
                 outp=tf.identity(outp, "outp"),
                 fovea_x=tf.identity(fovea_x, "fovea_x"),
                 fovea_y=tf.identity(fovea_y, "fovea_y"),
@@ -115,17 +112,16 @@ class HardAddition(CoreNetwork):
                 wm1=tf.identity(wm1, "wm1"),
                 wm2=tf.identity(wm2, "wm2"),
                 carry=tf.identity(carry, "carry"),
-                digit=tf.identity(digit, "digit"),
-                t=tf.identity(t, "t"))
+                digit=tf.identity(digit, "digit"))
         return new_registers
 
-    def __call__(self, action_activations, r, inp):
+    def build_step(self, t, r, a, static_inp):
 
-        _fovea_x, _fovea_y, _vision, _wm1, _wm2, _carry, _digit, _t, _outp = self.register_bank.as_tuple(r)
+        _fovea_x, _fovea_y, _vision, _wm1, _wm2, _carry, _digit, _outp = self.rb.as_tuple(r)
 
         (inc_fovea_x, dec_fovea_x, inc_fovea_y, dec_fovea_y,
          vision_to_wm1, vision_to_wm2, add, write_digit, no_op) = (
-            tf.split(action_activations, self.n_actions, axis=1))
+            tf.split(a, self.n_actions, axis=1))
 
         fovea_x = (1 - inc_fovea_x - dec_fovea_x) * _fovea_x + inc_fovea_x * (_fovea_x + 1) + dec_fovea_x * (_fovea_x - 1)
         fovea_y = (1 - inc_fovea_y - dec_fovea_y) * _fovea_y + inc_fovea_y * (_fovea_y + 1) + dec_fovea_y * (_fovea_y - 1)
@@ -140,10 +136,10 @@ class HardAddition(CoreNetwork):
         # Read input
         fovea = tf.concat([fovea_y, fovea_x], 1)
         std = tf.fill(tf.shape(fovea), 0.01)
-        inp = tf.reshape(inp, (-1, self.height, self.width))
+        static_inp = tf.reshape(static_inp, (-1, self.height, self.width))
         x_filter = gaussian_filter(fovea[:, 1:], std[:, 1:], np.arange(self.width, dtype='f'))
         y_filter = gaussian_filter(fovea[:, :1], std[:, :1], np.arange(self.height, dtype='f'))
-        vision = tf.matmul(y_filter, tf.matmul(inp, x_filter, adjoint_b=True))
+        vision = tf.matmul(y_filter, tf.matmul(static_inp, x_filter, adjoint_b=True))
         vision = tf.reshape(vision, (-1, 1))
 
         # Store output
@@ -151,10 +147,8 @@ class HardAddition(CoreNetwork):
         write_weighting = tf.squeeze(write_weighting, axis=[1])
         outp = (1 - write_digit) * _outp + write_digit * ((1 - write_weighting) * _outp + write_weighting * _digit)
 
-        t = _t + 1
-
         with tf.name_scope("HardAddition"):
-            new_registers = self.register_bank.wrap(
+            new_registers = self.rb.wrap(
                 outp=tf.identity(outp, "outp"),
                 fovea_x=tf.identity(fovea_x, "fovea_x"),
                 fovea_y=tf.identity(fovea_y, "fovea_y"),
@@ -162,16 +156,13 @@ class HardAddition(CoreNetwork):
                 wm1=tf.identity(wm1, "wm1"),
                 wm2=tf.identity(wm2, "wm2"),
                 carry=tf.identity(carry, "carry"),
-                digit=tf.identity(digit, "digit"),
-                t=tf.identity(t, "t"))
+                digit=tf.identity(digit, "digit"))
 
-        return new_registers
+        return tf.fill((tf.shape(r)[0], 1), 0.0), new_registers
 
 
-class HardAdditionTrainer(ProductionSystemTrainer):
-    def build_env(self):
-        return HardAdditionEnv(
-            cfg.height, cfg.width, cfg.n_digits, cfg.n_train, cfg.n_val, cfg.n_test)
-
-    def build_core_network(self, env):
-        return HardAddition(env)
+def build_env():
+    external = HardAdditionEnv(
+        cfg.height, cfg.width, cfg.n_digits, cfg.n_train, cfg.n_val, cfg.n_test)
+    internal = HardAddition(external)
+    return CompositeEnv(external, internal)

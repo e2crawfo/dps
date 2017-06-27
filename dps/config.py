@@ -2,24 +2,25 @@ import numpy as np
 import tensorflow as tf
 import os
 
-from dps.updater import DifferentiableUpdater
+from dps import cfg
+from dps.utils import CompositeCell, MLP, FixedController, Config
 from dps.reinforce import REINFORCE
 from dps.qlearning import QLearning
-from dps.policy import SoftmaxSelect, EpsilonGreedySelect, GumbelSoftmaxSelect, IdentitySelect
-from dps.utils import CompositeCell, MLP, DpsConfig, FixedController
+from dps.policy import (
+    SoftmaxSelect, EpsilonGreedySelect, IdentitySelect)
 from dps.mnist import LeNet, MNIST_CONFIG
 from dps.experiments import (
     hello_world, simple_addition, pointer_following,
     hard_addition, translated_mnist, mnist_arithmetic, simple_arithmetic)
 
 
-DEFAULT_CONFIG = DpsConfig(
+DEFAULT_CONFIG = Config(
     seed=12,
 
     preserve_policy=True,  # Whether to use the policy learned on the last stage of the curriculum for each new stage.
 
     optimizer_spec="rmsprop",
-    updater_class=None,
+    build_updater=None,
 
     power_through=True,  # Whether to complete the entire curriculum, even if threshold not reached.
     slim=False,  # If true, tries to use little disk space
@@ -63,18 +64,11 @@ DEFAULT_CONFIG = DpsConfig(
 )
 
 
-DIFF_CONFIG = DpsConfig(
-    updater_class=DifferentiableUpdater,
-    test_time_explore=None,
-    action_selection=lambda n_actions: GumbelSoftmaxSelect(n_actions, hard=0),
-    max_grad_norm=1.0,
-    patience=np.inf,
-    T=10,
-    noise_schedule="exponential 0.1 1000 0.96",
-)
+cfg._stack.append(DEFAULT_CONFIG)
 
-REINFORCE_CONFIG = DpsConfig(
-    updater_class=REINFORCE,
+
+REINFORCE_CONFIG = Config(
+    build_updater=REINFORCE,
     action_selection=lambda na: SoftmaxSelect(na),
     test_time_explore=0.1,
     patience=np.inf,
@@ -85,8 +79,8 @@ REINFORCE_CONFIG = DpsConfig(
 )
 
 
-QLEARNING_CONFIG = DpsConfig(
-    updater_class=QLearning,
+QLEARNING_CONFIG = Config(
+    build_updater=QLearning,
     action_selection=lambda n_actions: EpsilonGreedySelect(n_actions),
     double=False,
 
@@ -170,13 +164,13 @@ DUELING_CONFIG = QLEARNING_CONFIG.copy(
 
 DOUBLE_CONFIG = QLEARNING_CONFIG.copy(
     double=True,
-    exploration_start=0.1, # Not totally clear, but seems like they use the same scheme as DQN, but go from 1 to 0.01, instead of 1 to 0.1
+    exploration_start=0.1,  # Not totally clear, but seems like they use the same scheme as DQN, but go from 1 to 0.01, instead of 1 to 0.1
     test_time_explore=0.001,
     # Target network update rate: once every 30,000 frames (DQN apparently does it once every 10,000 frames).
 )
 
 
-DEBUG_CONFIG = DpsConfig(
+DEBUG_CONFIG = Config(
     max_steps=4,
     batch_size=2,
     n_train=10,
@@ -190,18 +184,19 @@ DEBUG_CONFIG = DpsConfig(
 )
 
 
-HELLO_WORLD_CONFIG = DEFAULT_CONFIG.copy(
+HELLO_WORLD_CONFIG = Config(
+    build_env=hello_world.build_env,
     curriculum=[
         dict(order=[0, 1], T=2),
         dict(order=[0, 1, 0], T=3),
         dict(order=[0, 1, 0, 1], T=4)],
     controller=lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=32), MLP(), n_actions),
     log_name='hello_world',
-    trainer=hello_world.HelloWorldTrainer(),
 )
 
 
-SIMPLE_ADDITION_CONFIG = DEFAULT_CONFIG.copy(
+SIMPLE_ADDITION_CONFIG = Config(
+    build_env=simple_addition.build_env,
     T=30,
     curriculum=[
         dict(width=1, n_digits=10),
@@ -235,34 +230,32 @@ SIMPLE_ADDITION_CONFIG = DEFAULT_CONFIG.copy(
     # ]
 
     log_name='simple_addition',
-
-    trainer=simple_addition.SimpleAdditionTrainer(),
 )
 
 
-POINTER_CONFIG = DEFAULT_CONFIG.copy(
+POINTER_CONFIG = Config(
+    build_env=pointer_following.build_env,
     T=30,
     curriculum=[
         dict(width=1, n_digits=10),
         dict(width=2, n_digits=10)],
     log_name='pointer',
-
-    trainer=pointer_following.PointerTrainer(),
 )
 
 
-HARD_ADDITION_CONFIG = DEFAULT_CONFIG.copy(
+HARD_ADDITION_CONFIG = Config(
+    build_env=hard_addition.build_env,
     T=40,
     curriculum=[
         dict(height=2, width=3, n_digits=2, entropy_start=1.0),
         dict(height=2, width=3, n_digits=2, entropy_start=0.0)],
     log_name='hard_addition',
-    trainer=hard_addition.HardAdditionTrainer(),
-    preserve_policy=False,
 )
 
 
-TRANSLATED_MNIST_CONFIG = DEFAULT_CONFIG.copy(
+TRANSLATED_MNIST_CONFIG = Config(
+    build_env=translated_mnist.build_env,
+
     T=10,
     scaled=False,
     discrete_attn=True,
@@ -294,12 +287,12 @@ TRANSLATED_MNIST_CONFIG = DEFAULT_CONFIG.copy(
     inc_delta=0.1,
     inc_x=0.1,
     inc_y=0.1,
-
-    trainer=translated_mnist.TranslatedMnistTrainer(),
 )
 
 
-MNIST_ARITHMETIC_CONFIG = DEFAULT_CONFIG.copy(
+MNIST_ARITHMETIC_CONFIG = Config(
+    build_env=mnist_arithmetic.build_env,
+
     curriculum=[
         dict(W=100, N=16, T=20, n_digits=3, base=10),
     ],
@@ -321,12 +314,12 @@ MNIST_ARITHMETIC_CONFIG = DEFAULT_CONFIG.copy(
     inc_delta=0.1,
     inc_x=0.1,
     inc_y=0.1,
-
-    trainer=mnist_arithmetic.MnistArithmeticTrainer(),
 )
 
 
-SIMPLE_ARITHMETIC_CONFIG = DEFAULT_CONFIG.copy(
+SIMPLE_ARITHMETIC_CONFIG = Config(
+    build_env=simple_arithmetic.build_env,
+
     curriculum=[
         # dict(T=30),
         dict(T=10, n_digits=2, shape=(1, 3)),
@@ -381,27 +374,30 @@ SIMPLE_ARITHMETIC_CONFIG = DEFAULT_CONFIG.copy(
         threshold=0.05,
         include_blank=True),
 
-    trainer=simple_arithmetic.SimpleArithmeticTrainer(),
-
     log_name='simple_arithmetic',
     render_rollouts=simple_arithmetic.render_rollouts,
 )
 
 
 def adjust_for_test(config):
-    config.T = len(config.action_seq)
-    config.controller = lambda n_actions: FixedController(config.action_seq, n_actions)
-    config.n_train = config.batch_size
+    try:
+        n_train = config.batch_size
+    except AttributeError:
+        n_train = 1
     config.update(
+        T=len(config.action_seq),
+        controller=lambda n_actions: FixedController(config.action_seq, n_actions),
+        batch_size=n_train,
+        n_train=n_train,
         n_val=0,
         n_test=0,
-        batch_size=1,
         action_selection=lambda na: IdentitySelect(na),
         verbose=4,
     )
 
 
 HELLO_WORLD_TEST = HELLO_WORLD_CONFIG.copy(
+    batch_size=10,
     order=[0, 1, 0],
     T=3,
     action_seq=[0, 1, 0],
@@ -508,14 +504,12 @@ SIMPLE_ARITHMETIC_TEST = SIMPLE_ARITHMETIC_CONFIG.copy(
         LeNet(1024, activation_fn=tf.nn.sigmoid)(inp, output_size, is_training)),
 
     action_seq=range(simple_arithmetic.SimpleArithmetic.n_actions),
-    trainer=simple_arithmetic.SimpleArithmeticTrainer(),
     render_rollouts=simple_arithmetic.render_rollouts,
 )
 adjust_for_test(SIMPLE_ARITHMETIC_TEST)
 
 
 algorithms = dict(
-    # diff=DIFF_CONFIG,  # Not in a working state
     reinforce=REINFORCE_CONFIG,
     qlearning=QLEARNING_CONFIG)
 
