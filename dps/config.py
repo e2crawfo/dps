@@ -3,14 +3,16 @@ import tensorflow as tf
 import os
 
 from dps import cfg
-from dps.utils import CompositeCell, MLP, FixedController, Config
+from dps.utils import (
+    CompositeCell, MLP, FixedDiscreteController, FixedController, Config)
 from dps.reinforce import REINFORCE
 from dps.qlearning import QLearning
 from dps.policy import (
-    SoftmaxSelect, EpsilonGreedySelect, IdentitySelect)
+    Softmax, EpsilonGreedy, Deterministic,
+    Normal, NormalWithFixedScale, Gamma, Bernoulli, ProductDist)
 from dps.mnist import LeNet, MNIST_CONFIG
 from dps.experiments import (
-    hello_world, simple_addition, pointer_following,
+    hello_world, room, simple_addition, pointer_following,
     hard_addition, translated_mnist, mnist_arithmetic, simple_arithmetic)
 
 
@@ -36,10 +38,6 @@ DEFAULT_CONFIG = Config(
     display_step=100,
     eval_step=10,
     checkpoint_step=1000,
-    n_controller_units=32,
-
-    controller=lambda n_actions: CompositeCell(
-        tf.contrib.rnn.LSTMCell(num_units=32), MLP(), n_actions),
 
     lr_schedule="exponential 0.001 1000 0.96",
     exploration_schedule="exponential 10.0 1000 0.96",
@@ -61,6 +59,11 @@ DEFAULT_CONFIG = Config(
     save_display=False,
     path=os.getcwd(),
     max_time=0,
+
+    n_controller_units=32,
+    controller=lambda n_params: CompositeCell(
+        tf.contrib.rnn.LSTMCell(num_units=cfg.n_controller_units), MLP(), n_params),
+    action_selection=lambda env: Softmax(env.n_actions),
 )
 
 
@@ -69,19 +72,18 @@ cfg._stack.append(DEFAULT_CONFIG)
 
 REINFORCE_CONFIG = Config(
     build_updater=REINFORCE,
-    action_selection=lambda na: SoftmaxSelect(na),
     test_time_explore=0.1,
     patience=np.inf,
     entropy_schedule="exp 0.01 100000 0.1",
     lr_schedule="constant 0.001",
     exploration_schedule="exp 10.0 100000 1.0",
-    gamma=0.99,
+    gamma=1.0,
 )
 
 
 QLEARNING_CONFIG = Config(
     build_updater=QLearning,
-    action_selection=lambda n_actions: EpsilonGreedySelect(n_actions),
+    action_selection=lambda env: EpsilonGreedy(env.n_actions),
     double=False,
 
     lr_schedule="exponential 0.00025 1000 1.0",
@@ -190,8 +192,27 @@ HELLO_WORLD_CONFIG = Config(
         dict(order=[0, 1], T=2),
         dict(order=[0, 1, 0], T=3),
         dict(order=[0, 1, 0, 1], T=4)],
-    controller=lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=32), MLP(), n_actions),
     log_name='hello_world',
+)
+
+
+ROOM_CONFIG = Config(
+    build_env=room.build_env,
+    curriculum=[dict()],
+    n_controller_units=128,
+    action_selection=lambda env: ProductDist(Normal(), Normal()),
+    #action_selection=lambda env: ProductDist(Normal(), Normal(), Gamma()),
+    # action_selection=lambda env: ProductDist(NormalWithFixedScale(0.1), NormalWithFixedScale(0.1)),
+    # action_selection=lambda env: NormalWithFixedScale(0.1),
+    # action_selection=lambda env: Normal(),
+    # action_selection=lambda env: ProductDist(Normal(), Gamma(), Bernoulli()),
+    log_name='room',
+    T=20,
+    batch_size=10,
+    dense_reward=True,
+    restart_prob=0.0,
+    max_step=0.1,
+    l2l=True
 )
 
 
@@ -279,7 +300,7 @@ TRANSLATED_MNIST_CONFIG = Config(
     build_classifier=lambda inp, outp_size, is_training=False: tf.nn.softmax(
         MLP([50, 50], activation_fn=tf.nn.sigmoid)(inp, outp_size)),
 
-    controller=lambda n_actions: CompositeCell(tf.contrib.rnn.LSTMCell(num_units=256), MLP(), n_actions),
+    n_controller_units=256,
     reward_window=0.5,
 
     log_name='translated_mnist',
@@ -305,8 +326,7 @@ MNIST_ARITHMETIC_CONFIG = Config(
     build_classifier=lambda inp, outp_size, is_training=False: tf.nn.softmax(
         MLP([30, 30], activation_fn=tf.nn.sigmoid)(inp, outp_size)),
 
-    controller=lambda n_actions: CompositeCell(
-        tf.contrib.rnn.LSTMCell(num_units=256), MLP(), n_actions),
+    n_controller_units=256,
     reward_window=0.5,
 
     log_name='mnist_arithmetic',
@@ -386,12 +406,12 @@ def adjust_for_test(config):
         n_train = 1
     config.update(
         T=len(config.action_seq),
-        controller=lambda n_actions: FixedController(config.action_seq, n_actions),
+        controller=lambda n_params: FixedDiscreteController(config.action_seq, n_params),
         batch_size=n_train,
         n_train=n_train,
         n_val=0,
         n_test=0,
-        action_selection=lambda na: IdentitySelect(na),
+        action_selection=lambda env: Deterministic(env.n_actions),
         verbose=4,
     )
 
@@ -403,6 +423,23 @@ HELLO_WORLD_TEST = HELLO_WORLD_CONFIG.copy(
     action_seq=[0, 1, 0],
 )
 adjust_for_test(HELLO_WORLD_TEST)
+
+
+ROOM_CONFIG_TEST = ROOM_CONFIG.copy(
+    build_env=room.build_env,
+    T=6,
+    controller=lambda env: FixedController(
+        np.concatenate(
+            [np.zeros((6, 1)), 0.1 * np.ones((6, 1)), np.zeros((6, 1))], axis=1)
+    ),
+    action_selection=lambda env: Deterministic(env.n_actions),
+    batch_size=2,
+    n_train=2,
+    n_val=0,
+    n_test=0,
+    verbose=4,
+    dense_reward=True,
+)
 
 
 SIMPLE_ADDITION_TEST = SIMPLE_ADDITION_CONFIG.copy(
@@ -516,6 +553,7 @@ algorithms = dict(
 
 tasks = dict(
     hello_world=HELLO_WORLD_CONFIG,
+    room=ROOM_CONFIG,
     simple_addition=SIMPLE_ADDITION_CONFIG,
     pointer=POINTER_CONFIG,
     hard_addition=HARD_ADDITION_CONFIG,
@@ -525,6 +563,7 @@ tasks = dict(
 
 test_configs = dict(
     hello_world=HELLO_WORLD_TEST,
+    room=ROOM_CONFIG_TEST,
     simple_addition=SIMPLE_ADDITION_TEST,
     pointer=POINTER_TEST,
     hard_addition=HARD_ADDITION_TEST,

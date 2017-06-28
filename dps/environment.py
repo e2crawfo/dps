@@ -15,7 +15,6 @@ from gym.utils import seeding
 from gym.spaces import prng
 
 from dps import cfg
-from dps.utils import uninitialized_variables_initializer
 
 
 class BatchBox(gym.Space):
@@ -257,6 +256,8 @@ class SamplerCell(RNNCell):
 
         self._output_size = (
             self.env.rb.width,
+            self.policy.n_params,
+            1,
             self.env.n_actions,
             1,
             self.policy.state_size)
@@ -276,12 +277,12 @@ class SamplerCell(RNNCell):
 
             with tf.name_scope('policy'):
                 obs = self.env.rb.visible(registers)
-                action, _, new_policy_state = self.policy.build_sample(obs, policy_state)
+                action, entropy, utils, new_policy_state = self.policy.build_sample(obs, policy_state)
 
             with tf.name_scope('env_step'):
                 reward, new_registers = self.env.build_step(t, registers, action, self._static_inp)
 
-            return (registers, action, reward, policy_state), (new_registers, new_policy_state)
+            return (registers, utils, entropy, action, reward, policy_state), (new_registers, new_policy_state)
 
     @property
     def state_size(self):
@@ -334,11 +335,13 @@ class Sampler(object):
                 parallel_iterations=1, swap_memory=False, time_major=True)
 
             (
-                (registers, actions, rewards, policy_states),
+                (registers, utils, entropy, actions, rewards, policy_states),
                 (final_registers, final_policy_state)) = _output
 
             output = dict(
                 registers=registers,
+                utils=utils,
+                entropy=entropy,
                 actions=actions,
                 rewards=rewards,
                 policy_states=policy_states,
@@ -414,8 +417,9 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
         T = T or cfg.T
         sampler = self.get_sampler(policy)
 
-        self.set_mode(mode)
-        static_inp = self.get_static_input(n_rollouts)
+        self.set_mode(mode, n_rollouts)
+        static_inp = self.make_static_input(n_rollouts)
+        n_rollouts = static_inp.shape[0]
 
         sampler, n_rollouts_ph, T_ph, _, _, static_inp_ph, output = self.get_sampler(policy)
 
@@ -429,9 +433,11 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
         sess = tf.get_default_session()
 
         # sample rollouts
-        registers, final_registers, actions, rewards = sess.run(
+        registers, final_registers, utils, entropy, actions, rewards = sess.run(
             [output['registers'],
              output['final_registers'],
+             output['utils'],
+             output['entropy'],
              output['actions'],
              output['rewards']],
             feed_dict=feed_dict)
@@ -444,9 +450,78 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
 
         alg.end_episode()
 
-        info = []
+        info = [dict(utils=u, entropy=e) for u, e in zip(utils, entropy)]
+
+        registers = np.concatenate([registers, np.expand_dims(final_registers, 0)], axis=0)
 
         return registers, actions, rewards, info
+
+    def visualize(self, policy, n_rollouts=None, T=None, mode='train', render_rollouts=None):
+        """ Visualize rollouts. """
+        rollout_results = self.do_rollouts(DummyAlg(), policy, n_rollouts, T, mode)
+        self._pprint_rollouts(*rollout_results)
+        if render_rollouts is not None:
+            render_rollouts(self, *rollout_results)
+
+    def _pprint_rollouts(self, registers, actions, rewards, info):
+        n_params = info[0]['utils'].shape[1]
+        utils = np.stack([i['utils'] for i in info], axis=0)
+        entropy = np.stack([i['entropy'] for i in info], axis=0)
+        row_names = ['t=', ''] + self.action_names + [''] + ['utils[{}]'.format(i) for i in range(n_params)] + ['', 'entropy']
+
+        omit = set(self.rb.no_display)
+        reg_ranges = {}
+
+        T = actions.shape[0]
+
+        for n, s in zip(self.rb.names, self.rb.shapes):
+            if n in omit:
+                continue
+
+            row_names.append('')
+            start = len(row_names)
+            for k in range(s):
+                row_names.append('{}[{}]'.format(n, k))
+            end = len(row_names)
+            reg_ranges[n] = (start, end)
+        row_names.extend(['', 'reward'])
+
+        n_timesteps, batch_size, n_actions = actions.shape
+
+        registers = self.rb.as_tuple(registers)
+
+        for b in range(batch_size):
+            print("\nElement {} of batch ".format(b) + "-" * 40)
+
+            values = np.zeros((T+1, len(row_names)))
+            for t in range(T):
+                values[t, 0] = t
+                offset = 2
+                values[t, offset:offset+n_actions] = actions[t, b, :]
+                offset += n_actions + 1
+                values[t, offset:offset+n_params] = utils[t, b, :]
+
+                offset += n_params + 1
+                values[t, offset] = entropy[t, b, 0]
+
+                for n, v in zip(self.rb.names, registers):
+                    if n in omit:
+                        continue
+                    rr = reg_ranges[n]
+                    values[t, rr[0]:rr[1]] = v[t, b, :]
+                values[t, -1] = rewards[t, b]
+
+            # Print final values for the registers
+            for n, v in zip(self.rb.names, registers):
+                if n in omit:
+                    continue
+                rr = reg_ranges[n]
+                values[-1, rr[0]:rr[1]] = v[-1, b, :]
+
+            values = pd.DataFrame(values.T)
+            values.insert(0, 'name', row_names)
+            values = values.set_index('name')
+            print(tabulate(values, headers='keys', tablefmt='fancy_grid'))
 
 
 class DummyAlg(object):

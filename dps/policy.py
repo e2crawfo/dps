@@ -38,23 +38,20 @@ class Policy(RNNCell):
         Outputs Tensor giving action activations.
     exploration: Tensor
         Amount of exploration to use.
-    n_actions: int
-        Number of actions.
     obs_dim: int
         Dimension of observations.
     name: string
         Name of policy, used as name of variable scope.
 
     """
-    def __init__(
-            self, controller, action_selection, exploration,
-            n_actions, obs_dim, name="policy"):
+    def __init__(self, controller, action_selection, exploration, obs_dim, name="policy"):
 
         self.controller = controller
         self.action_selection = action_selection
         self.exploration = exploration
 
-        self.n_actions = n_actions
+        self.n_actions = self.action_selection.n_actions
+        self.n_params = self.action_selection.n_params
         self.obs_dim = obs_dim
         self.name = name
 
@@ -87,23 +84,43 @@ class Policy(RNNCell):
     def build(self, obs, policy_state):
         with tf.variable_scope(self.get_scope(), reuse=self.n_builds > 0):
             utils, next_policy_state = self.controller(obs, policy_state)
+            entropy = self.action_selection.entropy(utils, self.exploration)
             samples = self.action_selection.sample(utils, self.exploration)
 
         self.n_builds += 1
 
-        return samples, utils, next_policy_state
+        return samples, entropy, utils, next_policy_state
 
     def build_sample(self, obs, policy_state):
         return self.build(obs, policy_state)
 
-    def build_log_pdf(self, obs, policy_state, actions):
+    def build_log_prob(self, obs, policy_state, actions):
         with tf.variable_scope(self.get_scope(), reuse=self.n_builds > 0):
             utils, next_policy_state = self.controller(obs, policy_state)
-            log_action_probabilities = self.action_selection.log_pdf(utils, actions, self.exploration)
+            log_prob = self.action_selection.log_prob(utils, actions, self.exploration)
 
         self.n_builds += 1
 
-        return log_action_probabilities, next_policy_state
+        return log_prob, next_policy_state
+
+    def build_entropy(self, obs, policy_state):
+        with tf.variable_scope(self.get_scope(), reuse=self.n_builds > 0):
+            utils, next_policy_state = self.controller(obs, policy_state)
+            entropy = self.action_selection.entropy(utils, self.exploration)
+
+        self.n_builds += 1
+
+        return entropy, next_policy_state
+
+    def build_log_prob_and_entropy(self, obs, policy_state, actions):
+        with tf.variable_scope(self.get_scope(), reuse=self.n_builds > 0):
+            utils, next_policy_state = self.controller(obs, policy_state)
+            log_prob = self.action_selection.log_prob(utils, actions, self.exploration)
+            entropy = self.action_selection.entropy(utils, self.exploration)
+
+        self.n_builds += 1
+
+        return log_prob, entropy, next_policy_state
 
     def zero_state(self, batch_size, dtype):
         return self.controller.zero_state(batch_size, dtype)
@@ -123,8 +140,7 @@ class Policy(RNNCell):
         new = Policy(
             deepcopy(self.controller),
             deepcopy(self.action_selection),
-            self.exploration,
-            self.n_actions, self.obs_dim, new_name)
+            self.exploration, self.obs_dim, new_name)
         return new
         # Should work in TF 1.1, will need to be changed in TF 1.2.
         # new_controller = deepcopy(self.controller)
@@ -153,7 +169,7 @@ class Policy(RNNCell):
             self._obs = tf.placeholder(tf.float32, (None, self.obs_dim), name='obs')
 
             result = self.build(self._obs, self._policy_state)
-            self._samples, self._utils, self._next_policy_state = result
+            self._samples, self._entropy, self._utils, self._next_policy_state = result
 
             self.act_is_built = True
 
@@ -177,9 +193,6 @@ class Policy(RNNCell):
 
 
 class ActionSelection(object):
-    """ A callable mapping from utilities and an exploration param to action activation values.
-
-    """
     def __init__(self, n_actions):
         self.n_actions = n_actions
         self.n_params = n_actions
@@ -187,15 +200,15 @@ class ActionSelection(object):
     def sample(self, utils, exploration):
         raise Exception()
 
-    def log_pdf(self, utils, actions, exploration):
+    def log_prob(self, utils, actions, exploration):
         raise Exception()
 
     def kl_divergence(self, utils1, utils2, exploration):
         raise Exception()
 
 
-class ProductSelection(object):
-    def __init__(self, components):
+class ProductDist(ActionSelection):
+    def __init__(self, *components):
         self.components = components
         self.n_params_vector = [c.n_params for c in components]
         self.n_params = sum(self.n_params_vector)
@@ -203,75 +216,98 @@ class ProductSelection(object):
         self.n_actions = sum(self.n_actions_vector)
 
     def sample(self, utils, exploration):
-        _utils = tf.split(utils, self.n_params_vector, axis=-1)
-        return tf.concat(
-            [c.sample(u, exploration) for u, c in zip(_utils, self.components)],
-            axis=-1)
+        _utils = tf.split(utils, self.n_params_vector, axis=1)
+        _samples = [c.sample(u, exploration) for u, c in zip(_utils, self.components)]
+        return tf.concat(_samples, axis=1)
 
-    def log_pdf(self, utils, actions, exploration):
-        _utils = tf.split(utils, self.n_params_vector, axis=-1)
-        _actions = tf.split(actions, self.n_actions_vector, axis=-1)
-        _log_pdf = tf.concat(
-            [c.log_pdf(u, a, exploration) for u, a, c in zip(_utils, _actions, self.components)],
-            axis=-1)
-        return tf.reduce_sum(_log_pdf, axis=-1, keep_dims=True)
+    def log_prob(self, utils, actions, exploration):
+        _utils = tf.split(utils, self.n_params_vector, axis=1)
+        _actions = tf.split(actions, self.n_actions_vector, axis=1)
+        _log_probs = [c.log_prob(u, a, exploration) for u, a, c in zip(_utils, _actions, self.components)]
+        return tf.reduce_sum(tf.concat(_log_probs, axis=1), axis=1, keep_dims=True)
 
     def kl_divergence(self, utils1, utils2, exploration):
-        _utils1 = tf.split(utils1, self.n_params_vector, axis=-1)
-        _utils2 = tf.split(utils2, self.n_params_vector, axis=-1)
+        _utils1 = tf.split(utils1, self.n_params_vector, axis=1)
+        _utils2 = tf.split(utils2, self.n_params_vector, axis=1)
 
         _splitwise_kl = tf.concate(
-            [c.kl_divergence(u1, u2, exploration) for u1, u2, c in zip(_utils1, _utils2, self.components)],
-            axis=-1)
+            [c.kl_divergence(u1, u2, exploration)
+             for u1, u2, c in zip(_utils1, _utils2, self.components)],
+            axis=1)
 
-        return tf.reduce_sum(_splitwise_kl, axis=-1, keep_dims=True)
+        return tf.reduce_sum(_splitwise_kl, axis=1, keep_dims=True)
+
+    def entropy(self, utils, exploration):
+        _utils = tf.split(utils, self.n_params_vector, axis=1)
+        _entropies = [c.entropy(u, exploration) for u, c in zip(_utils, self.components)]
+        return tf.reduce_sum(tf.concat(_entropies, axis=1), axis=1, keep_dims=True)
 
 
-class Normal(ActionSelection):
+class TensorFlowSelection(ActionSelection):
+    def _dist(self, utils, exploration):
+        raise Exception()
+
+    def sample(self, utils, temperature):
+        dist = self._dist(utils, temperature)
+        samples = tf.cast(dist.sample(), tf.float32)
+        return tf.reshape(samples, (-1, self.n_actions))
+
+    def log_prob(self, utils, actions, temperature):
+        dist = self._dist(utils, temperature)
+        actions = tf.reshape(actions, tf.shape(dist.sample()))
+        return tf.reshape(dist.log_prob(actions), (-1, 1))
+
+    def entropy(self, utils, temperature):
+        dist = self._dist(utils, temperature)
+        return tf.reshape(dist.entropy(), (-1, 1))
+
+
+class Normal(TensorFlowSelection):
     def __init__(self):
         self.n_actions = 1
         self.n_params = 2
 
     def _dist(self, utils, exploration):
-        mean = utils[:, 0:1]
-        # std = exploration * tf.exp(utils[:, 1:2])
-        std = tf.exp(utils[:, 1:2])
-        dist = tf.contrib.distributions.Normal(loc=mean, scale=std)
+        mean = utils[:, 0]
+        scale = utils[:, 1]
+        dist = tf.contrib.distributions.NormalWithSoftplusScale(loc=mean, scale=scale)
         return dist
-
-    def sample(self, utils, exploration=1.0):
-        dist = self._dist(utils, exploration)
-        return dist.sample()
-
-    def log_pdf(self, utils, actions, exploration=1.0):
-        dist = self._dist(utils, exploration)
-        return dist.log_prob(actions)
 
     def kl_divergence(self, utils1, utils2, exploration):
         mean1, std1 = utils1[:, 0:1], tf.exp(utils1[:, 1:2])
         mean2, std2 = utils2[:, 0:1], tf.exp(utils2[:, 1:2])
-        return tf.log(std2/std1) + (std1**2 + (mean1 - mean2)**2) / 2*std2**2 - 0.5
+        return tf.log(std2/std1) + (std1**2 + (mean1 - mean2)**2) / (2*std2**2) - 0.5
 
 
-class Gamma(ActionSelection):
+class NormalWithFixedScale(TensorFlowSelection):
+    def __init__(self, scale):
+        self.n_actions = 1
+        self.n_params = 1
+        self.scale = scale
+
+    def _dist(self, utils, exploration):
+        dist = tf.contrib.distributions.Normal(loc=utils[:, 0], scale=self.scale)
+        return dist
+
+    def kl_divergence(self, utils1, utils2, exploration):
+        mean1, std1 = utils1[:, 0:1], tf.exp(utils1[:, 1:2])
+        mean2, std2 = utils2[:, 0:1], tf.exp(utils2[:, 1:2])
+        return tf.log(std2/std1) + (std1**2 + (mean1 - mean2)**2) / (2*std2**2) - 0.5
+
+
+class Gamma(TensorFlowSelection):
     """ alpha, beta """
     def __init__(self):
         self.n_actions = 1
         self.n_params = 2
 
     def _dist(self, utils, exploration):
-        alpha = tf.exp(utils[:, 0:1])
-        beta = exploration * tf.exp(utils[:, 1:2])
-        dist = tf.contrib.distributions.Gamma(concentration=alpha, rate=beta)
+        concentration = utils[:, 0]
+        rate = utils[:, 1]
+
+        dist = tf.contrib.distributions.GammaWithSoftplusConcentrationRate(
+            concentration=concentration, rate=rate)
         return dist
-
-    def sample(self, utils, exploration=1.0):
-        dist = self._dist(utils, exploration)
-        return dist.sample()
-
-    def log_pdf(self, utils, actions, exploration=1.0):
-        dist = self._dist(utils, exploration)
-        return dist.log_prob(actions)
 
     def kl_divergence(self, utils1, utils2, exploration):
         alpha1, beta1 = utils1[:, 0:1], exploration * tf.exp(utils1[:, 1:2])
@@ -283,28 +319,22 @@ class Gamma(ActionSelection):
             alpha1 * (beta2 - beta1) / beta1)
 
 
-class IdentitySelect(ActionSelection):
-    def sample(self, inp, epsilon):
-        return tf.identity(inp, name="IdentitySelect")
+class Bernoulli(TensorFlowSelection):
+    def __init__(self):
+        self.n_actions = self.n_params = 1
+
+    def _dist(self, utils, temperature):
+        return tf.contrib.distributions.BernoulliWithSigmoidProbs(utils[:, 0])
 
 
-class ReluSelect(ActionSelection):
-    def sample(self, utils, temperature):
-        return tf.nn.relu(utils, name="relu_action_selection")
+class Softmax(TensorFlowSelection):
+    def __init__(self, n_actions):
+        self.n_params = n_actions
+        self.n_actions = n_actions
 
-
-class SoftmaxSelect(ActionSelection):
-    def sample(self, utils, temperature):
+    def _dist(self, utils, temperature):
         logits = utils / temperature
-        samples = tf.cast(tf.multinomial(logits, 1), tf.int32)
-        actions = tf.one_hot(tf.reshape(samples, (-1,)), self.n_actions)
-        return actions
-
-    def log_pdf(self, utils, actions, temperature):
-        """ Assumes each row of `actions` is a one-hot vector. """
-        logits = utils / temperature
-        return (tf.reduce_sum(logits * actions, axis=-1, keep_dims=True) -
-                tf.reduce_logsumexp(logits, axis=-1, keep_dims=True))
+        return tf.contrib.distributions.OneHotCategorical(logits=logits)
 
     def kl_divergence(self, utils1, utils2, temperature):
         logits1 = utils1 / temperature
@@ -317,9 +347,12 @@ class SoftmaxSelect(ActionSelection):
         return -tf.reduce_sum(tf.exp(logits1) * (logits1 - logits2)) / norm1 - log_norm2 + log_norm1
 
 
-class EpsilonGreedySelect(ActionSelection):
-    def _probs(self, utils, epsilon):
-        q_values = utils
+class EpsilonGreedy(TensorFlowSelection):
+    def __init__(self, n_actions):
+        self.n_params = n_actions
+        self.n_actions = n_actions
+
+    def _probs(self, q_values, epsilon):
         mx = tf.reduce_max(q_values, axis=1, keep_dims=True)
         bool_is_max = tf.equal(q_values, mx)
         float_is_max = tf.cast(bool_is_max, tf.float32)
@@ -329,63 +362,15 @@ class EpsilonGreedySelect(ActionSelection):
         probs = _probs + epsilon / tf.cast(n_actions, tf.float32)
         return probs
 
-    def sample(self, utils, epsilon):
-        probs = self._probs(utils, epsilon)
-        logprobs = tf.log(probs)
-        samples = tf.cast(tf.multinomial(logprobs, 1), tf.int32)
-        actions = tf.one_hot(tf.reshape(samples, (-1,)), self.n_actions)
-        return actions
-
-    def log_pdf(self, utils, actions, epsilon):
-        """ Assumes each row of `action` is a one-hot vector. """
-        probs = self._probs(utils, epsilon)
-        action_probs = tf.reduce_sum(actions * probs, axis=-1, keep_dims=True)
-        return tf.log(action_probs)
+    def _dist(self, q_values, epsilon):
+        return tf.contrib.distributions.OneHotCategorical(probs=self._probs(q_values, epsilon))
 
 
-class BernoulliSelect(ActionSelection):
-    def sample(self, utils, exploration):
-        probs = tf.sigmoid(utils, name="bernoulli_select")
-        uniform = tf.random_uniform(tf.shape(probs))
-        return tf.cast(tf.less(uniform, probs), tf.float32)
+class Deterministic(TensorFlowSelection):
+    def __init__(self, n_params, n_actions=None, func=None):
+        self.n_params = n_params
+        self.n_actions = n_actions or n_params
+        self.func = func or (lambda x: tf.identity(x))
 
-
-class GumbelSoftmaxSelect(ActionSelection):
-    """Sample from the Gumbel-Softmax distribution and optionally discretize.
-
-    Adapted from code by Eric Jang.
-
-    Args:
-        logits: [batch_size, n_class] unnormalized log-probs
-        temperature: non-negative scalar
-        hard: if True, take argmax, but differentiate w.r.t. soft sample y
-    Returns:
-        [batch_size, n_class] sample from the Gumbel-Softmax distribution.
-        If hard=True, then the returned sample will be one-hot, otherwise it will
-        be a probabilitiy distribution that sums to 1 across classes
-
-    """
-    def __init__(self, n_actions, hard=False):
-        self.hard = hard
-        super(GumbelSoftmaxSelect, self).__init__(n_actions)
-
-    @staticmethod
-    def _sample_gumbel(shape, eps=1e-20):
-        """Sample from Gumbel(0, 1)"""
-        U = tf.random_uniform(shape, minval=0, maxval=1)
-        return -tf.log(-tf.log(U + eps) + eps)
-
-    @staticmethod
-    def _gumbel_softmax_sample(logits, temperature):
-        """ Draw a sample from the Gumbel-Softmax distribution"""
-        y = logits + GumbelSoftmaxSelect._sample_gumbel(tf.shape(logits))
-        probs = tf.nn.softmax(y / temperature, name='gumbel_softmax')
-        # probs = tf.Print(probs, [logits, y, probs], 'logits/noisy_logits/probs', summarize=7)
-        return probs
-
-    def sample(self, utils, temperature):
-        y = self._gumbel_softmax_sample(utils, temperature)
-        if self.hard:
-            y_hard = tf.cast(tf.equal(y, tf.reduce_max(y, 1, keep_dims=True)), y.dtype)
-            y = tf.stop_gradient(y_hard - y) + y
-        return y
+    def _dist(self, utils, exploration):
+        return tf.contrib.distribution.VectorDeterministic(self.func(utils))

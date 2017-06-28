@@ -2,7 +2,7 @@ from dps.utils import DpsConfig, MLP, CompositeCell
 from dps.experiments.simple_arithmetic import render_rollouts_static
 from dps.mnist import LeNet
 from dps.run import _run
-from dps.policy import SoftmaxSelect
+from dps.policy import Softmax
 import tensorflow as tf
 
 
@@ -47,7 +47,7 @@ def build_classifier(inp, output_size, is_training=False):
 
 
 config.build_classifier = build_classifier
-config.action_selection = SoftmaxSelect()
+config.action_selection = Softmax()
 
 load_from = "/home/eric/Dropbox/projects/dps/good/solves_5x5_3digits/best_stage=2"
 

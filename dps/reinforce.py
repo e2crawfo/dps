@@ -51,17 +51,18 @@ class REINFORCE(ReinforcementLearningUpdater):
 
         T = len(self.reward_buffer)
         discounts = np.logspace(0, T-1, T, base=self.gamma).reshape(-1, 1, 1)
-        true_rewards = np.array(self.reward_buffer)
-        discounted_rewards = true_rewards * discounts
+        rewards = np.array(self.reward_buffer)
+        discounted_rewards = rewards * discounts
         sum_discounted_rewards = np.flipud(np.cumsum(np.flipud(discounted_rewards), axis=0))
         baselines = sum_discounted_rewards.mean(1, keepdims=True)
-        rewards = sum_discounted_rewards - baselines
+        advantage = sum_discounted_rewards - baselines
+        advantage = (advantage - advantage.mean()) / advantage.std()
 
         return {
             self.obs: obs,
             self.actions: actions,
-            self.cumulative_rewards: rewards,
-            self.true_rewards: true_rewards
+            self.advantage: advantage,
+            self.rewards: rewards
         }
 
     def start_episode(self):
@@ -83,25 +84,23 @@ class REINFORCE(ReinforcementLearningUpdater):
         with tf.name_scope("train"):
             self.obs = tf.placeholder(tf.float32, shape=(None, None, self.obs_dim), name="obs")
             self.actions = tf.placeholder(tf.float32, shape=(None, None, self.n_actions), name="actions")
-            self.cumulative_rewards = tf.placeholder(
-                tf.float32, shape=(None, None, 1), name="cumulative_rewards")
-            self.true_rewards = tf.placeholder(tf.float32, shape=(None, None, 1), name="true_rewards")
-            self.reward_per_ep = tf.squeeze(
-                tf.reduce_sum(
-                    tf.reduce_mean(self.true_rewards, axis=1),
-                    axis=0,
-                    name="reward_per_ep"))
+            self.advantage = tf.placeholder(
+                tf.float32, shape=(None, None, 1), name="advantage")
+            self.rewards = tf.placeholder(tf.float32, shape=(None, None, 1), name="rewards")
+            self.reward_per_ep = tf.reduce_mean(tf.reduce_sum(self.rewards, axis=0), name="reward_per_ep")
 
-            inp = (self.obs, self.actions, self.cumulative_rewards)
+            inp = (self.obs, self.actions, self.advantage)
 
             reinforce_cell = ReinforceCell(self.policy)
             batch_size = tf.shape(self.obs)[1]
             initial_state = reinforce_cell.zero_state(batch_size, tf.float32)
 
-            (_, action_probs), (surrogate_objective, controller_state) = dynamic_rnn(
+            (_, log_action_probs, entropy), (surrogate_objective, controller_state) = dynamic_rnn(
                 reinforce_cell, inp, initial_state=initial_state,
                 parallel_iterations=1, swap_memory=False,
                 time_major=True)
+
+            tf.summary.scalar("mean_action_prob", tf.reduce_mean(tf.exp(log_action_probs)))
 
             self.policy_loss = -tf.reduce_mean(surrogate_objective)
             tf.summary.scalar("loss_policy", self.policy_loss)
@@ -112,16 +111,17 @@ class REINFORCE(ReinforcementLearningUpdater):
             if self.l2_norm_penalty > 0:
                 policy_network_variables = tf.get_collection(
                     tf.GraphKeys.TRAINABLE_VARIABLES, scope=self.policy.scope)
-                self.reg_loss = tf.reduce_sum([tf.reduce_sum(tf.square(x)) for x in policy_network_variables])
+                self.reg_loss = tf.reduce_sum(
+                    [tf.reduce_sum(tf.square(x)) for x in policy_network_variables])
                 tf.summary.scalar("loss_reg", self.reg_loss)
 
                 loss += self.l2_norm_penalty * self.reg_loss
 
-            policy_mean_entropy = tf.reduce_mean(tf.reduce_sum(-action_probs * tf.log(action_probs + 1e-6), axis=-1))
-            tf.summary.scalar("policy_mean_entropy", policy_mean_entropy)
+            policy_entropy = tf.reduce_mean(entropy)
+            tf.summary.scalar("policy_entropy", policy_entropy)
 
             if self.entropy_schedule:
-                self.entropy_loss = -policy_mean_entropy
+                self.entropy_loss = -policy_entropy
                 entropy_bonus = build_scheduled_value(self.entropy_schedule, 'entropy_bonus')
                 loss += entropy_bonus * self.entropy_loss
 
@@ -140,15 +140,15 @@ class ReinforceCell(RNNCell):
 
     def __call__(self, inp, state, scope=None):
         with tf.name_scope(scope or 'reinforce_cell'):
-            observations, actions, cumulative_rewards = inp
+            observations, actions, advantage = inp
             accumulator, policy_state = state
 
-            log_action_probs, new_policy_state = self.policy.build_log_pdf(observations, policy_state, actions)
+            log_prob, entropy, new_policy_state = self.policy.build_log_prob_and_entropy(
+                observations, policy_state, actions)
 
-            new_term = log_action_probs * cumulative_rewards
-            new_accumulator = accumulator + new_term
+            new_acc = accumulator + (log_prob * advantage)
 
-            return (new_accumulator, tf.exp(log_action_probs)), (new_accumulator, new_policy_state)
+            return (new_acc, log_prob, entropy), (new_acc, new_policy_state)
 
     @property
     def state_size(self):
@@ -156,7 +156,7 @@ class ReinforceCell(RNNCell):
 
     @property
     def output_size(self):
-        return (1, 1)
+        return (1, 1, 1)
 
     def zero_state(self, batch_size, dtype):
         initial_state = (

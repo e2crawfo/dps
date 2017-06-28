@@ -150,7 +150,7 @@ class RegisterBank(object):
             if lib == 'tf':
                 value = tf.tile(tf.constant(v.reshape(bcast_shape), dtype), leading_shape + (1,))
             elif lib == 'np':
-                value = np.tile(v.reshape(bcast_shape).as_type(dtype), leading_shape + (1,))
+                value = np.tile(v.reshape(bcast_shape).astype(dtype), leading_shape + (1,))
             else:
                 raise Exception("Unknown lib {}.".format(lib))
             values.append(value)

@@ -231,6 +231,40 @@ class FixedController(RNNCell):
 
     Parameters
     ----------
+    action_sequence: ndarray (n_timesteps, action_dim)
+        t-th row gives the action this controller will select at time t.
+
+    """
+    def __init__(self, action_sequence):
+        self.action_sequence = np.array(action_sequence)
+
+    def __call__(self, inp, state):
+        action_seq = tf.constant(self.action_sequence, tf.float32)
+        int_state = tf.squeeze(tf.cast(state, tf.int32), axis=1)
+        actions = tf.gather(action_seq, int_state)
+
+        return actions, state + 1
+
+    def __len__(self):
+        return len(self.action_sequence)
+
+    @property
+    def state_size(self):
+        return 1
+
+    @property
+    def output_size(self):
+        return self.action_sequence.shape[1]
+
+    def zero_state(self, batch_size, dtype):
+        return tf.cast(tf.fill((batch_size, 1), 0), dtype)
+
+
+class FixedDiscreteController(RNNCell):
+    """ A controller that outputs a fixed sequence of actions.
+
+    Parameters
+    ----------
     action_sequence: list of int
         t-th entry gives the idx of the action this controller will select at time t.
     n_actions: int
@@ -261,6 +295,7 @@ class FixedController(RNNCell):
 
     def zero_state(self, batch_size, dtype):
         return tf.cast(tf.fill((batch_size, 1), 0), dtype)
+
 
 
 class CompositeCell(RNNCell):

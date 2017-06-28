@@ -7,11 +7,5 @@ def reset_config():
 
 reset_config()
 
-from .register import RegisterBank
-from .policy import (
-    Policy, ActionSelection, ReluSelect, SoftmaxSelect,
-    GumbelSoftmaxSelect, EpsilonGreedySelect)
-
-
 import matplotlib
 matplotlib.use(cfg.mpl_backend)

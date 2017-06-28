@@ -264,9 +264,11 @@ class Curriculum(object):
                 testing_exploration = tf.constant(cfg.test_time_explore, tf.float32, name='testing_exploration')
                 exploration = tf.cond(is_training, lambda: exploration, lambda: testing_exploration)
 
+            action_selection = cfg.action_selection(env)
+            controller = cfg.controller(action_selection.n_params)
             self.policy = policy = Policy(
-                cfg.controller(env.n_actions), cfg.action_selection(env.n_actions), exploration,
-                env.n_actions, env.obs_dim, name="{}_policy".format(env.__class__.__name__))
+                controller, action_selection, exploration,
+                env.obs_dim, name="{}_policy".format(env.__class__.__name__))
 
             policy.capture_scope()
 
@@ -340,9 +342,11 @@ def build_and_visualize(load_from=None):
         env = cfg.build_env()
 
         exploration = tf.constant(cfg.test_time_explore or 0.0)
+
+        action_selection = cfg.action_selection(env)
+        controller = cfg.controller(action_selection.n_params)
         policy = Policy(
-            cfg.controller(env.n_actions), cfg.action_selection(env.n_actions), exploration,
-            env.n_actions, env.obs_dim)
+            controller, action_selection, exploration, env.obs_dim)
 
         policy_scope = getattr(cfg, 'policy_scope', None)
         if policy_scope:
