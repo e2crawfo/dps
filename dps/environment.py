@@ -277,7 +277,9 @@ class SamplerCell(RNNCell):
 
             with tf.name_scope('policy'):
                 obs = self.env.rb.visible(registers)
-                action, entropy, utils, new_policy_state = self.policy.build_sample(obs, policy_state)
+                utils, new_policy_state = self.policy.build_update(obs, policy_state)
+                action = self.policy.build_sample(utils)
+                entropy = self.policy.build_entropy(utils)
 
             with tf.name_scope('env_step'):
                 reward, new_registers = self.env.build_step(t, registers, action, self._static_inp)

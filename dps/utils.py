@@ -297,7 +297,6 @@ class FixedDiscreteController(RNNCell):
         return tf.cast(tf.fill((batch_size, 1), 0), dtype)
 
 
-
 class CompositeCell(RNNCell):
     """ A wrapper around a cell that adds an additional transformation of the output.
 
@@ -441,7 +440,7 @@ class EarlyStopHook(object):
         return s
 
 
-def restart_tensorboard(logdir, port=6006):
+def restart_tensorboard(logdir, port=6006, reload_interval=120):
     print("Killing old tensorboard process...")
     try:
         command = "fuser {}/tcp -k".format(port)
@@ -450,7 +449,8 @@ def restart_tensorboard(logdir, port=6006):
         print("Killing tensorboard failed:")
         print(e.output)
     print("Restarting tensorboard process...")
-    sp.Popen("tensorboard --logdir={} --port={}".format(logdir, port).split(), stdout=sp.DEVNULL, stderr=sp.DEVNULL)
+    command = "tensorboard --logdir={} --port={} --reload_interval={}".format(logdir, port, reload_interval)
+    sp.Popen(command.split(), stdout=sp.DEVNULL, stderr=sp.DEVNULL)
     print("Done restarting tensorboard.")
 
 
@@ -583,6 +583,7 @@ def build_scheduled_value(schedule, name, dtype=None):
         scheduled_value = learning_rate / (1 + decay_rate * t)
 
     """
+    op_name = name + "_schedule"
     try:
         schedule = "constant {}".format(float(schedule))
     except (TypeError, ValueError):
@@ -603,7 +604,7 @@ def build_scheduled_value(schedule, name, dtype=None):
         global_step = tf.contrib.framework.get_or_create_global_step()
 
         scheduled_value = tf.train.exponential_decay(
-            initial, global_step, decay_steps, decay_rate, staircase, name=name)
+            initial, global_step, decay_steps, decay_rate, staircase, name=op_name)
 
     elif kind == "polynomial" or kind == "poly":
         initial = float(popleft(args))
@@ -614,7 +615,7 @@ def build_scheduled_value(schedule, name, dtype=None):
         global_step = tf.contrib.framework.get_or_create_global_step()
 
         scheduled_value = tf.train.polynomial_decay(
-            initial, global_step, decay_steps, end, power, cycle, name=name)
+            initial, global_step, decay_steps, end, power, cycle, name=op_name)
     elif kind == "inverse_time":
         initial = float(popleft(args))
         decay_steps = int(popleft(args))
@@ -623,7 +624,7 @@ def build_scheduled_value(schedule, name, dtype=None):
         global_step = tf.contrib.framework.get_or_create_global_step()
 
         scheduled_value = tf.train.inverse_time_decay(
-            initial, global_step, decay_steps, decay_rate, staircase, name=name)
+            initial, global_step, decay_steps, decay_rate, staircase, name=op_name)
 
     elif kind == "adj_inverse_time":
         initial = float(popleft(args))
@@ -634,14 +635,14 @@ def build_scheduled_value(schedule, name, dtype=None):
         global_step = tf.contrib.framework.get_or_create_global_step()
 
         scheduled_value = adj_inverse_time_decay(
-            initial, global_step, decay_steps, decay_rate, gamma, staircase, name=name)
+            initial, global_step, decay_steps, decay_rate, gamma, staircase, name=op_name)
     else:
         raise Exception(
             "No known schedule with kind `{}` and args `{}`.".format(kind, args))
 
     if dtype is not None:
         dtype = tf.as_dtype(np.dtype(dtype))
-        scheduled_value = tf.cast(scheduled_value, dtype, name=name+"_cast")
+        scheduled_value = tf.cast(scheduled_value, dtype, name=op_name+"_cast")
 
     if name is not None:
         tf.summary.scalar(name, scheduled_value)
@@ -775,6 +776,7 @@ def _parse_dps_config_from_file(key=None):
     config = Config(
         hostname=socket.gethostname(),
         start_tensorboard=_config.getboolean(key, 'start_tensorboard'),
+        reload_interval=_config.getint(key, 'reload_interval'),
         update_latest=_config.getboolean(key, 'update_latest'),
         save_summaries=_config.getboolean(key, 'save_summaries'),
         data_dir=process_path(_config.get(key, 'data_dir')),
@@ -866,3 +868,23 @@ class ConfigStack(dict, metaclass=Singleton):
     @property
     def log_dir(self):
         return str(Path(self.log_root) / self.log_name)
+
+
+def lst_to_vec(lst):
+    if isinstance(lst[0], np.ndarray):
+        return np.concatenate([np.reshape(v, (-1,)) for v in lst], axis=0)
+    elif isinstance(lst[0], tf.Tensor) or isinstance(lst[0], tf.Variable):
+        return tf.concat([tf.reshape(v, (-1,)) for v in lst], axis=0)
+    else:
+        raise Exception()
+
+
+def vec_to_lst(vec, reference):
+    if isinstance(vec, np.ndarray):
+        splits = np.split(vec, [r.size for r in reference])
+        return [np.reshape(v, r.shape) for v, r in zip(splits, reference)]
+    elif isinstance(vec, tf.Tensor) or isinstance(vec, tf.Variable):
+        splits = tf.split(vec, [tf.size(r) for r in reference])
+        return [tf.reshape(v, tf.shape(r)) for v, r in zip(splits, reference)]
+    else:
+        raise Exception()

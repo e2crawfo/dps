@@ -6,6 +6,7 @@ from dps import cfg
 from dps.utils import (
     CompositeCell, MLP, FixedDiscreteController, FixedController, Config)
 from dps.reinforce import REINFORCE
+from dps.trpo import TRPO
 from dps.qlearning import QLearning
 from dps.policy import (
     Softmax, EpsilonGreedy, Deterministic,
@@ -78,6 +79,19 @@ REINFORCE_CONFIG = Config(
     lr_schedule="constant 0.001",
     exploration_schedule="exp 10.0 100000 1.0",
     gamma=1.0,
+)
+
+
+TRPO_CONFIG = Config(
+    build_updater=TRPO,
+    test_time_explore=0.1,
+    patience=np.inf,
+    exploration_schedule="10.0",
+    # exploration_schedule="exp 10.0 100000 1.0",
+    entropy_schedule="exp 0.01 100000 0.1",
+    gamma=1.0,
+    max_cg_steps=10,
+    delta_schedule="0.01"
 )
 
 
@@ -196,23 +210,28 @@ HELLO_WORLD_CONFIG = Config(
 )
 
 
+def room_action_selection(env):
+    if cfg.room_angular:
+        return ProductDist(Normal(), Normal(), Gamma())
+    else:
+        return ProductDist(Normal(), Normal())
+
+
 ROOM_CONFIG = Config(
     build_env=room.build_env,
     curriculum=[dict()],
-    n_controller_units=128,
-    action_selection=lambda env: ProductDist(Normal(), Normal()),
-    #action_selection=lambda env: ProductDist(Normal(), Normal(), Gamma()),
-    # action_selection=lambda env: ProductDist(NormalWithFixedScale(0.1), NormalWithFixedScale(0.1)),
-    # action_selection=lambda env: NormalWithFixedScale(0.1),
-    # action_selection=lambda env: Normal(),
-    # action_selection=lambda env: ProductDist(Normal(), Gamma(), Bernoulli()),
+    n_controller_units=32,
+    action_selection=room_action_selection,
     log_name='room',
+    eval_step=10,
     T=20,
     batch_size=10,
-    dense_reward=True,
+    dense_reward=False,
     restart_prob=0.0,
-    max_step=0.1,
-    l2l=True
+    max_step=0.5,
+    room_angular=True,
+    l2l=False,
+    reward_std=0.4,
 )
 
 
@@ -225,7 +244,7 @@ SIMPLE_ADDITION_CONFIG = Config(
         dict(width=3, n_digits=10),
     ],
 
-    n_controller_units=64,
+    n_controller_units=32,
 
     # curriculum=[
     #     dict(width=1, n_digits=10),
@@ -548,6 +567,7 @@ adjust_for_test(SIMPLE_ARITHMETIC_TEST)
 
 algorithms = dict(
     reinforce=REINFORCE_CONFIG,
+    trpo=TRPO_CONFIG,
     qlearning=QLEARNING_CONFIG)
 
 

@@ -4,7 +4,6 @@ from tensorflow.python.ops.rnn import dynamic_rnn
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from collections import deque
 
-from dps import cfg
 from dps.updater import ReinforcementLearningUpdater, Param
 from dps.utils import trainable_variables
 
@@ -23,19 +22,11 @@ class QLearning(ReinforcementLearningUpdater):
     samples_per_update = Param()
     update_batch_size = Param()
 
-    def __init__(self,
-                 env,
-                 q_network,
-                 target_network,
-                 **kwargs):
-
+    def __init__(self, env, q_network, target_network, **kwargs):
         self.q_network = q_network
         self.target_network = target_network
 
-        super(QLearning, self).__init__(
-            env,
-            q_network,
-            **kwargs)
+        super(QLearning, self).__init__(env, q_network, **kwargs)
 
         self.n_rollouts_since_target_update = 0
 
@@ -44,96 +35,12 @@ class QLearning(ReinforcementLearningUpdater):
 
         self.clear_buffers()
 
-    def _update(self, batch_size, summary_op=None):
-        rollouts_remaining = batch_size
-        sess = tf.get_default_session()
-
-        while rollouts_remaining > 0:
-            n_rollouts = min(rollouts_remaining, self.samples_per_update)
-            rollouts_remaining -= n_rollouts
-
-            # Collect experiences
-            self.clear_buffers()
-            self.env.do_rollouts(self, self.q_network, n_rollouts, mode='train')
-            self.replay_buffer.add(self.obs_buffer, self.action_buffer, self.reward_buffer)
-
-            # Get a batch from replay buffer for performing update
-            (self.obs_buffer,
-             self.action_buffer,
-             self.reward_buffer) = self.replay_buffer.get_batch(self.update_batch_size)
-
-            # Perform the update
-            feed_dict = self.build_feeddict()
-            sess.run([self.train_op], feed_dict=feed_dict)
-
-            if (self.steps_per_target_update is None) or (self.n_rollouts_since_target_update > self.steps_per_target_update):
-                # Update target network
-                sess.run(self.target_network_update)
-                self.n_rollouts_since_target_update = 0
-            else:
-                self.n_rollouts_since_target_update += n_rollouts
-
-        # Run some evaluation rollouts
-        if summary_op is not None:
-            self.clear_buffers()
-            self.env.do_rollouts(self, self.q_network, batch_size, mode='train')
-            feed_dict = self.build_feeddict()
-
-            train_summary, train_loss, train_reward = sess.run(
-                [summary_op, self.loss, self.reward_per_ep], feed_dict=feed_dict)
-
-            self.clear_buffers()
-            self.env.do_rollouts(self, self.q_network, batch_size, mode='val')
-            feed_dict = self.build_feeddict()
-
-            val_summary, val_loss, val_reward = sess.run(
-                [summary_op, self.loss, self.reward_per_ep], feed_dict=feed_dict)
-
-            return_value = train_summary, -train_reward, val_summary, -val_reward
-        else:
-            self.clear_buffers()
-            self.env.do_rollouts(self, self.q_network, batch_size, mode='train')
-            feed_dict = self.build_feeddict()
-
-            train_reward, = sess.run([self.reward_per_ep], feed_dict=feed_dict)
-
-            return_value = -train_reward
-
-        return return_value
-
-    def build_feeddict(self):
-        obs = np.array(self.obs_buffer)
-        actions = np.array(self.action_buffer)
-        rewards = np.array(self.reward_buffer)
-
-        feed_dict = {
-            self.obs: obs,
-            self.actions: actions,
-            self.rewards: rewards}
-        return feed_dict
-
-    def start_episode(self):
-        pass
-
-    def clear_buffers(self):
-        self.obs_buffer = []
-        self.reward_buffer = []
-        self.action_buffer = []
-
-    def remember(self, obs, action, reward, behaviour_policy=None):
-        super(QLearning, self).remember(obs, action, reward, behaviour_policy)
-
-        self.obs_buffer.append(obs)
-        self.action_buffer.append(action)
-        self.reward_buffer.append(reward)
-
-    def _build_graph(self):
+    def build_graph(self):
         with tf.name_scope("train"):
-            self.obs = tf.placeholder(tf.float32, shape=(None, None, self.obs_dim), name="obs")
-            self.actions = tf.placeholder(tf.float32, shape=(None, None, self.n_actions), name="actions")
-            self.rewards = tf.placeholder(tf.float32, shape=(None, None, 1), name="rewards")
-            self.reward_per_ep = tf.squeeze(
-                tf.reduce_sum(tf.reduce_mean(self.rewards, axis=1), axis=0, name="reward_per_ep"))
+            self.obs = tf.placeholder(tf.float32, shape=(None, None, self.obs_dim), name="_obs")
+            self.actions = tf.placeholder(tf.float32, shape=(None, None, self.n_actions), name="_actions")
+            self.rewards = tf.placeholder(tf.float32, shape=(None, None, 1), name="_rewards")
+            self.reward_per_ep = tf.squeeze(tf.reduce_sum(tf.reduce_mean(self.rewards, axis=1), axis=0, name="_reward_per_ep"))
 
             first_obs = self.obs[0, :, :]
             rest_obs = self.obs[1:, :, :]
@@ -175,7 +82,7 @@ class QLearning(ReinforcementLearningUpdater):
             self._build_train()
 
         if self.steps_per_target_update is None:
-            assert self.target_network_update is not None
+            assert self.target_update_rate is not None
 
             with tf.name_scope("update_target_network"):
                 q_network_variables = trainable_variables(self.q_network.scope.name)
@@ -197,11 +104,80 @@ class QLearning(ReinforcementLearningUpdater):
                     target_network_update.append(update_op)
                 self.target_network_update = tf.group(*target_network_update)
 
+    def _build_feeddict(self):
+        obs = np.array(self.obs_buffer)
+        actions = np.array(self.action_buffer)
+        rewards = np.array(self.reward_buffer)
+
+        feed_dict = {
+            self.obs: obs,
+            self.actions: actions,
+            self.rewards: rewards}
+        return feed_dict
+
+    def _update(self, batch_size, summary_op=None):
+        rollouts_remaining = batch_size
+        sess = tf.get_default_session()
+
+        while rollouts_remaining > 0:
+            n_rollouts = min(rollouts_remaining, self.samples_per_update)
+            rollouts_remaining -= n_rollouts
+
+            # Collect experiences
+            self.clear_buffers()
+            self.env.do_rollouts(self, self.q_network, n_rollouts, mode='train')
+            self.replay_buffer.add(self.obs_buffer, self.action_buffer, self.reward_buffer)
+
+            # Get a batch from replay buffer for performing update
+            (self.obs_buffer,
+             self.action_buffer,
+             self.reward_buffer) = self.replay_buffer.get_batch(self.update_batch_size)
+
+            # Perform the update
+            feed_dict = self._build_feeddict()
+            sess.run([self.train_op], feed_dict=feed_dict)
+
+            if (self.steps_per_target_update is None) or (self.n_rollouts_since_target_update > self.steps_per_target_update):
+                # Update target network
+                sess.run(self.target_network_update)
+                self.n_rollouts_since_target_update = 0
+            else:
+                self.n_rollouts_since_target_update += n_rollouts
+
+        # Run some evaluation rollouts
+        if summary_op is not None:
+            self.clear_buffers()
+            self.env.do_rollouts(self, self.q_network, batch_size, mode='train')
+            feed_dict = self._build_feeddict()
+
+            train_summary, train_loss, train_reward = sess.run(
+                [summary_op, self.loss, self.reward_per_ep], feed_dict=feed_dict)
+
+            self.clear_buffers()
+            self.env.do_rollouts(self, self.q_network, batch_size, mode='val')
+            feed_dict = self._build_feeddict()
+
+            val_summary, val_loss, val_reward = sess.run(
+                [summary_op, self.loss, self.reward_per_ep], feed_dict=feed_dict)
+
+            return_value = train_summary, -train_reward, val_summary, -val_reward
+        else:
+            self.clear_buffers()
+            self.env.do_rollouts(self, self.q_network, batch_size, mode='train')
+            feed_dict = self._build_feeddict()
+
+            train_reward, = sess.run([self.reward_per_ep], feed_dict=feed_dict)
+
+            return_value = -train_reward
+
+        return return_value
+
 
 class QLearningCell(RNNCell):
     """ Used in defining the loss function that we differentiate to perform QLearning.
 
-    Reward needs to be offset by one time step, always want to be working with reward caused by previous state and action.
+    Reward needs to be offset by one time step; we always want to be working with
+    reward caused by previous state and action.
 
     """
     def __init__(self, q_network, target_network, double, gamma):

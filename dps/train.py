@@ -37,7 +37,7 @@ class TrainingLoop(object):
 
     def run(self):
         if cfg.start_tensorboard:
-            restart_tensorboard(str(cfg.log_dir), cfg.tbport)
+            restart_tensorboard(str(cfg.log_dir), cfg.tbport, cfg.reload_interval)
 
         value = self._run_core()
 
@@ -87,8 +87,9 @@ class TrainingLoop(object):
                     stack.enter_context(graph.device("/cpu:0"))
 
                 if cfg.save_summaries:
-                    self.train_writer = tf.summary.FileWriter(exp_dir.path_for('train'), graph)
-                    self.val_writer = tf.summary.FileWriter(exp_dir.path_for('val'))
+                    self.train_writer = tf.summary.FileWriter(
+                        exp_dir.path_for('train'), graph, flush_secs=cfg.reload_interval)
+                    self.val_writer = tf.summary.FileWriter(exp_dir.path_for('val'), flush_secs=cfg.reload_interval)
                     print("Writing summaries to {}.".format(exp_dir.path))
 
                 sess = tf.Session(graph=graph)
@@ -124,7 +125,7 @@ class TrainingLoop(object):
                     reason = "Time limit reached."
 
                 if cfg.start_tensorboard:
-                    restart_tensorboard(str(cfg.log_dir), cfg.tbport)
+                    restart_tensorboard(str(cfg.log_dir), cfg.tbport, cfg.reload_interval)
 
                 print("Optimization complete. Reason: {}".format(reason))
 
@@ -257,7 +258,7 @@ class Curriculum(object):
 
         with new_cfg:
             self.env = env = cfg.build_env()
-            is_training = tf.placeholder_with_default(False, shape=(), name="is_training")
+            is_training = tf.placeholder(tf.bool, shape=(), name="is_training")
 
             exploration = build_scheduled_value(cfg.exploration_schedule, 'exploration')
             if cfg.test_time_explore is not None:
@@ -266,26 +267,21 @@ class Curriculum(object):
 
             action_selection = cfg.action_selection(env)
             controller = cfg.controller(action_selection.n_params)
+
             self.policy = policy = Policy(
                 controller, action_selection, exploration,
                 env.obs_dim, name="{}_policy".format(env.__class__.__name__))
-
             policy.capture_scope()
-
-            target_policy = policy.deepcopy("target_policy")
-            target_policy.capture_scope()
-
-            if self.stage != 0 and cfg.preserve_policy:
-                policy.maybe_build_act()
-
-                g = tf.get_default_graph()
-
-                policy_variables = g.get_collection('trainable_variables', scope=policy.scope.name)
-                saver = tf.train.Saver(policy_variables)
-                saver.restore(tf.get_default_session(), os.path.join(cfg.path, 'policy.chk'))
 
             updater = cfg.build_updater(env, policy)
             updater.is_training = is_training
+
+            if self.stage != 0 and cfg.preserve_policy:
+                # Load policy from previous stage
+                g = tf.get_default_graph()
+                policy_variables = g.get_collection('trainable_variables', scope=policy.scope.name)
+                saver = tf.train.Saver(policy_variables)
+                saver.restore(tf.get_default_session(), os.path.join(cfg.path, 'policy.chk'))
 
         self.prev_stage = self.stage
         return new_cfg, updater
@@ -302,11 +298,12 @@ class Curriculum(object):
             render_rollouts = getattr(cfg, 'render_rollouts', None)
             self.env.visualize(self.policy, 16, cfg.T, 'train', render_rollouts)
 
-        # Occurs inside the same default graph, session and config as the previous call to __call__.
+        # Save policy for the next stage.
         g = tf.get_default_graph()
         policy_variables = g.get_collection('trainable_variables', scope=self.policy.scope.name)
         saver = tf.train.Saver(policy_variables)
         saver.save(tf.get_default_session(), os.path.join(cfg.path, 'policy.chk'))
+
         self.stage += 1
 
     def summarize(self):
@@ -345,8 +342,7 @@ def build_and_visualize(load_from=None):
 
         action_selection = cfg.action_selection(env)
         controller = cfg.controller(action_selection.n_params)
-        policy = Policy(
-            controller, action_selection, exploration, env.obs_dim)
+        policy = Policy(controller, action_selection, exploration, env.obs_dim)
 
         policy_scope = getattr(cfg, 'policy_scope', None)
         if policy_scope:
