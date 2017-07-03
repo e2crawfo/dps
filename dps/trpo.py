@@ -38,7 +38,8 @@ class KLCell(RNNCell):
         return initial_state
 
 
-def mean_kl(policy, prev_policy, obs):
+def mean_kl(p, q, obs):
+    """ `p` and `q` are instances of `Policy`. """
     # from tensorflow.python.ops.rnn import dynamic_rnn
     # kl_cell = KLCell(policy, prev_policy)
     # batch_size = tf.shape(obs)[1]
@@ -56,25 +57,22 @@ def mean_kl(policy, prev_policy, obs):
     # the hessian of includes a tensorflow while loop is not currently supported
     batch_size = tf.shape(obs)[1]
     dtype = tf.float32
-    policy_state, prev_policy_state = (
-        policy.zero_state(batch_size, dtype),
-        prev_policy.zero_state(batch_size, dtype))
+    p_state, q_state = p.zero_state(batch_size, dtype), q.zero_state(batch_size, dtype)
 
     kl = None
     T = int(obs.shape[0])
     for t in range(T):
-        utils, policy_state = policy.build_update(obs[t, :, :], policy_state)
-        prev_utils, prev_policy_state = prev_policy.build_update(obs[t, :, :], prev_policy_state)
+        p_utils, p_state = p.build_update(obs[t, :, :], p_state)
+        q_utils, q_state = q.build_update(obs[t, :, :], q_state)
 
         if kl is None:
-            kl = policy.build_kl(prev_utils, utils)
+            kl = p.build_kl(p_utils, q_utils)
         else:
-            kl += policy.build_kl(prev_utils, utils)
+            kl += p.build_kl(p_utils, q_utils)
     return tf.reduce_mean(kl) / T
 
 
 class TRPO(ReinforcementLearningUpdater):
-    entropy_schedule = Param()
     delta_schedule = Param()
     max_cg_steps = Param()
 
@@ -109,7 +107,7 @@ class TRPO(ReinforcementLearningUpdater):
             tvars = g.get_collection('trainable_variables', scope=self.policy.scope.name)
             self.policy_gradient = tf.gradients(self.surrogate_objective, tvars)
 
-            self.mean_kl = mean_kl(self.policy, self.prev_policy, self.obs)
+            self.mean_kl = mean_kl(self.prev_policy, self.policy, self.obs)
             self.fv_product = HessianVectorProduct(self.mean_kl, tvars)
 
             tf.summary.scalar("grad_norm_pure", self.grad_norm_pure)
@@ -168,6 +166,8 @@ class TRPO(ReinforcementLearningUpdater):
                 print("Got zero gradient, not updating.")
         else:
             grad_norm_pure = np.linalg.norm(policy_gradient)
+
+            self.prev_policy.set_params_flat(self.policy.get_params_flat())
 
             self.fv_product.update_feed_dict(feed_dict)
             step_dir = cg(self.fv_product, policy_gradient, max_steps=self.max_cg_steps)
@@ -228,9 +228,6 @@ class TRPO(ReinforcementLearningUpdater):
         else:
             train_reward = sess.run(self.reward_per_ep, feed_dict=feed_dict)
             return_value = -train_reward
-
-        # Do this after running summary_op so that KL divergence between new and old is recorded correctly.
-        self.prev_policy.set_params_flat(self.policy.get_params_flat())
 
         return return_value
 

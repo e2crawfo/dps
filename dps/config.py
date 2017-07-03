@@ -7,6 +7,7 @@ from dps.utils import (
     CompositeCell, MLP, FixedDiscreteController, FixedController, Config)
 from dps.reinforce import REINFORCE
 from dps.trpo import TRPO
+from dps.robust import RobustREINFORCE
 from dps.qlearning import QLearning
 from dps.policy import (
     Softmax, EpsilonGreedy, Deterministic,
@@ -87,8 +88,17 @@ TRPO_CONFIG = Config(
     test_time_explore=0.1,
     patience=np.inf,
     exploration_schedule="10.0",
-    # exploration_schedule="exp 10.0 100000 1.0",
-    entropy_schedule="exp 0.01 100000 0.1",
+    gamma=1.0,
+    max_cg_steps=10,
+    delta_schedule="0.01"
+)
+
+
+ROBUST_CONFIG = Config(
+    build_updater=RobustREINFORCE,
+    test_time_explore=0.1,
+    patience=np.inf,
+    exploration_schedule="10.0",
     gamma=1.0,
     max_cg_steps=10,
     delta_schedule="0.01"
@@ -568,6 +578,7 @@ adjust_for_test(SIMPLE_ARITHMETIC_TEST)
 algorithms = dict(
     reinforce=REINFORCE_CONFIG,
     trpo=TRPO_CONFIG,
+    robust=ROBUST_CONFIG,
     qlearning=QLEARNING_CONFIG)
 
 
