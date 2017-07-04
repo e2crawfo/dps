@@ -182,8 +182,7 @@ class SimpleArithmetic(TensorFlowEnv):
     For now, the location of the write head is the same as the x location of the read head.
 
     """
-    action_names = [
-        '>', '<', 'v', '^', 'store_op', '+', '+1', '*', 'store', 'noop']
+    action_names = ['>', '<', 'v', '^', 'store_op', '+', '+1', '*', 'store', 'noop']
 
     @property
     def element_shape(self):

@@ -74,6 +74,7 @@ def mean_kl(p, q, obs):
 
 class TRPO(ReinforcementLearningUpdater):
     delta_schedule = Param()
+    entropy_schedule = Param()
     max_cg_steps = Param()
 
     def __init__(self, env, policy, **kwargs):
@@ -102,6 +103,10 @@ class TRPO(ReinforcementLearningUpdater):
 
             self.surrogate_objective, _, self.mean_entropy = policy_gradient_surrogate(
                 self.policy, self.obs, self.actions, self.advantage)
+
+            if self.entropy_schedule:
+                entropy_param = build_scheduled_value(self.entropy_schedule, 'entropy_param')
+                self.surrogate_objective += entropy_param * self.mean_entropy
 
             g = tf.get_default_graph()
             tvars = g.get_collection('trainable_variables', scope=self.policy.scope.name)
