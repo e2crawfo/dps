@@ -34,6 +34,12 @@ class TupleDist(object):
             outp[index] = tuple(s[index] for s in stack)
         return outp
 
+    def __repr__(self):
+        return str(self)
+
+    def __str__(self):
+        return "TupleDist(\n" + '\n'.join('    {},'.format(d) for d in self.dists) + '\n)'
+
 
 class ChoiceDist(object):
     def __init__(self, choices, p=None, dtype=None):
@@ -60,6 +66,13 @@ class ChoiceDist(object):
             results = results.astype(self.choices.dtype)
         return results
 
+    def __repr__(self):
+        return str(self)
+
+    def __str__(self):
+        return "ChoiceDist(\n    choices={},\n    p={},\n    dtype={})".format(
+            self.choices, self.p, self.dtype)
+
 
 class LogUniform(object):
     def __init__(self, lo, hi, base=None):
@@ -69,6 +82,12 @@ class LogUniform(object):
 
     def rvs(self, shape):
         return self.base ** np.random.uniform(self.lo, self.hi, shape)
+
+    def __repr__(self):
+        return str(self)
+
+    def __str__(self):
+        return "LogUniform(lo={}, hi={}, base={})".format(self.lo, self.hi, self.base)
 
 
 def sample_configs(n, repeats, base_config, distributions):
@@ -148,19 +167,19 @@ def reduce_hyper_results(store, *results):
                 n_reached=n_reached_latest,
                 final_stage_loss=_df.final_stage_loss.mean()))
 
-    print('*' * 100)
+    print('\n' + '*' * 100)
     print("BASE CONFIG")
     print(store.load_object('metadata', 'config'))
-    print('*' * 100)
 
+    print('\n' + '*' * 100)
     print("DISTRIBUTIONS")
     pprint(distributions)
 
-    data = sorted(
-        data, reverse=True, key=lambda x: (x['percent_reached'], x['n_reached'], -x['final_stage_loss']))
+    data = sorted(data, reverse=True, key=lambda x: (x['percent_reached'], x['n_reached'], -x['final_stage_loss']))
+    print('\n' + '*' * 100)
     print("VARIANTS THAT REACHED FINAL STAGE AT LEAST ONCE, FROM BEST TO WORST: ")
     for d in data:
-        print('*' * 100)
+        print('\n' + '*' * 40)
         pprint({n: v for n, v in zip(keys, d['keys'])})
         print(d['data'].drop(keys + ['seed'], axis=1))
 
@@ -192,7 +211,33 @@ class RunTrainingLoop(object):
         return val
 
 
-def build_search(path, name, n, repeats, alg, task, _zip, distributions=None, config=None):
+def build_search(path, name, n, repeats, alg, task, _zip, distributions=None, config=None, use_time=0):
+    """ Create a Job representing a hyper-parameter search.
+
+    Parameters
+    ----------
+    path: str
+        Path to the directory where the archive that is built for the search will be saved.
+    name: str
+        Name for the search.
+    n: int
+        Number of parameter settings to sample.
+    repeats: int
+        Number of different random seeds to run each sample with.
+    alg: str
+        Specifies the algorithm to use.
+    task: str
+        Specifies the task to solve.
+    _zip: bool
+        Whether to zip the created search directory.
+    distributions: dict (str -> distribution)
+        Distributions to sample from.
+    config: Config instance
+        The base configuration.
+    use_time: bool
+        Whether to add time to name of experiment directory.
+
+    """
     _config = tasks[task]
     _config.update(algorithms[alg])
 
@@ -201,9 +246,8 @@ def build_search(path, name, n, repeats, alg, task, _zip, distributions=None, co
     config = _config
 
     if not distributions:
-        distributions = dict()
         if alg == 'reinforce' :
-            distributions.update(
+            distributions = dict(
                 lr_start=LogUniform(-3., 0., 1),
                 exploration_start=spdists.uniform(0, 0.5),
                 batch_size=ChoiceDist(10 * np.arange(1, 11)),
@@ -212,7 +256,7 @@ def build_search(path, name, n, repeats, alg, task, _zip, distributions=None, co
                 max_grad_norm=ChoiceDist([0.0, 1.0, 2.0])
             )
         elif alg == 'qlearning':
-            distributions.update(
+            distributions = dict(
                 lr_start=LogUniform(-3., 0., 10),
                 exploration_start=spdists.uniform(0, 0.5),
                 batch_size=ChoiceDist(10 * np.arange(1, 11).astype('i')),
@@ -234,7 +278,7 @@ def build_search(path, name, n, repeats, alg, task, _zip, distributions=None, co
     has_built = False
     while not has_built:
         try:
-            exp_dir = es.new_experiment('{}_{}_{}'.format(name, alg, task), use_time=0, force_fresh=1)
+            exp_dir = es.new_experiment('{}_{}_{}'.format(name, alg, task), use_time=use_time, force_fresh=1)
             has_built = True
         except FileExistsError:
             name = "{}_{}".format(base_name, count)
@@ -253,13 +297,15 @@ def build_search(path, name, n, repeats, alg, task, _zip, distributions=None, co
     job.save_object('metadata', 'config', config)
 
     if _zip:
-        job.zip(delete=False)
+        path = job.zip(delete=False)
+    else:
+        path = exp_dir.path
 
-    return job
+    return job, path
 
 
 def _build_search(args):
-    build_search(args.path, args.name, args.n, args.repeats, args.alg, args.task, not args.no_zip)
+    return build_search(args.path, args.name, args.n, args.repeats, args.alg, args.task, not args.no_zip)
 
 
 def _plot_search(args):

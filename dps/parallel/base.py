@@ -28,6 +28,11 @@ def raise_sigterm(*args, **kwargs):
     raise SigTerm()
 
 
+def vprint(s, v, threshold=0):
+    if v > threshold:
+        print(s)
+
+
 class Operator(object):
     """
     Needs to be fully serializable since we're saving and loading these all the time.
@@ -93,9 +98,9 @@ Operator(
     def is_ready(self, store):
         return all([store.object_exists('data', ik) for ik in self.inp_keys])
 
-    def run(self, store, force, output_to_files=True):
-        print("\n\n" + ("-" * 40))
-        print("Checking whether to run op {}".format(self.name))
+    def run(self, store, force, output_to_files=True, verbose=False):
+        vprint("\n\n" + ("*" * 80), verbose)
+        vprint("Checking whether to run op {}".format(self.name), verbose)
         old_sigterm_handler = signal.signal(signal.SIGTERM, raise_sigterm)
 
         try:
@@ -103,22 +108,22 @@ Operator(
             if self.is_complete(store):
                 if force:
                     force_unique = False
-                    print("Op {} is already complete, but ``force`` is True, so we're running it anyway.".format(self.name))
+                    vprint("Op {} is already complete, but ``force`` is True, so we're running it anyway.".format(self.name), verbose)
                 else:
-                    print("Skipping op {}, already complete.".format(self.name))
+                    vprint("Skipping op {}, already complete.".format(self.name), verbose)
                     return False
             else:
-                print("Op {} is not complete, so we SHOULD run it.".format(self.name))
+                vprint("Op {} is not complete, so we SHOULD run it.".format(self.name), verbose)
 
             if not self.is_ready(store):
-                print("Skipping op {}, deps are not met.".format(self.name))
+                vprint("Skipping op {}, deps are not met.".format(self.name), verbose)
                 return False
             else:
-                print("Op {} is ready, so we CAN run it.".format(self.name))
+                vprint("Op {} is ready, so we CAN run it.".format(self.name), verbose)
 
-            print("Running op {}".format(self.name))
+            vprint("Running op {}".format(self.name), verbose)
 
-            print("Loading objects for op {}".format(self.name))
+            vprint("Loading objects for op {}".format(self.name), verbose)
             inputs = [store.load_object('data', ik) for ik in self.inp_keys]
             func = store.load_object('function', self.func_key)
 
@@ -129,7 +134,8 @@ Operator(
             if self.pass_store:
                 inputs.insert(0, store)
 
-            print("Calling function for op {}".format(self.name))
+            vprint("Calling function for op {}".format(self.name), verbose)
+            vprint("\n\n" + ("-" * 40), verbose)
             if output_to_files:
                 stdout = store.path_for('stdout')
                 stdout.mkdir(parents=True, exist_ok=True)
@@ -140,15 +146,17 @@ Operator(
                         outputs = func(*inputs)
             else:
                 outputs = func(*inputs)
-
-            print("Saving output for op {}".format(self.name))
+            vprint("\n\n" + ("-" * 40), verbose)
+            vprint("Function for op {} has returned".format(self.name), verbose)
+            vprint("Saving output for op {}".format(self.name), verbose)
             if len(self.outp_keys) == 1:
                 store.save_object('data', self.outp_keys[0], outputs, force_unique=force_unique, clobber=True)
             else:
                 for o, ok in zip(outputs, self.outp_keys):
                     store.save_object('data', ok, o, force_unique=force_unique, clobber=True)
 
-            print("Op complete.")
+            vprint("op {} complete.".format(self.name), verbose)
+            vprint("\n\n" + ("*" * 80), verbose)
 
             return True
         finally:
@@ -211,7 +219,7 @@ class ReadOnlyJob(object):
     def summary(self, pattern=None, verbose=0):
         operators = self.get_ops(pattern, sort=True)
         operators = list(self.objects.load_objects('operator').values())
-        s = ["Job Summary\n-----------"]
+        s = ["\nJob Summary\n-----------"]
         s.append("\nn_ops: {}".format(len(operators)))
 
         is_complete = [op.is_complete(self.objects) for op in operators]
@@ -319,7 +327,7 @@ class Job(ReadOnlyJob):
 
         return op_result
 
-    def run(self, pattern, indices, force, output_to_files):
+    def run(self, pattern, indices, force, output_to_files, verbose):
         operators = self.get_ops(pattern)
 
         if not operators:
@@ -328,7 +336,7 @@ class Job(ReadOnlyJob):
         if not indices:
             indices = set(range(len(operators)))
 
-        return [op.run(self.objects, force, output_to_files) for i, op in enumerate(operators) if i in indices]
+        return [op.run(self.objects, force, output_to_files, verbose) for i, op in enumerate(operators) if i in indices]
 
     def zip(self, archive_name=None, delete=False):
         return self.objects.zip(archive_name, delete=delete)
@@ -453,6 +461,7 @@ class FileSystemObjectStore(ObjectStore):
         print("Zipped {} as {}.".format(self.directory, archive_path))
         if delete:
             shutil.rmtree(str(self.directory))
+        return archive_path
 
 
 class ZipObjectStore(ObjectStore):
@@ -524,7 +533,7 @@ def zip_root(zipfile):
 
 def run_command(args):
     job = Job(args.path)
-    job.run(args.pattern, args.indices, args.force, args.redirect)
+    job.run(args.pattern, args.indices, args.force, args.redirect, args.verbose)
 
 
 def view_command(args):
@@ -533,7 +542,8 @@ def view_command(args):
 
 
 def parallel_cl(desc, additional_cmds=None):
-    """
+    """ Entry point for the `dps-parallel` command-line utility.
+
     Parameters
     ----------
     desc: str

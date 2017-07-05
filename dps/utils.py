@@ -430,15 +430,6 @@ class EarlyStopHook(object):
         self._best_value_lstep = None
         self._early_stopped = 0
 
-    def summarize(self):
-        s = ""
-        for stage, (bvgs, bvls, bv) in enumerate(self._history):
-            s += "Stage {} ".format(stage) + "*" * 30 + '\n'
-            s += "* best value: {}\n".format(bv)
-            s += "* global step: {}\n".format(bvgs)
-            s += "* local step: {}\n\n".format(bvls)
-        return s
-
 
 def restart_tensorboard(logdir, port=6006, reload_interval=120):
     print("Killing old tensorboard process...")

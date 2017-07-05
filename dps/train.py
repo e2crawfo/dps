@@ -3,6 +3,7 @@ from __future__ import division
 import time
 from contextlib import ExitStack
 import tensorflow as tf
+from tensorflow.python.client import device_lib
 import numpy as np
 from pprint import pformat
 import datetime
@@ -83,8 +84,15 @@ class TrainingLoop(object):
             with ExitStack() as stack:
                 graph = tf.Graph()
 
+                print("Available devices: ")
+                print(device_lib.list_local_devices())
+
+                print("Deciding whether to use GPU...")
                 if not cfg.use_gpu:
+                    print("Not using GPU.")
                     stack.enter_context(graph.device("/cpu:0"))
+                else:
+                    print("Using GPU if available.")
 
                 if cfg.save_summaries:
                     self.train_writer = tf.summary.FileWriter(
