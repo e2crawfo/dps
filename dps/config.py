@@ -230,7 +230,8 @@ def room_action_selection(env):
 
 ROOM_CONFIG = Config(
     build_env=room.build_env,
-    curriculum=[dict()],
+    curriculum=[dict(T=5)],
+    # curriculum=[dict(T=20), dict(T=10), dict(T=5)],
     n_controller_units=32,
     action_selection=room_action_selection,
     log_name='room',
