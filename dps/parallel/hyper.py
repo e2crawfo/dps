@@ -5,6 +5,8 @@ from pathlib import Path
 import clify
 import pandas as pd
 from pprint import pprint
+import time
+import datetime
 
 from dps import cfg
 from dps.train import training_loop
@@ -189,6 +191,9 @@ class RunTrainingLoop(object):
         self.base_config = base_config
 
     def __call__(self, new):
+        start_time = time.time()
+        print("Starting new training run at: ")
+        print(datetime.datetime.now())
         print("Sampled values: ")
         pprint(new)
 
@@ -206,7 +211,7 @@ class RunTrainingLoop(object):
         with config:
             cl_args = clify.wrap_object(cfg).parse()
             config.update(cl_args)
-            val = training_loop()
+            val = training_loop(start_time=start_time)
 
         return val
 

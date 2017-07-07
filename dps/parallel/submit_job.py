@@ -221,7 +221,8 @@ echo We have {walltime_seconds} seconds to complete the entire job using {n_proc
 echo {execution_time} seconds have been reserved for job execution, and {cleanup_time_seconds} seconds have been reserved for cleanup.
 echo Each sub-job has been alloted {abs_seconds_per_job} seconds, {seconds_per_job} seconds of which is pure computation time.
 
-echo Running jobs... {stderr}
+echo Launching jobs at {stderr}
+date {stderr}
 
 start=`date +%s`
 

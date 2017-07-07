@@ -19,19 +19,20 @@ from dps.utils import (
     trainable_variables)
 
 
-def training_loop(exp_name=''):
+def training_loop(exp_name='', start_time=None):
     np.random.seed(cfg.seed)
 
     exp_name = exp_name or "updater={}_seed={}".format(cfg.build_updater.__name__, cfg.seed)
 
-    loop = TrainingLoop(cfg.curriculum, exp_name)
+    loop = TrainingLoop(cfg.curriculum, exp_name, start_time)
     return loop.run()
 
 
 class TrainingLoop(object):
-    def __init__(self, curriculum, exp_name=''):
+    def __init__(self, curriculum, exp_name='', start_time=None):
         self.curriculum = curriculum
         self.exp_name = exp_name
+        self.start_time = start_time
         self.history = []
 
     def record(self, name, value):
@@ -49,7 +50,7 @@ class TrainingLoop(object):
 
     @property
     def elapsed_time(self):
-        return time.time() - self.start
+        return time.time() - self.start_time
 
     @property
     def time_remaining(self):
@@ -75,7 +76,9 @@ class TrainingLoop(object):
         return value
 
     def _run_core(self):
-        self.start = time.time()
+        if self.start_time is None:
+            self.start_time = time.time()
+        print("Starting training {} seconds after given start time.".format(time.time() - self.start_time))
 
         es = ExperimentStore(str(cfg.log_dir), max_experiments=cfg.max_experiments, delete_old=1)
         self.exp_dir = exp_dir = es.new_experiment(
@@ -218,6 +221,9 @@ class TrainingLoop(object):
         threshold_reached = False
         reason = ""
         early_stop = EarlyStopHook(patience=cfg.patience)
+        time_remaining = self.time_remaining
+
+        print("{} seconds left at the beginning of stage {}.".format(time_remaining, stage))
 
         with time_limit(self.time_remaining, verbose=True) as limiter:
             try:
