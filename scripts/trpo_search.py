@@ -46,6 +46,8 @@ config = Config(
     threshold=0.05,
 
     noise_schedule=None,
+
+    deadline=''
 )
 
 
@@ -91,30 +93,19 @@ distributions = dict(
 alg = 'trpo'
 task = 'simple_arithmetic'
 
-n_param_settings = 2
-n_repeats = 2
+n_param_settings = 300
+n_repeats = 10
 
 job, archive_path = build_search(
     '/tmp/dps/search', 'trpo_search', n_param_settings, n_repeats, alg, task, True, distributions, config, use_time=1)
 
-hosts = [
-    ':',
-    'ecrawf6@lab1-1.cs.mcgill.ca',
-    'ecrawf6@lab1-2.cs.mcgill.ca',
-    'ecrawf6@lab1-3.cs.mcgill.ca',
-    'ecrawf6@lab1-4.cs.mcgill.ca',
-    'ecrawf6@lab1-5.cs.mcgill.ca',
-    'ecrawf6@lab1-6.cs.mcgill.ca',
-    'ecrawf6@lab1-7.cs.mcgill.ca',
-    'ecrawf6@lab1-8.cs.mcgill.ca',
-    'ecrawf6@lab1-9.cs.mcgill.ca',
-    'ecrawf6@lab1-10.cs.mcgill.ca'
-]
-hosts = hosts[:2]
+hosts = [':'] + ['ecrawf6@lab1-{}.cs.mcgill.ca'.format(i+1) for i in range(10)]
+# hosts += ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i+1) for i in range(10)]
+hosts = hosts[0:4]
 
-walltime = "00:5:00"
+walltime = "00:10:00"
 cleanup_time = "00:00:30"
-time_slack = 30
+time_slack = 40
 
 submit_job(
     archive_path, 'map', '/tmp/dps/search/execution/', pbs=False,

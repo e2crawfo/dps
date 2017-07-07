@@ -67,6 +67,8 @@ DEFAULT_CONFIG = Config(
     controller=lambda n_params: CompositeCell(
         tf.contrib.rnn.LSTMCell(num_units=cfg.n_controller_units), MLP(), n_params),
     action_selection=lambda env: Softmax(env.n_actions),
+
+    deadline=''
 )
 
 
@@ -407,6 +409,19 @@ SIMPLE_ARITHMETIC_CONFIG = Config(
 )
 
 
+def alt_arithmetic_action_selection(env):
+    if cfg.ablation == 'bad_wiring':
+        return ProductDist(Softmax(11), Normal(), Normal(), Normal())
+    elif cfg.ablation == 'no_classifiers':
+        return ProductDist(Softmax(9), Softmax(10, one_hot=0), Softmax(10, one_hot=0), Softmax(10, one_hot=0))
+    elif cfg.ablation == 'no_ops':
+        return ProductDist(Softmax(11), Normal(), Normal(), Normal())
+    elif cfg.ablation == 'no_modules':
+        return ProductDist(Softmax(11), Normal(), Normal(), Normal())
+    else:
+        return Softmax(env.n_actions)
+
+
 ALT_ARITHMETIC_CONFIG = Config(
     build_env=alt_arithmetic.build_env,
 
@@ -427,6 +442,8 @@ ALT_ARITHMETIC_CONFIG = Config(
     reward_window=0.4,
 
     n_controller_units=64,
+
+    ablation='',  # anything other than "bad_wiring", "no_classifiers", "no_ops", "no_modules" will use the default.
 
     classifier_str="LeNet2_1024",
     build_classifier=lambda inp, output_size, is_training=False: tf.nn.softmax(

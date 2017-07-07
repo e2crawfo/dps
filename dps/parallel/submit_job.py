@@ -141,6 +141,8 @@ def submit_job(
     if n_jobs_to_run == 0:
         print("All jobs are finished! Exiting.")
         return
+    kwargs['n_jobs_to_run'] = n_jobs_to_run
+
     execution_time = int((walltime - cleanup_time).total_seconds())
     n_procs = ppn * n_nodes
     total_compute_time = n_procs * execution_time
@@ -217,22 +219,22 @@ echo Unzipping... {stderr}
 {parallel_exe} --no-notice {node_file} --nonall {env_vars} -k \\
     "cd {local_scratch} && unzip -ouq {input_zip_base} && echo \\$(hostname) && ls"
 
-echo We have {walltime_seconds} seconds to complete the entire job using {n_procs} processors.
+echo We have {walltime_seconds} seconds to complete {n_jobs_to_run} sub-jobs using {n_procs} processors.
 echo {execution_time} seconds have been reserved for job execution, and {cleanup_time_seconds} seconds have been reserved for cleanup.
 echo Each sub-job has been alloted {abs_seconds_per_job} seconds, {seconds_per_job} seconds of which is pure computation time.
 
 echo Launching jobs at {stderr}
 date {stderr}
 
-start=`date +%s`
+start=$(date +%s)
 
 # Requires a newish version of parallel, has to accept --timeout
-{parallel_exe} --timeout {abs_seconds_per_job} -k --no-notice -j {ppn} \\
+{parallel_exe} --timeout {abs_seconds_per_job} --no-notice -j {ppn} \\
     --joblog {job_directory}/job_log.txt {node_file} \\
     --env OMP_NUM_THREADS --env PATH --env LD_LIBRARY_PATH {env_vars} \\
-    "cd {local_scratch} && dps-hyper run {archive_root} {pattern} {{}} --max-time {seconds_per_job} " < {idx_file}
+    "cd {local_scratch} && dps-hyper run {archive_root} {pattern} {{}} --max-time {seconds_per_job}" < {idx_file}
 
-end=`date +%s`
+end=$(date +%s)
 
 runtime=$((end-start))
 

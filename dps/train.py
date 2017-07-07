@@ -16,7 +16,7 @@ from dps.policy import Policy
 from dps.utils import (
     restart_tensorboard, gen_seed, build_scheduled_value,
     time_limit, uninitialized_variables_initializer, du, Config,
-    trainable_variables)
+    trainable_variables, parse_date)
 
 
 def training_loop(exp_name='', start_time=None):
@@ -54,10 +54,15 @@ class TrainingLoop(object):
 
     @property
     def time_remaining(self):
-        if cfg.max_time is None or cfg.max_time <= 0:
-            return np.inf
-        else:
-            return cfg.max_time - self.elapsed_time
+        """ Prioritize `deadline`, fall back on `max_time`. """
+        try:
+            deadline = parse_date(cfg.deadline)
+            return (deadline - datetime.datetime.now()).total_seconds()
+        except:
+            if cfg.max_time is None or cfg.max_time <= 0:
+                return np.inf
+            else:
+                return cfg.max_time - self.elapsed_time
 
     def run(self):
         if cfg.start_tensorboard:

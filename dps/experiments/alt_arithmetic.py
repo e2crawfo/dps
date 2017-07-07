@@ -1,8 +1,5 @@
 import tensorflow as tf
 import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib import animation, patches
-from pathlib import Path
 
 from dps import cfg
 from dps.register import RegisterBank
@@ -177,11 +174,6 @@ class AltArithmeticEnv(RegressionEnv):
 
 
 class AltArithmetic(TensorFlowEnv):
-    """ Top left is (x=0, y=0). Sign is in the bottom left of the input grid.
-
-    For now, the location of the write head is the same as the x location of the read head.
-
-    """
     action_names = ['>', '<', 'v', '^', 'classify_digit', 'classify_op', '+', '+1', '*', '=', 'noop']
 
     @property
@@ -197,17 +189,29 @@ class AltArithmetic(TensorFlowEnv):
         self.mnist = env.mnist
         self.symbols = env.symbols
         self.shape = env.shape
-
         if not len(self.shape) == 2:
             raise Exception("Shape must have length 2.")
-
         self.n_digits = env.n_digits
         self.upper_bound = env.upper_bound
         self.base = env.base
         self.blank_char = env.blank_char
-
         self.start_loc = env.start_loc
 
+        self.init_classifiers()
+        self.init_rb()
+
+        super(AltArithmetic, self).__init__()
+
+    def init_rb(self):
+        values = (
+            [0., 0., 0., 0., 0.] +
+            [np.zeros(np.product(self.element_shape), dtype='f')])
+        self.rb = RegisterBank(
+            'AltArithmeticRB',
+            'digit op acc fovea_x fovea_y glimpse', None, values=values,
+            output_names='acc', no_display='glimpse')
+
+    def init_classifiers(self):
         if self.mnist:
             build_classifier = cfg.build_classifier
             classifier_str = cfg.classifier_str
@@ -235,44 +239,78 @@ class AltArithmetic(TensorFlowEnv):
             self.build_digit_classifier = lambda x: tf.identity(x)
             self.build_op_classifier = lambda x: tf.identity(x)
 
-        values = (
-            [0., 0., 0., 0., 0.] +
-            [np.zeros(np.product(self.element_shape), dtype='f')])
-
-        self.rb = RegisterBank(
-            'AltArithmeticRB',
-            'digit op acc fovea_x fovea_y', 'glimpse', values=values,
-            output_names='acc', no_display='glimpse')
-
-        super(AltArithmetic, self).__init__()
-
-    def build_init(self, r, inp):
-        digit, op, acc, fovea_x, fovea_y, glimpse = self.rb.as_tuple(r)
-
-        _fovea_x = tf.cast(fovea_x, tf.int32)
-        _fovea_y = tf.cast(fovea_y, tf.int32)
-
-        batch_size = tf.shape(inp)[0]
+    def build_init_glimpse(self, batch_size, inp, fovea_y, fovea_x):
         indices = tf.concat([
             tf.reshape(tf.range(batch_size), (-1, 1)),
-            _fovea_y,
-            _fovea_x], axis=1)
+            tf.cast(fovea_y, tf.int32),
+            tf.cast(fovea_x, tf.int32)], axis=1)
         glimpse = tf.gather_nd(inp, indices)
         glimpse = tf.reshape(glimpse, (-1, np.product(self.element_shape)), name="glimpse")
+        return glimpse
 
+    def build_init_storage(self, batch_size):
         digit = tf.fill((batch_size, 1), -1.0)
         op = tf.fill((batch_size, 1), -1.0)
+        return digit, op
 
+    def build_init_fovea(self, batch_size, fovea_y, fovea_x):
         if self.start_loc is not None:
             fovea_y = tf.fill((batch_size, 1), self.start_loc[0])
             fovea_x = tf.fill((batch_size, 1), self.start_loc[1])
         else:
             fovea_y = tf.random_uniform(tf.shape(fovea_y), 0, self.shape[0], dtype=tf.int32)
             fovea_x = tf.random_uniform(tf.shape(fovea_x), 0, self.shape[1], dtype=tf.int32)
-
-        fovea_x = tf.cast(fovea_x, tf.float32)
         fovea_y = tf.cast(fovea_y, tf.float32)
+        fovea_x = tf.cast(fovea_x, tf.float32)
+        return fovea_y, fovea_x
 
+    def build_init(self, r, inp):
+        digit, op, acc, fovea_x, fovea_y, glimpse = self.rb.as_tuple(r)
+
+        batch_size = tf.shape(inp)[0]
+
+        glimpse = self.build_init_glimpse(batch_size, inp, fovea_y, fovea_x)
+
+        digit, op = self.build_init_storage(batch_size)
+
+        fovea_y, fovea_x = self.build_init_fovea(batch_size, fovea_y, fovea_x)
+
+        _, ret = self.build_return(digit, op, acc, fovea_x, fovea_y, glimpse)
+        return ret
+
+    def build_update_glimpse(self, inp, fovea_y, fovea_x):
+        batch_size = tf.shape(inp)[0]
+        indices = tf.concat([
+            tf.reshape(tf.range(batch_size), (-1, 1)),
+            tf.cast(fovea_y, tf.int32),
+            tf.cast(fovea_x, tf.int32)],
+            axis=1)
+        glimpse = tf.gather_nd(inp, indices)
+        glimpse = tf.reshape(glimpse, (-1, np.product(self.element_shape)), name="glimpse")
+        return glimpse
+
+    def build_update_storage(self, glimpse, digit, classify_digit, op, classify_op):
+        digit_classification = self.build_digit_classifier(glimpse)
+        digit_vision = tf.cast(digit_classification, tf.float32)
+        digit = (1 - classify_digit) * digit + classify_digit * digit_vision
+
+        op_classification = self.build_op_classifier(glimpse)
+        op_vision = tf.cast(op_classification, tf.float32)
+        op = (1 - classify_op) * op + classify_op * op_vision
+        return digit, op
+
+    def build_update_fovea(self, right, left, down, up, fovea_y, fovea_x):
+        fovea_x = (1 - right - left) * fovea_x + \
+            right * (fovea_x + 1) + \
+            left * (fovea_x - 1)
+        fovea_y = (1 - down - up) * fovea_y + \
+            down * (fovea_y + 1) + \
+            up * (fovea_y - 1)
+        fovea_y = tf.clip_by_value(fovea_y, 0, self.shape[0]-1)
+        fovea_x = tf.clip_by_value(fovea_x, 0, self.shape[1]-1)
+        return fovea_y, fovea_x
+
+    def build_return(self, digit, op, acc, fovea_x, fovea_y, glimpse):
         with tf.name_scope("AltArithmetic"):
             new_registers = self.rb.wrap(
                 digit=tf.identity(digit, "digit"),
@@ -281,7 +319,8 @@ class AltArithmetic(TensorFlowEnv):
                 fovea_x=tf.identity(fovea_x, "fovea_x"),
                 fovea_y=tf.identity(fovea_y, "fovea_y"),
                 glimpse=glimpse)
-        return new_registers
+
+        return tf.fill((tf.shape(digit)[0], 1), 0.0), new_registers
 
     def build_step(self, t, r, a, inp):
         _digit, _op, _acc, _fovea_x, _fovea_y, _glimpse = self.rb.as_tuple(r)
@@ -295,205 +334,120 @@ class AltArithmetic(TensorFlowEnv):
             inc * (_acc + 1) + \
             store * _digit
 
-        batch_size = tf.shape(inp)[0]
-        indices = tf.concat([
-            tf.reshape(tf.range(batch_size), (-1, 1)),
-            tf.cast(_fovea_y, tf.int32),
-            tf.cast(_fovea_x, tf.int32)],
-            axis=1)
-        glimpse = tf.gather_nd(inp, indices)
-        glimpse = tf.reshape(glimpse, (-1, np.product(self.element_shape)), name="glimpse")
+        glimpse = self.build_update_glimpse(inp, _fovea_y, _fovea_x)
 
-        # For now, always run the classifiers, even if that action hasn't been selected
-        digit_classification = self.build_digit_classifier(glimpse)
-        digit_vision = tf.cast(digit_classification, tf.float32)
-        digit = (1 - classify_digit) * _digit + classify_digit * digit_vision
+        digit, op = self.build_update_storage(glimpse, _digit, classify_digit, _op, classify_op)
 
-        op_classification = self.build_op_classifier(glimpse)
-        op_vision = tf.cast(op_classification, tf.float32)
-        op = (1 - classify_op) * _op + classify_op * op_vision
+        fovea_y, fovea_x = self.build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
 
-        fovea_x = (1 - right - left) * _fovea_x + \
-            right * (_fovea_x + 1) + \
-            left * (_fovea_x - 1)
-
-        fovea_y = (1 - down - up) * _fovea_y + \
-            down * (_fovea_y + 1) + \
-            up * (_fovea_y - 1)
-
-        fovea_y = tf.clip_by_value(fovea_y, 0, self.shape[0]-1)
-        fovea_x = tf.clip_by_value(fovea_x, 0, self.shape[1]-1)
-
-        with tf.name_scope("AltArithmetic"):
-            new_registers = self.rb.wrap(
-                digit=tf.identity(digit, "digit"),
-                op=tf.identity(op, "op"),
-                acc=tf.identity(acc, "acc"),
-                fovea_x=tf.identity(fovea_x, "fovea_x"),
-                fovea_y=tf.identity(fovea_y, "fovea_y"),
-                glimpse=glimpse)
-
-        return tf.fill((tf.shape(r)[0], 1), 0.0), new_registers
+        return self.build_return(digit, op, acc, fovea_x, fovea_y, glimpse)
 
 
-class AltArithmeticNoClassifiers(TensorFlowEnv):
-    action_names = ['>', '<', 'v', '^', '+', '+1', '*', '=', 'noop']
-
-    @property
-    def element_shape(self):
-        return (28, 28) if self.mnist else (1,)
-
-    def static_inp_type_and_shape(self):
-        return (tf.float32, self.shape + self.element_shape)
-
-    make_input_available = True
-
-    def __init__(self, env):
-        self.mnist = env.mnist
-        self.symbols = env.symbols
-        self.shape = env.shape
-
-        if not len(self.shape) == 2:
-            raise Exception("Shape must have length 2.")
-
-        self.n_digits = env.n_digits
-        self.upper_bound = env.upper_bound
-        self.base = env.base
-        self.blank_char = env.blank_char
-
-        self.start_loc = env.start_loc
-
-        if self.mnist:
-            build_classifier = cfg.build_classifier
-            classifier_str = cfg.classifier_str
-
-            digit_config = cfg.mnist_config.copy(symbol=list(range(self.base)))
-
-            name = '{}_symbols={}.chk'.format(
-                classifier_str, '_'.join(str(s) for s in digit_config.symbols))
-            digit_pretrained = MnistPretrained(
-                None, build_classifier, name=name, model_dir='/tmp/dps/mnist_pretrained/',
-                var_scope_name='digit_classifier', mnist_config=digit_config)
-            self.build_digit_classifier = ClassifierFunc(digit_pretrained, self.base + 1)
-
-            op_config = cfg.mnist_config.copy(symbols=[10, 12, 22])
-
-            name = '{}_symbols={}.chk'.format(
-                classifier_str, '_'.join(str(s) for s in op_config.symbols))
-
-            op_pretrained = MnistPretrained(
-                None, build_classifier, name=name, model_dir='/tmp/dps/mnist_pretrained/',
-                var_scope_name='op_classifier', mnist_config=op_config)
-            self.build_op_classifier = ClassifierFunc(op_pretrained, len(op_config.symbols) + 1)
-
-        else:
-            self.build_digit_classifier = lambda x: tf.identity(x)
-            self.build_op_classifier = lambda x: tf.identity(x)
-
-        values = (
-            [0., 0., 0., 0., 0.] +
-            [np.zeros(np.product(self.element_shape), dtype='f')])
-
-        self.rb = RegisterBank(
-            'AltArithmeticRB',
-            'digit op acc fovea_x fovea_y', 'glimpse', values=values,
-            output_names='acc', no_display='glimpse')
-
-        super(AltArithmetic, self).__init__()
-
-    def build_init(self, r, inp):
-        digit, op, acc, fovea_x, fovea_y, glimpse = self.rb.as_tuple(r)
-
-        _fovea_x = tf.cast(fovea_x, tf.int32)
-        _fovea_y = tf.cast(fovea_y, tf.int32)
-
-        batch_size = tf.shape(inp)[0]
-        indices = tf.concat([
-            tf.reshape(tf.range(batch_size), (-1, 1)),
-            _fovea_y,
-            _fovea_x], axis=1)
-        glimpse = tf.gather_nd(inp, indices)
-        glimpse = tf.reshape(glimpse, (-1, np.product(self.element_shape)), name="glimpse")
-
-        digit = tf.fill((batch_size, 1), -1.0)
-        op = tf.fill((batch_size, 1), -1.0)
-
-        if self.start_loc is not None:
-            fovea_y = tf.fill((batch_size, 1), self.start_loc[0])
-            fovea_x = tf.fill((batch_size, 1), self.start_loc[1])
-        else:
-            fovea_y = tf.random_uniform(tf.shape(fovea_y), 0, self.shape[0], dtype=tf.int32)
-            fovea_x = tf.random_uniform(tf.shape(fovea_x), 0, self.shape[1], dtype=tf.int32)
-
-        fovea_x = tf.cast(fovea_x, tf.float32)
-        fovea_y = tf.cast(fovea_y, tf.float32)
-
-        with tf.name_scope("AltArithmetic"):
-            new_registers = self.rb.wrap(
-                digit=tf.identity(digit, "digit"),
-                op=tf.identity(op, "op"),
-                acc=tf.identity(acc, "acc"),
-                fovea_x=tf.identity(fovea_x, "fovea_x"),
-                fovea_y=tf.identity(fovea_y, "fovea_y"),
-                glimpse=glimpse)
-        return new_registers
+class AltArithmeticBadWiring(AltArithmetic):
+    action_names = [
+        '>', '<', 'v', '^', 'classify_digit', 'classify_op',
+        '+', '+1', '*', '=', 'noop', '+ arg', '* arg', '= arg']
 
     def build_step(self, t, r, a, inp):
         _digit, _op, _acc, _fovea_x, _fovea_y, _glimpse = self.rb.as_tuple(r)
 
-        (right, left, down, up, classify_digit, classify_op, add, inc, multiply, store, no_op) = (
+        (right, left, down, up, classify_digit, classify_op,
+         add, inc, multiply, store, no_op, add_arg, mult_arg, store_arg) = (
             tf.split(a, self.n_actions, axis=1))
 
         acc = (1 - add - inc - multiply - store) * _acc + \
-            add * (_digit + _acc) + \
-            multiply * (_digit * _acc) + \
+            add * (add_arg + _acc) + \
+            multiply * (mult_arg * _acc) + \
             inc * (_acc + 1) + \
-            store * _digit
+            store * store_arg
 
-        batch_size = tf.shape(inp)[0]
-        indices = tf.concat([
-            tf.reshape(tf.range(batch_size), (-1, 1)),
-            tf.cast(_fovea_y, tf.int32),
-            tf.cast(_fovea_x, tf.int32)],
-            axis=1)
-        glimpse = tf.gather_nd(inp, indices)
-        glimpse = tf.reshape(glimpse, (-1, np.product(self.element_shape)), name="glimpse")
+        glimpse = self.build_update_glimpse(inp, _fovea_y, _fovea_x)
 
-        # For now, always run the classifiers, even if that action hasn't been selected
-        digit_classification = self.build_digit_classifier(glimpse)
-        digit_vision = tf.cast(digit_classification, tf.float32)
-        digit = (1 - classify_digit) * _digit + classify_digit * digit_vision
+        digit, op = self.build_update_storage(glimpse, _digit, classify_digit, _op, classify_op)
 
-        op_classification = self.build_op_classifier(glimpse)
-        op_vision = tf.cast(op_classification, tf.float32)
-        op = (1 - classify_op) * _op + classify_op * op_vision
+        fovea_y, fovea_x = self.build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
 
-        fovea_x = (1 - right - left) * _fovea_x + \
-            right * (_fovea_x + 1) + \
-            left * (_fovea_x - 1)
+        return self.build_return(digit, op, acc, fovea_x, fovea_y, glimpse)
 
-        fovea_y = (1 - down - up) * _fovea_y + \
-            down * (_fovea_y + 1) + \
-            up * (_fovea_y - 1)
 
-        fovea_y = tf.clip_by_value(fovea_y, 0, self.shape[0]-1)
-        fovea_x = tf.clip_by_value(fovea_x, 0, self.shape[1]-1)
+class AltArithmeticNoClassifiers(AltArithmetic):
+    action_names = ['>', '<', 'v', '^', '+', '+1', '*', '=', 'noop', '+ arg', '* arg', '= arg']
 
-        with tf.name_scope("AltArithmetic"):
-            new_registers = self.rb.wrap(
-                digit=tf.identity(digit, "digit"),
-                op=tf.identity(op, "op"),
-                acc=tf.identity(acc, "acc"),
-                fovea_x=tf.identity(fovea_x, "fovea_x"),
-                fovea_y=tf.identity(fovea_y, "fovea_y"),
-                glimpse=glimpse)
+    def init_classifiers(self):
+        return
 
-        return tf.fill((tf.shape(r)[0], 1), 0.0), new_registers
+    def build_step(self, t, r, a, inp):
+        _digit, _op, _acc, _fovea_x, _fovea_y, _glimpse = self.rb.as_tuple(r)
+
+        (right, left, down, up, add, inc, multiply, store, no_op, add_arg, mult_arg, store_arg) = (
+            tf.split(a, self.n_actions, axis=1))
+
+        acc = (1 - add - inc - multiply - store) * _acc + \
+            add * (add_arg + _acc) + \
+            multiply * (mult_arg * _acc) + \
+            inc * (_acc + 1) + \
+            store * store_arg
+
+        glimpse = self.build_update_glimpse(inp, _fovea_y, _fovea_x)
+
+        fovea_y, fovea_x = self.build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
+
+        return self.build_return(_digit, _op, acc, fovea_x, fovea_y, glimpse)
+
+
+class AltArithmeticNoOps(AltArithmetic):
+    action_names = ['>', '<', 'v', '^', 'classify_digit', 'classify_op', '=', 'noop', '= arg']
+
+    def build_step(self, t, r, a, inp):
+        _digit, _op, _acc, _fovea_x, _fovea_y, _glimpse = self.rb.as_tuple(r)
+
+        (right, left, down, up, classify_digit, classify_op, store, no_op, store_arg) = (
+            tf.split(a, self.n_actions, axis=1))
+
+        acc = (1 - store) * _acc + store * store_arg
+
+        glimpse = self.build_update_glimpse(inp, _fovea_y, _fovea_x)
+
+        digit, op = self.build_update_storage(glimpse, _digit, classify_digit, _op, classify_op)
+
+        fovea_y, fovea_x = self.build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
+
+        return self.build_return(digit, op, acc, fovea_x, fovea_y, glimpse)
+
+
+class AltArithmeticNoModules(AltArithmetic):
+    action_names = ['>', '<', 'v', '^', '=', 'noop', '= arg']
+
+    def init_classifiers(self):
+        return
+
+    def build_step(self, t, r, a, inp):
+        _digit, _op, _acc, _fovea_x, _fovea_y, _glimpse = self.rb.as_tuple(r)
+        right, left, down, up, store, no_op, store_arg = tf.split(a, self.n_actions, axis=1)
+
+        acc = (1 - store) * _acc + store * store_arg
+
+        glimpse = self.build_update_glimpse(inp, _fovea_y, _fovea_x)
+
+        fovea_y, fovea_x = self.build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
+
+        return self.build_return(_digit, _op, acc, fovea_x, fovea_y, glimpse)
 
 
 def build_env():
     external = AltArithmeticEnv(
         cfg.mnist, cfg.shape, cfg.n_digits, cfg.upper_bound, cfg.base,
         cfg.n_train, cfg.n_val, cfg.n_test, cfg.op_loc, cfg.start_loc)
-    internal = AltArithmetic(external)
+
+    if cfg.ablation == 'bad_wiring':
+        internal = AltArithmeticBadWiring(external)
+    elif cfg.ablation == 'no_classifiers':
+        internal = AltArithmeticNoClassifiers(external)
+    elif cfg.ablation == 'no_ops':
+        internal = AltArithmeticNoOps(external)
+    elif cfg.ablation == 'no_modules':
+        internal = AltArithmeticNoModules(external)
+    else:
+        internal = AltArithmetic(external)
+
     return CompositeEnv(external, internal)

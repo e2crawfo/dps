@@ -335,19 +335,25 @@ class Bernoulli(TensorFlowSelection):
 
 
 class Softmax(TensorFlowSelection):
-    def __init__(self, n_actions):
+    def __init__(self, n_actions, one_hot=True):
         self.n_params = n_actions
-        self.n_actions = n_actions
+        self.n_actions = n_actions if one_hot else 1
+        self.one_hot = one_hot
 
     def _dist(self, utils, exploration):
         logits = utils / exploration
-        return tf_dists.OneHotCategorical(logits=logits)
+
+        if self.one_hot:
+            return tf_dists.OneHotCategorical(logits=logits)
+        else:
+            return tf_dists.Categorical(logits=logits)
 
 
 class EpsilonGreedy(TensorFlowSelection):
-    def __init__(self, n_actions):
+    def __init__(self, n_actions, one_hot=True):
         self.n_params = n_actions
-        self.n_actions = n_actions
+        self.n_actions = n_actions if one_hot else 1
+        self.one_hot = one_hot
 
     def _probs(self, q_values, exploration):
         epsilon = exploration
@@ -361,7 +367,11 @@ class EpsilonGreedy(TensorFlowSelection):
         return probs
 
     def _dist(self, q_values, exploration):
-        return tf_dists.OneHotCategorical(probs=self._probs(q_values, exploration))
+        probs = self._probs(q_values, exploration)
+        if self.one_hot:
+            return tf_dists.OneHotCategorical(probs=probs)
+        else:
+            return tf_dists.Categorical(probs=probs)
 
 
 class Deterministic(TensorFlowSelection):
