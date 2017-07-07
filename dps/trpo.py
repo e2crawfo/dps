@@ -201,7 +201,9 @@ class TRPO(ReinforcementLearningUpdater):
                 params = self.policy.get_params_flat()
 
                 expected_imp = beta * grad_dot_step_dir
-                success, new_params = maximizing_line_search(objective, params, full_step, expected_imp, verbose=cfg.verbose)
+                success, new_params = maximizing_line_search(
+                    objective, params, full_step, expected_imp,
+                    max_backtracks=cfg.max_line_search_steps, verbose=cfg.verbose)
 
                 step_norm = np.linalg.norm(new_params - params)
 

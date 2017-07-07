@@ -10,7 +10,7 @@ from dps import cfg
 from dps.train import training_loop
 from dps.utils import gen_seed
 from dps.config import algorithms, tasks
-from dps.parallel.base import Job
+from dps.parallel.base import Job, ReadOnlyJob
 from spectral_dagger.utils.experiment import ExperimentStore
 
 
@@ -139,9 +139,9 @@ def reduce_hyper_results(store, *results):
     for r in results:
         record = dict(
             n_stages=r['n_stages'],
-            total_steps=sum(s[1] for s in r['output']),
-            final_stage_steps=r['output'][-1][1],
-            final_stage_loss=r['output'][-1][2])
+            total_steps=sum(s['n_steps'] for s in r['output']),
+            final_stage_steps=r['output'][-1]['n_steps'],
+            final_stage_loss=r['output'][-1]['best_value'])
 
         for k in keys:
             record[k] = r['config'][k]
@@ -308,10 +308,10 @@ def _build_search(args):
     return build_search(args.path, args.name, args.n, args.repeats, args.alg, args.task, not args.no_zip)
 
 
-def _plot_search(args):
+def _summarize_search(args):
     # Get all completed jobs, get their outputs. Plot em.
-    job = Job(args.path)
-    results = [op.get_outputs(job.objects)[0] for op in job.completed_ops()]
+    job = ReadOnlyJob(args.path)
+    results = [op.get_outputs(job.objects)[0] for op in job.completed_ops() if 'map' in op.name]
     reduce_hyper_results(job.objects, *results)
 
 
@@ -335,9 +335,9 @@ def hyper_search_cl():
         ('--no-zip', dict(action='store_true', help="If True, no zip file is produced.")),
     )
 
-    plot_cmd = (
-        'plot', 'Plot a hyper-parameter search.', _plot_search,
-        ('path', dict(help="Location to save the built job.", type=str)),
+    summary_cmd = (
+        'summary', 'Summarize results of a hyper-parameter search.', _summarize_search,
+        ('path', dict(help="Location of data store for job.", type=str)),
     )
 
     zip_cmd = (
@@ -347,4 +347,4 @@ def hyper_search_cl():
         ('--delete', dict(help="If True, delete the original.", action='store_true'))
     )
 
-    parallel_cl('Build, run and view hyper-parameter searches.', [build_cmd, plot_cmd, zip_cmd])
+    parallel_cl('Build, run and view hyper-parameter searches.', [build_cmd, summary_cmd, zip_cmd])

@@ -93,7 +93,9 @@ class RobustREINFORCE(TRPO):
             self.prev_policy.set_params_flat(params)
 
             expected_imp = beta * denom
-            success, new_params = maximizing_line_search(objective, params, full_step, expected_imp, verbose=cfg.verbose)
+            success, new_params = maximizing_line_search(
+                objective, params, full_step, expected_imp,
+                max_backtracks=cfg.max_line_search_steps, verbose=cfg.verbose)
 
             step_norm = np.linalg.norm(new_params - params)
 

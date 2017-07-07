@@ -9,7 +9,6 @@ from pprint import pformat
 import datetime
 import shutil
 import dill
-import os
 
 from spectral_dagger.utils.experiment import ExperimentStore
 from dps import cfg
@@ -23,8 +22,7 @@ from dps.utils import (
 def training_loop(exp_name=''):
     np.random.seed(cfg.seed)
 
-    exp_name = exp_name or "selection={}_updater={}_seed={}".format(
-        cfg.action_selection.__name__, cfg.build_updater.__name__, cfg.seed)
+    exp_name = exp_name or "updater={}_seed={}".format(cfg.build_updater.__name__, cfg.seed)
 
     loop = TrainingLoop(cfg.curriculum, exp_name)
     return loop.run()
@@ -144,7 +142,7 @@ class TrainingLoop(object):
                 # Build policy
                 is_training = tf.placeholder(tf.bool, shape=(), name="is_training")
                 exploration = build_scheduled_value(cfg.exploration_schedule, 'exploration')
-                if cfg.test_time_explore is not None:
+                if cfg.test_time_explore >= 0:
                     testing_exploration = tf.constant(cfg.test_time_explore, tf.float32, name='testing_exploration')
                     exploration = tf.cond(is_training, lambda: exploration, lambda: testing_exploration)
 
@@ -196,7 +194,7 @@ class TrainingLoop(object):
 
                 if cfg.visualize:
                     render_rollouts = getattr(cfg, 'render_rollouts', None)
-                    self.env.visualize(policy, 16, cfg.T, 'train', render_rollouts)
+                    self.env.visualize(policy, 4, cfg.T, 'train', render_rollouts)
 
                 if threshold_reached or cfg.power_through:
                     stage += 1
@@ -217,6 +215,8 @@ class TrainingLoop(object):
         return result
 
     def run_stage(self, stage, updater):
+        threshold_reached = False
+        reason = ""
         early_stop = EarlyStopHook(patience=cfg.patience)
 
         with time_limit(self.time_remaining, verbose=True) as limiter:
@@ -224,10 +224,10 @@ class TrainingLoop(object):
                 threshold_reached, reason = self._run_stage(stage, updater, early_stop)
             except KeyboardInterrupt:
                 threshold_reached = False
-                reason = "User interrupt."
+                reason = "User interrupt"
 
         if limiter.ran_out:
-            reason = "Time limit reached."
+            reason = "Time limit reached"
         return threshold_reached, reason, early_stop.best
 
     def _run_stage(self, stage, updater, early_stop):
@@ -242,9 +242,8 @@ class TrainingLoop(object):
         time_per_batch = 0.0
 
         while True:
-            n_epochs = updater.n_experiences / cfg.n_train
             if local_step >= cfg.max_steps:
-                reason = "Maximum number of steps reached."
+                reason = "Maximum number of steps reached"
                 break
 
             evaluate = self.global_step % cfg.eval_step == 0
@@ -280,16 +279,17 @@ class TrainingLoop(object):
                 if stop:
                     best_gstep, best_lstep, best_value = early_stop.best
                     print("Early stopping triggered.")
-                    reason = "Early stopping triggered."
+                    reason = "Early stopping triggered"
                     break
 
                 if val_loss < cfg.threshold:
-                    reason = "Validation loss threshold reached."
+                    reason = "Validation loss threshold reached"
                     threshold_reached = True
                     break
 
                 self.record('time_per_example', time_per_example)
                 self.record('time_per_batch', time_per_batch)
+                self.record('n_steps', local_step)
 
             else:
                 start_time = time.time()

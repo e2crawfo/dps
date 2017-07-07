@@ -32,8 +32,8 @@ def parse_timedelta(s):
 
 
 def submit_job(
-        input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', n_nodes=1, ppn=12,
-        walltime="1:00:00", cleanup_time="00:15:00", time_slack=200,
+        input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', ppn=12,
+        walltime="1:00:00", cleanup_time="00:15:00", time_slack=0,
         add_date=True, show_script=0, dry_run=0, parallel_exe="$HOME/.local/bin/parallel",
         pbs=True, queue=None, hosts=None, env_vars=None):
     """ Submit a Job to be executed in parallel.
@@ -51,8 +51,6 @@ def submit_job(
         written. Must be writeable by the master process.
     local_scratch_prefix: str
         Path to scratch directory that is local to each remote process.
-    n_nodes: int
-        Number of computational nodes to employ.
     ppn: int
         Number of processors per node.
     walltime: str
@@ -113,6 +111,9 @@ def submit_job(
     if cleanup_time > walltime:
         raise Exception("Cleanup time {} is larger than walltime {}!".format(cleanup_time, walltime))
 
+    walltime_seconds = int(walltime.total_seconds())
+    cleanup_time_seconds = int(cleanup_time.total_seconds())
+
     if not pbs:
         if not hosts:
             hosts = [":"]  # Only localhost
@@ -121,10 +122,18 @@ def submit_job(
         node_file = " --sshloginfile nodefile.txt "
     else:
         node_file = " --sshloginfile $PBS_NODEFILE "
+    n_nodes = len(hosts)
 
     idx_file = 'job_indices.txt'
 
     kwargs = locals().copy()
+
+    env = os.environ.copy()
+    if env_vars is not None:
+        env.update({e: str(v) for e, v in env_vars.items()})
+        kwargs['env_vars'] = ' '.join('--env ' + k for k in env_vars)
+    else:
+        kwargs['env_vars'] = ''
 
     ro_job = ReadOnlyJob(input_zip)
     completion = ro_job.completion(pattern)
@@ -138,12 +147,10 @@ def submit_job(
     abs_seconds_per_job = int(np.floor(total_compute_time / n_jobs_to_run))
     seconds_per_job = abs_seconds_per_job - time_slack
 
-    env = os.environ.copy()
-    if env_vars is not None:
-        env.update({e: str(v) for e, v in env_vars.items()})
-        kwargs['env_vars'] = ' '.join('--env ' + k for k in env_vars)
-    else:
-        kwargs['env_vars'] = ''
+    assert execution_time > 0
+    assert total_compute_time > 0
+    assert abs_seconds_per_job > 0
+    assert seconds_per_job > 0
 
     kwargs['abs_seconds_per_job'] = abs_seconds_per_job
     kwargs['seconds_per_job'] = seconds_per_job
@@ -210,8 +217,9 @@ echo Unzipping... {stderr}
 {parallel_exe} --no-notice {node_file} --nonall {env_vars} -k \\
     "cd {local_scratch} && unzip -ouq {input_zip_base} && echo \\$(hostname) && ls"
 
-echo Each job is alloted {abs_seconds_per_job} seconds, {seconds_per_job} seconds of which is pure computation time.
-echo Since we have {n_procs} processors, this batch should take at most {execution_time} seconds.
+echo We have {walltime_seconds} seconds to complete the entire job using {n_procs} processors.
+echo {execution_time} seconds have been reserved for job execution, and {cleanup_time_seconds} seconds have been reserved for cleanup.
+echo Each sub-job has been alloted {abs_seconds_per_job} seconds, {seconds_per_job} seconds of which is pure computation time.
 
 echo Running jobs... {stderr}
 

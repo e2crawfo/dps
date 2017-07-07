@@ -7,13 +7,13 @@ from dps.environment import TensorFlowEnv, BatchBox
 
 
 class Room(TensorFlowEnv):
-    action_names = ['delta_x', 'delta_y']
+    action_names = ['delta_x', 'delta_y', 'stop']
     make_input_available = False
     static_inp_width = 4
 
     def __init__(self, T, reward_std, max_step, restart_prob, dense_reward, l2l, n_val):
         self.rb = RegisterBank('RoomRB', 'x y r dx dy', 'goal_x goal_y', [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 'x y')
-        self.observation_space = BatchBox(low=-1.0, high=1.0, shape=(None, 5))
+        self.observation_space = BatchBox(low=-1.0, high=1.0, shape=(None, self.rb.visible_width))
         self.action_space = BatchBox(low=-np.inf, high=np.inf, shape=(None, self.n_actions))
 
         self.T = T
@@ -84,13 +84,15 @@ class Room(TensorFlowEnv):
                 tf.contrib.distributions.Uniform(-1., 1.).sample(tf.shape(x)),
                 new_y)
 
-        if self.dense_reward:
-            reward = -1+tf.exp(-0.5 * (new_x**2 + new_y**2) / (self.reward_std**2))
-        else:
-            reward = tf.cond(
-                tf.equal(t[0, 0], tf.constant(self.T-1)),
-                lambda: -1+tf.exp(-0.5 * (new_x**2 + new_y**2) / (self.reward_std**2)),
-                lambda: tf.fill(tf.shape(x), 0.0))
+        reward = -tf.cast(tf.sqrt(new_x**2 + new_y**2) > self.reward_std, tf.float32)
+
+        # if self.dense_reward:
+        #     reward = -1+tf.exp(-0.5 * (new_x**2 + new_y**2) / (self.reward_std**2))
+        # else:
+        #     reward = tf.cond(
+        #         tf.equal(t[0, 0], tf.constant(self.T-1)),
+        #         lambda: -1+tf.exp(-0.5 * (new_x**2 + new_y**2) / (self.reward_std**2)),
+        #         lambda: tf.fill(tf.shape(x), 0.0))
         new_registers = self.rb.wrap(
             x=new_x, y=new_y, goal_x=goal_x, goal_y=goal_y,
             dx=delta_x, dy=delta_y, r=reward)

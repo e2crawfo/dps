@@ -15,7 +15,8 @@ from dps.policy import (
 from dps.mnist import LeNet, MNIST_CONFIG
 from dps.experiments import (
     hello_world, room, simple_addition, pointer_following,
-    hard_addition, translated_mnist, mnist_arithmetic, simple_arithmetic)
+    hard_addition, translated_mnist, mnist_arithmetic, simple_arithmetic,
+    alt_arithmetic)
 
 
 DEFAULT_CONFIG = Config(
@@ -45,7 +46,7 @@ DEFAULT_CONFIG = Config(
     exploration_schedule="exponential 10.0 1000 0.96",
     noise_schedule=None,
 
-    test_time_explore=None,
+    test_time_explore=-1,
 
     max_grad_norm=0.0,
     l2_norm_penalty=0.0,
@@ -74,7 +75,7 @@ cfg._stack.append(DEFAULT_CONFIG)
 
 REINFORCE_CONFIG = Config(
     build_updater=REINFORCE,
-    test_time_explore=None,
+    test_time_explore=-1,
     patience=np.inf,
     entropy_schedule="0.1",
     lr_schedule="constant 0.001",
@@ -85,12 +86,13 @@ REINFORCE_CONFIG = Config(
 
 TRPO_CONFIG = Config(
     build_updater=TRPO,
-    test_time_explore=None,
+    test_time_explore=-1,
     patience=np.inf,
     entropy_schedule=None,
     exploration_schedule="10.0",
     gamma=1.0,
     max_cg_steps=10,
+    max_line_search_steps_steps=10,
     delta_schedule="0.01"
 )
 
@@ -101,7 +103,7 @@ ROBUST_CONFIG = Config(
     patience=np.inf,
     exploration_schedule="10.0",
     gamma=1.0,
-    max_cg_steps=10,
+    max_line_search_steps_steps=10,
     delta_schedule="0.01"
 )
 
@@ -230,7 +232,7 @@ def room_action_selection(env):
 
 ROOM_CONFIG = Config(
     build_env=room.build_env,
-    curriculum=[dict(T=5)],
+    curriculum=[dict(T=20)],
     # curriculum=[dict(T=20), dict(T=10), dict(T=5)],
     n_controller_units=32,
     action_selection=room_action_selection,
@@ -240,10 +242,10 @@ ROOM_CONFIG = Config(
     batch_size=10,
     dense_reward=False,
     restart_prob=0.0,
-    max_step=0.5,
+    max_step=0.1,
     room_angular=True,
     l2l=False,
-    reward_std=0.4,
+    reward_std=0.2,
 )
 
 
@@ -372,10 +374,10 @@ SIMPLE_ARITHMETIC_CONFIG = Config(
     build_env=simple_arithmetic.build_env,
 
     curriculum=[
-        dict(T=6, n_digits=3, shape=(2, 2), upper_bound=True),
+        dict(T=10, n_digits=3, shape=(2, 2), upper_bound=True),
     ],
     display=False,
-    mnist=True,
+    mnist=False,
     shape=(1, 2),
     op_loc=(0, 0),
     start_loc=(0, 0),
@@ -385,7 +387,7 @@ SIMPLE_ARITHMETIC_CONFIG = Config(
     batch_size=64,
     threshold=0.04,
 
-    reward_window=0.5,
+    reward_window=0.4,
 
     n_controller_units=64,
 
@@ -402,6 +404,43 @@ SIMPLE_ARITHMETIC_CONFIG = Config(
 
     log_name='simple_arithmetic',
     render_rollouts=simple_arithmetic.render_rollouts,
+)
+
+
+ALT_ARITHMETIC_CONFIG = Config(
+    build_env=alt_arithmetic.build_env,
+
+    curriculum=[
+        dict(T=10, n_digits=2, shape=(3, 1), upper_bound=False),
+    ],
+    display=False,
+    mnist=False,
+    shape=(1, 2),
+    op_loc=(0, 0),
+    start_loc=(0, 0),
+    n_digits=1,
+    upper_bound=False,
+    base=10,
+    batch_size=16,
+    threshold=0.04,
+
+    reward_window=0.4,
+
+    n_controller_units=64,
+
+    classifier_str="LeNet2_1024",
+    build_classifier=lambda inp, output_size, is_training=False: tf.nn.softmax(
+        LeNet(1024, activation_fn=tf.nn.sigmoid)(inp, output_size, is_training)),
+
+    mnist_config=MNIST_CONFIG.copy(
+        eval_step=100,
+        max_steps=100000,
+        patience=np.inf,
+        threshold=0.05,
+        include_blank=True),
+
+    log_name='alt_arithmetic',
+    render_rollouts=None
 )
 
 
@@ -567,7 +606,8 @@ tasks = dict(
     hard_addition=HARD_ADDITION_CONFIG,
     translated_mnist=TRANSLATED_MNIST_CONFIG,
     mnist_arithmetic=MNIST_ARITHMETIC_CONFIG,
-    simple_arithmetic=SIMPLE_ARITHMETIC_CONFIG)
+    simple_arithmetic=SIMPLE_ARITHMETIC_CONFIG,
+    alt_arithmetic=ALT_ARITHMETIC_CONFIG)
 
 test_configs = dict(
     hello_world=HELLO_WORLD_TEST,
