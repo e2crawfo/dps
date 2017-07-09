@@ -20,7 +20,7 @@ class TupleDist(object):
     def __init__(self, *dists):
         self.dists = dists
 
-    def rvs(self, shape):
+    def rvs(self, shape=None):
         stack = []
         for d in self.dists:
             if hasattr(d, 'rvs'):
@@ -51,7 +51,14 @@ class ChoiceDist(object):
             assert len(p) == len(choices)
         self.dtype = dtype
 
-    def rvs(self, shape):
+    def rvs(self, shape=None):
+        if shape is None:
+            choice = np.random.choice(len(self.choices), p=self.p)
+            if hasattr(choice, 'rvs'):
+                return choice.rvs()
+            else:
+                return choice
+
         indices = np.random.choice(len(self.choices), size=shape, p=self.p)
         results = np.zeros(shape, dtype=np.object)
         for i in range(len(self.choices)):
@@ -82,7 +89,7 @@ class LogUniform(object):
         self.hi = hi
         self.base = base or np.e
 
-    def rvs(self, shape):
+    def rvs(self, shape=None):
         return self.base ** np.random.uniform(self.lo, self.hi, shape)
 
     def __repr__(self):
@@ -116,15 +123,33 @@ def sample_configs(n, repeats, base_config, distributions):
             _distributions[k] = d
     distributions = _distributions
 
-    samples = {k: d.rvs(n) for k, d in distributions.items()}
-    configs = []
+    max_tries = 1000
+
+    sample_traces = set()
+    samples = []
+
     for i in range(n):
-        new = dict()
-        for k, s in samples.items():
-            new[k] = s[i]
-        new['idx'] = i
+        n_tries = 0
+        while True:
+            sample = {k: d.rvs(1)[0] for k, d in distributions.items()}
+            trace = '|'.join('{}|{}'.format(k, v) for k, v in sample.items())
+
+            if trace not in sample_traces:
+                break
+
+            n_tries += 1
+
+            if n_tries >= max_tries:
+                raise Exception("Tried {} times, could not generate a new unique configuration.")
+
+        sample_traces.add(trace)
+        samples.append(sample)
+
+    configs = []
+    for s in samples:
+        s['idx'] = i
         for r in range(repeats):
-            _new = copy.copy(new)
+            _new = copy.copy(s)
             _new['repeat'] = r
             _new['seed'] = gen_seed()
             configs.append(_new)
@@ -295,8 +320,7 @@ def build_search(path, name, n, repeats, alg, task, _zip, distributions=None, co
     job = Job(exp_dir.path)
 
     new_configs = sample_configs(n, repeats, config, distributions)
-    summaries = job.map(RunTrainingLoop(config), new_configs)
-    job.reduce(reduce_hyper_results, summaries, pass_store=1)
+    job.map(RunTrainingLoop(config), new_configs)
 
     job.save_object('metadata', 'distributions', distributions)
     job.save_object('metadata', 'config', config)

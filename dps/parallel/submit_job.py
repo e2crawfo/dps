@@ -274,6 +274,7 @@ zip -rq {name} {archive_root}
 mv {name}.zip ..
 cd ..
 
+dps-hyper summary {name}.zip
 dps-hyper view {name}.zip
 mv {input_zip_abs} {input_zip_abs}.bk
 cp -f {name}.zip {input_zip_abs}

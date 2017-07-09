@@ -94,7 +94,7 @@ TRPO_CONFIG = Config(
     exploration_schedule="10.0",
     gamma=1.0,
     max_cg_steps=10,
-    max_line_search_steps_steps=10,
+    max_line_search_steps=10,
     delta_schedule="0.01"
 )
 
@@ -105,7 +105,7 @@ ROBUST_CONFIG = Config(
     patience=np.inf,
     exploration_schedule="10.0",
     gamma=1.0,
-    max_line_search_steps_steps=10,
+    max_line_search_steps=10,
     delta_schedule="0.01"
 )
 
@@ -426,7 +426,13 @@ ALT_ARITHMETIC_CONFIG = Config(
     build_env=alt_arithmetic.build_env,
 
     curriculum=[
-        dict(T=10, n_digits=2, shape=(3, 1), upper_bound=False),
+        dict(T=4, n_digits=1, shape=(2, 1), upper_bound=True),
+        dict(T=8, n_digits=1, shape=(2, 1), upper_bound=True),
+        dict(T=8, n_digits=1, shape=(3, 1), upper_bound=True),
+        dict(T=12, n_digits=1, shape=(3, 1), upper_bound=True),
+        dict(T=12, n_digits=2, shape=(3, 1), upper_bound=True),
+        dict(T=12, n_digits=2, shape=(4, 1), upper_bound=True),
+        dict(T=12, n_digits=3, shape=(4, 1), upper_bound=True),
     ],
     display=False,
     mnist=False,
