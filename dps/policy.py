@@ -381,4 +381,10 @@ class Deterministic(TensorFlowSelection):
         self.func = func or (lambda x: tf.identity(x))
 
     def _dist(self, utils, exploration):
-        return tf.contrib.distribution.VectorDeterministic(self.func(utils))
+        return tf_dists.VectorDeterministic(self.func(utils))
+
+    def entropy(self, utils, exploration):
+        return tf.fill((tf.shape(utils)[0], 1), 0.)
+
+    def kl(self, utils1, utils2, e1, e2=None):
+        raise Exception()

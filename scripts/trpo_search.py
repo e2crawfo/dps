@@ -1,3 +1,5 @@
+import numpy as np
+
 import clify
 
 from dps import cfg
@@ -59,18 +61,8 @@ with config:
 distributions = dict(
     n_controller_units=[32, 64, 128],
     batch_size=[16, 32, 64, 128],
-    entropy_schedule=[
-        'constant 1e-1',
-        'constant 1e-2',
-        'constant 1e-3',
-        'constant 1e-4',
-        'constant 1e-5',
-        'poly 1e-1 100000 1e-6 1',
-        'poly 1e-2 100000 1e-6 1',
-        'poly 1e-3 100000 1e-6 1',
-        'poly 1e-4 100000 1e-6 1',
-        'poly 1e-5 100000 1e-6 1',
-    ],
+    entropy_schedule=['constant {}'.format(n) for n in 0.5**np.arange(10, step=2)] +
+                     ['poly {} 100000 1e-6 1'.format(n) for n in 0.5**np.arange(10, step=2)],
     exploration_schedule=[
         'exp 1.0 100000 0.01',
         'exp 1.0 100000 0.1',
@@ -89,20 +81,25 @@ distributions = dict(
 )
 
 alg = 'trpo'
-task = 'simple_arithmetic'
+task = 'alt_arithmetic'
 
-n_param_settings = 300
-n_repeats = 10
+if 1:
+    n_param_settings = 300
+    n_repeats = 10
+    hosts = ['ecrawf6@lab1-{}.cs.mcgill.ca'.format(i+1) for i in range(10)]
+    walltime = "96:00:00"
+    cleanup_time = "00:30:00"
+    time_slack = 120
+else:
+    n_param_settings = 4
+    n_repeats = 2
+    hosts = ['ecrawf6@lab1-{}.cs.mcgill.ca'.format(i+1) for i in range(10)][:2]
+    walltime = "00:3:00"
+    cleanup_time = "00:00:15"
+    time_slack = 120
 
 job, archive_path = build_search(
     '/tmp/dps/search', 'trpo_search', n_param_settings, n_repeats, alg, task, True, distributions, config, use_time=1)
-
-hosts = ['ecrawf6@lab1-{}.cs.mcgill.ca'.format(i+1) for i in range(10)]
-# hosts += ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i+1) for i in range(10)]
-
-walltime = "96:00:00"
-cleanup_time = "00:15:00"
-time_slack = 120
 
 submit_job(
     archive_path, 'map', '/tmp/dps/search/execution/', pbs=False,

@@ -426,13 +426,7 @@ ALT_ARITHMETIC_CONFIG = Config(
     build_env=alt_arithmetic.build_env,
 
     curriculum=[
-        dict(T=4, n_digits=1, shape=(2, 1), upper_bound=True),
-        dict(T=8, n_digits=1, shape=(2, 1), upper_bound=True),
-        dict(T=8, n_digits=1, shape=(3, 1), upper_bound=True),
-        dict(T=12, n_digits=1, shape=(3, 1), upper_bound=True),
-        dict(T=12, n_digits=2, shape=(3, 1), upper_bound=True),
-        dict(T=12, n_digits=2, shape=(4, 1), upper_bound=True),
-        dict(T=12, n_digits=3, shape=(4, 1), upper_bound=True),
+        dict(T=10, n_digits=2, shape=(3, 1), upper_bound=True),
     ],
     display=False,
     mnist=False,
@@ -442,7 +436,7 @@ ALT_ARITHMETIC_CONFIG = Config(
     n_digits=1,
     upper_bound=False,
     base=10,
-    batch_size=16,
+    batch_size=64,
     threshold=0.04,
 
     reward_window=0.4,
@@ -614,6 +608,40 @@ SIMPLE_ARITHMETIC_TEST = SIMPLE_ARITHMETIC_CONFIG.copy(
 adjust_for_test(SIMPLE_ARITHMETIC_TEST)
 
 
+ALT_ARITHMETIC_TEST = ALT_ARITHMETIC_CONFIG.copy(
+    shape=(3, 1),
+    op_loc=(0, 0),
+    start_loc=(0, 0),
+    n_digits=2,
+    upper_bound=False,
+    base=10,
+    batch_size=16,
+    threshold=0.04,
+
+    reward_window=0.4,
+
+    n_controller_units=64,
+
+    ablation='',  # anything other than "bad_wiring", "no_classifiers", "no_ops", "no_modules" will use the default.
+
+    classifier_str="LeNet2_1024",
+    build_classifier=lambda inp, output_size, is_training=False: tf.nn.softmax(
+        LeNet(1024, activation_fn=tf.nn.sigmoid)(inp, output_size, is_training)),
+
+    mnist_config=MNIST_CONFIG.copy(
+        eval_step=100,
+        max_steps=100000,
+        patience=np.inf,
+        threshold=0.05,
+        include_blank=True),
+
+    log_name='alt_arithmetic',
+    render_rollouts=None,
+    action_seq=[5, 2, 4, 9, 2, 4, 8]
+)
+adjust_for_test(ALT_ARITHMETIC_TEST)
+
+
 algorithms = dict(
     reinforce=REINFORCE_CONFIG,
     trpo=TRPO_CONFIG,
@@ -640,4 +668,5 @@ test_configs = dict(
     hard_addition=HARD_ADDITION_TEST,
     translated_mnist=TRANSLATED_MNIST_TEST,
     mnist_arithmetic=MNIST_ARITHMETIC_TEST,
-    simple_arithmetic=SIMPLE_ARITHMETIC_TEST)
+    simple_arithmetic=SIMPLE_ARITHMETIC_TEST,
+    alt_arithmetic=ALT_ARITHMETIC_TEST)
