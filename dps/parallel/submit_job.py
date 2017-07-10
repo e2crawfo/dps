@@ -32,7 +32,7 @@ def parse_timedelta(s):
 
 
 def submit_job(
-        input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', ppn=12,
+        input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', n_nodes=1, ppn=12,
         walltime="1:00:00", cleanup_time="00:15:00", time_slack=0,
         add_date=True, show_script=0, dry_run=0, parallel_exe="$HOME/.local/bin/parallel",
         pbs=True, queue=None, hosts=None, env_vars=None):
@@ -114,15 +114,15 @@ def submit_job(
     walltime_seconds = int(walltime.total_seconds())
     cleanup_time_seconds = int(cleanup_time.total_seconds())
 
-    if not pbs:
+    if pbs:
+        node_file = " --sshloginfile $PBS_NODEFILE "
+    else:
         if not hosts:
             hosts = [":"]  # Only localhost
         with (Path(job_directory) / 'nodefile.txt').open('w') as f:
             f.write('\n'.join(hosts))
         node_file = " --sshloginfile nodefile.txt "
-    else:
-        node_file = " --sshloginfile $PBS_NODEFILE "
-    n_nodes = len(hosts)
+        n_nodes = len(hosts)
 
     idx_file = 'job_indices.txt'
 
@@ -159,15 +159,27 @@ def submit_job(
     kwargs['execution_time'] = execution_time
     kwargs['n_procs'] = n_procs
 
-    stage_data_code = '\n'.join(
-        ("scp -q {{input_zip_abs}} {}:{{local_scratch}}".format(h)
-            if h != ":" else "cp {input_zip_abs} {local_scratch}")
-        for h in hosts)
+    if pbs:
+        stage_data_code = '''
+{parallel_exe} --no-notice {node_file} --nonall {env_vars} \\
+    "cp {input_zip_abs} {local_scratch}
+'''
+    else:
+        stage_data_code = '\n'.join(
+            ("scp -q {{input_zip_abs}} {}:{{local_scratch}}".format(h)
+                if h != ":" else "cp {input_zip_abs} {local_scratch}")
+            for h in hosts)
 
-    fetch_results_code = '\n'.join(
-        ("scp -q {}:{{local_scratch}}/results.zip ./results/{}.zip".format(h, i)
-            if h != ":" else "cp {{local_scratch}}/results.zip ./results/{}.zip".format(i))
-        for i, h in enumerate(hosts))
+    if pbs:
+        fetch_results_code = '''
+{parallel_exe} --no-notice {node_file} --nonall {env_vars} \\
+    "cp {local_scratch}/results.zip {job_directory}/results/\\$(hostname).zip
+'''
+    else:
+        fetch_results_code = '\n'.join(
+            ("scp -q {}:{{local_scratch}}/results.zip ./results/{}.zip".format(h, i)
+                if h != ":" else "cp {{local_scratch}}/results.zip ./results/{}.zip".format(i))
+            for i, h in enumerate(hosts))
 
     code = '''#!/bin/bash '''
 
