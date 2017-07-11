@@ -5,7 +5,8 @@ from dps import cfg
 from dps.register import RegisterBank
 from dps.environment import (
     RegressionDataset, RegressionEnv, CompositeEnv, TensorFlowEnv)
-from dps.mnist import char_to_idx, load_emnist, MnistPretrained, ClassifierFunc
+from dps.vision import MnistPretrained, ClassifierFunc
+from dps.vision.dataset import char_to_idx, load_emnist
 
 
 def digits_to_numbers(digits, base=10, axis=-1, keepdims=False):
@@ -40,7 +41,6 @@ class AltArithmeticDataset(RegressionDataset):
     def __init__(
             self, mnist, symbols, shape, n_digits, upper_bound, base,
             n_examples, op_loc, for_eval=False, shuffle=True, force_2d=False):
-
         assert 1 <= base <= 10
 
         # symbols is a list of pairs of the form (letter, reduction function)
@@ -104,30 +104,28 @@ class AltArithmeticDataset(RegressionDataset):
 
         element_shape = blank_element.shape
         m, n = element_shape
-        _blank_element = blank_element.reshape((1,)*len(shape) + blank_element.shape)
+        reshaped_blank_element = blank_element.reshape((1,)*len(shape) + blank_element.shape)
 
         for j in range(n_examples):
             if upper_bound:
-                n = np.random.randint(0, n_digits+1)
+                current_n_digits = np.random.randint(0, n_digits+1)
             else:
-                n = n_digits
+                current_n_digits = n_digits
 
             if op_loc is None:
-                indices = np.random.choice(size, n+1, replace=False)
+                indices = np.random.choice(size, current_n_digits+1, replace=False)
             else:
                 _op_loc = np.ravel_multi_index(op_loc, shape)
-                indices = np.random.choice(size-1, n, replace=False)
+                indices = np.random.choice(size-1, current_n_digits, replace=False)
                 indices[indices == _op_loc] = size-1
                 indices = np.append(_op_loc, indices)
 
             if force_2d:
-                import pdb; pdb.set_trace()
-
-                env = np.tile(_blank_element, shape)
+                env = np.tile(blank_element, shape)
                 locs = zip(*np.unravel_index(indices, shape))
                 locs = [(slice(i*m, (i+1)*m), slice(j*n, (j+1)*n)) for i, j in locs]
             else:
-                env = np.tile(_blank_element, shape+(1,)*len(element_shape))
+                env = np.tile(reshaped_blank_element, shape+(1,)*len(element_shape))
                 locs = list(zip(*np.unravel_index(indices, shape)))
 
             x, y = symbol_reps.get_random()

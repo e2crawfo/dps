@@ -4,18 +4,18 @@ import tensorflow as tf
 from pathlib import Path
 from shutil import rmtree
 
-from dps.attention import DRAW_attention_2D
 from dps.utils import MLP, NumpySeed
-from dps.mnist import (
+from dps.vision import (
     TranslatedMnistDataset, load_or_train, MNIST_CONFIG,
     MnistPretrained, DRAW, LeNet, train_mnist)
+from dps.vision.attention import DRAW_attention_2D
 
 
 N = 14
 
 
 def _eval_model(sess, inference, x_ph, symbols):
-    test_dataset = TranslatedMnistDataset(28, 1, np.inf, 10, for_eval=True, symbols=symbols)
+    test_dataset = TranslatedMnistDataset(n_examples=100, for_eval=True, symbols=symbols)
     y_ph = tf.placeholder(tf.int64, (None))
     _y = tf.reshape(y_ph, (-1,))
     loss = tf.reduce_mean(
@@ -31,10 +31,14 @@ def _eval_model(sess, inference, x_ph, symbols):
 
 
 def build_model(inp, output_size, is_training):
+    if len(inp.shape) == 2:
+        s = int(np.sqrt(int(inp.shape[1])))
+        inp = tf.reshape(inp, (-1, s, s))
+
     batch_size = tf.shape(inp)[0]
     with tf.name_scope('DRAW'):
         glimpse = DRAW_attention_2D(
-            tf.reshape(inp, (-1, 28, 28)),
+            inp,
             fovea_x=tf.zeros((batch_size, 1)),
             fovea_y=tf.zeros((batch_size, 1)),
             delta=tf.ones((batch_size, 1)),
@@ -43,6 +47,16 @@ def build_model(inp, output_size, is_training):
     glimpse = tf.reshape(glimpse, (-1, N**2))
     logits = MLP([100, 100], activation_fn=tf.nn.sigmoid)(glimpse, output_size)
     return tf.nn.softmax(logits)
+
+
+def make_checkpoint_dir(config):
+    checkpoint_dir = Path(config.log_root) / 'mnist_test/checkpoint'
+    try:
+        rmtree(str(checkpoint_dir))
+    except FileNotFoundError:
+        pass
+    checkpoint_dir.mkdir(parents=True, exist_ok=False)
+    return checkpoint_dir
 
 
 def test_mnist_load_or_train():
@@ -58,24 +72,18 @@ def test_mnist_load_or_train():
             eval_step=100,
             include_blank=True)
 
+        checkpoint_dir = make_checkpoint_dir(config)
         output_size = n_symbols + 1
 
         g = tf.Graph()
         with g.device("/cpu:0"):
             with g.as_default():
+
                 with tf.variable_scope('mnist') as var_scope:
-                    x_ph = tf.placeholder(tf.float32, (None, 28**2))
+                    x_ph = tf.placeholder(tf.float32, (None, 28, 28))
                     inference = build_model(x_ph, output_size, is_training=False)
+
                 sess = tf.Session()
-
-                checkpoint_dir = Path(config.log_root) / 'mnist_test/checkpoint'
-                try:
-                    rmtree(str(checkpoint_dir))
-                except FileNotFoundError:
-                    pass
-
-                checkpoint_dir.mkdir(parents=True, exist_ok=False)
-
                 loaded = load_or_train(
                     sess, build_model, train_mnist, var_scope,
                     str(checkpoint_dir / 'model.chk'), train_config=config)
@@ -86,15 +94,17 @@ def test_mnist_load_or_train():
         g = tf.Graph()
         with g.device("/cpu:0"):
             with g.as_default():
-                with tf.variable_scope('mnist') as var_scope:
-                    x_ph = tf.placeholder(tf.float32, (None, 28**2))
-                    inference = build_model(x_ph, output_size, is_training=False)
-                sess = tf.Session()
 
+                with tf.variable_scope('mnist') as var_scope:
+                    x_ph = tf.placeholder(tf.float32, (None, 28, 28))
+                    inference = build_model(x_ph, output_size, is_training=False)
+
+                sess = tf.Session()
                 loaded = load_or_train(
                     sess, build_model, train_mnist, var_scope,
                     str(checkpoint_dir / 'model.chk'), train_config=config)
                 assert loaded
+
                 _eval_model(sess, inference, x_ph, symbols)
 
 
@@ -108,7 +118,7 @@ def lenet(inp, output_size, is_training):
     return tf.nn.softmax(logits)
 
 
-@pytest.mark.parametrize('preprocess', [False])
+@pytest.mark.parametrize('preprocess', [True, False])
 @pytest.mark.parametrize('classifier', ['mlp', 'lenet'])
 def test_mnist_pretrained(preprocess, classifier):
     if preprocess:
@@ -129,25 +139,20 @@ def test_mnist_pretrained(preprocess, classifier):
         config = MNIST_CONFIG.copy(
             eval_step=100, max_steps=10000, symbols=list(symbols), include_blank=True)
 
+        checkpoint_dir = make_checkpoint_dir(config)
+
         g = tf.Graph()
         with g.as_default():
 
             sess = tf.Session()
 
-            checkpoint_dir = Path(config.log_root) / 'mnist_test/checkpoint'
-            try:
-                rmtree(str(checkpoint_dir))
-            except FileNotFoundError:
-                pass
-
-            checkpoint_dir.mkdir(parents=True, exist_ok=False)
-
             with sess.as_default():
                 build_model = MnistPretrained(
                     prepper, build_classifier, model_dir=str(checkpoint_dir), mnist_config=config)
-                x_ph = tf.placeholder(tf.float32, (None, 28**2))
+                x_ph = tf.placeholder(tf.float32, (None, 28, 28))
                 inference = build_model(x_ph, output_size, is_training=False, preprocess=True)
                 assert not build_model.was_loaded
+
                 _eval_model(sess, inference, x_ph, symbols)
 
         g = tf.Graph()
@@ -157,7 +162,7 @@ def test_mnist_pretrained(preprocess, classifier):
             with sess.as_default():
                 build_model = MnistPretrained(
                     prepper, build_classifier, model_dir=str(checkpoint_dir), mnist_config=config)
-                x_ph = tf.placeholder(tf.float32, (None, 28**2))
+                x_ph = tf.placeholder(tf.float32, (None, 28, 28))
                 inference = build_model(x_ph, output_size, is_training=False, preprocess=True)
                 assert build_model.was_loaded
 

@@ -9,7 +9,7 @@ from dps import cfg
 from dps.register import RegisterBank
 from dps.environment import (
     RegressionEnv, CompositeEnv, TensorFlowEnv)
-from dps.mnist import (
+from dps.vision import (
     TranslatedMnistDataset, DRAW, DiscreteAttn,
     MnistPretrained, MNIST_CONFIG, ClassifierFunc)
 
@@ -25,10 +25,11 @@ class TranslatedMnistEnv(RegressionEnv):
         self.inc_y = inc_y
         n_digits = 1
         max_overlap = 200
+        kwargs = dict(W=W, n_digits=n_digits, max_overlap=max_overlap)
         super(TranslatedMnistEnv, self).__init__(
-            train=TranslatedMnistDataset(W, n_digits, max_overlap, n_train, for_eval=False),
-            val=TranslatedMnistDataset(W, n_digits, max_overlap, n_val, for_eval=True),
-            test=TranslatedMnistDataset(W, n_digits, max_overlap, n_test, for_eval=True))
+            train=TranslatedMnistDataset(n_examples=n_train, for_eval=False, **kwargs),
+            val=TranslatedMnistDataset(n_examples=n_val, for_eval=True, **kwargs),
+            test=TranslatedMnistDataset(n_examples=n_test, for_eval=True, **kwargs))
 
     def __str__(self):
         return "<TranslatedMnistEnv W={}>".format(self.W)
@@ -77,7 +78,7 @@ class TranslatedMnist(TensorFlowEnv):
         super(TranslatedMnist, self).__init__()
 
     def static_inp_type_and_shape(self):
-        return (tf.float32, (self.W*self.W,))
+        return (tf.float32, (self.W, self.W))
 
     make_input_available = True
 
@@ -85,6 +86,8 @@ class TranslatedMnist(TensorFlowEnv):
         outp, fovea_x, fovea_y, vision, delta, glimpse = self.rb.as_tuple(r)
 
         glimpse = self.build_attention(inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta)
+        glimpse = tf.reshape(glimpse, (-1, int(np.product(glimpse.shape[1:]))))
+
         digit_classification = self.build_digit_classifier(glimpse)
         vision = tf.cast(digit_classification, tf.float32)
 
@@ -142,6 +145,8 @@ class TranslatedMnist(TensorFlowEnv):
         outp = (1 - store) * _outp + store * _vision
 
         glimpse = self.build_attention(inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta)
+        glimpse = tf.reshape(glimpse, (-1, int(np.product(glimpse.shape[1:]))))
+
         digit_classification = self.build_digit_classifier(glimpse)
         vision = tf.cast(digit_classification, tf.float32)
 

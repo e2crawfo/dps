@@ -8,7 +8,8 @@ from dps import cfg
 from dps.register import RegisterBank
 from dps.environment import (
     RegressionDataset, RegressionEnv, CompositeEnv, TensorFlowEnv)
-from dps.mnist import char_to_idx, load_emnist, MnistPretrained, ClassifierFunc
+from dps.vision import MnistPretrained, ClassifierFunc
+from dps.vision.dataset import char_to_idx, load_emnist
 
 
 def digits_to_numbers(digits, base=10, axis=-1, keepdims=False):

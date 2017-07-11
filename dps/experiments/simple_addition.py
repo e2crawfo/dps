@@ -5,7 +5,7 @@ from dps import cfg
 from dps.register import RegisterBank
 from dps.environment import (
     RegressionDataset, RegressionEnv, CompositeEnv, TensorFlowEnv)
-from dps.attention import apply_gaussian_filter
+from dps.vision.attention import apply_gaussian_filter
 
 
 class SimpleAdditionDataset(RegressionDataset):

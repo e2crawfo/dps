@@ -37,7 +37,7 @@ class QLearning(ReinforcementLearningUpdater):
 
     def build_graph(self):
         with tf.name_scope("train"):
-            self.obs = tf.placeholder(tf.float32, shape=(None, None, self.obs_dim), name="_obs")
+            self.obs = tf.placeholder(tf.float32, shape=(None, None)+self.obs_shape, name="_obs")
             self.actions = tf.placeholder(tf.float32, shape=(None, None, self.n_actions), name="_actions")
             self.rewards = tf.placeholder(tf.float32, shape=(None, None, 1), name="_rewards")
             self.reward_per_ep = tf.squeeze(tf.reduce_sum(tf.reduce_mean(self.rewards, axis=1), axis=0, name="_reward_per_ep"))

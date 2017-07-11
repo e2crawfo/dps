@@ -228,6 +228,9 @@ class MLP(object):
         self.fc_kwargs = fc_kwargs
 
     def __call__(self, inp, output_size):
+        if len(inp.shape) > 2:
+            trailing_dim = np.product([int(s) for s in inp.shape[1:]])
+            inp = tf.reshape(inp, (tf.shape(inp)[0], trailing_dim))
         hidden = inp
         for i, nu in enumerate(self.n_units):
             hidden = fully_connected(hidden, nu, **self.fc_kwargs)

@@ -105,6 +105,10 @@ class RegressionDataset(object):
         self._index_in_epoch = 0
 
     @property
+    def obs_shape(self):
+        return self.x.shape[1:]
+
+    @property
     def n_examples(self):
         return self.x.shape[0]
 
@@ -186,9 +190,8 @@ class RegressionEnv(Env):
         self.n_actions = self.train.y.shape[1]
         self.action_space = BatchBox(low=-np.inf, high=np.inf, shape=(None, self.n_actions))
 
-        self.obs_dim = self.train.x.shape[1]
-        self.observation_space = BatchBox(
-            low=-np.inf, high=np.inf, shape=(None, self.obs_dim))
+        self.obs_shape = self.train.x.shape[1:]
+        self.observation_space = BatchBox(low=-np.inf, high=np.inf, shape=(None,) + self.obs_shape)
 
         self.reward_range = (-np.inf, 0)
 
@@ -372,8 +375,8 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
         self._assert_defined('rb')
 
     @property
-    def obs_dim(self):
-        return self.rb.visible_width
+    def obs_shape(self):
+        return (self.rb.visible_width,)
 
     def _assert_defined(self, attr):
         assert getattr(self, attr) is not None, (
@@ -553,8 +556,8 @@ class CompositeEnv(Env):
         self.n_actions = self.internal.n_actions
         self.action_space = BatchBox(low=0.0, high=1.0, shape=(None, self.n_actions))
 
-        self.obs_dim = self.rb.visible_width
-        self.observation_space = BatchBox(low=-np.inf, high=np.inf, shape=(None, self.obs_dim))
+        self.obs_shape = (self.rb.visible_width,)
+        self.observation_space = BatchBox(low=-np.inf, high=np.inf, shape=(None,)+self.obs_shape)
 
         self.reward_range = external.reward_range
         self.sampler = None

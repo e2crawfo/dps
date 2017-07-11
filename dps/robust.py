@@ -24,7 +24,7 @@ class RobustREINFORCE(TRPO):
         with tf.name_scope("updater"):
             self.delta = build_scheduled_value(self.delta_schedule, 'delta')
 
-            self.obs = tf.placeholder(tf.float32, shape=(self.T, None, self.obs_dim), name="_obs")
+            self.obs = tf.placeholder(tf.float32, shape=(self.T, None)+self.obs_shape, name="_obs")
             self.actions = tf.placeholder(tf.float32, shape=(self.T, None, self.n_actions), name="_actions")
             self.advantage = tf.placeholder(tf.float32, shape=(self.T, None, 1), name="_advantage")
             self.rewards = tf.placeholder(tf.float32, shape=(self.T, None, 1), name="_rewards")

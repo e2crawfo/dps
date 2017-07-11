@@ -19,10 +19,11 @@ def build_env():
         mnist=True, shape=cfg.shape, n_digits=cfg.n_digits,
         upper_bound=cfg.upper_bound, base=cfg.base, n_train=cfg.n_train,
         n_val=cfg.n_val, n_test=cfg.n_test, op_loc=cfg.op_loc,
-        start_loc=cfg.start_loc)
+        start_loc=cfg.start_loc, force_2d=cfg.force_2d)
 
 
 config = DEFAULT_CONFIG.copy(
+    force_2d=True,
     n_train=10000,
     n_val=1000,
     n_test=0,
@@ -38,12 +39,11 @@ config = DEFAULT_CONFIG.copy(
     base=10,
     build_updater=DifferentiableUpdater,
     build_env=build_env,
-    n_controller_units=100,
+    n_controller_units=1000,
     action_selection=lambda env: Deterministic(env.n_actions),
     controller=lambda n_params: FeedforwardCell(LeNet(n_units=cfg.n_controller_units), n_params),
-    log_dir="alt_arithmetic"
+    log_name="cnn_alt_arithmetic"
 )
-
 
 start_time = time.time()
 print("Starting new training run at: ")

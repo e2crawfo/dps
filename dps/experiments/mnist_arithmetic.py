@@ -5,7 +5,7 @@ from dps import cfg
 from dps.register import RegisterBank
 from dps.environment import (
     RegressionEnv, CompositeEnv, TensorFlowEnv)
-from dps.mnist import (
+from dps.vision import (
     TranslatedMnistDataset, MnistArithmeticDataset, DRAW,
     MnistPretrained, MNIST_CONFIG, ClassifierFunc)
 
@@ -24,20 +24,25 @@ class MnistArithmeticEnv(RegressionEnv):
         max_overlap = 100
 
         if simple:
-            # We only learn about one function, addition, and there is no symbol to extract.
+            kwargs = dict(W=W, n_digits=n_digits, max_overlap=max_overlap)
             super(MnistArithmeticEnv, self).__init__(
-                train=TranslatedMnistDataset(W, n_digits, max_overlap, n_train, for_eval=False),
-                val=TranslatedMnistDataset(W, n_digits, max_overlap, n_val, for_eval=True),
-                test=TranslatedMnistDataset(W, n_digits, max_overlap, n_test, for_eval=True))
+                train=TranslatedMnistDataset(n_examples=n_train, for_eval=False, **kwargs),
+                val=TranslatedMnistDataset(n_examples=n_val, for_eval=True, **kwargs),
+                test=TranslatedMnistDataset(n_examples=n_test, for_eval=True, **kwargs))
         else:
-            symbols = [('A', lambda x: sum(x)), ('M', lambda x: np.product(x)), ('C', lambda x: len(x))]
+            reductions = [('A', lambda x: sum(x)), ('M', lambda x: np.product(x)), ('C', lambda x: len(x))]
+            kwargs = dict(
+                W=W, n_digits=n_digits, max_overlap=max_overlap,
+                reductions=reductions, upper_bound=upper_bound, base=base)
+
             train = MnistArithmeticDataset(
-                symbols, W, n_digits, max_overlap, n_train, upper_bound, base=base, for_eval=False, shuffle=True)
+                n_examples=n_train, for_eval=False, shuffle=True, **kwargs)
             val = MnistArithmeticDataset(
-                symbols, W, n_digits, max_overlap, n_val, upper_bound, base=base, for_eval=True)
+                n_examples=n_train, for_eval=True, shuffle=False, **kwargs)
             test = MnistArithmeticDataset(
-                symbols, W, n_digits, max_overlap, n_test, upper_bound, base=base, for_eval=True)
-            super(MnistArithmeticEnv, self).__init__(train=train, val=val, test=test)
+                n_examples=n_train, for_eval=True, shuffle=False, **kwargs)
+
+        super(MnistArithmeticEnv, self).__init__(train=train, val=val, test=test)
 
     def __str__(self):
         return "<MnistArithmeticEnv W={}>".format(self.W)

@@ -1,7 +1,8 @@
 import numpy as np
 
 import clify
-from dps import cfg from dps.utils import Config
+from dps import cfg
+from dps.utils import Config
 from dps.parallel.submit_job import submit_job
 from dps.parallel.hyper import build_search
 

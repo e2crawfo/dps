@@ -1,10 +1,9 @@
 import numpy as np
 import tensorflow as tf
-import os
 
 from dps import cfg
 from dps.utils import (
-    CompositeCell, MLP, FixedDiscreteController, FixedController, Config)
+    CompositeCell, MLP, FixedDiscreteController, FixedController, DpsConfig, Config)
 from dps.reinforce import REINFORCE
 from dps.trpo import TRPO
 from dps.robust import RobustREINFORCE
@@ -12,55 +11,43 @@ from dps.qlearning import QLearning
 from dps.policy import (
     Softmax, EpsilonGreedy, Deterministic,
     Normal, NormalWithFixedScale, Gamma, Bernoulli, ProductDist)
-from dps.mnist import LeNet, MNIST_CONFIG
+from dps.vision import LeNet, MNIST_CONFIG
 from dps.experiments import (
     hello_world, room, simple_addition, pointer_following,
     hard_addition, translated_mnist, mnist_arithmetic, simple_arithmetic,
     alt_arithmetic)
 
 
-DEFAULT_CONFIG = Config(
-    seed=12,
+DEFAULT_CONFIG = DpsConfig(
+    seed=None,
 
     preserve_policy=True,  # Whether to use the policy learned on the last stage of the curriculum for each new stage.
+    power_through=True,  # Whether to complete the entire curriculum, even if threshold not reached.
 
     optimizer_spec="rmsprop",
     build_updater=None,
 
-    power_through=True,  # Whether to complete the entire curriculum, even if threshold not reached.
     slim=False,  # If true, tries to use little disk space
     max_steps=100,
     batch_size=100,
     n_train=10000,
     n_val=1000,
     n_test=0,
-
     threshold=1e-2,
     patience=np.inf,
 
     display_step=100,
     eval_step=10,
-    checkpoint_step=1000,
 
-    lr_schedule="exponential 0.001 1000 0.96",
-    exploration_schedule="exponential 10.0 1000 0.96",
+    gamma=1.0,
     noise_schedule=None,
-
     test_time_explore=-1,
-
     max_grad_norm=0.0,
     l2_norm_penalty=0.0,
-    gamma=1.0,
     reward_window=0.1,
+    exploration_schedule='0.1',
+    lr_schedule='0.001',
 
-    n_auxiliary_tasks=0,
-    auxiliary_coef=0,
-
-    debug=False,
-    verbose=False,
-    display=False,
-    save_display=False,
-    path=os.getcwd(),
     max_time=0,
 
     n_controller_units=32,
@@ -77,22 +64,16 @@ cfg._stack.append(DEFAULT_CONFIG)
 
 REINFORCE_CONFIG = Config(
     build_updater=REINFORCE,
-    test_time_explore=-1,
-    patience=np.inf,
     entropy_schedule="0.1",
     lr_schedule="constant 0.001",
     exploration_schedule='poly 10 100000 0.1 1',
-    gamma=1.0,
 )
 
 
 TRPO_CONFIG = Config(
     build_updater=TRPO,
-    test_time_explore=-1,
-    patience=np.inf,
     entropy_schedule=None,
     exploration_schedule="10.0",
-    gamma=1.0,
     max_cg_steps=10,
     max_line_search_steps=10,
     delta_schedule="0.01"
@@ -101,10 +82,8 @@ TRPO_CONFIG = Config(
 
 ROBUST_CONFIG = Config(
     build_updater=RobustREINFORCE,
-    test_time_explore=0.1,
-    patience=np.inf,
+    entropy_schedule="0.1",
     exploration_schedule="10.0",
-    gamma=1.0,
     max_line_search_steps=10,
     delta_schedule="0.01"
 )

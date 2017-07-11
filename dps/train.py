@@ -167,7 +167,7 @@ class TrainingLoop(object):
 
                 self.policy = policy = Policy(
                     controller, action_selection, exploration,
-                    env.obs_dim, name="{}_policy".format(env.__class__.__name__))
+                    env.obs_shape, name="{}_policy".format(env.__class__.__name__))
                 policy.capture_scope()
 
                 updater = cfg.build_updater(env, policy)
@@ -347,7 +347,7 @@ def build_and_visualize(load_from=None):
 
         action_selection = cfg.action_selection(env)
         controller = cfg.controller(action_selection.n_params)
-        policy = Policy(controller, action_selection, exploration, env.obs_dim)
+        policy = Policy(controller, action_selection, exploration, env.obs_shape)
 
         policy_scope = getattr(cfg, 'policy_scope', None)
         if policy_scope:

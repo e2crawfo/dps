@@ -2,8 +2,8 @@ import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
 
-from dps.mnist import TranslatedMnistDataset
-from dps.attention import DRAW_attention_2D, discrete_attention
+from dps.vision import TranslatedMnistDataset
+from dps.vision.attention import DRAW_attention_2D, discrete_attention
 
 
 def test_draw_mnist(display):
@@ -58,7 +58,8 @@ def test_draw_parameter_effect(display):
     max_overlap = 200
     W = 28
     n_images = 2
-    mnist = TranslatedMnistDataset(W, n_digits, max_overlap, n_images, for_eval=True)
+    mnist = TranslatedMnistDataset(
+        W=W, n_digits=n_digits, max_overlap=max_overlap, n_examples=n_images, for_eval=True)
 
     images, _ = mnist.next_batch(2)
     images = np.reshape(images, (-1, W, W))
@@ -151,4 +152,6 @@ def test_discrete_mnist(display):
 
 
 if __name__ == "__main__":
+    test_draw_mnist(1)
+    test_draw_parameter_effect(1)
     test_discrete_mnist(1)

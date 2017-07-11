@@ -41,13 +41,13 @@ class Policy(RNNCell):
         Outputs Tensor giving action activations.
     exploration: Tensor
         Amount of exploration to use.
-    obs_dim: int
-        Dimension of observations.
+    obs_shape: int
+        Shape of individual observation.
     name: string
         Name of policy, used as name of variable scope.
 
     """
-    def __init__(self, controller, action_selection, exploration, obs_dim, name="policy"):
+    def __init__(self, controller, action_selection, exploration, obs_shape, name="policy"):
 
         self.controller = controller
         self.action_selection = action_selection
@@ -55,7 +55,7 @@ class Policy(RNNCell):
 
         self.n_actions = self.action_selection.n_actions
         self.n_params = self.action_selection.n_params
-        self.obs_dim = obs_dim
+        self.obs_shape = obs_shape
         self.name = name
 
         self.scope = None
@@ -129,7 +129,7 @@ class Policy(RNNCell):
         new = Policy(
             deepcopy(self.controller),
             deepcopy(self.action_selection),
-            self.exploration, self.obs_dim, new_name)
+            self.exploration, self.obs_shape, new_name)
         return new
         # Should work in TF 1.1, will need to be changed in TF 1.2.
         # new_controller = deepcopy(self.controller)
@@ -144,7 +144,7 @@ class Policy(RNNCell):
         #     deepcopy(self.controller),
         #     deepcopy(self.action_selection),
         #     self.exploration,
-        #     self.n_actions, self.obs_dim, new_name)
+        #     self.n_actions, self.obs_shape, new_name)
 
         # if hasattr(new, '_scope'):
         #     del new._scope
@@ -155,7 +155,7 @@ class Policy(RNNCell):
         if not self.act_is_built:
             # Build a subgraph that we carry around with the Policy for implementing the ``act`` method
             self._policy_state = rnn_cell_placeholder(self.controller.state_size, name='policy_state')
-            self._obs = tf.placeholder(tf.float32, (None, self.obs_dim), name='obs')
+            self._obs = tf.placeholder(tf.float32, (None,)+self.obs_shape, name='obs')
 
             self._utils, self._next_policy_state = self.build_update(self._obs, self._policy_state)
             self._samples = self.build_sample(self._utils)

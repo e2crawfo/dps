@@ -5,7 +5,7 @@ from dps import cfg
 from dps.register import RegisterBank
 from dps.environment import (
     RegressionDataset, RegressionEnv, CompositeEnv, TensorFlowEnv)
-from dps.attention import gaussian_filter
+from dps.vision.attention import gaussian_filter
 
 
 def digits_to_numbers(digits, base=10, axis=-1, keepdims=False):

@@ -104,7 +104,7 @@ class ReinforcementLearningUpdater(Updater):
     """
     def __init__(self, env, policy, **kwargs):
         self.policy = policy
-        self.obs_dim = env.observation_space.shape[1]
+        self.obs_shape = env.observation_space.shape[1:]
         self.n_actions = env.action_space.shape[1]
 
         super(ReinforcementLearningUpdater, self).__init__(env, **kwargs)
@@ -144,7 +144,9 @@ class DifferentiableUpdater(Updater):
         assert hasattr(env, 'build_loss'), (
             "Environments used with DifferentiableUpdater must possess "
             "a method called `build_loss` which builds a differentiable loss function.")
-        self.f = f
+        self.policy = f
+        self.obs_shape = env.observation_space.shape[1:]
+        self.n_actions = env.action_space.shape[1]
         super(DifferentiableUpdater, self).__init__(env, **kwargs)
 
     def _update(self, batch_size, summary_op=None):
@@ -174,9 +176,9 @@ class DifferentiableUpdater(Updater):
 
     def build_graph(self):
         with tf.name_scope("updater"):
-            self.inp_ph = tf.placeholder(tf.float32, (None, None))
+            self.inp_ph = tf.placeholder(tf.float32, (None,) + self.obs_shape)
             self.target_ph = tf.placeholder(tf.float32, (None, None))
-            self.output = self.f(self.inp_ph)
+            self.output = self.policy(self.inp_ph)
             self.loss = tf.reduce_mean(self.env.build_loss(self.output, self.target_ph))
             self._build_optimizer()
 
