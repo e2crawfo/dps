@@ -554,13 +554,18 @@ class _MnistPretrainedBuilder(object):
 
 
 class LeNet(object):
-    def __init__(self, n_units=1024, dropout_keep_prob=0.5, scope='LeNet', **fc_kwargs):
+    def __init__(self, n_units=1024, dropout_keep_prob=0.5, scope='LeNet', output_size=None, **fc_kwargs):
         self.n_units = n_units
         self.dropout_keep_prob = dropout_keep_prob
         self.scope = scope
+        self.output_size = output_size
         self.fc_kwargs = fc_kwargs
 
-    def __call__(self, images, output_size, is_training=False):
+    def __call__(self, images, output_size=None, is_training=False):
+        if (output_size is None) == (self.output_size is None):
+            raise Exception("Conflicting or ambigous values received for attribute `output_size`.")
+        output_size = self.output_size if output_size is None else output_size
+
         if len(images.shape) == 2:
             s = int(np.sqrt(int(images.shape[1])))
             images = tf.reshape(images, (-1, s, s, 1))

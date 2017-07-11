@@ -13,6 +13,13 @@ class Param(object):
 
 
 class Updater(with_metaclass(abc.ABCMeta, object)):
+    optimizer_spec = Param()
+    lr_schedule = Param()
+    noise_schedule = Param()
+    max_grad_norm = Param()
+    gamma = Param()
+    l2_norm_penalty = Param()
+
     def __init__(self, env, **kwargs):
         self.env = env
         self._n_experiences = 0
@@ -30,10 +37,6 @@ class Updater(with_metaclass(abc.ABCMeta, object)):
     @property
     def params(self):
         return [p for p in dir(self) if p != 'params' and isinstance(getattr(self, p), Param)]
-
-    @property
-    def stage(self):
-        return 0
 
     @property
     def n_experiences(self):
@@ -85,23 +88,11 @@ class Updater(with_metaclass(abc.ABCMeta, object)):
         tf.summary.scalar('grad_norm_clipped', tf.global_norm(clipped_gradients))
         tf.summary.scalar('grad_norm_clipped_and_noisy', tf.global_norm(noisy_gradients))
 
-    def save(self, path, step=None):
-        g = tf.get_default_graph()
-        tvars = g.get_collection('trainable_variables')
-        saver = tf.train.Saver(tvars)
-        return saver.save(tf.get_default_session(), path, step)
-
-    def restore(self, path):
-        g = tf.get_default_graph()
-        tvars = g.get_collection('trainable_variables')
-        saver = tf.train.Saver(tvars)
-        saver.restore(tf.get_default_session(), path)
-
 
 class ReinforcementLearningUpdater(Updater):
     """ Update parameters of a policy using reinforcement learning.
 
-    Should be used in the context of both a default session, default graph and default context.
+    Must be used in context of a default graph, session and config.
 
     Parameters
     ----------
@@ -111,13 +102,6 @@ class ReinforcementLearningUpdater(Updater):
         Needs to provide member functions ``build_feeddict`` and ``get_output``.
 
     """
-    optimizer_spec = Param()
-    lr_schedule = Param()
-    noise_schedule = Param()
-    max_grad_norm = Param()
-    gamma = Param()
-    l2_norm_penalty = Param()
-
     def __init__(self, env, policy, **kwargs):
         self.policy = policy
         self.obs_dim = env.observation_space.shape[1]
@@ -141,3 +125,61 @@ class ReinforcementLearningUpdater(Updater):
         self.obs_buffer.append(obs)
         self.action_buffer.append(action)
         self.reward_buffer.append(reward)
+
+
+class DifferentiableUpdater(Updater):
+    """ Update parameters of a differentiable function `f` using gradient-based algorithm.
+
+    Must be used in context of a default graph, session and config.
+
+    Parameters
+    ----------
+    env: gym Env
+        The environment we're trying to learn about.
+    f: (differentiable) callable
+        Accepts a tensor (input), returns a tensor (inference).
+
+    """
+    def __init__(self, env, f, **kwargs):
+        assert hasattr(env, 'build_loss'), (
+            "Environments used with DifferentiableUpdater must possess "
+            "a method called `build_loss` which builds a differentiable loss function.")
+        self.f = f
+        super(DifferentiableUpdater, self).__init__(env, **kwargs)
+
+    def _update(self, batch_size, summary_op=None):
+        sess = tf.get_default_session()
+
+        train_x, train_y = self.env.train.next_batch(batch_size)
+
+        feed_dict = {
+            self.inp_ph: train_x,
+            self.target_ph: train_y,
+            self.is_training: True}
+
+        if summary_op is not None:
+            train_summary, train_loss, _ = sess.run([summary_op, self.loss, self.train_op], feed_dict=feed_dict)
+
+            val_x, val_y = self.env.val.next_batch()
+            feed_dict = {
+                self.inp_ph: val_x,
+                self.target_ph: val_y,
+                self.is_training: False}
+
+            val_summary, val_loss = sess.run([summary_op, self.loss], feed_dict=feed_dict)
+            return train_summary, train_loss, val_summary, val_loss
+        else:
+            train_loss, _ = sess.run([self.loss, self.train_op], feed_dict=feed_dict)
+            return train_loss
+
+    def build_graph(self):
+        with tf.name_scope("updater"):
+            self.inp_ph = tf.placeholder(tf.float32, (None, None))
+            self.target_ph = tf.placeholder(tf.float32, (None, None))
+            self.output = self.f(self.inp_ph)
+            self.loss = tf.reduce_mean(self.env.build_loss(self.output, self.target_ph))
+            self._build_optimizer()
+
+        with tf.name_scope("performance"):
+            tf.summary.scalar("surrogate_loss", self.loss)
+            tf.summary.scalar("reward_per_ep", -self.loss)

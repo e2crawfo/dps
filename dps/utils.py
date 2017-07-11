@@ -27,7 +27,9 @@ import dps
 
 def parse_date(d, fmt='%a %b  %d %H:%M:%S %Z %Y'):
     # default value for `fmt` is default format used by GNU `date`
-    dstr = subprocess.check_output('date -d {}'.format(d).split())
+    with open(os.devnull, 'w') as devnull:
+        dstr = subprocess.check_output('date -d {}'.format(d).split(), stderr=devnull)
+
     dstr = dstr.decode().strip()
     return datetime.datetime.strptime(dstr, fmt)
 

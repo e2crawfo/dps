@@ -32,10 +32,10 @@ def parse_timedelta(s):
 
 
 def submit_job(
-        input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', n_nodes=1, ppn=12,
+        input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', ppn=12,
         walltime="1:00:00", cleanup_time="00:15:00", time_slack=0,
         add_date=True, show_script=0, dry_run=0, parallel_exe="$HOME/.local/bin/parallel",
-        pbs=True, queue=None, hosts=None, env_vars=None):
+        hosts=None, env_vars=None, redirect=False):
     """ Submit a Job to be executed in parallel.
 
     A directory for this Job execution is created in `scratch`, and results are saved there.
@@ -69,13 +69,272 @@ def submit_job(
         If True, control script will be generated but not executed/submitted.
     parallel_exe: str
         Path to the `gnu-parallel` executable to use.
-    pbs: bool
-        Whether to submit using PBS (i.e. whether we're in an HPC environment).
-    queue: str
-        If `pbs` set to True, the queue to submit job to.
     hosts: list of str
-        If `pbs` is False, names of hosts to use to execute the job. If `pbs` is True,
-        then this is ignored and host names are retrieved from `$PBS_NODEFILE`.
+        List of names of hosts to use to execute the job.
+    env_vars: dict (str -> str)
+        Dictionary mapping environment variable names to values. These will be accessible
+        by the submit script, and will also be sent to the worker nodes.
+    redirect: bool
+        If True, stderr and stdout of jobs is saved in files rather than being printed to screen.
+
+    """
+    input_zip = Path(input_zip)
+    input_zip_abs = input_zip.resolve()
+    input_zip_rsync = str(input_zip.parent) + '/./' + input_zip.name
+    input_zip_base = input_zip.name
+    archive_root = zip_root(input_zip)
+    name = Path(input_zip).stem
+    clean_pattern = pattern.replace(' ', '_')
+
+    # Create directory to run the job from - should be on scratch.
+    scratch = os.path.abspath(scratch)
+    job_directory = make_directory_name(
+        scratch,
+        '{}_{}'.format(name, clean_pattern),
+        add_date=add_date)
+    os.makedirs(job_directory)
+
+    # storage local to each node, from the perspective of that node
+    local_scratch = str(Path(local_scratch_prefix) / Path(job_directory).name)
+
+    cleanup_time = parse_timedelta(cleanup_time)
+    walltime = parse_timedelta(walltime)
+    if cleanup_time > walltime:
+        raise Exception("Cleanup time {} is larger than walltime {}!".format(cleanup_time, walltime))
+
+    walltime_seconds = int(walltime.total_seconds())
+    cleanup_time_seconds = int(cleanup_time.total_seconds())
+
+    if not hosts:
+        hosts = [":"]  # Only localhost
+    with (Path(job_directory) / 'nodefile.txt').open('w') as f:
+        f.write('\n'.join(hosts))
+    node_file = " --sshloginfile nodefile.txt "
+    n_nodes = len(hosts)
+
+    idx_file = 'job_indices.txt'
+
+    redirect = "--redirect" if redirect else ""
+
+    kwargs = locals().copy()
+
+    env = os.environ.copy()
+    if env_vars is not None:
+        env.update({e: str(v) for e, v in env_vars.items()})
+        kwargs['env_vars'] = ' '.join('--env ' + k for k in env_vars)
+    else:
+        kwargs['env_vars'] = ''
+
+    ro_job = ReadOnlyJob(input_zip)
+    completion = ro_job.completion(pattern)
+    n_jobs_to_run = completion['n_ready_incomplete']
+    if n_jobs_to_run == 0:
+        print("All jobs are finished! Exiting.")
+        return
+    kwargs['n_jobs_to_run'] = n_jobs_to_run
+
+    execution_time = int((walltime - cleanup_time).total_seconds())
+    n_procs = ppn * n_nodes
+    total_compute_time = n_procs * execution_time
+    abs_seconds_per_job = int(np.floor(total_compute_time / n_jobs_to_run))
+    seconds_per_job = abs_seconds_per_job - time_slack
+
+    assert execution_time > 0
+    assert total_compute_time > 0
+    assert abs_seconds_per_job > 0
+    assert seconds_per_job > 0
+
+    kwargs['abs_seconds_per_job'] = abs_seconds_per_job
+    kwargs['seconds_per_job'] = seconds_per_job
+    kwargs['execution_time'] = execution_time
+    kwargs['n_procs'] = n_procs
+
+    stage_data_code = '\n'.join(
+        ("scp -q {{input_zip_abs}} {}:{{local_scratch}}".format(h)
+            if h != ":" else "cp {input_zip_abs} {local_scratch}")
+        for h in hosts)
+
+    fetch_results_code = '\n'.join(
+        ("scp -q {}:{{local_scratch}}/results.zip ./results/{}.zip".format(h, i)
+            if h != ":" else "cp {{local_scratch}}/results.zip ./results/{}.zip".format(i))
+        for i, h in enumerate(hosts))
+
+    code = '''#!/bin/bash
+# Turn off implicit threading in Python
+export OMP_NUM_THREADS=1
+
+cd {job_directory}
+mkdir results
+
+echo Starting job at
+date
+
+echo Creating local scratch directories...
+
+{parallel_exe} --no-notice {node_file} --nonall {env_vars} -k \\
+    "mkdir -p {local_scratch}"
+
+echo Printing local scratch directories...
+
+{parallel_exe} --no-notice {node_file} --nonall {env_vars} -k \\
+    "cd {local_scratch} && echo Local scratch on host \\$(hostname) is {local_scratch}, working directory is \\$(pwd)."
+
+echo Staging input archive...
+
+''' + stage_data_code + '''
+
+echo Unzipping...
+
+{parallel_exe} --no-notice {node_file} --nonall {env_vars} -k \\
+    "cd {local_scratch} && unzip -ouq {input_zip_base} && echo \\$(hostname) && ls"
+
+echo We have {walltime_seconds} seconds to complete {n_jobs_to_run} sub-jobs using {n_procs} processors.
+echo {execution_time} seconds have been reserved for job execution, and {cleanup_time_seconds} seconds have been reserved for cleanup.
+echo Each sub-job has been alloted {abs_seconds_per_job} seconds, {seconds_per_job} seconds of which is pure computation time.
+
+echo Launching jobs at
+date
+
+start=$(date +%s)
+
+# Requires a newish version of parallel, has to accept --timeout
+{parallel_exe} --timeout {abs_seconds_per_job} --no-notice -j {ppn} \\
+    --joblog {job_directory}/job_log.txt {node_file} \\
+    --env OMP_NUM_THREADS --env PATH --env LD_LIBRARY_PATH {env_vars} -v \\
+    "cd {local_scratch} && dps-hyper run {archive_root} {pattern} {{}} --max-time {seconds_per_job} {redirect}" < {idx_file}
+
+end=$(date +%s)
+
+runtime=$((end-start))
+
+echo Executing jobs took $runtime seconds.
+
+echo Fetching results at
+date
+
+{parallel_exe} --no-notice {node_file} --nonall {env_vars} -k \\
+    "cd {local_scratch} && echo Zipping results on node \\$(hostname). && zip -rq results {archive_root} && ls"
+
+''' + fetch_results_code + '''
+
+cd results
+
+echo Unzipping results from nodes...
+
+if test -n "$(find . -maxdepth 1 -name '*.zip' -print -quit)"; then
+    echo Results files exist:
+    ls
+else
+    echo Did not find any results files from nodes.
+    echo Contents of results directory is:
+    ls
+    exit 1
+fi
+
+for f in *zip
+do
+    echo Storing contents of $f
+    unzip -nuq $f
+done
+
+echo Zipping final results...
+zip -rq {name} {archive_root}
+mv {name}.zip ..
+cd ..
+
+dps-hyper summary {name}.zip
+dps-hyper view {name}.zip
+mv {input_zip_abs} {input_zip_abs}.bk
+cp -f {name}.zip {input_zip_abs}
+
+'''
+    code = code.format(**kwargs)
+    if show_script:
+        print("\n")
+        print("-" * 20 + " BEGIN SCRIPT " + "-" * 20)
+        print(code)
+        print("-" * 20 + " END SCRIPT " + "-" * 20)
+        print("\n")
+
+    # Create convenience `latest` symlinks
+    make_symlink(job_directory, os.path.join(scratch, 'latest'))
+    make_symlink(
+        job_directory,
+        os.path.join(scratch, 'latest_{}_{}'.format(name, clean_pattern)))
+
+    os.chdir(job_directory)
+    with open(idx_file, 'w') as f:
+        [f.write('{}\n'.format(u)) for u in range(completion['n_ops'])]
+
+    submit_script = "submit_script.sh"
+    with open(submit_script, 'w') as f:
+        f.write(code)
+
+    if dry_run:
+        print("Dry run, so not submitting.")
+    else:
+        try:
+            command = ['sh', submit_script]
+            for line in execute(command):
+                print(line)
+        except subprocess.CalledProcessError as e:
+            print("CalledProcessError has been raised while executing command: {}.".format(' '.join(command)))
+            print("Output of process: ")
+            print(e.output.decode())
+            raise_with_traceback(e)
+
+
+def execute(cmd):
+    """ Uses `subprocess` to execute `cmd`, yielding lines from stdout as soon as they are ready. """
+    popen = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+    for stdout_line in iter(popen.stdout.readline, b""):
+        yield ''.join([i for i in stdout_line.decode() if i != '\n'])
+    popen.stdout.close()
+    return_code = popen.wait()
+    if return_code:
+        raise subprocess.CalledProcessError(return_code, cmd)
+
+
+def submit_job_pbs(
+        input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', n_nodes=1, ppn=12,
+        walltime="1:00:00", cleanup_time="00:15:00", time_slack=0,
+        add_date=True, show_script=0, dry_run=0, parallel_exe="$HOME/.local/bin/parallel",
+        queue=None, hosts=None, env_vars=None):
+    """ Submit a Job to be executed in parallel.
+
+    A directory for this Job execution is created in `scratch`, and results are saved there.
+
+    Parameters
+    ----------
+    input_zip: str
+        Path to a zip archive storing the Job.
+    pattern: str
+        Pattern to use to select which ops to run within the Job.
+    scratch: str
+        Path to location where the results of running the selected ops will be
+        written. Must be writeable by the master process.
+    local_scratch_prefix: str
+        Path to scratch directory that is local to each remote process.
+    ppn: int
+        Number of processors per node.
+    walltime: str
+        String specifying the maximum wall-time allotted to running the selected ops.
+    cleanup_time: str
+        String specifying the amount of time required to clean-up. Job execution will be
+        halted when there is this much time left in the overall walltime, at which point
+        results computed so far will be collected.
+    add_date: bool
+        Whether to add current date/time to the name of the directory where results are stored.
+    time_slack: int
+        Number of extra seconds to allow per job.
+    show_script: bool
+        Whether to print to console the control script that is generated.
+    dry_run: bool
+        If True, control script will be generated but not executed/submitted.
+    parallel_exe: str
+        Path to the `gnu-parallel` executable to use.
+    queue: str
+        The queue to submit job to.
     env_vars: dict (str -> str)
         Dictionary mapping environment variable names to values. These will be accessible
         by the submit script, and will also be sent to the worker nodes.
@@ -89,11 +348,7 @@ def submit_job(
     name = Path(input_zip).stem
     queue = "#PBS -q {}".format(queue) if queue is not None else ""
     clean_pattern = pattern.replace(' ', '_')
-
-    if pbs:
-        stderr = "{stderr}"
-    else:
-        stderr = ""
+    stderr = "| tee -a /dev/stderr"
 
     # Create directory to run the job from - should be on scratch.
     scratch = os.path.abspath(scratch)
@@ -104,7 +359,7 @@ def submit_job(
     os.makedirs(job_directory)
 
     # storage local to each node, from the perspective of that node
-    local_scratch = '\\$RAMDISK' if pbs else str(Path(local_scratch_prefix) / Path(job_directory).name)
+    local_scratch = '\\$RAMDISK'
 
     cleanup_time = parse_timedelta(cleanup_time)
     walltime = parse_timedelta(walltime)
@@ -114,15 +369,7 @@ def submit_job(
     walltime_seconds = int(walltime.total_seconds())
     cleanup_time_seconds = int(cleanup_time.total_seconds())
 
-    if pbs:
-        node_file = " --sshloginfile $PBS_NODEFILE "
-    else:
-        if not hosts:
-            hosts = [":"]  # Only localhost
-        with (Path(job_directory) / 'nodefile.txt').open('w') as f:
-            f.write('\n'.join(hosts))
-        node_file = " --sshloginfile nodefile.txt "
-        n_nodes = len(hosts)
+    node_file = " --sshloginfile $PBS_NODEFILE "
 
     idx_file = 'job_indices.txt'
 
@@ -159,32 +406,17 @@ def submit_job(
     kwargs['execution_time'] = execution_time
     kwargs['n_procs'] = n_procs
 
-    if pbs:
-        stage_data_code = '''
+    stage_data_code = '''
 {parallel_exe} --no-notice {node_file} --nonall {env_vars} \\
-    "cp {input_zip_abs} {local_scratch}
+"cp {input_zip_abs} {local_scratch}
 '''
-    else:
-        stage_data_code = '\n'.join(
-            ("scp -q {{input_zip_abs}} {}:{{local_scratch}}".format(h)
-                if h != ":" else "cp {input_zip_abs} {local_scratch}")
-            for h in hosts)
 
-    if pbs:
-        fetch_results_code = '''
+    fetch_results_code = '''
 {parallel_exe} --no-notice {node_file} --nonall {env_vars} \\
-    "cp {local_scratch}/results.zip {job_directory}/results/\\$(hostname).zip
+"cp {local_scratch}/results.zip {job_directory}/results/\\$(hostname).zip
 '''
-    else:
-        fetch_results_code = '\n'.join(
-            ("scp -q {}:{{local_scratch}}/results.zip ./results/{}.zip".format(h, i)
-                if h != ":" else "cp {{local_scratch}}/results.zip ./results/{}.zip".format(i))
-            for i, h in enumerate(hosts))
 
-    code = '''#!/bin/bash '''
-
-    if pbs:
-        code += '''
+    code = '''#!/bin/bash
 # MOAB/Torque submission script for multiple, dynamically-run serial jobs
 #
 #PBS -V
@@ -195,9 +427,8 @@ def submit_job(
 #PBS -A jim-594-aa
 #PBS -e stderr.txt
 #PBS -o stdout.txt
-''' + queue
+{queue}
 
-    code += '''
 # Turn off implicit threading in Python
 export OMP_NUM_THREADS=1
 
@@ -207,16 +438,6 @@ mkdir results
 echo Starting job at {stderr}
 date {stderr}
 
-'''
-    if not pbs:
-        code += '''
-echo Creating local scratch directories... {stderr}
-
-{parallel_exe} --no-notice {node_file} --nonall {env_vars} -k \\
-    "mkdir -p {local_scratch}"
-'''
-
-    code += '''
 echo Printing local scratch directories... {stderr}
 
 {parallel_exe} --no-notice {node_file} --nonall {env_vars} -k \\
@@ -278,7 +499,6 @@ for f in *zip
 do
     echo Storing contents of $f {stderr}
     unzip -nuq $f
-    # rm $f
 done
 
 echo Zipping final results... {stderr}
@@ -294,7 +514,11 @@ cp -f {name}.zip {input_zip_abs}
 '''
     code = code.format(**kwargs)
     if show_script:
+        print("\n")
+        print("-" * 20 + " BEGIN SCRIPT " + "-" * 20)
         print(code)
+        print("-" * 20 + " END SCRIPT " + "-" * 20)
+        print("\n")
 
     # Create convenience `latest` symlinks
     make_symlink(job_directory, os.path.join(scratch, 'latest'))
@@ -314,22 +538,16 @@ cp -f {name}.zip {input_zip_abs}
         print("Dry run, so not submitting.")
     else:
         try:
-            if pbs:
-                command = ['qsub', submit_script]
-                print("Submitting.")
-                output = subprocess.check_output(command, stderr=subprocess.STDOUT, env=env)
-                output = output.decode()
-                print(output)
+            command = ['qsub', submit_script]
+            print("Submitting.")
+            output = subprocess.check_output(command, stderr=subprocess.STDOUT, env=env)
+            output = output.decode()
+            print(output)
 
-                # Create a file in the directory with the job_id as its name
-                job_id = output.split('.')[0]
-                open(job_id, 'w').close()
-                print("Job ID: {}".format(job_id))
-            else:
-                command = ['sh', submit_script]
-                output = subprocess.check_output(command, stderr=subprocess.STDOUT, env=env)
-                output = output.decode()
-                print(output)
+            # Create a file in the directory with the job_id as its name
+            job_id = output.split('.')[0]
+            open(job_id, 'w').close()
+            print("Job ID: {}".format(job_id))
 
         except subprocess.CalledProcessError as e:
             print("CalledProcessError has been raised while executing command: {}.".format(' '.join(command)))

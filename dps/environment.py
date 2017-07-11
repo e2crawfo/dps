@@ -202,15 +202,16 @@ class RegressionEnv(Env):
     def __str__(self):
         return "<RegressionEnv train={} val={} test={}>".format(self.train, self.val, self.test)
 
+    def build_loss(self, actions, targets):
+        return tf.reduce_mean((actions - targets)**2, axis=-1, keep_dims=True)
+
+    def build_reward(self, actions, targets):
+        abs_error = tf.reduce_sum(tf.abs(actions - targets), axis=-1, keep_dims=True)
+        return -tf.cast(abs_error > cfg.reward_window, tf.float32)
+
     @property
     def completion(self):
         return self.train.completion
-
-    def build_loss(self, actions, idx=0):
-        target_ph = tf.placeholder(tf.float32, shape=actions.shape, name='target')
-        error = tf.reduce_sum(tf.abs(actions - target_ph), axis=-1, keep_dims=True)
-        loss = tf.cast(error > cfg.reward_window, tf.float32)
-        return loss, target_ph
 
     def _step(self, action):
         assert self.action_space.contains(action), (
@@ -221,11 +222,12 @@ class RegressionEnv(Env):
         obs = np.zeros(self.x.shape)
 
         if self.action_ph is None:
+            self.target_ph = tf.placeholder(tf.float32, (None, self.n_actions))
             self.action_ph = tf.placeholder(tf.float32, (None, self.n_actions))
-            self.loss, self.target_ph = self.build_loss(self.action_ph)
+            self.reward = self.build_reward(self.action_ph, self.target_ph)
 
         sess = tf.get_default_session()
-        reward = -sess.run(self.loss, {self.action_ph: action, self.target_ph: self.y})
+        reward = sess.run(self.reward, {self.action_ph: action, self.target_ph: self.y})
 
         done = True
         info = {"y": self.y}

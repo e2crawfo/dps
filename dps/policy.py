@@ -67,7 +67,10 @@ class Policy(RNNCell):
     def __str__(self):
         return pformat(self)
 
-    def __call__(self, obs, policy_state):
+    def __call__(self, obs, policy_state=None):
+        if policy_state is None:
+            policy_state = self.zero_state(tf.shape(obs)[0], tf.float32)
+
         utils, next_policy_state = self.build_update(obs, policy_state)
         samples = self.build_sample(utils)
 

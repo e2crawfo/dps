@@ -9,6 +9,7 @@ from pprint import pformat
 import datetime
 import shutil
 import dill
+import os
 
 from spectral_dagger.utils.experiment import ExperimentStore
 from dps import cfg
@@ -23,8 +24,12 @@ def training_loop(exp_name='', start_time=None):
     np.random.seed(cfg.seed)
 
     exp_name = exp_name or "updater={}_seed={}".format(cfg.build_updater.__name__, cfg.seed)
+    try:
+        curriculum = cfg.curriculum
+    except AttributeError:
+        curriculum = [{}]
 
-    loop = TrainingLoop(cfg.curriculum, exp_name, start_time)
+    loop = TrainingLoop(curriculum, exp_name, start_time)
     return loop.run()
 
 
@@ -65,6 +70,8 @@ class TrainingLoop(object):
                 return cfg.max_time - self.elapsed_time
 
     def run(self):
+        print("CUDA_VISIBLE_DEVICES: ", os.getenv("CUDA_VISIBLE_DEVICES"))
+
         if cfg.start_tensorboard:
             restart_tensorboard(str(cfg.log_dir), cfg.tbport, cfg.reload_interval)
 
@@ -72,6 +79,7 @@ class TrainingLoop(object):
 
         if cfg.slim:
             print("`slim` is True, so deleting experiment directory {}.".format(self.exp_dir.path))
+            print("Size of {} before delete: {}.".format(cfg.log_dir, du(cfg.log_dir)))
             try:
                 shutil.rmtree(self.exp_dir.path)
             except FileNotFoundError:
@@ -104,7 +112,7 @@ class TrainingLoop(object):
         self.global_step = 0
 
         for stage_config in self.curriculum:
-            stage_config = Config(cfg.curriculum[stage])
+            stage_config = Config(stage_config)
             if self.time_remaining <= 1:
                 print("Time limit exceeded.")
                 break

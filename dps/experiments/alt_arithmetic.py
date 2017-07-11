@@ -38,8 +38,8 @@ class Container(object):
 
 class AltArithmeticDataset(RegressionDataset):
     def __init__(
-            self, mnist, symbols, shape, n_digits, upper_bound, base, blank_char,
-            n_examples, op_loc, for_eval=False, shuffle=True):
+            self, mnist, symbols, shape, n_digits, upper_bound, base,
+            n_examples, op_loc, for_eval=False, shuffle=True, force_2d=False):
 
         assert 1 <= base <= 10
 
@@ -50,7 +50,6 @@ class AltArithmeticDataset(RegressionDataset):
         self.n_digits = n_digits
         self.upper_bound = upper_bound
         self.base = base
-        self.blank_char = blank_char
         self.op_loc = op_loc
 
         assert np.product(shape) >= n_digits + 1
@@ -82,29 +81,29 @@ class AltArithmeticDataset(RegressionDataset):
             symbol_reps = Container(symbol_values, symbol_values)
             digit_reps = Container(np.arange(base), np.arange(base))
 
-            blank_element = np.array([-1])
+            blank_element = np.array([[-1]])
 
         x, y = self.make_dataset(
             self.shape, self.n_digits, self.upper_bound, self.base,
             blank_element, symbol_reps, digit_reps,
-            functions, n_examples, op_loc)
+            functions, n_examples, op_loc, force_2d=force_2d)
 
         super(AltArithmeticDataset, self).__init__(x, y, for_eval, shuffle)
 
     @staticmethod
     def make_dataset(
             shape, n_digits, upper_bound, base, blank_element,
-            symbol_reps, digit_reps, functions, n_examples, op_loc):
+            symbol_reps, digit_reps, functions, n_examples, op_loc, force_2d):
 
         if n_examples == 0:
             return np.zeros((0,) + shape + blank_element.shape).astype('f'), np.zeros((0, 1)).astype('i')
 
         new_X, new_Y = [], []
 
-        # Include a blank character, so it has to learn to skip over them.
         size = np.product(shape)
 
         element_shape = blank_element.shape
+        m, n = element_shape
         _blank_element = blank_element.reshape((1,)*len(shape) + blank_element.shape)
 
         for j in range(n_examples):
@@ -121,9 +120,15 @@ class AltArithmeticDataset(RegressionDataset):
                 indices[indices == _op_loc] = size-1
                 indices = np.append(_op_loc, indices)
 
-            locs = list(zip(*np.unravel_index(indices, shape)))
+            if force_2d:
+                import pdb; pdb.set_trace()
 
-            env = np.tile(_blank_element, shape+(1,)*len(element_shape))
+                env = np.tile(_blank_element, shape)
+                locs = zip(*np.unravel_index(indices, shape))
+                locs = [(slice(i*m, (i+1)*m), slice(j*n, (j+1)*n)) for i, j in locs]
+            else:
+                env = np.tile(_blank_element, shape+(1,)*len(element_shape))
+                locs = list(zip(*np.unravel_index(indices, shape)))
 
             x, y = symbol_reps.get_random()
             func = functions[int(y)]
@@ -146,13 +151,12 @@ class AltArithmeticDataset(RegressionDataset):
 
 class AltArithmeticEnv(RegressionEnv):
     def __init__(self, mnist, shape, n_digits, upper_bound, base,
-                 n_train, n_val, n_test, op_loc=None, start_loc=None):
+                 n_train, n_val, n_test, op_loc=None, start_loc=None, force_2d=False):
         self.mnist = mnist
         self.shape = shape
         self.n_digits = n_digits
         self.upper_bound = upper_bound
         self.base = base
-        self.blank_char = blank_char = 'b'
         self.symbols = symbols = [
             ('A', lambda x: sum(x)),
             ('M', lambda x: np.product(x)),
@@ -161,13 +165,12 @@ class AltArithmeticEnv(RegressionEnv):
         self.op_loc = op_loc
         self.start_loc = op_loc
 
+        pargs = mnist, symbols, shape, n_digits, upper_bound, base
+
         super(AltArithmeticEnv, self).__init__(
-            train=AltArithmeticDataset(
-                mnist, symbols, shape, n_digits, upper_bound, base, blank_char, n_train, op_loc, for_eval=False),
-            val=AltArithmeticDataset(
-                mnist, symbols, shape, n_digits, upper_bound, base, blank_char, n_val, op_loc, for_eval=True),
-            test=AltArithmeticDataset(
-                mnist, symbols, shape, n_digits, upper_bound, base, blank_char, n_test, op_loc, for_eval=True))
+            train=AltArithmeticDataset(*pargs, n_train, op_loc, for_eval=False, force_2d=force_2d),
+            val=AltArithmeticDataset(*pargs, n_val, op_loc, for_eval=True, force_2d=force_2d),
+            test=AltArithmeticDataset(*pargs, n_test, op_loc, for_eval=True, force_2d=force_2d))
 
     def __str__(self):
         return "<AltArithmeticEnv shape={} base={}>".format(self.height, self.shape, self.base)
@@ -178,7 +181,7 @@ class AltArithmetic(TensorFlowEnv):
 
     @property
     def element_shape(self):
-        return (28, 28) if self.mnist else (1,)
+        return (28, 28) if self.mnist else (1, 1)
 
     def static_inp_type_and_shape(self):
         return (tf.float32, self.shape + self.element_shape)
@@ -194,7 +197,6 @@ class AltArithmetic(TensorFlowEnv):
         self.n_digits = env.n_digits
         self.upper_bound = env.upper_bound
         self.base = env.base
-        self.blank_char = env.blank_char
         self.start_loc = env.start_loc
 
         self.init_classifiers()
