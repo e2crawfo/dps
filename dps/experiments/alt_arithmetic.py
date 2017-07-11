@@ -162,6 +162,7 @@ class AltArithmeticEnv(RegressionEnv):
 
         self.op_loc = op_loc
         self.start_loc = op_loc
+        self.force_2d = force_2d
 
         pargs = mnist, symbols, shape, n_digits, upper_bound, base
 
@@ -182,7 +183,10 @@ class AltArithmetic(TensorFlowEnv):
         return (28, 28) if self.mnist else (1, 1)
 
     def static_inp_type_and_shape(self):
-        return (tf.float32, self.shape + self.element_shape)
+        if self.force_2d:
+            return (tf.float32, [s*e for s, e in zip(self.shape, self.element_shape)])
+        else:
+            return (tf.float32, self.shape + self.element_shape)
 
     make_input_available = True
 
@@ -196,6 +200,7 @@ class AltArithmetic(TensorFlowEnv):
         self.upper_bound = env.upper_bound
         self.base = env.base
         self.start_loc = env.start_loc
+        self.force_2d = env.force_2d
 
         self.init_classifiers()
         self.init_rb()

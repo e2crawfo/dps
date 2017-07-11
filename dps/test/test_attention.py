@@ -4,11 +4,13 @@ import matplotlib.pyplot as plt
 
 from dps.vision import TranslatedMnistDataset
 from dps.vision.attention import DRAW_attention_2D, discrete_attention
+from dps.utils import DpsConfig
 
 
 def test_draw_mnist(display):
     import pickle
     import gzip
+
     params = tf.constant([
         [0.0, 0.0, 1.0, 1, 1],
         [-1.0, 0.0, 1.0, 1, 1],
@@ -32,7 +34,8 @@ def test_draw_mnist(display):
     ], dtype=tf.float32)
     batch_size = int(params.shape[0])
 
-    z = gzip.open('/data/mnist.pkl.gz', 'rb')
+    config = DpsConfig()
+    z = gzip.open(config.data_dir + '/mnist.pkl.gz', 'rb')
     (train, _), (dev, _), (test, _) = pickle.load(z, encoding='bytes')
     train = train[:batch_size, :]
     W = int(np.sqrt(train[0].shape[0]))
@@ -132,7 +135,8 @@ def test_discrete_mnist(display):
     ], dtype=tf.float32)
     batch_size = int(params.shape[0])
 
-    z = gzip.open('/data/mnist.pkl.gz', 'rb')
+    config = DpsConfig()
+    z = gzip.open(config.data_dir + '/mnist.pkl.gz', 'rb')
     (train, _), (dev, _), (test, _) = pickle.load(z, encoding='bytes')
     train = train[:batch_size, :]
     W = int(np.sqrt(train[0].shape[0]))

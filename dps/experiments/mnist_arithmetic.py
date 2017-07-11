@@ -105,7 +105,7 @@ class MnistArithmetic(TensorFlowEnv):
         super(MnistArithmetic, self).__init__()
 
     def static_inp_type_and_shape(self):
-        return (tf.float32, (self.W*self.W,))
+        return (tf.float32, (self.W, self.W))
 
     make_input_available = True
 
@@ -113,6 +113,7 @@ class MnistArithmetic(TensorFlowEnv):
         op, acc, fovea_x, fovea_y, delta, vision, op_vision, glimpse = self.rb.as_tuple(r)
 
         glimpse = self.build_attention(inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta, sigma=1.0)
+        glimpse = tf.reshape(glimpse, (-1, int(np.product(glimpse.shape[1:]))))
 
         digit_classification = tf.stop_gradient(self.build_digit_classifier(glimpse))
         vision = tf.cast(tf.expand_dims(tf.argmax(digit_classification, 1), 1), tf.float32)
@@ -168,6 +169,7 @@ class MnistArithmetic(TensorFlowEnv):
             dec_delta_big * (_delta - 5 * self.inc_delta)
 
         glimpse = self.build_attention(inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta, sigma=1.0)
+        glimpse = tf.reshape(glimpse, (-1, int(np.product(glimpse.shape[1:]))))
 
         digit_classification = tf.stop_gradient(self.build_digit_classifier(glimpse))
         vision = tf.cast(tf.expand_dims(tf.argmax(digit_classification, 1), 1), tf.float32)
