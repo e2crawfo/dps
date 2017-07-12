@@ -1,5 +1,5 @@
 from dps.utils import DpsConfig, MLP
-from dps.mnist import LeNet
+from dps.vision import LeNet
 import tensorflow as tf
 
 

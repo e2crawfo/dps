@@ -7,11 +7,11 @@ import clify
 from dps import cfg
 from dps.config import DEFAULT_CONFIG
 from dps.train import training_loop
-from dps.utils import FeedforwardCell
+from dps.utils import FeedforwardCell, MLP
 from dps.updater import DifferentiableUpdater
 from dps.experiments.alt_arithmetic import AltArithmeticEnv
 from dps.policy import Deterministic
-from dps.mnist import LeNet
+from dps.vision import LeNet
 
 
 def build_env():
@@ -39,8 +39,10 @@ config = DEFAULT_CONFIG.copy(
     base=10,
     build_updater=DifferentiableUpdater,
     build_env=build_env,
-    n_controller_units=1000,
     action_selection=lambda env: Deterministic(env.n_actions),
+    # n_controller_units=256,
+    # controller=lambda n_params: FeedforwardCell(MLP([cfg.n_controller_units, cfg.n_controller_units]), n_params),
+    n_controller_units=256,
     controller=lambda n_params: FeedforwardCell(LeNet(n_units=cfg.n_controller_units), n_params),
     log_name="cnn_alt_arithmetic"
 )

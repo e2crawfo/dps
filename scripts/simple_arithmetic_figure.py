@@ -1,6 +1,6 @@
 from dps.utils import DpsConfig, MLP, CompositeCell
 from dps.experiments.simple_arithmetic import render_rollouts_static
-from dps.mnist import LeNet
+from dps.vision import LeNet
 from dps.run import _run
 from dps.policy import Softmax
 import tensorflow as tf
