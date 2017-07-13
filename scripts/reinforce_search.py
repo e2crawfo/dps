@@ -83,19 +83,30 @@ with config:
     # hosts = ['ecrawf6@lab1-{}.cs.mcgill.ca'.format(i+1) for i in range(10, 20)]
     hosts = None
 
-    if 1:
+    if 0:
+        # Big
         n_param_settings = 50
         n_repeats = 5
         walltime = "14:30:00"
         cleanup_time = "00:30:00"
         time_slack = 30
-    else:
+        ppn = 4
+    elif 0:
+        # Medium
         n_param_settings = 8
         n_repeats = 4
         walltime = "00:30:00"
         cleanup_time = "00:02:15"
         time_slack = 30
-    ppn = 4
+        ppn = 4
+    else:
+        # Small
+        n_param_settings = 2
+        n_repeats = 2
+        walltime = "00:03:00"
+        cleanup_time = "00:00:15"
+        time_slack = 10
+        ppn = 2
 
     job, archive_path = build_search(
         '/tmp/dps/search', 'reinforce_search', n_param_settings, n_repeats,

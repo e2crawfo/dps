@@ -58,33 +58,29 @@ with config:
 
     distributions = dict(
         n_controller_units=[32, 64, 128],
-        batch_size=[16, 32, 64, 128],
-        entropy_schedule=['constant {}'.format(n) for n in 0.5**np.arange(10, step=2)] +
-                         ['poly {} 100000 1e-6 1'.format(n) for n in 0.5**np.arange(10, step=2)],
+        batch_size=[128],
+        entropy_schedule=[1e-4, 1e-3, 1e-2] +
+                         ['poly {} 100000 1e-6 1'.format(n) for n in [1e-4, 1e-3, 1e-2]],
         exploration_schedule=[
             'exp 1.0 100000 0.01',
             'exp 1.0 100000 0.1',
-            'exp 10.0 100000 0.01',
-            'exp 10.0 100000 0.1',
         ],
-        test_time_explore=[1.0, 0.1],
+        test_time_explore=[1.0, 0.1, -1],
         delta_schedule=[
             'constant 1e-2',
             'constant 1e-3',
-            'constant 1e-4',
             'poly 1e-2 100000 1e-6 1',
             'poly 1e-3 100000 1e-6 1',
-            'poly 1e-4 100000 1e-6 1',
         ],
     )
 
     alg = 'trpo'
     task = 'alt_arithmetic'
 
-    if 1:
-        n_param_settings = 50
+    if 0:
+        n_param_settings = 20
         n_repeats = 5
-        walltime = "14:30:00"
+        walltime = "24:00:00"
         cleanup_time = "00:30:00"
         time_slack = 30
     else:
@@ -102,5 +98,5 @@ with config:
     submit_job(
         archive_path, 'map', '/tmp/dps/search/execution/',
         show_script=True, parallel_exe='$HOME/.local/bin/parallel', dry_run=False,
-        env_vars=dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1'), ppn=ppn, hosts=hosts,
+        env_vars=dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1'), ppn=ppn,
         walltime=walltime, cleanup_time=cleanup_time, time_slack=time_slack, redirect=True)
