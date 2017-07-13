@@ -1,7 +1,8 @@
 import pytest
 
 from dps.config import algorithms, tasks, test_configs
-from dps.train import training_loop, build_and_visualize
+from dps.train import training_loop
+from dps.run import build_and_visualize
 
 
 slow = pytest.mark.skipif(

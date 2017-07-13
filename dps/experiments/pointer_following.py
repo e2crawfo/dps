@@ -9,24 +9,23 @@ from dps.vision.attention import apply_gaussian_filter
 
 
 class PointerDataset(RegressionDataset):
-    def __init__(self, width, n_digits, n_examples, for_eval=False, shuffle=True):
+    def __init__(self, width, n_digits, n_examples):
         self.width = width
         self.n_digits = n_digits
 
         x = np.random.randint(0, n_digits, size=(n_examples, 2*width+1))
         x[:, width] = np.random.randint(-width, width+1, size=n_examples)
         y = x[range(x.shape[0]), x[:, width]+width].reshape(-1, 1)
-        super(PointerDataset, self).__init__(x, y, for_eval, shuffle)
+        super(PointerDataset, self).__init__(x, y)
 
 
 class PointerEnv(RegressionEnv):
-    def __init__(self, width, n_digits, n_train, n_val, n_test):
+    def __init__(self, width, n_digits, n_train, n_val):
         self.width = width
         self.n_digits = n_digits
         super(PointerEnv, self).__init__(
-            train=PointerDataset(width, n_digits, n_train, for_eval=False),
-            val=PointerDataset(width, n_digits, n_val, for_eval=True),
-            test=PointerDataset(width, n_digits, n_test, for_eval=True))
+            train=PointerDataset(width, n_digits, n_train),
+            val=PointerDataset(width, n_digits, n_val))
 
     def __str__(self):
         return "<PointerEnv width={} n_digits={}>".format(self.width, self.n_digits)
@@ -76,6 +75,6 @@ class Pointer(TensorFlowEnv):
 
 
 def build_env():
-    external = PointerEnv(cfg.width, cfg.n_digits, cfg.n_train, cfg.n_val, cfg.n_test)
+    external = PointerEnv(cfg.width, cfg.n_digits, cfg.n_train, cfg.n_val)
     internal = Pointer(external)
     return CompositeEnv(external, internal)

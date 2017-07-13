@@ -106,11 +106,11 @@ class Rect(object):
 
 
 class PatchesDataset(RegressionDataset):
-    def __init__(self, n_examples, W, max_overlap, for_eval, shuffle):
+    def __init__(self, n_examples, W, max_overlap):
         self.W = W
         self.max_overlap = max_overlap
         x, y = self._make_dataset(n_examples)
-        super(PatchesDataset, self).__init__(x, y, for_eval, shuffle)
+        super(PatchesDataset, self).__init__(x, y)
 
     def _sample_patches(self):
         raise Exception()
@@ -199,7 +199,7 @@ def char_to_idx(c):
 
 class MnistArithmeticDataset(PatchesDataset):
     def __init__(self, n_digits, reductions, upper_bound=True, base=10,
-                 W=28, max_overlap=np.inf, n_examples=10, for_eval=False, shuffle=True):
+                 W=28, max_overlap=np.inf, n_examples=10):
 
         self.n_digits = n_digits
         self.upper_bound = upper_bound
@@ -220,7 +220,7 @@ class MnistArithmeticDataset(PatchesDataset):
 
         self.reductions = {self.class_map[k]: v for k, v in reductions.items()}
 
-        super(MnistArithmeticDataset, self).__init__(n_examples, W, max_overlap, for_eval, shuffle)
+        super(MnistArithmeticDataset, self).__init__(n_examples, W, max_overlap)
 
         del self.X
         del self.Y
@@ -244,7 +244,7 @@ class MnistArithmeticDataset(PatchesDataset):
 
 class TranslatedMnistDataset(PatchesDataset):
     def __init__(self, n_digits=1, reduction=None, upper_bound=True, base=10, symbols=None, include_blank=True,
-                 W=28, max_overlap=np.inf, n_examples=10, for_eval=False, shuffle=True):
+                 W=28, max_overlap=np.inf, n_examples=10):
 
         self.n_digits = n_digits
 
@@ -261,7 +261,7 @@ class TranslatedMnistDataset(PatchesDataset):
         self.X, self.Y, self.symbol_map = load_emnist(self.symbols, include_blank=include_blank)
         self.X = self.X.reshape(-1, 28, 28)
 
-        super(TranslatedMnistDataset, self).__init__(n_examples, W, max_overlap, for_eval, shuffle)
+        super(TranslatedMnistDataset, self).__init__(n_examples, W, max_overlap)
 
         del self.X
         del self.Y

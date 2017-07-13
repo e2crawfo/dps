@@ -39,19 +39,17 @@ class Policy(RNNCell):
         Outputs Tensor giving utilities.
     action_selection: callable
         Outputs Tensor giving action activations.
-    exploration: Tensor
-        Amount of exploration to use.
     obs_shape: int
         Shape of individual observation.
     name: string
         Name of policy, used as name of variable scope.
 
     """
-    def __init__(self, controller, action_selection, exploration, obs_shape, name="policy"):
+    def __init__(self, controller, action_selection, obs_shape, name="policy"):
 
         self.controller = controller
         self.action_selection = action_selection
-        self.exploration = exploration
+        self.exploration = None
 
         self.n_actions = self.action_selection.n_actions
         self.n_params = self.action_selection.n_params
@@ -64,19 +62,28 @@ class Policy(RNNCell):
         self.set_params_op = None
         self.flat_params = None
 
+    def set_exploration(self, exploration):
+        self.exploration = exploration
+
     def __str__(self):
         return pformat(self)
 
-    def __call__(self, obs, policy_state=None):
-        if policy_state is None:
-            policy_state = self.zero_state(tf.shape(obs)[0], tf.float32)
+    def build_graph(self):
+        pass
 
-        utils, next_policy_state = self.build_update(obs, policy_state)
-        samples = self.build_sample(utils)
+    # def __call__(self, obs, policy_state=None):
+    #     if policy_state is None:
+    #         policy_state = self.zero_state(tf.shape(obs)[0], tf.float32)
 
-        return samples, utils, next_policy_state
+    #     utils, next_policy_state = self.build_update(obs, policy_state)
+    #     samples = self.build_sample(utils)
+
+    #     return samples, utils, next_policy_state
 
     def build_update(self, obs, policy_state):
+        if self.n_builds == 0:
+            self.capture_scope()
+
         with tf.variable_scope(self.get_scope(), reuse=self.n_builds > 0):
             utils, next_policy_state = self.controller(obs, policy_state)
 
@@ -129,7 +136,7 @@ class Policy(RNNCell):
         new = Policy(
             deepcopy(self.controller),
             deepcopy(self.action_selection),
-            self.exploration, self.obs_shape, new_name)
+            self.obs_shape, new_name)
         return new
         # Should work in TF 1.1, will need to be changed in TF 1.2.
         # new_controller = deepcopy(self.controller)
@@ -143,7 +150,6 @@ class Policy(RNNCell):
         # new = Policy(
         #     deepcopy(self.controller),
         #     deepcopy(self.action_selection),
-        #     self.exploration,
         #     self.n_actions, self.obs_shape, new_name)
 
         # if hasattr(new, '_scope'):
@@ -157,23 +163,21 @@ class Policy(RNNCell):
             self._policy_state = rnn_cell_placeholder(self.controller.state_size, name='policy_state')
             self._obs = tf.placeholder(tf.float32, (None,)+self.obs_shape, name='obs')
 
-            self._utils, self._next_policy_state = self.build_update(self._obs, self._policy_state)
-            self._samples = self.build_sample(self._utils)
-            self._entropy = self.build_entropy(self._utils)
+            self._utils, self._next_policy_state = self.build_update(self._obs, self._policy_state, self.exploration)
+            self._samples = self.build_sample(self._utils, self.exploration)
+            self._entropy = self.build_entropy(self._utils, self.exploration)
 
             self.act_is_built = True
 
-    def build_feeddict(self, obs, policy_state):
-        fd = flatten_dict_items({self._policy_state: policy_state})
-        fd.update({self._obs: obs})
-        return fd
-
-    def act(self, obs, policy_state):
+    def act(self, obs, policy_state, exploration=None):
         """ Return (actions, next policy state) given an observation and the current policy state. """
         self.build_act()
 
         sess = tf.get_default_session()
-        feed_dict = self.build_feeddict(obs, policy_state)
+        feed_dict = flatten_dict_items({self._policy_state: policy_state})
+        feed_dict.update({self._obs: obs})
+        if exploration is not None:
+            feed_dict.update({self.exploration: exploration})
 
         actions, next_policy_state = sess.run([self._samples, self._next_policy_state], feed_dict)
 

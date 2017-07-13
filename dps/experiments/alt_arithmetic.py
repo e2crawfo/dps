@@ -40,7 +40,7 @@ class Container(object):
 class AltArithmeticDataset(RegressionDataset):
     def __init__(
             self, mnist, symbols, shape, n_digits, upper_bound, base,
-            n_examples, op_loc, for_eval=False, shuffle=True, force_2d=False):
+            n_examples, op_loc, force_2d=False):
         assert 1 <= base <= 10
 
         # symbols is a list of pairs of the form (letter, reduction function)
@@ -88,7 +88,7 @@ class AltArithmeticDataset(RegressionDataset):
             blank_element, symbol_reps, digit_reps,
             functions, n_examples, op_loc, force_2d=force_2d)
 
-        super(AltArithmeticDataset, self).__init__(x, y, for_eval, shuffle)
+        super(AltArithmeticDataset, self).__init__(x, y)
 
     @staticmethod
     def make_dataset(
@@ -149,7 +149,7 @@ class AltArithmeticDataset(RegressionDataset):
 
 class AltArithmeticEnv(RegressionEnv):
     def __init__(self, mnist, shape, n_digits, upper_bound, base,
-                 n_train, n_val, n_test, op_loc=None, start_loc=None, force_2d=False):
+                 n_train, n_val, op_loc=None, start_loc=None, force_2d=False):
         self.mnist = mnist
         self.shape = shape
         self.n_digits = n_digits
@@ -167,9 +167,8 @@ class AltArithmeticEnv(RegressionEnv):
         pargs = mnist, symbols, shape, n_digits, upper_bound, base
 
         super(AltArithmeticEnv, self).__init__(
-            train=AltArithmeticDataset(*pargs, n_train, op_loc, for_eval=False, force_2d=force_2d),
-            val=AltArithmeticDataset(*pargs, n_val, op_loc, for_eval=True, force_2d=force_2d),
-            test=AltArithmeticDataset(*pargs, n_test, op_loc, for_eval=True, force_2d=force_2d))
+            train=AltArithmeticDataset(*pargs, n_train, op_loc, force_2d=force_2d),
+            val=AltArithmeticDataset(*pargs, n_val, op_loc, force_2d=force_2d))
 
     def __str__(self):
         return "<AltArithmeticEnv shape={} base={}>".format(self.height, self.shape, self.base)
@@ -445,7 +444,7 @@ class AltArithmeticNoModules(AltArithmetic):
 def build_env():
     external = AltArithmeticEnv(
         cfg.mnist, cfg.shape, cfg.n_digits, cfg.upper_bound, cfg.base,
-        cfg.n_train, cfg.n_val, cfg.n_test, cfg.op_loc, cfg.start_loc)
+        cfg.n_train, cfg.n_val, cfg.op_loc, cfg.start_loc)
 
     if cfg.ablation == 'bad_wiring':
         internal = AltArithmeticBadWiring(external)

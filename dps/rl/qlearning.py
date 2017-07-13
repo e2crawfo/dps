@@ -4,15 +4,15 @@ from tensorflow.python.ops.rnn import dynamic_rnn
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from collections import deque
 
-from dps.updater import ReinforcementLearningUpdater, Param
-from dps.utils import trainable_variables
+from dps.rl import ReinforcementLearner
+from dps.utils import trainable_variables, Param
 
 
 def clipped_error(x):
     return tf.where(tf.abs(x) < 1.0, 0.5 * tf.square(x), tf.abs(x) - 0.5)
 
 
-class QLearning(ReinforcementLearningUpdater):
+class QLearning(ReinforcementLearner):
     double = Param()
     replay_max_size = Param()
     replay_threshold = Param()
@@ -64,19 +64,9 @@ class QLearning(ReinforcementLearningUpdater):
 
             final_td_error = final_rewards - prev_q_value
             td_error = tf.concat((td_error, tf.expand_dims(final_td_error, 0)), axis=0)
-            self.q_loss = tf.reduce_mean(clipped_error(td_error))
+            self.loss = self.q_loss = tf.reduce_mean(clipped_error(td_error))
+
             tf.summary.scalar("loss_q", self.q_loss)
-
-            loss = self.q_loss
-
-            if self.l2_norm_penalty > 0:
-                policy_network_variables = trainable_variables(self.q_network.scope.name)
-                self.reg_loss = tf.reduce_sum([tf.reduce_sum(tf.square(x)) for x in policy_network_variables])
-                tf.summary.scalar("loss_reg", self.reg_loss)
-                loss += self.l2_norm_penalty * self.reg_loss
-
-            self.loss = loss
-
             tf.summary.scalar("reward_per_ep", self.reward_per_ep)
 
             self._build_train()

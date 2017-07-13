@@ -10,7 +10,7 @@ from dps.train import training_loop
 from dps.utils import FeedforwardCell, MLP
 from dps.updater import DifferentiableUpdater
 from dps.experiments.alt_arithmetic import AltArithmeticEnv
-from dps.policy import Deterministic
+from dps.rl.policy import Deterministic
 from dps.vision import LeNet
 
 
@@ -18,7 +18,7 @@ def build_env():
     return AltArithmeticEnv(
         mnist=True, shape=cfg.shape, n_digits=cfg.n_digits,
         upper_bound=cfg.upper_bound, base=cfg.base, n_train=cfg.n_train,
-        n_val=cfg.n_val, n_test=cfg.n_test, op_loc=cfg.op_loc,
+        n_val=cfg.n_val, op_loc=cfg.op_loc,
         start_loc=cfg.start_loc, force_2d=cfg.force_2d)
 
 
@@ -26,7 +26,6 @@ config = DEFAULT_CONFIG.copy(
     force_2d=True,
     n_train=10000,
     n_val=1000,
-    n_test=0,
     shape=(2, 2),
     start_loc=(0, 0),
     n_digits=3,
@@ -37,7 +36,7 @@ config = DEFAULT_CONFIG.copy(
     op_loc=(0, 0),
     upper_bound=True,
     base=10,
-    build_updater=DifferentiableUpdater,
+    get_updater=lambda env: DifferentiableUpdater(),
     build_env=build_env,
     action_selection=lambda env: Deterministic(env.n_actions),
     # n_controller_units=256,

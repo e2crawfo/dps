@@ -15,7 +15,7 @@ N = 14
 
 
 def _eval_model(sess, inference, x_ph, symbols):
-    test_dataset = TranslatedMnistDataset(n_examples=100, for_eval=True, symbols=symbols)
+    test_dataset = TranslatedMnistDataset(n_examples=100, symbols=symbols)
     y_ph = tf.placeholder(tf.int64, (None))
     _y = tf.reshape(y_ph, (-1,))
     loss = tf.reduce_mean(
@@ -24,7 +24,7 @@ def _eval_model(sess, inference, x_ph, symbols):
     correct_prediction = tf.equal(tf.argmax(inference, 1), _y)
     accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
 
-    x, y = test_dataset.next_batch()
+    x, y = test_dataset.next_batch(advance=False)
     _loss, _accuracy = sess.run([loss, accuracy], {x_ph: x, y_ph: y})
     print("Loss: {}, accuracy: {}".format(_loss, _accuracy))
     assert _accuracy > 0.7
@@ -65,7 +65,7 @@ def test_mnist_load_or_train():
         symbols = list(np.random.choice(20, n_symbols, replace=False))
 
         config = MNIST_CONFIG.copy(
-            threshold=0.05,
+            threshold=0.20,
             patience=np.inf,
             max_steps=10000000,
             symbols=symbols,
@@ -137,7 +137,11 @@ def test_mnist_pretrained(preprocess, classifier):
         output_size = n_symbols + 1
 
         config = MNIST_CONFIG.copy(
-            eval_step=100, max_steps=10000, symbols=list(symbols), include_blank=True)
+            eval_step=100,
+            max_steps=10000,
+            symbols=list(symbols),
+            include_blank=True,
+            threshold=0.2)
 
         checkpoint_dir = make_checkpoint_dir(config)
 

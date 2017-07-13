@@ -15,7 +15,7 @@ from dps.vision import (
 
 
 class TranslatedMnistEnv(RegressionEnv):
-    def __init__(self, scaled, discrete_attn, W, N, n_train, n_val, n_test, inc_delta, inc_x, inc_y):
+    def __init__(self, scaled, discrete_attn, W, N, n_train, n_val, inc_delta, inc_x, inc_y):
         self.scaled = scaled
         self.discrete_attn = discrete_attn
         self.W = W
@@ -27,9 +27,8 @@ class TranslatedMnistEnv(RegressionEnv):
         max_overlap = 200
         kwargs = dict(W=W, n_digits=n_digits, max_overlap=max_overlap)
         super(TranslatedMnistEnv, self).__init__(
-            train=TranslatedMnistDataset(n_examples=n_train, for_eval=False, **kwargs),
-            val=TranslatedMnistDataset(n_examples=n_val, for_eval=True, **kwargs),
-            test=TranslatedMnistDataset(n_examples=n_test, for_eval=True, **kwargs))
+            train=TranslatedMnistDataset(n_examples=n_train, **kwargs),
+            val=TranslatedMnistDataset(n_examples=n_val, **kwargs))
 
     def __str__(self):
         return "<TranslatedMnistEnv W={}>".format(self.W)
@@ -165,10 +164,6 @@ class TranslatedMnist(TensorFlowEnv):
 def render_rollouts(env, actions, registers, reward, info):
     external_obs = [i['external_obs'] for i in info]
 
-    if not cfg.save_display and not cfg.display:
-        print("Skipping rendering.")
-        return
-
     n_timesteps, batch_size, n_actions = actions.shape
     s = int(np.ceil(np.sqrt(batch_size)))
 
@@ -177,8 +172,8 @@ def render_rollouts(env, actions, registers, reward, info):
     env_subplots = subplots[::2, :].flatten()
     glimpse_subplots = subplots[1::2, :].flatten()
 
-    W = env.core_network.W
-    N = env.core_network.N
+    W = env.internal.W
+    N = env.internal.N
 
     raw_images = external_obs[0].reshape((-1, W, W))
 
@@ -231,7 +226,7 @@ def render_rollouts(env, actions, registers, reward, info):
 
 def build_env():
     external = TranslatedMnistEnv(
-        cfg.scaled, cfg.discrete_attn, cfg.W, cfg.N, cfg.n_train, cfg.n_val, cfg.n_test,
+        cfg.scaled, cfg.discrete_attn, cfg.W, cfg.N, cfg.n_train, cfg.n_val,
         cfg.inc_delta, cfg.inc_x, cfg.inc_y)
     internal = TranslatedMnist(external)
     return CompositeEnv(external, internal)

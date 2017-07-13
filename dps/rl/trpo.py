@@ -4,8 +4,10 @@ from tensorflow.python.ops.gradients_impl import _hessian_vector_product
 import numpy as np
 
 from dps import cfg
-from dps.updater import ReinforcementLearningUpdater, Param
-from dps.reinforce import policy_gradient_surrogate
+from dps.updater import Param
+from dps.rl import (
+    ReinforcementLearner, episodic_mean, policy_gradient_objective,
+    GeneralizedAdvantageEstimator, BasicValueEstimator)
 from dps.utils import build_scheduled_value, lst_to_vec, vec_to_lst
 
 
@@ -72,106 +74,107 @@ def mean_kl(p, q, obs):
     return tf.reduce_mean(kl) / T
 
 
-class TRPO(ReinforcementLearningUpdater):
+class TRPO(ReinforcementLearner):
     delta_schedule = Param()
     entropy_schedule = Param()
     max_cg_steps = Param()
 
-    def __init__(self, env, policy, **kwargs):
+    def __init__(self, policy, advantage_estimator=None, **kwargs):
+        if not advantage_estimator:
+            advantage_estimator = GeneralizedAdvantageEstimator(BasicValueEstimator())
+        self.advantage_estimator = advantage_estimator
+
         self.prev_policy = policy.deepcopy("prev_policy")
-        self.prev_policy.capture_scope()
+
+        self.policy = policy
 
         self.T = cfg.T
 
-        super(TRPO, self).__init__(env, policy, **kwargs)
+        super(TRPO, self).__init__(**kwargs)
 
-        self.clear_buffers()
-
-    def build_graph(self):
+    def build_graph(self, is_training, exploration):
         with tf.name_scope("updater"):
             self.delta = build_scheduled_value(self.delta_schedule, 'delta')
 
-            self.obs = tf.placeholder(tf.float32, shape=(self.T, None)+self.obs_shape, name="_obs")
-            self.actions = tf.placeholder(tf.float32, shape=(self.T, None, self.n_actions), name="_actions")
+            self.obs = tf.placeholder(tf.float32, shape=(self.T, None)+self.policy.obs_shape, name="_obs")
+            self.actions = tf.placeholder(tf.float32, shape=(self.T, None, self.policy.n_actions), name="_actions")
             self.advantage = tf.placeholder(tf.float32, shape=(self.T, None, 1), name="_advantage")
             self.rewards = tf.placeholder(tf.float32, shape=(self.T, None, 1), name="_rewards")
-            self.reward_per_ep = tf.reduce_mean(tf.reduce_sum(self.rewards, axis=0), name="_reward_per_ep")
+            self.reward_per_ep = episodic_mean(self.rewards, name="_reward_per_ep")
 
             self.grad_norm_pure = tf.placeholder(tf.float32, shape=(), name="_grad_norm_pure")
             self.grad_norm_natural = tf.placeholder(tf.float32, shape=(), name="_grad_norm_natural")
             self.step_norm = tf.placeholder(tf.float32, shape=(), name="_step_norm")
 
-            self.surrogate_objective, _, self.mean_entropy = policy_gradient_surrogate(
+            self.policy.set_exploration(exploration)
+            self.prev_policy.set_exploration(exploration)
+
+            self.pg_objective, _, self.mean_entropy = policy_gradient_objective(
                 self.policy, self.obs, self.actions, self.advantage)
+
+            self.objective = self.pg_objective
 
             if self.entropy_schedule:
                 entropy_param = build_scheduled_value(self.entropy_schedule, 'entropy_param')
-                self.surrogate_objective += entropy_param * self.mean_entropy
+                self.objective += entropy_param * self.mean_entropy
 
             g = tf.get_default_graph()
             tvars = g.get_collection('trainable_variables', scope=self.policy.scope.name)
-            self.policy_gradient = tf.gradients(self.surrogate_objective, tvars)
+            self.policy_gradient = tf.gradients(self.objective, tvars)
 
             self.mean_kl = mean_kl(self.prev_policy, self.policy, self.obs)
             self.fv_product = HessianVectorProduct(self.mean_kl, tvars)
 
-            tf.summary.scalar("grad_norm_pure", self.grad_norm_pure)
-            tf.summary.scalar("grad_norm_natural", self.grad_norm_natural)
-            tf.summary.scalar("step_norm", self.step_norm)
+            self.train_summary_op = tf.summary.merge([
+                tf.summary.scalar("grad_norm_pure", self.grad_norm_pure),
+                tf.summary.scalar("grad_norm_natural", self.grad_norm_natural),
+                tf.summary.scalar("step_norm", self.step_norm),
+            ])
 
-        with tf.name_scope("performance"):
-            tf.summary.scalar("surrogate_loss", -self.surrogate_objective)
-            tf.summary.scalar("mean_entropy", self.mean_entropy)
-            tf.summary.scalar("mean_kl", self.mean_kl)
-            tf.summary.scalar("reward_per_ep", self.reward_per_ep)
+        with tf.name_scope("eval"):
+            self.eval_summary_op = tf.summary.merge([
+                tf.summary.scalar("pg_objective", self.pg_objective),
+                tf.summary.scalar("objective", self.objective),
+                tf.summary.scalar("reward_per_ep", self.reward_per_ep),
+                tf.summary.scalar("mean_entropy", self.mean_entropy),
+                tf.summary.scalar("mean_kl", self.mean_kl)
+            ])
 
-    def _build_feeddict(self):
-        obs = np.array(self.obs_buffer)
-        actions = np.array(self.action_buffer)
-
-        T = len(self.reward_buffer)
-        discounts = np.logspace(0, T-1, T, base=self.gamma).reshape(-1, 1, 1)
-        rewards = np.array(self.reward_buffer)
-        discounted_rewards = rewards * discounts
-        sum_discounted_rewards = np.flipud(np.cumsum(np.flipud(discounted_rewards), axis=0))
-
-        advantage = sum_discounted_rewards
-        baselines = sum_discounted_rewards.mean(1, keepdims=True)
-        advantage = sum_discounted_rewards - baselines
+    def compute_advantage(self, rollouts):
+        advantage = self.advantage_estimator.estimate(rollouts)
 
         # Standardize advantage
         advantage = advantage - advantage.mean()
-        adv_std = max(1e-6, advantage.std())
-        advantage /= adv_std
+        adv_std = advantage.std()
+        if adv_std > 1e-6:
+            advantage /= adv_std
+        return advantage
 
-        return {
-            self.obs: obs,
-            self.actions: actions,
+    def update(self, rollouts, collect_summaries):
+        # Compute standard policy gradient
+        # --------------------------------
+        advantage = self.compute_advantage(rollouts)
+
+        feed_dict = {
+            self.obs: rollouts.o,
+            self.actions: rollouts.a,
+            self.rewards: rollouts.r,
             self.advantage: advantage,
-            self.rewards: rewards
         }
-
-    def _update(self, batch_size, summary_op=None):
-        self.clear_buffers()
-        self.env.do_rollouts(self, self.policy, batch_size, mode='train')
-
-        feed_dict = self._build_feeddict()
-        feed_dict[self.is_training] = True
 
         sess = tf.get_default_session()
         policy_gradient = sess.run(self.policy_gradient, feed_dict=feed_dict)
         policy_gradient = lst_to_vec(policy_gradient)
 
-        grad_norm_pure = 0.0
+        grad_norm_pure = np.linalg.norm(policy_gradient)
         grad_norm_natural = 0.0
         step_norm = 0.0
 
-        if np.allclose(policy_gradient, 0):
-            if cfg.verbose:
-                print("Got zero gradient, not updating.")
+        if np.isclose(0, grad_norm_pure):
+            print("Got zero policy gradient, not updating.")
         else:
-            grad_norm_pure = np.linalg.norm(policy_gradient)
-
+            # Compute natural gradient direction
+            # ----------------------------------
             self.prev_policy.set_params_flat(self.policy.get_params_flat())
 
             self.fv_product.update_feed_dict(feed_dict)
@@ -179,13 +182,11 @@ class TRPO(ReinforcementLearningUpdater):
 
             grad_norm_natural = np.linalg.norm(step_dir)
 
-            if cfg.verbose:
-                print("Gradient norm: ", grad_norm_pure)
-                print("Natural Gradient norm: ", grad_norm_natural)
-
             if grad_norm_natural < 1e-6:
                 print("Step dir has norm 0, not updating.")
             else:
+                # Perform line search in natural gradient direction
+                # -------------------------------------------------
                 delta = sess.run(self.delta)
                 denom = step_dir.dot(self.fv_product(step_dir))
                 beta = np.sqrt(2 * delta / denom)
@@ -194,7 +195,7 @@ class TRPO(ReinforcementLearningUpdater):
                 def objective(_params):
                     self.policy.set_params_flat(_params)
                     sess = tf.get_default_session()
-                    return sess.run(self.surrogate_objective, feed_dict=feed_dict)
+                    return sess.run(self.objective, feed_dict=feed_dict)
 
                 grad_dot_step_dir = policy_gradient.dot(step_dir)
 
@@ -205,38 +206,51 @@ class TRPO(ReinforcementLearningUpdater):
                     objective, params, full_step, expected_imp,
                     max_backtracks=cfg.max_line_search_steps, verbose=cfg.verbose)
 
-                step_norm = np.linalg.norm(new_params - params)
-
-                if cfg.verbose:
-                    print("Step norm: ", step_norm)
-
                 self.policy.set_params_flat(new_params)
 
-        feed_dict[self.grad_norm_pure] = grad_norm_pure
-        feed_dict[self.grad_norm_natural] = grad_norm_natural
-        feed_dict[self.step_norm] = step_norm
+                step_norm = np.linalg.norm(new_params - params)
 
-        if summary_op is not None:
-            train_summary, train_reward = sess.run([summary_op, self.reward_per_ep], feed_dict=feed_dict)
+        if cfg.verbose:
+            print("Gradient norm: ", grad_norm_pure)
+            print("Natural Gradient norm: ", grad_norm_natural)
+            print("Step norm: ", step_norm)
 
-            # Run some validation rollouts
-            self.clear_buffers()
-            self.env.do_rollouts(self, self.policy, mode='val')
-            feed_dict = self._build_feeddict()
-            feed_dict[self.is_training] = False
-
-            feed_dict[self.grad_norm_pure] = 0.0
-            feed_dict[self.grad_norm_natural] = 0.0
-            feed_dict[self.step_norm] = 0.0
-
-            val_summary, val_reward = sess.run([summary_op, self.reward_per_ep], feed_dict=feed_dict)
-
-            return_value = train_summary, -train_reward, val_summary, -val_reward
+        if collect_summaries:
+            feed_dict = {
+                self.grad_norm_pure: grad_norm_pure,
+                self.grad_norm_natural: grad_norm_natural,
+                self.step_norm: step_norm,
+            }
+            sess = tf.get_default_session()
+            train_summaries = sess.run(self.train_summary_op, feed_dict=feed_dict)
+            return train_summaries
         else:
-            train_reward = sess.run(self.reward_per_ep, feed_dict=feed_dict)
-            return_value = -train_reward
+            return b''
 
-        return return_value
+    def evaluate(self, rollouts):
+        advantage = self.compute_advantage(rollouts)
+
+        feed_dict = {
+            self.obs: rollouts.o,
+            self.actions: rollouts.a,
+            self.rewards: rollouts.r,
+            self.advantage: advantage
+        }
+
+        sess = tf.get_default_session()
+
+        eval_summaries, pg_objective, reward_per_ep, mean_entropy, mean_kl = (
+            sess.run(
+                [self.eval_summary_op, self.pg_objective, self.reward_per_ep, self.mean_entropy, self.mean_kl],
+                feed_dict=feed_dict))
+
+        record = dict(
+            pg_objective=pg_objective,
+            reward_per_ep=reward_per_ep,
+            mean_entropy=mean_entropy,
+            mean_kl=mean_kl)
+
+        return eval_summaries, record
 
 
 class HessianVectorProduct(object):

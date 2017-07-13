@@ -9,23 +9,22 @@ from dps.vision.attention import apply_gaussian_filter
 
 
 class SimpleAdditionDataset(RegressionDataset):
-    def __init__(self, width, n_digits, n_examples, for_eval=False, shuffle=True):
+    def __init__(self, width, n_digits, n_examples):
         self.width = width
         self.n_digits = n_digits
 
         x = np.random.randint(0, n_digits, size=(n_examples, 2*width+1))
         y = x[:, :1] + x[:, -1:]
-        super(SimpleAdditionDataset, self).__init__(x, y, for_eval, shuffle)
+        super(SimpleAdditionDataset, self).__init__(x, y)
 
 
 class SimpleAdditionEnv(RegressionEnv):
-    def __init__(self, width, n_digits, n_train, n_val, n_test):
+    def __init__(self, width, n_digits, n_train, n_val):
         self.width = width
         self.n_digits = n_digits
         super(SimpleAdditionEnv, self).__init__(
-            train=SimpleAdditionDataset(width, n_digits, n_train, for_eval=False),
-            val=SimpleAdditionDataset(width, n_digits, n_val, for_eval=True),
-            test=SimpleAdditionDataset(width, n_digits, n_test, for_eval=True))
+            train=SimpleAdditionDataset(width, n_digits, n_train),
+            val=SimpleAdditionDataset(width, n_digits, n_val))
 
     def __str__(self):
         return "<SimpleAdditionEnv - width={}, n_digits={}>".format(self.width, self.n_digits)
@@ -86,6 +85,6 @@ class SimpleAddition(TensorFlowEnv):
 
 
 def build_env():
-        external = SimpleAdditionEnv(cfg.width, cfg.n_digits, cfg.n_train, cfg.n_val, cfg.n_test)
+        external = SimpleAdditionEnv(cfg.width, cfg.n_digits, cfg.n_train, cfg.n_val)
         internal = SimpleAddition(external)
         return CompositeEnv(external, internal)

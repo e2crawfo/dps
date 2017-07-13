@@ -13,17 +13,15 @@ import os
 
 from spectral_dagger.utils.experiment import ExperimentStore
 from dps import cfg
-from dps.policy import Policy
 from dps.utils import (
-    restart_tensorboard, gen_seed, build_scheduled_value,
-    time_limit, uninitialized_variables_initializer, du, Config,
-    trainable_variables, parse_date)
+    restart_tensorboard, gen_seed, time_limit,
+    uninitialized_variables_initializer, du, Config, parse_date)
 
 
 def training_loop(exp_name='', start_time=None):
     np.random.seed(cfg.seed)
 
-    exp_name = exp_name or "updater={}_seed={}".format(cfg.build_updater.__name__, cfg.seed)
+    exp_name = exp_name or cfg.get_experiment_name()
     try:
         curriculum = cfg.curriculum
     except AttributeError:
@@ -137,7 +135,9 @@ class TrainingLoop(object):
                 if cfg.save_summaries:
                     self.train_writer = tf.summary.FileWriter(
                         exp_dir.path_for('train'), graph, flush_secs=cfg.reload_interval)
-                    self.val_writer = tf.summary.FileWriter(exp_dir.path_for('val'), flush_secs=cfg.reload_interval)
+                    self.val_writer = tf.summary.FileWriter(
+                        exp_dir.path_for('val'), flush_secs=cfg.reload_interval)
+
                     print("Writing summaries to {}.".format(exp_dir.path))
 
                 sess = tf.Session(graph=graph)
@@ -152,32 +152,13 @@ class TrainingLoop(object):
 
                 stack.enter_context(stage_config)
 
-                # Build env
                 self.env = env = cfg.build_env()
-
-                # Build policy
-                is_training = tf.placeholder(tf.bool, shape=(), name="is_training")
-                exploration = build_scheduled_value(cfg.exploration_schedule, 'exploration')
-                if cfg.test_time_explore >= 0:
-                    testing_exploration = tf.constant(cfg.test_time_explore, tf.float32, name='testing_exploration')
-                    exploration = tf.cond(is_training, lambda: exploration, lambda: testing_exploration)
-
-                action_selection = cfg.action_selection(env)
-                controller = cfg.controller(action_selection.n_params)
-
-                self.policy = policy = Policy(
-                    controller, action_selection, exploration,
-                    env.obs_shape, name="{}_policy".format(env.__class__.__name__))
-                policy.capture_scope()
-
-                updater = cfg.build_updater(env, policy)
-                updater.is_training = is_training
+                updater = cfg.get_updater(env)
+                updater.build_graph()
 
                 if stage > 0 and cfg.preserve_policy:
-                    policy_variables = trainable_variables(policy.scope.name)
-                    saver = tf.train.Saver(policy_variables)
-                    saver.restore(tf.get_default_session(), self.history[-2]['best_path'])
-                # Done building policy
+                    updater.restore(
+                        tf.get_default_session(), self.history[-2]['best_path'])
 
                 tf_seed = gen_seed()
                 tf.set_random_seed(tf_seed)
@@ -200,17 +181,14 @@ class TrainingLoop(object):
 
                 best_path = self.history[-1]['best_path']
                 print("Loading best hypothesis for this stage "
-                      "from file {}...".format(stage, best_path))
-                policy_variables = trainable_variables(policy.scope.name)
-                saver = tf.train.Saver(policy_variables)
-                saver.save(tf.get_default_session(), best_path)
+                      "from file {}...".format(best_path))
+                updater.restore(tf.get_default_session(), best_path)
 
                 if cfg.start_tensorboard:
                     restart_tensorboard(str(cfg.log_dir), cfg.tbport, cfg.reload_interval)
 
-                if cfg.visualize:
-                    render_rollouts = getattr(cfg, 'render_rollouts', None)
-                    self.env.visualize(policy, 4, cfg.T, 'train', render_rollouts)
+                if cfg.render_hook is not None:
+                    cfg.render_hook(updater)
 
                 if threshold_reached or cfg.power_through:
                     stage += 1
@@ -267,21 +245,28 @@ class TrainingLoop(object):
             evaluate = self.global_step % cfg.eval_step == 0
             display = self.global_step % cfg.display_step == 0
 
+            start_time = time.time()
+            update_summaries = updater.update(cfg.batch_size, collect_summaries=evaluate)
+            update_duration = time.time() - start_time
+
             if evaluate or display:
-                start_time = time.time()
-                train_summary, train_loss, val_summary, val_loss = updater.update(
-                    cfg.batch_size, self.summary_op if evaluate else None)
-                duration = time.time() - start_time
+                train_loss, train_summaries, train_record = updater.evaluate(cfg.batch_size, mode='train_eval')
+                val_loss, val_summaries, val_record = updater.evaluate(cfg.batch_size, mode='val')
 
                 if evaluate and cfg.save_summaries:
-                    self.train_writer.add_summary(train_summary, self.global_step)
-                    self.val_writer.add_summary(val_summary, self.global_step)
+                    self.train_writer.add_summary(update_summaries + train_summaries, self.global_step)
+                    self.val_writer.add_summary(val_summaries, self.global_step)
 
                 if display:
-                    print("Step(g: {}, l: {}): TLoss={:06.4f}, VLoss={:06.4f}, "
-                          "Sec/Batch={:06.10f}, Sec/Example={:06.10f}, Epoch={:04.2f}.".format(
-                              self.global_step, local_step, train_loss, val_loss, time_per_batch,
-                              time_per_example, updater.env.completion))
+                    record = {k + '(train)': v for k, v in train_record.items()}
+                    record.update({k + '(val)': v for k, v in val_record.items()})
+                    record['Sec/Batch'] = time_per_example
+                    record['Sec/Example'] = time_per_example
+                    record['Epoch'] = updater.env.completion
+
+                    s = "Step(g: {}, l: {}): ".format(self.global_step, local_step)
+                    for k, v in record.items():
+                        s += '\n{}: {}'.format(k, v)
 
                 new_best, stop = early_stop.check(val_loss, self.global_step, local_step)
 
@@ -289,9 +274,7 @@ class TrainingLoop(object):
                     print("Storing new best on local step {} (global step {}) "
                           "with validation loss of {}.".format(local_step, self.global_step, val_loss))
                     filename = self.exp_dir.path_for('best_of_stage_{}'.format(stage))
-                    policy_variables = trainable_variables(self.policy.scope.name)
-                    saver = tf.train.Saver(policy_variables)
-                    best_path = saver.save(tf.get_default_session(), filename)
+                    best_path = updater.save(tf.get_default_session(), filename)
                     self.record('best_path', best_path)
 
                 if stop:
@@ -309,12 +292,7 @@ class TrainingLoop(object):
                 self.record('time_per_batch', time_per_batch)
                 self.record('n_steps', local_step)
 
-            else:
-                start_time = time.time()
-                updater.update(cfg.batch_size)
-                duration = time.time() - start_time
-
-            total_train_time += duration
+            total_train_time += update_duration
             time_per_example = total_train_time / ((local_step+1) * cfg.batch_size)
             time_per_batch = total_train_time / (local_step+1)
 
@@ -322,55 +300,6 @@ class TrainingLoop(object):
             self.global_step += 1
 
         return threshold_reached, reason
-
-
-def build_and_visualize(load_from=None):
-    with ExitStack() as stack:
-        graph = tf.Graph()
-
-        if not cfg.use_gpu:
-            stack.enter_context(graph.device("/cpu:0"))
-
-        sess = tf.Session(graph=graph)
-
-        stack.enter_context(graph.as_default())
-        stack.enter_context(sess)
-        stack.enter_context(sess.as_default())
-
-        tf_seed = gen_seed()
-        tf.set_random_seed(tf_seed)
-
-        env = cfg.build_env()
-
-        exploration = tf.constant(cfg.test_time_explore or 0.0)
-
-        action_selection = cfg.action_selection(env)
-        controller = cfg.controller(action_selection.n_params)
-        policy = Policy(controller, action_selection, exploration, env.obs_shape)
-
-        policy_scope = getattr(cfg, 'policy_scope', None)
-        if policy_scope:
-            with tf.variable_scope(policy_scope) as scope:
-                policy.set_scope(scope)
-
-        if load_from:
-            # TODO: might have to make sure the policy gets instantiated before we do this.
-            policy_variables = graph.get_collection('trainable_variables', scope=policy.scope.name)
-            saver = tf.train.Saver(policy_variables)
-            saver.restore(sess, load_from)
-
-        try:
-            sess.run(uninitialized_variables_initializer())
-            sess.run(tf.assert_variables_initialized())
-        except TypeError:
-            pass
-
-        render_rollouts = getattr(cfg, 'render_rollouts', None)
-        start_time = time.time()
-        env.visualize(policy, cfg.batch_size, cfg.T, 'train', render_rollouts)
-        duration = time.time() - start_time
-
-        print("Visualization took {} seconds.".format(duration))
 
 
 class EarlyStopHook(object):

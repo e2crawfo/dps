@@ -11,7 +11,7 @@ from dps.vision import (
 
 
 class MnistArithmeticEnv(RegressionEnv):
-    def __init__(self, simple, base, n_digits, upper_bound, W, N, n_train, n_val, n_test, inc_delta, inc_x, inc_y):
+    def __init__(self, simple, base, n_digits, upper_bound, W, N, n_train, n_val, inc_delta, inc_x, inc_y):
         self.simple = simple
         self.base = base
         self.n_digits = n_digits
@@ -26,23 +26,18 @@ class MnistArithmeticEnv(RegressionEnv):
         if simple:
             kwargs = dict(W=W, n_digits=n_digits, max_overlap=max_overlap)
             super(MnistArithmeticEnv, self).__init__(
-                train=TranslatedMnistDataset(n_examples=n_train, for_eval=False, **kwargs),
-                val=TranslatedMnistDataset(n_examples=n_val, for_eval=True, **kwargs),
-                test=TranslatedMnistDataset(n_examples=n_test, for_eval=True, **kwargs))
+                train=TranslatedMnistDataset(n_examples=n_train, **kwargs),
+                val=TranslatedMnistDataset(n_examples=n_val, **kwargs))
         else:
             reductions = [('A', lambda x: sum(x)), ('M', lambda x: np.product(x)), ('C', lambda x: len(x))]
             kwargs = dict(
                 W=W, n_digits=n_digits, max_overlap=max_overlap,
                 reductions=reductions, upper_bound=upper_bound, base=base)
 
-            train = MnistArithmeticDataset(
-                n_examples=n_train, for_eval=False, shuffle=True, **kwargs)
-            val = MnistArithmeticDataset(
-                n_examples=n_train, for_eval=True, shuffle=False, **kwargs)
-            test = MnistArithmeticDataset(
-                n_examples=n_train, for_eval=True, shuffle=False, **kwargs)
+            train = MnistArithmeticDataset(n_examples=n_train, **kwargs)
+            val = MnistArithmeticDataset(n_examples=n_train, **kwargs)
 
-        super(MnistArithmeticEnv, self).__init__(train=train, val=val, test=test)
+        super(MnistArithmeticEnv, self).__init__(train=train, val=val)
 
     def __str__(self):
         return "<MnistArithmeticEnv W={}>".format(self.W)
@@ -194,7 +189,6 @@ class MnistArithmetic(TensorFlowEnv):
 def build_env():
     external = MnistArithmeticEnv(
         cfg.simple, cfg.base, cfg.n_digits, cfg.upper_bound, cfg.W, cfg.N,
-        cfg.n_train, cfg.n_val, cfg.n_test,
-        cfg.inc_delta, cfg.inc_x, cfg.inc_y)
+        cfg.n_train, cfg.n_val, cfg.inc_delta, cfg.inc_x, cfg.inc_y)
     internal = MnistArithmetic(external)
     return CompositeEnv(external, internal)

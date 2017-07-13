@@ -8,7 +8,7 @@ from dps.environment import (
 
 
 class HelloWorldDataset(RegressionDataset):
-    def __init__(self, order, n_examples, for_eval=False, shuffle=True):
+    def __init__(self, order, n_examples):
         self.order = order
 
         x = np.random.randn(n_examples, 2)
@@ -20,15 +20,14 @@ class HelloWorldDataset(RegressionDataset):
             else:
                 y[:, 1] = y[:, 0] * y[:, 1]
 
-        super(HelloWorldDataset, self).__init__(x, y, for_eval, shuffle)
+        super(HelloWorldDataset, self).__init__(x, y)
 
 
 class HelloWorldEnv(RegressionEnv):
-    def __init__(self, order, n_train, n_val, n_test):
+    def __init__(self, order, n_train, n_val):
         super(HelloWorldEnv, self).__init__(
-            train=HelloWorldDataset(order, n_train, for_eval=False),
-            val=HelloWorldDataset(order, n_val, for_eval=True),
-            test=HelloWorldDataset(order, n_test, for_eval=True))
+            train=HelloWorldDataset(order, n_train),
+            val=HelloWorldDataset(order, n_val))
 
 
 class HelloWorld(TensorFlowEnv):
@@ -68,6 +67,6 @@ class HelloWorld(TensorFlowEnv):
 
 
 def build_env():
-    external = HelloWorldEnv(cfg.order, cfg.n_train, cfg.n_val, cfg.n_test)
+    external = HelloWorldEnv(cfg.order, cfg.n_train, cfg.n_val)
     internal = HelloWorld(external)
     return CompositeEnv(external, internal)

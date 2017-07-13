@@ -65,12 +65,12 @@ class BatchBox(gym.Space):
 
 
 class Env(with_metaclass(abc.ABCMeta, GymEnv)):
-    def set_mode(self, kind, batch_size):
-        assert kind in ['train', 'val', 'test'], "Unknown kind {}.".format(kind)
-        self._kind = kind
-        self._batch_size = batch_size
+    def set_mode(self, mode, batch_size):
+        assert mode in 'train train_eval val'.split(), "Unknown mode: {}.".format(mode)
+        self.mode = mode
+        self.batch_size = batch_size
 
-    def do_rollouts(self, alg, policy, n_rollouts=None, T=None, mode='train'):
+    def do_rollouts(self, alg, policy, n_rollouts=None, T=None, exploration=None, mode='train'):
         T = T or cfg.T
         start_time = time.time()
         self.set_mode(mode, n_rollouts)
@@ -83,22 +83,30 @@ class Env(with_metaclass(abc.ABCMeta, GymEnv)):
 
         done = False
         while not done:
-            action, policy_state = policy.act(obs, policy_state)
+            action, policy_state = policy.act(obs, policy_state, exploration)
             new_obs, reward, done, info = self.step(action)
 
-            alg.remember(obs, action, reward)
+            alg.remember(obs, action, reward, 0.0)
             obs = new_obs
 
         alg.end_episode()
 
         print("Took {} seconds to do {} rollouts.".format(time.time() - start_time, n_rollouts))
 
+    def _pprint_rollouts(**kwargs):
+        raise Exception("NotImplemented.")
+
+    def visualize(self, render_rollouts=None, **rollout_kwargs):
+        rollout_results = self.do_rollouts(DummyAlg(), **rollout_kwargs)
+        self._pprint_rollouts(*rollout_results)
+        if render_rollouts is not None:
+            render_rollouts(self, *rollout_results)
+
 
 class RegressionDataset(object):
-    def __init__(self, x, y, for_eval=False, shuffle=True):
+    def __init__(self, x, y, shuffle=True):
         self.x = x
         self.y = y
-        self.for_eval = for_eval
         self.shuffle = shuffle
 
         self._epochs_completed = 0
@@ -124,7 +132,7 @@ class RegressionDataset(object):
     def completion(self):
         return self.epochs_completed + self.index_in_epoch / self.n_examples
 
-    def next_batch(self, batch_size=None):
+    def next_batch(self, batch_size=None, advance=True):
         """ Return the next ``batch_size`` examples from this data set.
 
         If ``batch_size`` not specified, return rest of the examples in the current epoch.
@@ -144,39 +152,37 @@ class RegressionDataset(object):
             self._x = self.x[perm0]
             self._y = self.y[perm0]
 
-        # Go to the next epoch
         if start + batch_size >= self.n_examples:
             # Finished epoch
-            self._epochs_completed += 1
 
-            # Get the rest examples in this epoch
-            rest_n_examples = self.n_examples - start
-            x_rest_part = self._x[start:self.n_examples]
-            y_rest_part = self._y[start:self.n_examples]
+            # Get the remaining examples in this epoch
+            x_rest_part = self._x[start:]
+            y_rest_part = self._y[start:]
 
-            if self.for_eval:
-                self._index_in_epoch = 0
-                return x_rest_part, y_rest_part
-            else:
-                # Shuffle the data
-                if self.shuffle:
-                    perm = np.arange(self.n_examples)
-                    np.random.shuffle(perm)
-                    self._x = self.x[perm]
-                    self._y = self.y[perm]
+            # Shuffle the data
+            if self.shuffle and advance:
+                perm = np.arange(self.n_examples)
+                np.random.shuffle(perm)
+                self._x = self.x[perm]
+                self._y = self.y[perm]
 
-                # Start next epoch
-                start = 0
-                self._index_in_epoch = batch_size - rest_n_examples
-                end = self._index_in_epoch
-                x_new_part = self._x[start:end]
-                y_new_part = self._y[start:end]
-                x = np.concatenate((x_rest_part, x_new_part), axis=0)
-                y = np.concatenate((y_rest_part, y_new_part), axis=0)
+            # Start next epoch
+            end = batch_size - len(x_rest_part)
+            x_new_part = self._x[:end]
+            y_new_part = self._y[:end]
+            x = np.concatenate((x_rest_part, x_new_part), axis=0)
+            y = np.concatenate((y_rest_part, y_new_part), axis=0)
+
+            if advance:
+                self._index_in_epoch = end
+                self._epochs_completed += 1
         else:
-            self._index_in_epoch += batch_size
-            end = self._index_in_epoch
+            # Middle of epoch
+            end = start + batch_size
             x, y = self._x[start:end], self._y[start:end]
+
+            if advance:
+                self._index_in_epoch = end
 
         return x, y
 
@@ -184,8 +190,13 @@ class RegressionDataset(object):
 class RegressionEnv(Env):
     metadata = {"render.modes": ["human", "ansi"]}
 
-    def __init__(self, train, val, test):
-        self.train, self.val, self.test = train, val, test
+    def __init__(self, train, val):
+        self.train, self.val = train, val
+        self.datasets = {
+            'train': self.train,
+            'train_eval': self.train,
+            'val': self.val,
+        }
 
         self.n_actions = self.train.y.shape[1]
         self.action_space = BatchBox(low=-np.inf, high=np.inf, shape=(None, self.n_actions))
@@ -195,18 +206,23 @@ class RegressionEnv(Env):
 
         self.reward_range = (-np.inf, 0)
 
-        self._kind = 'train'
-        self._batch_size = None
+        self.mode = 'train'
+        self.batch_size = None
 
         self.action_ph, self.loss, self.target_ph = None, None, None
 
         self.reset()
 
     def __str__(self):
-        return "<RegressionEnv train={} val={} test={}>".format(self.train, self.val, self.test)
+        return "<RegressionEnv train={} val={}>".format(self.train, self.val)
+
+    def next_batch(self, batch_size=None, mode='train'):
+        advance = mode == 'train'
+        return self.datasets[mode].next_batch(batch_size=batch_size, advance=advance)
 
     def build_loss(self, actions, targets):
-        return tf.reduce_mean((actions - targets)**2, axis=-1, keep_dims=True)
+        return tf.reduce_mean(tf.abs(actions - targets), axis=-1, keep_dims=True)
+        # return tf.reduce_mean((actions - targets)**2, axis=-1, keep_dims=True)
 
     def build_reward(self, actions, targets):
         abs_error = tf.reduce_sum(tf.abs(actions - targets), axis=-1, keep_dims=True)
@@ -239,8 +255,8 @@ class RegressionEnv(Env):
     def _reset(self):
         self.t = 0
 
-        dataset = getattr(self, self._kind)
-        self.x, self.y = dataset.next_batch(self._batch_size)
+        advance = self.mode == 'train'
+        self.x, self.y = self.datasets[self.mode].next_batch(self.batch_size, advance=advance)
         return self.x
 
     def _render(self, mode='human', close=False):
@@ -255,26 +271,13 @@ class RegressionEnv(Env):
 
 
 class SamplerCell(RNNCell):
-    def __init__(self, env, policy):
+    def __init__(self, env, policy, static_inp):
         self.env, self.policy = env, policy
         self._state_size = (self.env.rb.width, self.policy.state_size)
 
-        self._output_size = (
-            self.env.rb.width,
-            self.policy.n_params,
-            1,
-            self.env.n_actions,
-            1,
-            self.policy.state_size)
+        self._output_size = (self.env.rb.width, self.policy.n_params, 1, self.env.n_actions, 1, 1, self.policy.state_size)
 
-        self._static_inp = None
-
-    def set_static_input(self, static_inp):
-        """ Provide a batched tensor that is the same every time step,
-            and which can be accessed by the environment.
-
-        """
-        self._static_inp = static_inp
+        self.static_inp = static_inp
 
     def __call__(self, t, state, scope=None):
         with tf.name_scope(scope or 'sampler_cell'):
@@ -284,12 +287,13 @@ class SamplerCell(RNNCell):
                 obs = self.env.rb.visible(registers)
                 utils, new_policy_state = self.policy.build_update(obs, policy_state)
                 action = self.policy.build_sample(utils)
+                log_prob = self.policy.build_log_prob(utils, action)
                 entropy = self.policy.build_entropy(utils)
 
             with tf.name_scope('env_step'):
-                reward, new_registers = self.env.build_step(t, registers, action, self._static_inp)
+                reward, new_registers = self.env.build_step(t, registers, action, self.static_inp)
 
-            return (registers, utils, entropy, action, reward, policy_state), (new_registers, new_policy_state)
+            return (registers, utils, entropy, action, log_prob, reward, policy_state), (new_registers, new_policy_state)
 
     @property
     def state_size(self):
@@ -307,55 +311,6 @@ class SamplerCell(RNNCell):
 
 def timestep_tensor(batch_size, T):
     return tf.tile(tf.reshape(tf.range(T), (T, 1, 1)), (1, batch_size, 1))
-
-
-class Sampler(object):
-    """ An object that stores an env and a policy.
-        Its build function creates operations that sample rollouts using the env and policy.
-
-        Calling its __call__ method builds the graph.
-
-    """
-    def __init__(self, env, policy, scope=None):
-        self.env, self.policy, self.scope = env, policy, scope
-        self._sampler_cell = None
-
-    def __str__(self):
-        return "<Sampler - env={}, policy={}, scope={}>".format(self.env, self.policy)
-
-    @property
-    def sampler_cell(self):
-        if self._sampler_cell is None:
-            self._sampler_cell = SamplerCell(self.env, self.policy)
-        return self._sampler_cell
-
-    def __call__(self, n_rollouts, T, initial_policy_state, initial_registers, static_inp):
-        with tf.name_scope(self.scope or "sampler"):
-            self.sampler_cell.set_static_input(static_inp)
-
-            initial_registers = self.env.build_init(initial_registers, static_inp)
-
-            t = timestep_tensor(n_rollouts, T)
-
-            _output = dynamic_rnn(
-                self.sampler_cell, t, initial_state=(initial_registers, initial_policy_state),
-                parallel_iterations=1, swap_memory=False, time_major=True)
-
-            (
-                (registers, utils, entropy, actions, rewards, policy_states),
-                (final_registers, final_policy_state)) = _output
-
-            output = dict(
-                registers=registers,
-                utils=utils,
-                entropy=entropy,
-                actions=actions,
-                rewards=rewards,
-                policy_states=policy_states,
-                final_registers=final_registers,
-                final_policy_state=final_policy_state)
-
-        return output
 
 
 class TensorFlowEnvMeta(abc.ABCMeta):
@@ -400,7 +355,6 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
     def get_sampler(self, policy):
         sampler = self._samplers.get(id(policy))
         if not sampler:
-            sampler = Sampler(self, policy)
             n_rollouts_ph = tf.placeholder(tf.int32, ())
             T_ph = tf.placeholder(tf.int32, ())
 
@@ -410,50 +364,72 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
             si_type, si_shape = self.static_inp_type_and_shape()
             static_inp_ph = tf.placeholder(si_type, (None,) + si_shape)
 
-            outputs = sampler(n_rollouts_ph, T_ph, initial_policy_state, initial_registers, static_inp_ph)
+            sampler_cell = SamplerCell(self, policy, static_inp_ph)
+            with tf.name_scope("sampler"):
+                initial_registers = self.build_init(initial_registers, static_inp_ph)
+                t = timestep_tensor(n_rollouts_ph, T_ph)
+
+                _output = dynamic_rnn(
+                    sampler_cell, t, initial_state=(initial_registers, initial_policy_state),
+                    parallel_iterations=1, swap_memory=False, time_major=True)
+
+                registers, utils, entropy, actions, log_probs, rewards, policy_states = _output[0]
+                final_registers, final_policy_state = _output[1]
+
+                output = dict(
+                    registers=registers,
+                    utils=utils,
+                    entropy=entropy,
+                    actions=actions,
+                    log_probs=log_probs,
+                    rewards=rewards,
+                    policy_states=policy_states,
+                    final_registers=final_registers,
+                    final_policy_state=final_policy_state)
 
             self._samplers[id(policy)] = (
-                sampler, n_rollouts_ph, T_ph,
-                initial_policy_state, initial_registers,
-                static_inp_ph, outputs)
+                n_rollouts_ph, T_ph, initial_policy_state, initial_registers, static_inp_ph, output)
+
             sampler = self._samplers[id(policy)]
 
         return sampler
 
-    def do_rollouts(self, alg, policy, n_rollouts=None, T=None, mode='train'):
-        T = T or cfg.T
-        sampler = self.get_sampler(policy)
-
+    def do_rollouts(self, alg, policy, n_rollouts=None, T=None, exploration=None, mode='train'):
         self.set_mode(mode, n_rollouts)
+        T = T or cfg.T
         static_inp = self.make_static_input(n_rollouts)
         n_rollouts = static_inp.shape[0]
 
-        sampler, n_rollouts_ph, T_ph, _, _, static_inp_ph, output = self.get_sampler(policy)
+        n_rollouts_ph, T_ph, _, _, static_inp_ph, output = self.get_sampler(policy)
 
         feed_dict = {
             n_rollouts_ph: n_rollouts,
             T_ph: T,
             static_inp_ph: static_inp,
-            alg.is_training: mode == 'train'
+            alg.is_training: mode in 'train train_eval'.split()
         }
+
+        if exploration is not None:
+            feed_dict.update({policy.exploration: exploration})
 
         sess = tf.get_default_session()
 
         # sample rollouts
-        registers, final_registers, utils, entropy, actions, rewards = sess.run(
+        registers, final_registers, utils, entropy, actions, log_probs, rewards = sess.run(
             [output['registers'],
              output['final_registers'],
              output['utils'],
              output['entropy'],
              output['actions'],
+             output['log_probs'],
              output['rewards']],
             feed_dict=feed_dict)
 
         # record rollouts
         alg.start_episode()
 
-        for t, (o, a, r) in enumerate(zip(self.rb.visible(registers), actions, rewards)):
-            alg.remember(o, a, r)
+        for t, (o, a, r, lp) in enumerate(zip(self.rb.visible(registers), actions, rewards, log_probs)):
+            alg.remember(o, a, r, lp)
 
         alg.end_episode()
 
@@ -462,13 +438,6 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
         registers = np.concatenate([registers, np.expand_dims(final_registers, 0)], axis=0)
 
         return registers, actions, rewards, info
-
-    def visualize(self, policy, n_rollouts=None, T=None, mode='train', render_rollouts=None):
-        """ Visualize rollouts. """
-        rollout_results = self.do_rollouts(DummyAlg(), policy, n_rollouts, T, mode)
-        self._pprint_rollouts(*rollout_results)
-        if render_rollouts is not None:
-            render_rollouts(self, *rollout_results)
 
     def _pprint_rollouts(self, registers, actions, rewards, info):
         n_params = info[0]['utils'].shape[1]
@@ -535,7 +504,7 @@ class DummyAlg(object):
     def start_episode(self):
         pass
 
-    def remember(self, o, a, r):
+    def remember(self, o, a, r, lp):
         pass
 
     def end_episode(self):
@@ -566,11 +535,10 @@ class CompositeEnv(Env):
     def completion(self):
         return self.external.completion
 
-    def do_rollouts(self, alg, policy, n_rollouts=None, T=None, mode='train'):
+    def do_rollouts(self, alg, policy, n_rollouts=None, T=None, exploration=None, mode='train'):
         T = T or cfg.T
-        (sampler, n_rollouts_ph, T_ph,
-         initial_policy_state, initial_registers,
-         static_inp_ph, output) = self.internal.get_sampler(policy)
+        (n_rollouts_ph, T_ph, initial_policy_state,
+         initial_registers, static_inp_ph, output) = self.internal.get_sampler(policy)
 
         self.external.set_mode(mode, n_rollouts)
         external_obs = self.external.reset()
@@ -592,7 +560,7 @@ class CompositeEnv(Env):
                     T_ph: T,
                     initial_registers: final_registers,
                     static_inp_ph: external_obs,
-                    alg.is_training: mode == 'train'
+                    alg.is_training: mode in 'train train_eval'.split()
                 }
 
                 feed_dict.update(
@@ -604,16 +572,19 @@ class CompositeEnv(Env):
                     n_rollouts_ph: n_rollouts,
                     T_ph: T,
                     static_inp_ph: external_obs,
-                    alg.is_training: mode == 'train'
+                    alg.is_training: mode in 'train train_eval'.split()
                 }
+            if exploration is not None:
+                feed_dict.update({policy.exploration: exploration})
 
             sess = tf.get_default_session()
 
-            _registers, final_registers, final_policy_state, _actions, _rewards = sess.run(
+            _registers, final_registers, final_policy_state, _actions, _log_probs, _rewards = sess.run(
                 [output['registers'],
                  output['final_registers'],
                  output['final_policy_state'],
                  output['actions'],
+                 output['log_probs'],
                  output['rewards']],
                 feed_dict=feed_dict)
 
@@ -638,8 +609,8 @@ class CompositeEnv(Env):
             info.append(_info)
 
             # record the trajectory
-            for t, (o, a, r) in enumerate(zip(self.rb.visible(_registers), _actions, _rewards)):
-                alg.remember(o, a, r)
+            for t, (o, a, r, lp) in enumerate(zip(self.rb.visible(_registers), _actions, _rewards, _log_probs)):
+                alg.remember(o, a, r, lp)
 
             e += 1
 
@@ -652,13 +623,6 @@ class CompositeEnv(Env):
         info.append(dict(external_obs=external_obs))
 
         return registers, actions, rewards, info
-
-    def visualize(self, policy, n_rollouts=None, T=None, mode='train', render_rollouts=None):
-        """ Visualize rollouts. """
-        rollout_results = self.do_rollouts(DummyAlg(), policy, n_rollouts, T, mode)
-        self._pprint_rollouts(*rollout_results)
-        if render_rollouts is not None:
-            render_rollouts(self, *rollout_results)
 
     def _pprint_rollouts(self, registers, actions, rewards, info):
         external_step_lengths = [i['length'] for i in info[:-1]]

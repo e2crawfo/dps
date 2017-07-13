@@ -41,9 +41,8 @@ class Container(object):
 
 
 class SimpleArithmeticDataset(RegressionDataset):
-    def __init__(
-            self, mnist, symbols, shape, n_digits, upper_bound, base, blank_char,
-            n_examples, op_loc, for_eval=False, shuffle=True):
+    def __init__(self, mnist, symbols, shape, n_digits, upper_bound,
+                 base, blank_char, n_examples, op_loc):
 
         assert 1 <= base <= 10
 
@@ -93,7 +92,7 @@ class SimpleArithmeticDataset(RegressionDataset):
             blank_element, symbol_reps, digit_reps,
             functions, n_examples, op_loc)
 
-        super(SimpleArithmeticDataset, self).__init__(x, y, for_eval, shuffle)
+        super(SimpleArithmeticDataset, self).__init__(x, y)
 
     @staticmethod
     def make_dataset(
@@ -150,7 +149,7 @@ class SimpleArithmeticDataset(RegressionDataset):
 
 class SimpleArithmeticEnv(RegressionEnv):
     def __init__(self, mnist, shape, n_digits, upper_bound, base,
-                 n_train, n_val, n_test, op_loc=None, start_loc=None):
+                 n_train, n_val, op_loc=None, start_loc=None):
         self.mnist = mnist
         self.shape = shape
         self.n_digits = n_digits
@@ -167,11 +166,9 @@ class SimpleArithmeticEnv(RegressionEnv):
 
         super(SimpleArithmeticEnv, self).__init__(
             train=SimpleArithmeticDataset(
-                mnist, symbols, shape, n_digits, upper_bound, base, blank_char, n_train, op_loc, for_eval=False),
+                mnist, symbols, shape, n_digits, upper_bound, base, blank_char, n_train, op_loc),
             val=SimpleArithmeticDataset(
-                mnist, symbols, shape, n_digits, upper_bound, base, blank_char, n_val, op_loc, for_eval=True),
-            test=SimpleArithmeticDataset(
-                mnist, symbols, shape, n_digits, upper_bound, base, blank_char, n_test, op_loc, for_eval=True))
+                mnist, symbols, shape, n_digits, upper_bound, base, blank_char, n_val, op_loc))
 
     def __str__(self):
         return "<SimpleArithmeticEnv shape={} base={}>".format(self.height, self.shape, self.base)
@@ -514,6 +511,6 @@ def render_rollouts_static(env, actions, registers, reward, info):
 def build_env():
     external = SimpleArithmeticEnv(
         cfg.mnist, cfg.shape, cfg.n_digits, cfg.upper_bound, cfg.base,
-        cfg.n_train, cfg.n_val, cfg.n_test, cfg.op_loc, cfg.start_loc)
+        cfg.n_train, cfg.n_val, cfg.op_loc, cfg.start_loc)
     internal = SimpleArithmetic(external)
     return CompositeEnv(external, internal)

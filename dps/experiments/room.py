@@ -23,7 +23,7 @@ class Room(TensorFlowEnv):
         self.dense_reward = dense_reward
         self.l2l = l2l
         self.val = self._make_static_input(n_val)
-        self._kind = 'train'
+        self.mode = 'train'
         super(Room, self).__init__()
 
     @property
@@ -43,12 +43,12 @@ class Room(TensorFlowEnv):
                 axis=1)
 
     def make_static_input(self, batch_size):
-        if self._kind == 'train':
+        if self.mode in 'train train_eval'.split():
             return self._make_static_input(batch_size)
-        elif self._kind == 'val':
+        elif self.mode == 'val':
             return self.val
         else:
-            raise Exception()
+            raise Exception("Unknown mode: {}.".format(self.mode))
 
     def build_init(self, r, inp):
         batch_size = tf.shape(r)[0]

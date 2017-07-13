@@ -25,6 +25,54 @@ from tensorflow.contrib.slim import fully_connected
 import dps
 
 
+def build_gradient_train_op(loss, scope, optimizer_spec, lr_schedule, max_grad_norm=None, noise_schedule=None):
+    tvars = trainable_variables(scope)
+    pure_gradients = tf.gradients(loss, tvars)
+
+    clipped_gradients = pure_gradients
+    if max_grad_norm is not None and max_grad_norm > 0.0:
+        clipped_gradients, _ = tf.clip_by_global_norm(pure_gradients, max_grad_norm)
+
+    noisy_gradients = clipped_gradients
+    if noise_schedule is not None:
+        grads_and_vars = zip(clipped_gradients, tvars)
+        noise = build_scheduled_value(noise_schedule, 'gradient_noise')
+        noisy_gradients = add_scaled_noise_to_gradients(grads_and_vars, noise)
+
+    grads_and_vars = list(zip(noisy_gradients, tvars))
+
+    lr = build_scheduled_value(lr_schedule, 'learning_rate')
+    optimizer = build_optimizer(optimizer_spec, lr)
+
+    global_step = tf.contrib.framework.get_or_create_global_step()
+
+    train_op = optimizer.apply_gradients(grads_and_vars, global_step=global_step)
+
+    summaries = [
+        tf.summary.scalar('grad_norm_pure', tf.global_norm(pure_gradients)),
+        tf.summary.scalar('grad_norm_processed', tf.global_norm(noisy_gradients)),
+    ]
+
+    return train_op, summaries
+
+
+class Param(object):
+    pass
+
+
+class Parameterized(object):
+    def __init__(self, **kwargs):
+        for p in self.params:
+            value = kwargs.get(p)
+            if value is None:
+                value = getattr(dps.cfg, p)
+            setattr(self, p, value)
+
+    @property
+    def params(self):
+        return [p for p in dir(self) if p != 'params' and isinstance(getattr(self, p), Param)]
+
+
 def parse_date(d, fmt='%a %b  %d %H:%M:%S %Z %Y'):
     # default value for `fmt` is default format used by GNU `date`
     with open(os.devnull, 'w') as devnull:
@@ -656,12 +704,13 @@ def build_scheduled_value(schedule, name, dtype=None):
 
 def build_optimizer(spec, learning_rate):
     """
-    `learning_rate` is always supplied as the first argument.
 
     Parameters
     ----------
     spec: str
         String of the form "kind arg1 arg2 ...".
+    learning_rate: float
+        First argument to the constructed optimizer.
 
     """
     assert isinstance(spec, str)
@@ -791,6 +840,7 @@ def _parse_dps_config_from_file(key=None):
         use_gpu=_config.getboolean(key, 'use_gpu'),
         visualize=_config.getboolean(key, 'visualize'),
         tbport=_config.getint(key, 'tbport'),
+        verbose=_config.getboolean(key, 'verbose'),
     )
 
     config.max_experiments = _config.getint(key, 'max_experiments')

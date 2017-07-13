@@ -237,6 +237,7 @@ class RunTrainingLoop(object):
         with config:
             cl_args = clify.wrap_object(cfg).parse()
             config.update(cl_args)
+
             val = training_loop(start_time=start_time)
 
         return val

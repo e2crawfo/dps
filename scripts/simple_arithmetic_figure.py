@@ -2,7 +2,7 @@ from dps.utils import DpsConfig, MLP, CompositeCell
 from dps.experiments.simple_arithmetic import render_rollouts_static
 from dps.vision import LeNet
 from dps.run import _run
-from dps.policy import Softmax
+from dps.rl.policy import Softmax
 import tensorflow as tf
 
 
@@ -24,7 +24,6 @@ config.update({
     'mnist': 1,
     'mpl_backend': 'TkAgg',
     'n_controller_units': 128,
-    'n_test': 0,
     'n_train': n_examples,
     'n_val': n_examples,
     'batch_size': n_examples,

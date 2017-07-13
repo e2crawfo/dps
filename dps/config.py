@@ -3,13 +3,13 @@ import tensorflow as tf
 
 from dps import cfg
 from dps.utils import (
-    CompositeCell, MLP, FixedDiscreteController, FixedController, DpsConfig, Config)
-from dps.reinforce import REINFORCE
-from dps.trpo import TRPO
-from dps.robust import RobustREINFORCE
-from dps.qlearning import QLearning
-from dps.policy import (
-    Softmax, EpsilonGreedy, Deterministic,
+    CompositeCell, MLP, FixedDiscreteController,
+    FixedController, DpsConfig, Config)
+from dps.rl import (
+    ReinforcementLearningUpdater, rl_render_hook,
+    REINFORCE, TRPO, RobustREINFORCE, QLearning)
+from dps.rl.policy import (
+    Policy, Softmax, EpsilonGreedy, Deterministic,
     Normal, NormalWithFixedScale, Gamma, Bernoulli, ProductDist)
 from dps.vision import LeNet, MNIST_CONFIG
 from dps.experiments import (
@@ -19,20 +19,20 @@ from dps.experiments import (
 
 
 DEFAULT_CONFIG = DpsConfig(
+    name="Default",
     seed=None,
 
     preserve_policy=True,  # Whether to use the policy learned on the last stage of the curriculum for each new stage.
     power_through=True,  # Whether to complete the entire curriculum, even if threshold not reached.
 
     optimizer_spec="rmsprop",
-    build_updater=None,
+    get_updater=None,
 
     slim=False,  # If true, tries to use little disk space
     max_steps=100,
     batch_size=100,
     n_train=10000,
     n_val=1000,
-    n_test=0,
     threshold=1e-2,
     patience=np.inf,
 
@@ -43,7 +43,6 @@ DEFAULT_CONFIG = DpsConfig(
     noise_schedule=None,
     test_time_explore=-1,
     max_grad_norm=0.0,
-    l2_norm_penalty=0.0,
     reward_window=0.1,
     exploration_schedule='0.1',
     lr_schedule='0.001',
@@ -55,23 +54,44 @@ DEFAULT_CONFIG = DpsConfig(
         tf.contrib.rnn.LSTMCell(num_units=cfg.n_controller_units), MLP(), n_params),
     action_selection=lambda env: Softmax(env.n_actions),
 
-    deadline=''
+    deadline='',
+    render_hook=rl_render_hook,
+
+    get_experiment_name=lambda: "name={}_seed={}".format(cfg.name, cfg.seed)
 )
 
 
 cfg._stack.append(DEFAULT_CONFIG)
 
 
+def reinforce_get_updater(env):
+    action_selection = cfg.action_selection(env)
+    controller = cfg.controller(action_selection.n_params)
+    policy = Policy(controller, action_selection, env.obs_shape)
+    updater = ReinforcementLearningUpdater(env, policy, REINFORCE(policy))
+    return updater
+
+
 REINFORCE_CONFIG = Config(
-    build_updater=REINFORCE,
+    name="REINFORCE",
+    get_updater=reinforce_get_updater,
     entropy_schedule="0.1",
     lr_schedule="constant 0.001",
     exploration_schedule='poly 10 100000 0.1 1',
 )
 
 
+def trpo_get_updater(env):
+    action_selection = cfg.action_selection(env)
+    controller = cfg.controller(action_selection.n_params)
+    policy = Policy(controller, action_selection, env.obs_shape)
+    updater = ReinforcementLearningUpdater(env, policy, TRPO(policy))
+    return updater
+
+
 TRPO_CONFIG = Config(
-    build_updater=TRPO,
+    name="TRPO",
+    get_updater=trpo_get_updater,
     entropy_schedule=None,
     exploration_schedule="10.0",
     max_cg_steps=10,
@@ -80,17 +100,26 @@ TRPO_CONFIG = Config(
 )
 
 
+def robust_get_updater(env):
+    action_selection = cfg.action_selection(env)
+    controller = cfg.controller(action_selection.n_params)
+    policy = Policy(controller, action_selection, env.obs_shape)
+    updater = ReinforcementLearningUpdater(env, policy, RobustREINFORCE(policy))
+    return updater
+
+
 ROBUST_CONFIG = Config(
-    build_updater=RobustREINFORCE,
+    get_updater=robust_get_updater,
     entropy_schedule="0.1",
     exploration_schedule="10.0",
     max_line_search_steps=10,
-    delta_schedule="0.01"
+    delta_schedule="0.01",
+    max_cg_steps=0,
 )
 
 
 QLEARNING_CONFIG = Config(
-    build_updater=QLearning,
+    get_updater=QLearning,
     action_selection=lambda env: EpsilonGreedy(env.n_actions),
     double=False,
 
@@ -113,7 +142,6 @@ QLEARNING_CONFIG = Config(
     batch_size=64,  # Number of sample experiences to execute
     test_time_explore=0.05,
 
-    l2_norm_penalty=0.0,
     max_grad_norm=0.0,
 
     n_controller_units=256,
@@ -185,7 +213,6 @@ DEBUG_CONFIG = Config(
     batch_size=2,
     n_train=10,
     n_val=10,
-    n_test=0,
 
     display_step=1,
     eval_step=1,
@@ -451,7 +478,6 @@ def adjust_for_test(config):
         batch_size=n_train,
         n_train=n_train,
         n_val=0,
-        n_test=0,
         action_selection=lambda env: Deterministic(env.n_actions),
         verbose=4,
     )
@@ -477,7 +503,6 @@ ROOM_CONFIG_TEST = ROOM_CONFIG.copy(
     batch_size=2,
     n_train=2,
     n_val=0,
-    n_test=0,
     verbose=4,
     dense_reward=True,
 )
@@ -569,7 +594,6 @@ SIMPLE_ARITHMETIC_TEST = SIMPLE_ARITHMETIC_CONFIG.copy(
     batch_size=1,
     n_train=1,
     n_val=0,
-    n_test=0,
     curriculum=[dict(T=10, n_digits=2, shape=(1, 3))],
 
     reward_window=0.5,

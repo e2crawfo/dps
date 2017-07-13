@@ -49,9 +49,9 @@ def test_draw_mnist(display):
     sess.run(tf.global_variables_initializer())
     attended_images = sess.run(tf_attended_images)
 
-    f, ax = plt.subplots(figsize=(10, 10))
-    ax.imshow(np.hstack(np.hstack(attended_images[:batch_size].reshape((4, 4, N, N))/255.)), cmap='gray')
     if display:
+        f, ax = plt.subplots(figsize=(10, 10))
+        ax.imshow(np.hstack(np.hstack(attended_images[:batch_size].reshape((4, 4, N, N))/255.)), cmap='gray')
         plt.show()
 
 
@@ -62,7 +62,7 @@ def test_draw_parameter_effect(display):
     W = 28
     n_images = 2
     mnist = TranslatedMnistDataset(
-        W=W, n_digits=n_digits, max_overlap=max_overlap, n_examples=n_images, for_eval=True)
+        W=W, n_digits=n_digits, max_overlap=max_overlap, n_examples=n_images)
 
     images, _ = mnist.next_batch(2)
     images = np.reshape(images, (-1, W, W))
@@ -93,19 +93,18 @@ def test_draw_parameter_effect(display):
     sess = tf.Session()
     glimpses = sess.run(tf_attended_images)
 
-    for i in range(n_images):
-        fig, axes = plt.subplots(nrows=S, ncols=D, figsize=(10, 10))
-
-        for j in range(S):
-            for k in range(D):
-                plt.subplot(S, D, j*D + k + 1)
-                if j == 0:
-                    plt.title(cols[k])
-                if k == 0:
-                    plt.ylabel(rows[j])
-                plt.imshow(glimpses[i*S*D + j*D + k, :, :], cmap='gray')
-
     if display:
+        for i in range(n_images):
+            fig, axes = plt.subplots(nrows=S, ncols=D, figsize=(10, 10))
+
+            for j in range(S):
+                for k in range(D):
+                    plt.subplot(S, D, j*D + k + 1)
+                    if j == 0:
+                        plt.title(cols[k])
+                    if k == 0:
+                        plt.ylabel(rows[j])
+                    plt.imshow(glimpses[i*S*D + j*D + k, :, :], cmap='gray')
         plt.show()
 
 
@@ -149,9 +148,9 @@ def test_discrete_mnist(display):
     sess.run(tf.global_variables_initializer())
     attended_images = sess.run(tf_attended_images)
 
-    f, ax = plt.subplots(figsize=(10, 10))
-    ax.imshow(np.hstack(np.hstack(attended_images[:batch_size].reshape((4, 4, N, N))/255.)), cmap='gray')
     if display:
+        f, ax = plt.subplots(figsize=(10, 10))
+        ax.imshow(np.hstack(np.hstack(attended_images[:batch_size].reshape((4, 4, N, N))/255.)), cmap='gray')
         plt.show()
 
 

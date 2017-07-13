@@ -101,13 +101,13 @@ def test_hyper():
         cmd = 'dps-hyper build {} this_is_a_test 3 3 reinforce hello_world --use-gpu=0 --n-train=200'.format(path)
         process = run_cmd(cmd)
 
-        cmd = 'dps-hyper run {}/latest _'.format(path)
+        cmd = 'dps-hyper run {}/latest _ --max-time=20'.format(path)
         process = run_cmd(cmd)
 
         cmd = 'dps-hyper view {}/latest'.format(path)
         process = run_cmd(cmd)
         output = process.stdout.decode()
-        assert "n_ops: 10" in output
-        assert "n_completed_ops: 10" in output
+        assert "n_ops: 9" in output
+        assert "n_completed_ops: 9" in output
         assert "n_ready_incomplete_ops: 0" in output
         assert "n_not_ready_incomplete_ops: 0" in output

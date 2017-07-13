@@ -27,8 +27,7 @@ def numbers_to_digits(numbers, n_digits, base=10):
 
 
 class HardAdditionDataset(RegressionDataset):
-    def __init__(
-            self, height, width, n_digits, n_examples, for_eval=False, shuffle=True):
+    def __init__(self, height, width, n_digits, n_examples):
         self.height = height
         self.width = width
         self.n_digits = n_digits
@@ -45,18 +44,17 @@ class HardAdditionDataset(RegressionDataset):
         if height > 2:
             raise Exception("Need to specify greater number of digits when adding > 2 numbers.")
 
-        super(HardAdditionDataset, self).__init__(x, y, for_eval, shuffle)
+        super(HardAdditionDataset, self).__init__(x, y)
 
 
 class HardAdditionEnv(RegressionEnv):
-    def __init__(self, height, width, n_digits, n_train, n_val, n_test):
+    def __init__(self, height, width, n_digits, n_train, n_val):
         self.height = height
         self.width = width
         self.n_digits = n_digits
         super(HardAdditionEnv, self).__init__(
-            train=HardAdditionDataset(height, width, n_digits, n_train, for_eval=False),
-            val=HardAdditionDataset(height, width, n_digits, n_val, for_eval=True),
-            test=HardAdditionDataset(height, width, n_digits, n_test, for_eval=True))
+            train=HardAdditionDataset(height, width, n_digits, n_train),
+            val=HardAdditionDataset(height, width, n_digits, n_val))
 
     def __str__(self):
         return "<HardAdditionEnv height={} width={} n_digits={}>".format(self.height, self.width, self.n_digits)
@@ -163,6 +161,6 @@ class HardAddition(TensorFlowEnv):
 
 def build_env():
     external = HardAdditionEnv(
-        cfg.height, cfg.width, cfg.n_digits, cfg.n_train, cfg.n_val, cfg.n_test)
+        cfg.height, cfg.width, cfg.n_digits, cfg.n_train, cfg.n_val)
     internal = HardAddition(external)
     return CompositeEnv(external, internal)

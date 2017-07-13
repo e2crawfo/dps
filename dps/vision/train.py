@@ -44,7 +44,7 @@ def train_mnist(build_model, var_scope, path=None):
     train_dataset = TranslatedMnistDataset(
         n_examples=cfg.n_train, symbols=cfg.symbols, include_blank=cfg.include_blank)
     val_dataset = TranslatedMnistDataset(
-        n_examples=cfg.n_val, for_eval=True, symbols=cfg.symbols, include_blank=cfg.include_blank)
+        n_examples=cfg.n_val, symbols=cfg.symbols, include_blank=cfg.include_blank)
     obs_shape = train_dataset.obs_shape
 
     output_size = len(cfg.symbols) + int(cfg.include_blank)
@@ -109,7 +109,7 @@ def train_mnist(build_model, var_scope, path=None):
                 duration = time.time() - then
                 train_writer.add_summary(train_summary, step)
 
-                x, y = val_dataset.next_batch(cfg.batch_size)
+                x, y = val_dataset.next_batch(None, advance=False)
                 val_summary, val_loss, val_acc = sess.run(
                     [summary_op, loss, accuracy], {x_ph: x, y_ph: y, is_training: False})
                 val_writer.add_summary(val_summary, step)
