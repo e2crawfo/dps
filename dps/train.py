@@ -225,7 +225,6 @@ class TrainingLoop(object):
         result = dict(
             config=cfg.freeze(),
             output=self.history,
-            n_stages=len(self.history)
         )
 
         return result

@@ -165,10 +165,11 @@ def reduce_hyper_results(store, *results):
     records = []
     for r in results:
         record = dict(
-            n_stages=r['n_stages'],
+            n_stages=len(r['output']),
             total_steps=sum(s['n_steps'] for s in r['output']),
             final_stage_steps=r['output'][-1]['n_steps'],
-            final_stage_loss=r['output'][-1]['best_value'])
+            final_stage_loss=r['output'][-1]['best_value'],
+            reason=r['output'][-1]['reason'])
 
         for k in keys:
             record[k] = r['config'][k]
@@ -208,7 +209,7 @@ def reduce_hyper_results(store, *results):
     for d in data:
         print('\n' + '*' * 40)
         pprint({n: v for n, v in zip(keys, d['keys'])})
-        print(d['data'].drop(keys + ['seed'], axis=1))
+        print(d['data'].drop(keys, axis=1))
 
 
 class RunTrainingLoop(object):
