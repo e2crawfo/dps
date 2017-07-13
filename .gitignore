@@ -1,6 +1,7 @@
 # dps
 animation.mp4
 good/
+*nohup.out
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
