@@ -29,7 +29,7 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
         raise Exception("NotImplemented")
 
     def build_graph(self):
-        with tf.variable_scope('updater') as scope:
+        with tf.variable_scope(self.__class__.__name__) as scope:
             self.scope = scope
             self.is_training = tf.placeholder(tf.bool, shape=(), name="is_training")
             self._build_graph()

@@ -250,7 +250,7 @@ class TRPO(ReinforcementLearner):
             mean_entropy=mean_entropy,
             mean_kl=mean_kl)
 
-        return eval_summaries, record
+        return -reward_per_ep, eval_summaries, record
 
 
 class HessianVectorProduct(object):

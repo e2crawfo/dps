@@ -264,9 +264,12 @@ class TrainingLoop(object):
                     record['Sec/Example'] = time_per_example
                     record['Epoch'] = updater.env.completion
 
-                    s = "Step(g: {}, l: {}): ".format(self.global_step, local_step)
+                    s = "~" * 40
+                    s += "\nStep(g: {}, l: {}): ".format(self.global_step, local_step)
                     for k, v in record.items():
                         s += '\n{}: {}'.format(k, v)
+                    s += "\n" + "~" * 40
+                    print(s)
 
                 new_best, stop = early_stop.check(val_loss, self.global_step, local_step)
 

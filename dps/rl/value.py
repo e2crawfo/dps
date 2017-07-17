@@ -2,7 +2,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.python.ops.rnn import dynamic_rnn
 
-from dps.utils import build_gradient_train_op
+from dps.utils import build_gradient_train_op, Param
 from dps.rl import ReinforcementLearner
 
 
@@ -29,35 +29,44 @@ def symmetricize(a):
 
 class PolicyEvaluation(ReinforcementLearner):
     """ Evaluate a policy by performing regression. """
+    optimizer_spec = Param()
+    lr_schedule = Param()
 
-    def __init__(self, estimator, loss_ord=2, gamma=1.0):
+    def __init__(self, estimator, gamma=1.0, **kwargs):
         self.estimator = estimator
-        self.loss_ord = loss_ord
         self.gamma = gamma
 
-    def build_graph(self):
+        super(PolicyEvaluation, self).__init__(**kwargs)
+
+    def build_graph(self, is_training, exploration):
         self.estimator.build_graph()
         self.rewards = tf.placeholder(tf.float32, shape=(None, None, 1), name="_rewards")
         self.targets = tf.placeholder(tf.float32, shape=(None, None, 1), name="_targets")
-        error = self.estimator.value_estimates - self.target
-        self.loss = tf.norm(error, ord=self.loss_ord, axis=1, keep_dims=True)
+        error = self.estimator.value_estimates - self.targets
+        self.loss = tf.reduce_mean(error**2)
+        self.mean_estimated_value = tf.reduce_mean(self.estimator.value_estimates)
 
         scope = None
         self.train_op, train_summaries = build_gradient_train_op(
             self.loss, scope, self.optimizer_spec, self.lr_schedule)
 
         td_error = compute_td_error(self.estimator.value_estimates, self.gamma, self.rewards)
-        self.approx_bellman_error = tf.reduce_mean(td_error)
-        train_summaries.append(tf.summary.scalar("approx_bellman_error", self.approx_bellman_error))
 
         self.train_summary_op = tf.summary.merge(train_summaries)
+
+        with tf.name_scope("eval"):
+            self.approx_bellman_error = tf.reduce_mean(td_error)
+            self.eval_summary_op = tf.summary.merge([
+                tf.summary.scalar("squared_error", self.loss),
+                tf.summary.scalar("approx_bellman_error", self.approx_bellman_error),
+                tf.summary.scalar("mean_estimated_value", self.mean_estimated_value)
+            ])
 
     def update(self, rollouts, collect_summaries):
         cumsum_rewards = np.flipud(np.cumsum(np.flipud(rollouts.r), axis=0))
         feed_dict = {
             self.estimator.obs: rollouts.o,
             self.targets: cumsum_rewards,
-            self.is_training: True
         }
 
         sess = tf.get_default_session()
@@ -67,26 +76,32 @@ class PolicyEvaluation(ReinforcementLearner):
             return train_summaries
         else:
             sess.run(self.train_op, feed_dict=feed_dict)
-            return []
+            return b''
 
     def evaluate(self, rollouts):
         cumsum_rewards = np.flipud(np.cumsum(np.flipud(rollouts.r), axis=0))
         feed_dict = {
             self.estimator.obs: rollouts.o,
             self.targets: cumsum_rewards,
-            self.is_training: False
+            self.rewards: rollouts.r
         }
 
         sess = tf.get_default_session()
 
-        eval_summaries, loss, approx_bellman_error = (
-            sess.run([self.eval_summaries, self.loss, self.approx_bellman_error], feed_dict=feed_dict))
+        eval_summaries, loss, approx_bellman_error, mean_estimated_value = (
+            sess.run(
+                [self.eval_summary_op,
+                 self.loss,
+                 self.approx_bellman_error,
+                 self.mean_estimated_value],
+                feed_dict=feed_dict))
 
         record = {
-            'ord_{}_loss'.format(self.loss_ord): loss,
+            'mean_estimated_value': mean_estimated_value,
+            'squared_error': loss,
             'approx_bellman_error': approx_bellman_error}
 
-        return eval_summaries, record
+        return loss, eval_summaries, record
 
 
 class BasicValueEstimator(object):
@@ -110,6 +125,7 @@ class BasicValueEstimator(object):
 class NeuralValueEstimator(object):
     def __init__(self, controller, obs_shape, **kwargs):
         self.controller = controller
+        self.obs_shape = obs_shape
         super(NeuralValueEstimator, self).__init__(**kwargs)
 
     def build_graph(self):

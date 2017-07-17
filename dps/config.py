@@ -6,7 +6,7 @@ from dps.utils import (
     CompositeCell, MLP, FixedDiscreteController,
     FixedController, DpsConfig, Config)
 from dps.rl import (
-    ReinforcementLearningUpdater, rl_render_hook,
+    RLUpdater, rl_render_hook,
     REINFORCE, TRPO, RobustREINFORCE, QLearning)
 from dps.rl.policy import (
     Policy, Softmax, EpsilonGreedy, Deterministic,
@@ -68,7 +68,7 @@ def reinforce_get_updater(env):
     action_selection = cfg.action_selection(env)
     controller = cfg.controller(action_selection.n_params)
     policy = Policy(controller, action_selection, env.obs_shape)
-    updater = ReinforcementLearningUpdater(env, policy, REINFORCE(policy))
+    updater = RLUpdater(env, policy, REINFORCE(policy))
     return updater
 
 
@@ -85,7 +85,7 @@ def trpo_get_updater(env):
     action_selection = cfg.action_selection(env)
     controller = cfg.controller(action_selection.n_params)
     policy = Policy(controller, action_selection, env.obs_shape)
-    updater = ReinforcementLearningUpdater(env, policy, TRPO(policy))
+    updater = RLUpdater(env, policy, TRPO(policy))
     return updater
 
 
@@ -104,7 +104,7 @@ def robust_get_updater(env):
     action_selection = cfg.action_selection(env)
     controller = cfg.controller(action_selection.n_params)
     policy = Policy(controller, action_selection, env.obs_shape)
-    updater = ReinforcementLearningUpdater(env, policy, RobustREINFORCE(policy))
+    updater = RLUpdater(env, policy, RobustREINFORCE(policy))
     return updater
 
 
@@ -253,7 +253,7 @@ ROOM_CONFIG = Config(
     max_step=0.1,
     room_angular=True,
     l2l=False,
-    reward_std=0.2,
+    reward_radius=0.2,
 )
 
 

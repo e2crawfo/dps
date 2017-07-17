@@ -149,4 +149,4 @@ class REINFORCE(ReinforcementLearner):
             reward_per_ep=reward_per_ep,
             mean_entropy=mean_entropy)
 
-        return eval_summaries, record
+        return -reward_per_ep, eval_summaries, record

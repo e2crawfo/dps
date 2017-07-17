@@ -1,4 +1,4 @@
-from .core import RolloutBatch, ReinforcementLearningUpdater, ReinforcementLearner, rl_render_hook, episodic_mean
+from .core import RolloutBatch, RLUpdater, ReinforcementLearner, rl_render_hook, episodic_mean
 from .value import GeneralizedAdvantageEstimator, NeuralValueEstimator, BasicValueEstimator, PolicyEvaluation
 from .reinforce import policy_gradient_objective, REINFORCE
 from .trpo import mean_kl, cg, maximizing_line_search, HessianVectorProduct, TRPO

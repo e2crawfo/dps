@@ -7,10 +7,9 @@ import clify
 from dps import cfg
 from dps.config import DEFAULT_CONFIG
 from dps.train import training_loop
-from dps.utils import FeedforwardCell, MLP
 from dps.updater import DifferentiableUpdater
 from dps.experiments.alt_arithmetic import AltArithmeticEnv
-from dps.rl.policy import Deterministic
+# from dps.utils import MLP
 from dps.vision import LeNet
 
 
@@ -36,14 +35,12 @@ config = DEFAULT_CONFIG.copy(
     op_loc=(0, 0),
     upper_bound=True,
     base=10,
-    get_updater=lambda env: DifferentiableUpdater(),
-    build_env=build_env,
-    action_selection=lambda env: Deterministic(env.n_actions),
-    # n_controller_units=256,
-    # controller=lambda n_params: FeedforwardCell(MLP([cfg.n_controller_units, cfg.n_controller_units]), n_params),
     n_controller_units=256,
-    controller=lambda n_params: FeedforwardCell(LeNet(n_units=cfg.n_controller_units), n_params),
-    log_name="cnn_alt_arithmetic"
+    get_updater=lambda env: DifferentiableUpdater(env, LeNet(n_units=cfg.n_controller_units, output_size=1)),
+    # get_updater=lambda env: DifferentiableUpdater(env, MLP([cfg.n_controller_units, cfg.n_controller_units])),
+    build_env=build_env,
+    log_name="cnn_alt_arithmetic",
+    max_steps=100000,
 )
 
 start_time = time.time()

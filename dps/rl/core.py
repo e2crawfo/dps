@@ -76,7 +76,7 @@ def episodic_mean(v, name=None):
     return tf.reduce_mean(tf.reduce_sum(v, axis=0), name=name)
 
 
-class ReinforcementLearningUpdater(Updater):
+class RLUpdater(Updater):
     """ Update parameters of objects (mainly policies and value functions)
         based on sequences of interactions between a behaviour policy and an environment.
 
@@ -111,7 +111,7 @@ class ReinforcementLearningUpdater(Updater):
 
         self.rollouts = RolloutBatch()
 
-        super(ReinforcementLearningUpdater, self).__init__(env, **kwargs)
+        super(RLUpdater, self).__init__(env, **kwargs)
 
     def start_episode(self):
         pass
@@ -141,6 +141,8 @@ class ReinforcementLearningUpdater(Updater):
             self.exploration = tf.cond(self.is_training, lambda: training_exploration, lambda: testing_exploration)
         else:
             self.exploration = training_exploration
+
+        self.policy.set_exploration(self.exploration)
 
         # self.policy.build_update()
         for learner in self.learners:
@@ -175,8 +177,12 @@ class ReinforcementLearningUpdater(Updater):
 
         summaries = b''
         record = {}
+        loss = None
+
         for learner in self.learners:
-            s, r = learner.evaluate(self.rollouts)
+            l, s, r = learner.evaluate(self.rollouts)
+            if loss is None:
+                loss = l
             summaries += s
             overlap = record.keys() & r.keys()
             if overlap:
@@ -190,7 +196,7 @@ class ReinforcementLearningUpdater(Updater):
         summaries += _summaries
         record['behaviour_policy_reward_per_ep'] = reward_per_ep
 
-        return -reward_per_ep, summaries, record
+        return loss, summaries, record
 
 
 class ReinforcementLearner(Parameterized):
