@@ -169,6 +169,7 @@ def reduce_hyper_results(store, *results):
             total_steps=sum(s['n_steps'] for s in r['output']),
             final_stage_steps=r['output'][-1]['n_steps'],
             final_stage_loss=r['output'][-1]['best_value'],
+            final_stage_last_imp_step=r['output'][-1]['best_local_step'],
             reason=r['output'][-1]['reason'])
 
         for k in keys:

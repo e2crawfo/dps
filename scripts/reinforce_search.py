@@ -57,8 +57,8 @@ with config:
     distributions = dict(
         n_controller_units=[32, 64, 128],
         batch_size=[16, 32, 64, 128],
-        entropy_schedule=['constant {}'.format(n) for n in 0.5**np.arange(10, step=2)] +
-                         ['poly {} 100000 1e-6 1'.format(n) for n in 0.5**np.arange(10, step=2)],
+        entropy_schedule=['constant {}'.format(n) for n in 0.5**np.arange(1, 4, step=1)] +
+                         ['poly {} 100000 1e-6 1'.format(n) for n in 0.5**np.arange(1, 4, step=1)],
         exploration_schedule=[
             'exp 1.0 100000 0.01',
             'exp 1.0 100000 0.1',
@@ -67,11 +67,9 @@ with config:
         ],
         test_time_explore=[1.0, 0.1, -1],
         lr_schedule=[
-            'constant 1e-2',
             'constant 1e-3',
             'constant 1e-4',
             'constant 1e-5',
-            'poly 1e-2 100000 1e-6 1',
             'poly 1e-3 100000 1e-6 1',
             'poly 1e-4 100000 1e-6 1',
             'poly 1e-5 100000 1e-6 1',
@@ -83,11 +81,11 @@ with config:
     # hosts = ['ecrawf6@lab1-{}.cs.mcgill.ca'.format(i+1) for i in range(10, 20)]
     hosts = None
 
-    if 0:
+    if 1:
         # Big
-        n_param_settings = 50
+        n_param_settings = 20
         n_repeats = 5
-        walltime = "14:30:00"
+        walltime = "24:00:00"
         cleanup_time = "00:30:00"
         time_slack = 30
         ppn = 4
