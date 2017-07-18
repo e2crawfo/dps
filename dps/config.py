@@ -497,10 +497,11 @@ ROOM_CONFIG_TEST = ROOM_CONFIG.copy(
     T=6,
     controller=lambda env: FixedController(
         np.concatenate(
-            [np.zeros((6, 1)), 0.1 * np.ones((6, 1)), np.zeros((6, 1))], axis=1)
+            [0.1 * np.ones((6, 1)), 0.1 * np.ones((6, 1))], axis=1)
     ),
     action_selection=lambda env: Deterministic(env.n_actions),
     batch_size=2,
+    room_angular=False,
     n_train=2,
     n_val=0,
     verbose=4,

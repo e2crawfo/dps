@@ -161,8 +161,14 @@ class TranslatedMnist(TensorFlowEnv):
         return tf.fill((tf.shape(r)[0], 1), 0.0), new_registers
 
 
-def render_rollouts(env, actions, registers, reward, info):
-    external_obs = [i['external_obs'] for i in info]
+def render_rollouts(env, rollouts):
+    external_rollouts = rollouts._metadata['external_rollouts']
+    external_obs = external_rollouts.o
+
+    registers = np.concatenate(
+        [rollouts.o, rollouts._metadata['final_registers'][np.newaxis, ...]],
+        axis=0)
+    actions = rollouts.a
 
     n_timesteps, batch_size, n_actions = actions.shape
     s = int(np.ceil(np.sqrt(batch_size)))

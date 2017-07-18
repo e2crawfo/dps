@@ -85,7 +85,7 @@ def run():
         _run(alg, task)
 
 
-def _run(alg, task, _config=None, load_from=None, **kwargs):
+def _run(alg, task, _config=None, **kwargs):
     if alg == 'visualize':
         config = test_configs[task]
         if _config is not None:
@@ -97,7 +97,7 @@ def _run(alg, task, _config=None, load_from=None, **kwargs):
             cl_args = clify.wrap_object(cfg).parse()
             config.update(cl_args)
 
-            build_and_visualize(load_from=load_from)
+            build_and_visualize()
     else:
         config = tasks[task]
         config.update(algorithms[alg])

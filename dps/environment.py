@@ -15,6 +15,7 @@ from gym.utils import seeding
 from gym.spaces import prng
 
 from dps import cfg
+from dps.rl import RolloutBatch
 
 
 class BatchBox(gym.Space):
@@ -70,14 +71,13 @@ class Env(with_metaclass(abc.ABCMeta, GymEnv)):
         self.mode = mode
         self.batch_size = batch_size
 
-    def do_rollouts(self, alg, policy, n_rollouts=None, T=None, exploration=None, mode='train'):
+    def do_rollouts(self, policy, n_rollouts=None, T=None, exploration=None, mode='train'):
         T = T or cfg.T
         start_time = time.time()
         self.set_mode(mode, n_rollouts)
         obs = self.reset()
         batch_size = obs.shape[0]
 
-        alg.start_episode()
         policy_state = policy.zero_state(batch_size, tf.float32)
         policy_state = tf.get_default_session().run(policy_state)
 
@@ -85,11 +85,7 @@ class Env(with_metaclass(abc.ABCMeta, GymEnv)):
         while not done:
             action, policy_state = policy.act(obs, policy_state, exploration)
             new_obs, reward, done, info = self.step(action)
-
-            alg.remember(obs, action, reward, 0.0)
             obs = new_obs
-
-        alg.end_episode()
 
         print("Took {} seconds to do {} rollouts.".format(time.time() - start_time, n_rollouts))
 
@@ -97,10 +93,10 @@ class Env(with_metaclass(abc.ABCMeta, GymEnv)):
         raise Exception("NotImplemented.")
 
     def visualize(self, render_rollouts=None, **rollout_kwargs):
-        rollout_results = self.do_rollouts(DummyAlg(), **rollout_kwargs)
-        self._pprint_rollouts(*rollout_results)
-        if render_rollouts is not None:
-            render_rollouts(self, *rollout_results)
+        rollouts = self.do_rollouts(**rollout_kwargs)
+        self._pprint_rollouts(rollouts)
+        if render_rollouts is not None and (cfg.save_display or cfg.display):
+            render_rollouts(self, rollouts)
 
 
 class RegressionDataset(object):
@@ -394,7 +390,7 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
 
         return sampler
 
-    def do_rollouts(self, alg, policy, n_rollouts=None, T=None, exploration=None, mode='train'):
+    def do_rollouts(self, policy, n_rollouts=None, T=None, exploration=None, mode='train'):
         self.set_mode(mode, n_rollouts)
         T = T or cfg.T
         static_inp = self.make_static_input(n_rollouts)
@@ -406,7 +402,6 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
             n_rollouts_ph: n_rollouts,
             T_ph: T,
             static_inp_ph: static_inp,
-            alg.is_training: mode in 'train train_eval'.split()
         }
 
         if exploration is not None:
@@ -425,25 +420,18 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
              output['rewards']],
             feed_dict=feed_dict)
 
-        # record rollouts
-        alg.start_episode()
+        rollouts = RolloutBatch(
+            registers, actions, rewards, log_probs=log_probs, utils=utils, entropy=entropy,
+            metadata={'final_registers': final_registers})
+        return rollouts
 
-        for t, (o, a, r, lp) in enumerate(zip(self.rb.visible(registers), actions, rewards, log_probs)):
-            alg.remember(o, a, r, lp)
+    def _pprint_rollouts(self, rollouts):
+        registers = np.concatenate(
+            [rollouts.o, rollouts._metadata['final_registers'][np.newaxis, ...]],
+            axis=0)
+        actions = rollouts.a
 
-        alg.end_episode()
-
-        info = [dict(utils=u, entropy=e) for u, e in zip(utils, entropy)]
-
-        registers = np.concatenate([registers, np.expand_dims(final_registers, 0)], axis=0)
-
-        return registers, actions, rewards, info
-
-    def _pprint_rollouts(self, registers, actions, rewards, info):
-        n_params = info[0]['utils'].shape[1]
-        utils = np.stack([i['utils'] for i in info], axis=0)
-        entropy = np.stack([i['entropy'] for i in info], axis=0)
-        row_names = ['t=', ''] + self.action_names + [''] + ['utils[{}]'.format(i) for i in range(n_params)] + ['', 'entropy']
+        row_names = ['t=', ''] + self.action_names
 
         omit = set(self.rb.no_display)
         reg_ranges = {}
@@ -460,7 +448,19 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
                 row_names.append('{}[{}]'.format(n, k))
             end = len(row_names)
             reg_ranges[n] = (start, end)
-        row_names.extend(['', 'reward'])
+
+        other_ranges = {}
+        other_keys = sorted(rollouts.keys())
+        other_keys.remove('obs')
+        other_keys.remove('actions')
+
+        for k in other_keys:
+            row_names.append('')
+
+            start = len(row_names)
+            row_names.extend(['{}[{}]'.format(k, i) for i in range(rollouts[k].shape[2])])
+            end = len(row_names)
+            other_ranges[k] = (start, end)
 
         n_timesteps, batch_size, n_actions = actions.shape
 
@@ -475,17 +475,17 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
                 offset = 2
                 values[t, offset:offset+n_actions] = actions[t, b, :]
                 offset += n_actions + 1
-                values[t, offset:offset+n_params] = utils[t, b, :]
-
-                offset += n_params + 1
-                values[t, offset] = entropy[t, b, 0]
 
                 for n, v in zip(self.rb.names, registers):
                     if n in omit:
                         continue
                     rr = reg_ranges[n]
                     values[t, rr[0]:rr[1]] = v[t, b, :]
-                values[t, -1] = rewards[t, b]
+
+                for k in other_keys:
+                    v = rollouts[k]
+                    _range = other_ranges[k]
+                    values[t, _range[0]:_range[1]] = v[t, b, :]
 
             # Print final values for the registers
             for n, v in zip(self.rb.names, registers):
@@ -498,21 +498,6 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
             values.insert(0, 'name', row_names)
             values = values.set_index('name')
             print(tabulate(values, headers='keys', tablefmt='fancy_grid'))
-
-
-class DummyAlg(object):
-    def start_episode(self):
-        pass
-
-    def remember(self, o, a, r, lp):
-        pass
-
-    def end_episode(self):
-        pass
-
-    @property
-    def is_training(self):
-        return tf.constant(np.array(False))
 
 
 class CompositeEnv(Env):
@@ -535,7 +520,9 @@ class CompositeEnv(Env):
     def completion(self):
         return self.external.completion
 
-    def do_rollouts(self, alg, policy, n_rollouts=None, T=None, exploration=None, mode='train'):
+    def do_rollouts(
+            self, policy, n_rollouts=None, T=None, exploration=None, mode='train'):
+
         T = T or cfg.T
         (n_rollouts_ph, T_ph, initial_policy_state,
          initial_registers, static_inp_ph, output) = self.internal.get_sampler(policy)
@@ -544,14 +531,14 @@ class CompositeEnv(Env):
         external_obs = self.external.reset()
         n_rollouts = external_obs.shape[0]
 
-        alg.start_episode()
-
         final_registers = None
         final_policy_state = None
 
         done = False
         e = 0
-        registers, actions, rewards, info = [], [], [], []
+
+        external_rollouts = RolloutBatch()
+        rollouts = RolloutBatch()
 
         while not done:
             if e > 0:
@@ -560,7 +547,6 @@ class CompositeEnv(Env):
                     T_ph: T,
                     initial_registers: final_registers,
                     static_inp_ph: external_obs,
-                    alg.is_training: mode in 'train train_eval'.split()
                 }
 
                 feed_dict.update(
@@ -572,61 +558,58 @@ class CompositeEnv(Env):
                     n_rollouts_ph: n_rollouts,
                     T_ph: T,
                     static_inp_ph: external_obs,
-                    alg.is_training: mode in 'train train_eval'.split()
                 }
+
             if exploration is not None:
                 feed_dict.update({policy.exploration: exploration})
 
             sess = tf.get_default_session()
 
-            _registers, final_registers, final_policy_state, _actions, _log_probs, _rewards = sess.run(
+            (registers, final_registers, final_policy_state, utils, entropy,
+             actions, log_probs, rewards) = sess.run(
                 [output['registers'],
                  output['final_registers'],
                  output['final_policy_state'],
+                 output['utils'],
+                 output['entropy'],
                  output['actions'],
                  output['log_probs'],
                  output['rewards']],
                 feed_dict=feed_dict)
 
-            registers.append(_registers)
-            actions.append(_actions)
-            rewards.append(_rewards)
-
-            _info = dict(external_obs=external_obs)
-
             external_action = self.rb.get_output(final_registers)
-            external_obs, external_reward, done, i = self.external.step(external_action)
+            new_external_obs, external_reward, done, i = \
+                self.external.step(external_action)
 
-            _rewards[-1, :, :] += external_reward
+            rewards[-1, :, :] += external_reward
 
-            _info.update(
-                i,
-                external_action=external_action,
-                external_reward=external_reward,
-                done=done,
-                length=_actions.shape[0])
+            rollouts.extend(
+                RolloutBatch(
+                    registers, actions, rewards,
+                    log_probs=log_probs, utils=utils, entropy=entropy))
 
-            info.append(_info)
+            external_rollouts.append(
+                external_obs, external_action, external_reward,
+                info=dict(length=len(rollouts)))
 
-            # record the trajectory
-            for t, (o, a, r, lp) in enumerate(zip(self.rb.visible(_registers), _actions, _rewards, _log_probs)):
-                alg.remember(o, a, r, lp)
+            external_obs = new_external_obs
 
             e += 1
 
-        alg.end_episode()
+        rollouts._metadata['final_registers'] = final_registers
+        rollouts._metadata['external_rollouts'] = external_rollouts
 
-        registers = np.concatenate(list(registers) + [np.expand_dims(final_registers, 0)], axis=0)
-        actions = np.concatenate(actions, axis=0)
-        rewards = np.concatenate(rewards, axis=0)
+        return rollouts
 
-        info.append(dict(external_obs=external_obs))
+    def _pprint_rollouts(self, rollouts):
+        registers = np.concatenate(
+            [rollouts.o, rollouts._metadata['final_registers'][np.newaxis, ...]],
+            axis=0)
+        actions = rollouts.a
 
-        return registers, actions, rewards, info
-
-    def _pprint_rollouts(self, registers, actions, rewards, info):
-        external_step_lengths = [i['length'] for i in info[:-1]]
-        external_obs = [i['external_obs'] for i in info]
+        external_rollouts = rollouts._metadata['external_rollouts']
+        external_step_lengths = [i['length'] for i in external_rollouts.info]
+        external_obs = external_rollouts.o
 
         total_internal_steps = sum(external_step_lengths)
 
@@ -635,17 +618,28 @@ class CompositeEnv(Env):
         omit = set(self.rb.no_display)
         reg_ranges = {}
 
-        for n, s in zip(self.rb.names, self.rb.shapes):
-            if n in omit:
+        for name, shape in zip(self.rb.names, self.rb.shapes):
+            if name in omit:
                 continue
 
             row_names.append('')
             start = len(row_names)
-            for k in range(s):
-                row_names.append('{}[{}]'.format(n, k))
+            row_names.extend(['{}[{}]'.format(name, k) for k in range(shape)])
             end = len(row_names)
-            reg_ranges[n] = (start, end)
-        row_names.extend(['', 'reward'])
+            reg_ranges[name] = (start, end)
+
+        other_ranges = {}
+        other_keys = sorted(rollouts.keys())
+        other_keys.remove('obs')
+        other_keys.remove('actions')
+
+        for k in other_keys:
+            row_names.append('')
+
+            start = len(row_names)
+            row_names.extend(['{}[{}]'.format(k, i) for i in range(rollouts[k].shape[2])])
+            end = len(row_names)
+            other_ranges[k] = (start, end)
 
         n_timesteps, batch_size, n_actions = actions.shape
 
@@ -666,12 +660,17 @@ class CompositeEnv(Env):
                 values[i, 0] = external_t
                 values[i, 1] = internal_t
                 values[i, 3:3+n_actions] = actions[i, b, :]
-                for n, v in zip(self.rb.names, registers):
-                    if n in omit:
+
+                for name, v in zip(self.rb.names, registers):
+                    if name in omit:
                         continue
-                    rr = reg_ranges[n]
+                    rr = reg_ranges[name]
                     values[i, rr[0]:rr[1]] = v[i, b, :]
-                values[i, -1] = rewards[i, b]
+
+                for k in other_keys:
+                    v = rollouts[k]
+                    _range = other_ranges[k]
+                    values[i, _range[0]:_range[1]] = v[i, b, :]
 
                 internal_t += 1
 

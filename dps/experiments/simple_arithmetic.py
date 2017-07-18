@@ -342,12 +342,14 @@ class SimpleArithmetic(TensorFlowEnv):
         return tf.fill((tf.shape(r)[0], 1), 0.0), new_registers
 
 
-def render_rollouts(env, actions, registers, reward, info):
-    if not cfg.save_display and not cfg.display:
-        print("Skipping rendering.")
-        return
+def render_rollouts(env, rollouts):
+    external_rollouts = rollouts._metadata['external_rollouts']
+    external_obs = external_rollouts.o
 
-    external_obs = [i['external_obs'] for i in info]
+    registers = np.concatenate(
+        [rollouts.o, rollouts._metadata['final_registers'][np.newaxis, ...]],
+        axis=0)
+    actions = rollouts.a
 
     n_timesteps, batch_size, n_actions = actions.shape
     s = int(np.ceil(np.sqrt(batch_size)))
@@ -360,7 +362,7 @@ def render_rollouts(env, actions, registers, reward, info):
     else:
         env_subplots = subplots[:, ::2].flatten()
         for i, ep in enumerate(env_subplots):
-            ep.set_title(str(info[0]['y'][i]))
+            ep.set_title(str(external_rollouts.info[0]['y'][i]))
         glimpse_subplots = subplots[:, 1::2].flatten()
 
     plt.subplots_adjust(hspace=0.5)
@@ -413,7 +415,7 @@ def render_rollouts(env, actions, registers, reward, info):
         for n, t in enumerate(titles1):
             t.set_text(env.internal.action_names[actions_reduced[i, n]])
         for n, t in enumerate(titles2):
-            t.set_text("t={},y={},r={}".format(i, info[0]['y'][n][0], reward[i, n, 0]))
+            t.set_text("t={},y={},r={}".format(i, external_rollouts.info[0]['y'][n][0], rollouts.r[i, n, 0]))
 
         # Find locations of bottom-left in fovea co-ordinate system, then transform to axis co-ordinate system.
         fx = fovea_x[i, :, :] + offset
@@ -439,12 +441,14 @@ def render_rollouts(env, actions, registers, reward, info):
         plt.show()
 
 
-def render_rollouts_static(env, actions, registers, reward, info):
-    if not cfg.save_display and not cfg.display:
-        print("Skipping rendering.")
-        return
+def render_rollouts_static(env, rollouts):
+    external_rollouts = rollouts._metadata['external_rollouts']
+    external_obs = external_rollouts.o
 
-    external_obs = [i['external_obs'] for i in info]
+    registers = np.concatenate(
+        [rollouts.o, rollouts._metadata['final_registers'][np.newaxis, ...]],
+        axis=0)
+    actions = rollouts.a
 
     if env.env.mnist:
         images = []

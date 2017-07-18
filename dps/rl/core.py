@@ -1,4 +1,3 @@
-import numpy as np
 import tensorflow as tf
 
 from dps import cfg
@@ -18,59 +17,6 @@ def rl_render_hook(updater):
         print("Not rendering.")
 
 
-class RolloutBatch(object):
-    """ Assumes components are stored with shape (time, batch_size, dimension) """
-
-    def __init__(self, o=None, a=None, r=None, lp=None):
-        self._o = list(o or [])
-        self._a = list(a or [])
-        self._r = list(r or [])
-        self._lp = list(lp or [])
-
-    def append(self, o, a, r, lp):
-        self._o.append(o)
-        self._a.append(a)
-        self._r.append(r)
-        self._lp.append(lp)
-
-    @property
-    def o(self):
-        return np.array(self._o)
-
-    @property
-    def a(self):
-        return np.array(self._a)
-
-    @property
-    def r(self):
-        return np.array(self._r)
-
-    @property
-    def p(self):
-        return np.array(self._lp)
-
-    def clear(self):
-        self._o = []
-        self._a = []
-        self._r = []
-        self._lp = []
-
-    def T(self):
-        return len(self._o)
-
-    def batch_size(self):
-        return self._o[0].shape[0]
-
-    def obs_shape(self):
-        return self._o[0].shape[1:]
-
-    def action_shape(self):
-        return self._a[0].shape[1:]
-
-    def n_rewards(self):
-        return self._r[0].shape[1]
-
-
 def episodic_mean(v, name=None):
     """ Sum across time steps, take mean across episodes """
     return tf.reduce_mean(tf.reduce_sum(v, axis=0), name=name)
@@ -78,7 +24,8 @@ def episodic_mean(v, name=None):
 
 class RLUpdater(Updater):
     """ Update parameters of objects (mainly policies and value functions)
-        based on sequences of interactions between a behaviour policy and an environment.
+        based on sequences of interactions between a behaviour policy and
+        an environment.
 
     Must be used in context of a default graph, session and config.
 
@@ -109,22 +56,7 @@ class RLUpdater(Updater):
         self.obs_shape = env.observation_space.shape[1:]
         self.n_actions = env.action_space.shape[1]
 
-        self.rollouts = RolloutBatch()
-
         super(RLUpdater, self).__init__(env, **kwargs)
-
-    def start_episode(self):
-        pass
-
-    def end_episode(self):
-        pass
-
-    def clear_buffers(self):
-        self.rollouts.clear()
-
-    def remember(self, obs, action, reward, log_prob):
-        """ Supply the RL algorithm with a unit of experience. """
-        self.rollouts.append(obs, action, reward, log_prob)
 
     def set_is_training(self, is_training):
         tf.get_default_session().run(self._assign_is_training, feed_dict={self._set_is_training: is_training})
@@ -158,11 +90,10 @@ class RLUpdater(Updater):
 
     def _update(self, batch_size, collect_summaries):
         self.set_is_training(True)
-        self.clear_buffers()
-        self.env.do_rollouts(self, self.policy, batch_size, mode='train')
+        rollouts = self.env.do_rollouts(self.policy, batch_size, mode='train')
 
         summaries = (b'').join(
-            learner.update(self.rollouts, collect_summaries)
+            learner.update(rollouts, collect_summaries)
             for learner in self.learners)
         return summaries
 
@@ -171,16 +102,14 @@ class RLUpdater(Updater):
         assert mode in 'train_eval val'.split()
         self.set_is_training(mode == 'train_eval')
 
-        self.clear_buffers()
-
-        self.env.do_rollouts(self, self.policy, batch_size, mode=mode)
+        rollouts = self.env.do_rollouts(self.policy, batch_size, mode=mode)
 
         summaries = b''
         record = {}
         loss = None
 
         for learner in self.learners:
-            l, s, r = learner.evaluate(self.rollouts)
+            l, s, r = learner.evaluate(rollouts)
             if loss is None:
                 loss = l
             summaries += s
@@ -190,7 +119,7 @@ class RLUpdater(Updater):
             record.update(r)
 
         sess = tf.get_default_session()
-        feed_dict = {self.reward: self.rollouts.r}
+        feed_dict = {self.reward: rollouts.r}
         _summaries, reward_per_ep = (
             sess.run([self.eval_summary_op, self.reward_per_ep], feed_dict=feed_dict))
         summaries += _summaries
