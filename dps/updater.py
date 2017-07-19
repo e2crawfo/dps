@@ -28,10 +28,18 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
     def _update(self, batch_size, collect_summaries=None):
         raise Exception("NotImplemented")
 
+    def set_is_training(self, is_training):
+        tf.get_default_session().run(
+            self._assign_is_training, feed_dict={self._set_is_training: is_training})
+
     def build_graph(self):
         with tf.variable_scope(self.__class__.__name__) as scope:
             self.scope = scope
-            self.is_training = tf.placeholder(tf.bool, shape=(), name="is_training")
+
+            self.is_training = tf.Variable(False, trainable=False)
+            self._set_is_training = tf.placeholder(tf.bool, ())
+            self._assign_is_training = tf.assign(self.is_training, self._set_is_training)
+
             self._build_graph()
 
     @abc.abstractmethod
@@ -91,9 +99,9 @@ class DifferentiableUpdater(Updater):
             self.loss = tf.reduce_mean(self.env.build_loss(self.output, self.target_ph))
             self.reward = tf.reduce_mean(self.env.build_reward(self.output, self.target_ph))
 
-            scope = None
+            tvars = trainable_variables()
             self.train_op, train_summaries = build_gradient_train_op(
-                self.loss, scope, self.optimizer_spec, self.lr_schedule,
+                self.loss, tvars, self.optimizer_spec, self.lr_schedule,
                 self.max_grad_norm, self.noise_schedule)
 
             self.train_summary_op = tf.summary.merge(train_summaries)
@@ -110,8 +118,10 @@ class DifferentiableUpdater(Updater):
 
         feed_dict = {
             self.x_ph: train_x,
-            self.target_ph: train_y,
-            self.is_training: True}
+            self.target_ph: train_y
+        }
+
+        self.set_is_training(True)
 
         sess = tf.get_default_session()
         if collect_summaries:
@@ -123,12 +133,14 @@ class DifferentiableUpdater(Updater):
 
     def evaluate(self, batch_size, mode):
         assert mode in 'train_eval val'.split()
+        self.set_is_training(mode == 'train_eval')
+
         x, y = self.env.next_batch(batch_size, mode=mode)
 
         feed_dict = {
             self.x_ph: x,
-            self.target_ph: y,
-            self.is_training: False}
+            self.target_ph: y
+        }
 
         sess = tf.get_default_session()
         summaries, loss = sess.run([self.eval_summary_op, self.loss], feed_dict=feed_dict)

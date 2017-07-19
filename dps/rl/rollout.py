@@ -55,7 +55,7 @@ class RolloutBatch(dict):
         try:
             return self[key]
         except KeyError:
-            super(RolloutBatch, self).__getattr__(key)
+            raise AttributeError("No attribute named `{}`.".format(key))
 
     @property
     def o(self):

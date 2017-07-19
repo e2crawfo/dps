@@ -271,7 +271,9 @@ class SamplerCell(RNNCell):
         self.env, self.policy = env, policy
         self._state_size = (self.env.rb.width, self.policy.state_size)
 
-        self._output_size = (self.env.rb.width, self.policy.n_params, 1, self.env.n_actions, 1, 1, self.policy.state_size)
+        self._output_size = (
+            self.env.rb.visible_width, self.env.rb.hidden_width,
+            self.policy.n_params, 1, self.env.n_actions, 1, 1, self.policy.state_size)
 
         self.static_inp = static_inp
 
@@ -281,6 +283,7 @@ class SamplerCell(RNNCell):
 
             with tf.name_scope('policy'):
                 obs = self.env.rb.visible(registers)
+                hidden = self.env.rb.hidden(registers)
                 utils, new_policy_state = self.policy.build_update(obs, policy_state)
                 action = self.policy.build_sample(utils)
                 log_prob = self.policy.build_log_prob(utils, action)
@@ -289,7 +292,7 @@ class SamplerCell(RNNCell):
             with tf.name_scope('env_step'):
                 reward, new_registers = self.env.build_step(t, registers, action, self.static_inp)
 
-            return (registers, utils, entropy, action, log_prob, reward, policy_state), (new_registers, new_policy_state)
+            return (obs, hidden, utils, entropy, action, log_prob, reward, policy_state), (new_registers, new_policy_state)
 
     @property
     def state_size(self):
@@ -369,11 +372,12 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
                     sampler_cell, t, initial_state=(initial_registers, initial_policy_state),
                     parallel_iterations=1, swap_memory=False, time_major=True)
 
-                registers, utils, entropy, actions, log_probs, rewards, policy_states = _output[0]
+                obs, hidden, utils, entropy, actions, log_probs, rewards, policy_states = _output[0]
                 final_registers, final_policy_state = _output[1]
 
                 output = dict(
-                    registers=registers,
+                    obs=obs,
+                    hidden=hidden,
                     utils=utils,
                     entropy=entropy,
                     actions=actions,
@@ -410,8 +414,9 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
         sess = tf.get_default_session()
 
         # sample rollouts
-        registers, final_registers, utils, entropy, actions, log_probs, rewards = sess.run(
-            [output['registers'],
+        obs, hidden, final_registers, utils, entropy, actions, log_probs, rewards = sess.run(
+            [output['obs'],
+             output['hidden'],
              output['final_registers'],
              output['utils'],
              output['entropy'],
@@ -421,13 +426,14 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
             feed_dict=feed_dict)
 
         rollouts = RolloutBatch(
-            registers, actions, rewards, log_probs=log_probs, utils=utils, entropy=entropy,
+            obs, actions, rewards, log_probs=log_probs, utils=utils, entropy=entropy, hidden=hidden,
             metadata={'final_registers': final_registers})
         return rollouts
 
     def _pprint_rollouts(self, rollouts):
+        registers = np.concatenate([rollouts.obs, rollouts.hidden], axis=2)
         registers = np.concatenate(
-            [rollouts.o, rollouts._metadata['final_registers'][np.newaxis, ...]],
+            [registers, rollouts._metadata['final_registers'][np.newaxis, ...]],
             axis=0)
         actions = rollouts.a
 
@@ -453,6 +459,7 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
         other_keys = sorted(rollouts.keys())
         other_keys.remove('obs')
         other_keys.remove('actions')
+        other_keys.remove('hidden')
 
         for k in other_keys:
             row_names.append('')
@@ -565,9 +572,10 @@ class CompositeEnv(Env):
 
             sess = tf.get_default_session()
 
-            (registers, final_registers, final_policy_state, utils, entropy,
+            (obs, hidden, final_registers, final_policy_state, utils, entropy,
              actions, log_probs, rewards) = sess.run(
-                [output['registers'],
+                [output['obs'],
+                 output['hidden'],
                  output['final_registers'],
                  output['final_policy_state'],
                  output['utils'],
@@ -585,8 +593,9 @@ class CompositeEnv(Env):
 
             rollouts.extend(
                 RolloutBatch(
-                    registers, actions, rewards,
-                    log_probs=log_probs, utils=utils, entropy=entropy))
+                    obs, actions, rewards,
+                    log_probs=log_probs, utils=utils,
+                    entropy=entropy, hidden=hidden))
 
             external_rollouts.append(
                 external_obs, external_action, external_reward,
@@ -602,8 +611,9 @@ class CompositeEnv(Env):
         return rollouts
 
     def _pprint_rollouts(self, rollouts):
+        registers = np.concatenate([rollouts.obs, rollouts.hidden], axis=2)
         registers = np.concatenate(
-            [rollouts.o, rollouts._metadata['final_registers'][np.newaxis, ...]],
+            [registers, rollouts._metadata['final_registers'][np.newaxis, ...]],
             axis=0)
         actions = rollouts.a
 
@@ -632,6 +642,7 @@ class CompositeEnv(Env):
         other_keys = sorted(rollouts.keys())
         other_keys.remove('obs')
         other_keys.remove('actions')
+        other_keys.remove('hidden')
 
         for k in other_keys:
             row_names.append('')

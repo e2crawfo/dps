@@ -25,8 +25,7 @@ from tensorflow.contrib.slim import fully_connected
 import dps
 
 
-def build_gradient_train_op(loss, scope, optimizer_spec, lr_schedule, max_grad_norm=None, noise_schedule=None):
-    tvars = trainable_variables(scope)
+def build_gradient_train_op(loss, tvars, optimizer_spec, lr_schedule, max_grad_norm=None, noise_schedule=None):
     pure_gradients = tf.gradients(loss, tvars)
 
     clipped_gradients = pure_gradients
@@ -249,7 +248,7 @@ def load_or_train(sess, build_model, train, var_scope, path=None, train_config=N
     Returns True iff model was successfully loaded, False otherwise.
 
     """
-    to_be_loaded = tf.get_collection('trainable_variables', scope=var_scope.name)
+    to_be_loaded = trainable_variables(var_scope.name)
     saver = tf.train.Saver(var_list=to_be_loaded)
 
     if path is not None:
@@ -358,7 +357,56 @@ class FixedDiscreteController(RNNCell):
         return tf.cast(tf.fill((batch_size, 1), 0), dtype)
 
 
-class CompositeCell(RNNCell):
+class ScopedCell(RNNCell):
+    """ An RNNCell that creates its own variable scope the first time `resolve_scope` is called.
+        The scope is then carried around and used for any subsequent build operations, ensuring
+        that all uses of an instance of this class use the same set of variables.
+
+    """
+    def __init__(self, name):
+        self.scope = None
+        self.name = name
+
+    def resolve_scope(self):
+        reuse = self.scope is not None
+        if not reuse:
+            with tf.variable_scope(self.name):
+                self.scope = tf.get_variable_scope()
+        return self.scope, reuse
+
+    def call(self, inp, state):
+        raise Exception("NotImplemented")
+
+    def __call__(self, inp, state):
+        scope, reuse = self.resolve_scope()
+        with tf.variable_scope(scope, reuse=reuse):
+            return self._call(inp, state)
+
+
+class ScopedCellWrapper(ScopedCell):
+    """ Similar to ScopedCell, but used in cases where the cell we want to scope does not inherit from ScopedCell. """
+    def __init__(self, cell, name):
+        self.cell = cell
+        super(ScopedCellWrapper, self).__init__(name)
+
+    def __call__(self, inp, state):
+        scope, reuse = self.resolve_scope()
+        with tf.variable_scope(scope, reuse=reuse):
+            return self.cell(inp, state)
+
+    @property
+    def state_size(self):
+        return self.cell.state_size
+
+    @property
+    def output_size(self):
+        return self.cell.output_size
+
+    def zero_state(self, batch_size, dtype):
+        return self.cell.zero_state(batch_size, dtype)
+
+
+class CompositeCell(ScopedCell):
     """ A wrapper around a cell that adds an additional transformation of the output.
 
     Parameters
@@ -371,12 +419,13 @@ class CompositeCell(RNNCell):
         The size of the output, passed as the second argument when calling ``output``.
 
     """
-    def __init__(self, cell, output, output_size):
+    def __init__(self, cell, output, output_size, name="composite_cell"):
         self.cell = cell
         self.output = output
         self._output_size = output_size
+        super(CompositeCell, self).__init__(name)
 
-    def __call__(self, inp, state):
+    def _call(self, inp, state):
         output, new_state = self.cell(inp, state)
         return self.output(output, self._output_size), new_state
 
@@ -392,7 +441,7 @@ class CompositeCell(RNNCell):
         return self.cell.zero_state(batch_size, dtype)
 
 
-class FeedforwardCell(RNNCell):
+class FeedforwardCell(ScopedCell):
     """ A wrapper around a feedforward network that turns it into an RNNCell with a dummy state.
 
     Parameters
@@ -405,11 +454,13 @@ class FeedforwardCell(RNNCell):
         The size of the output, passed as the second argument when calling ``output``.
 
     """
-    def __init__(self, ff, output_size):
+    def __init__(self, ff, output_size, name="feedforward_cell"):
         self.ff = ff
         self._output_size = output_size
 
-    def __call__(self, inp, state):
+        super(FeedforwardCell, self).__init__(name)
+
+    def _call(self, inp, state):
         output = self.ff(inp, self._output_size)
         return output, tf.zeros((tf.shape(inp)[0], 1))
 

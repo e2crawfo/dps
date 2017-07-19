@@ -10,7 +10,7 @@ from dps.config import DEFAULT_CONFIG
 from dps.train import training_loop
 from dps.experiments.room import Room
 from dps.rl import RLUpdater
-from dps.rl.value import PolicyEvaluation, NeuralValueEstimator
+from dps.rl.value import PolicyEvaluation, TrustRegionPolicyEvaluation, NeuralValueEstimator
 from dps.rl.policy import Policy, Deterministic
 from dps.utils import FeedforwardCell, MLP
 
@@ -44,10 +44,11 @@ class GoToPoint(RNNCell):
 
 def get_updater(env):
     policy = Policy(GoToPoint(), Deterministic(2), env.obs_shape)
-    controller = FeedforwardCell(lambda inp, output_size: MLP([128, 128])(inp, output_size), 1)
-    # controller = FeedforwardCell(lambda inp, output_size: fully_connected(inp, output_size, activation_fn=None), 1)
+    # controller = FeedforwardCell(lambda inp, output_size: MLP([128, 128])(inp, output_size), 1)
+    controller = FeedforwardCell(lambda inp, output_size: fully_connected(inp, output_size, activation_fn=None), 1)
     estimator = NeuralValueEstimator(controller, env.obs_shape)
-    updater = RLUpdater(env, policy, PolicyEvaluation(estimator))
+    alg = cfg.alg_class(estimator)
+    updater = RLUpdater(env, policy, alg)
     return updater
 
 
@@ -59,7 +60,7 @@ config = DEFAULT_CONFIG.copy(
 
     display_step=100,
 
-    T=4,
+    T=3,
     reward_radius=0.2,
     max_step=0.1,
     restart_prob=0.0,
@@ -67,10 +68,27 @@ config = DEFAULT_CONFIG.copy(
     l2l=False,
     n_val=200,
 
-    optimizer_spec='rmsprop',
-    lr_schedule='1e-5',
-    threshold=1e-4
+    threshold=1e-4,
+
+    verbose=False,
 )
+
+if 1:
+    config.update(
+        name="TRPE",
+        delta_schedule='0.01',
+        max_cg_steps=10,
+        max_line_search_steps=10,
+        alg_class=TrustRegionPolicyEvaluation
+    )
+else:
+    config.update(
+        name="PolicyEvaluation",
+        optimizer_spec='rmsprop',
+        lr_schedule='1e-5',
+        alg_class=PolicyEvaluation
+    )
+
 
 with config:
     cl_args = clify.wrap_object(cfg).parse()

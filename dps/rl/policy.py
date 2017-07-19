@@ -6,7 +6,7 @@ from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from tensorflow.python.util.nest import flatten_dict_items
 import tensorflow.contrib.distributions as tf_dists
 
-from dps.utils import lst_to_vec, vec_to_lst
+from dps.utils import lst_to_vec, vec_to_lst, trainable_variables
 
 
 def rnn_cell_placeholder(state_size, batch_size=None, dtype=tf.float32, name=''):
@@ -35,10 +35,11 @@ class Policy(RNNCell):
 
     Parameters
     ----------
-    controller: callable
-        Outputs Tensor giving utilities.
-    action_selection: callable
-        Outputs Tensor giving action activations.
+    controller: RNNCell
+        Each time step, accepts an observation as input and yields the predicted
+        utilities for that time step based on all observations it has seen.
+    action_selection: ActionSelection
+        Probability distribution over actions conditioned on input utilities computed by controller.
     obs_shape: int
         Shape of individual observation.
     name: string
@@ -56,7 +57,6 @@ class Policy(RNNCell):
         self.obs_shape = obs_shape
         self.name = name
 
-        self.scope = None
         self.n_builds = 0
         self.act_is_built = False
         self.set_params_op = None
@@ -71,22 +71,14 @@ class Policy(RNNCell):
     def build_graph(self):
         pass
 
-    # def __call__(self, obs, policy_state=None):
-    #     if policy_state is None:
-    #         policy_state = self.zero_state(tf.shape(obs)[0], tf.float32)
+    def __call__(self, obs, policy_state):
+        utils, next_policy_state = self.build_update(obs, policy_state)
+        samples = self.build_sample(utils)
 
-    #     utils, next_policy_state = self.build_update(obs, policy_state)
-    #     samples = self.build_sample(utils)
-
-    #     return samples, utils, next_policy_state
+        return (samples, utils), next_policy_state
 
     def build_update(self, obs, policy_state):
-        if self.n_builds == 0:
-            self.capture_scope()
-
-        with tf.variable_scope(self.get_scope(), reuse=self.n_builds > 0):
-            utils, next_policy_state = self.controller(obs, policy_state)
-
+        utils, next_policy_state = self.controller(obs, policy_state)
         self.n_builds += 1
 
         return utils, next_policy_state
@@ -112,22 +104,7 @@ class Policy(RNNCell):
 
     @property
     def output_size(self):
-        return self.n_actions
-
-    def set_scope(self, scope):
-        if self.n_builds > 0:
-            raise ValueError("Cannot set scope once Policy has been built for the first time.")
-        self.scope = scope
-
-    def capture_scope(self):
-        """ Creates a variable scope called self.name inside current active scope, and stores it. """
-        with tf.variable_scope(self.name):
-            self.set_scope(tf.get_variable_scope())
-
-    def get_scope(self):
-        if not self.scope:
-            self.capture_scope()
-        return self.scope
+        return (self.n_actions, self.n_params)
 
     def deepcopy(self, new_name):
         if self.n_builds > 0:
@@ -185,16 +162,16 @@ class Policy(RNNCell):
 
     def build_set_params(self):
         if self.set_params_op is None:
-            g = tf.get_default_graph()
-            variables = g.get_collection('trainable_variables', scope=self.scope.name)
-            self.flat_params_ph = tf.placeholder(tf.float32, lst_to_vec(variables).shape)
+            variables = self.trainable_variables()
+            self.flat_params_ph = tf.placeholder(
+                tf.float32, lst_to_vec(variables).shape, name="{}_flat_params_ph".format(self.name))
             params_lst = vec_to_lst(self.flat_params_ph, variables)
 
             ops = []
             for p, v in zip(params_lst, variables):
                 op = v.assign(p)
                 ops.append(op)
-            self.set_params_op = tf.group(*ops)
+            self.set_params_op = tf.group(*ops, name="{}_set_params".format(self.name))
 
     def set_params_flat(self, flat_params):
         self.build_set_params()
@@ -203,15 +180,17 @@ class Policy(RNNCell):
 
     def build_get_params(self):
         if self.flat_params is None:
-            g = tf.get_default_graph()
-            variables = g.get_collection('trainable_variables', scope=self.scope.name)
-            self.flat_params = lst_to_vec(variables)
+            variables = self.trainable_variables()
+            self.flat_params = tf.identity(lst_to_vec(variables), name="{}_flat_params".format(self.name))
 
     def get_params_flat(self):
         self.build_get_params()
         sess = tf.get_default_session()
         flat_params = sess.run(self.flat_params)
         return flat_params
+
+    def trainable_variables(self):
+        return trainable_variables(self.controller.scope.name)
 
 
 class ActionSelection(object):
@@ -316,6 +295,16 @@ class NormalWithFixedScale(TensorFlowSelection):
 
     def _dist(self, utils, exploration):
         dist = tf_dists.Normal(loc=utils[:, 0], scale=self.scale)
+        return dist
+
+
+class NormalWithExploration(TensorFlowSelection):
+    def __init__(self):
+        self.n_actions = 1
+        self.n_params = 1
+
+    def _dist(self, utils, exploration):
+        dist = tf_dists.Normal(loc=utils[:, 0], scale=exploration)
         return dist
 
 

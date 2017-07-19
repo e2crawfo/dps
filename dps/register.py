@@ -103,6 +103,7 @@ class RegisterBank(object):
             visible_width = offset
 
         self.visible_width = visible_width
+        self.hidden_width = self.width - self.visible_width
         self.dtype = tf.float32
 
     def __str__(self):
@@ -182,6 +183,9 @@ class RegisterBank(object):
 
     def visible(self, array):
         return array[..., :self.visible_width]
+
+    def hidden(self, array):
+        return array[..., self.visible_width:]
 
     def wrap(self, **kwargs):
         names = kwargs.keys()

@@ -1,5 +1,3 @@
-import numpy as np
-
 import clify
 from dps import cfg
 from dps.utils import Config

@@ -58,14 +58,7 @@ class RLUpdater(Updater):
 
         super(RLUpdater, self).__init__(env, **kwargs)
 
-    def set_is_training(self, is_training):
-        tf.get_default_session().run(self._assign_is_training, feed_dict={self._set_is_training: is_training})
-
     def _build_graph(self):
-        self.is_training = tf.Variable(False, trainable=False)
-        self._set_is_training = tf.placeholder(tf.bool, ())
-        self._assign_is_training = tf.assign(self.is_training, self._set_is_training)
-
         training_exploration = build_scheduled_value(self.exploration_schedule, 'exploration')
 
         if self.test_time_explore >= 0:

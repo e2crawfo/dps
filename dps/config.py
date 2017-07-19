@@ -36,7 +36,7 @@ DEFAULT_CONFIG = DpsConfig(
     threshold=1e-2,
     patience=np.inf,
 
-    display_step=100,
+    display_step=1000,
     eval_step=10,
 
     gamma=1.0,
@@ -92,10 +92,10 @@ def trpo_get_updater(env):
 TRPO_CONFIG = Config(
     name="TRPO",
     get_updater=trpo_get_updater,
-    entropy_schedule=None,
-    exploration_schedule="10.0",
+    entropy_schedule='0.1',
+    exploration_schedule="poly 1.0 10000 1e-6 1.0",
     max_cg_steps=10,
-    max_line_search_steps=10,
+    max_line_search_steps=20,
     delta_schedule="0.01"
 )
 
@@ -109,6 +109,7 @@ def robust_get_updater(env):
 
 
 ROBUST_CONFIG = Config(
+    name="RobustREINFORCE",
     get_updater=robust_get_updater,
     entropy_schedule="0.1",
     exploration_schedule="10.0",

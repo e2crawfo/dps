@@ -4,14 +4,14 @@ import numpy as np
 from dps import cfg
 from dps.utils import build_scheduled_value, lst_to_vec
 from dps.rl import episodic_mean, policy_gradient_objective
-from dps.rl.trpo import TRPO, mean_kl, maximizing_line_search
+from dps.rl.trpo import TRPO, mean_kl, line_search
 
 
 class RobustREINFORCE(TRPO):
     """ Combine the KL-divergence line search of TRPO with REINFORCE's use of vanilla policy gradient as search direction. """
 
     def build_graph(self, is_training, exploration):
-        with tf.name_scope("updater"):
+        with tf.name_scope("update"):
             self.delta = build_scheduled_value(self.delta_schedule, 'delta')
 
             self.obs = tf.placeholder(tf.float32, shape=(self.T, None)+self.policy.obs_shape, name="_obs")
@@ -20,8 +20,7 @@ class RobustREINFORCE(TRPO):
             self.rewards = tf.placeholder(tf.float32, shape=(self.T, None, 1), name="_rewards")
             self.reward_per_ep = episodic_mean(self.rewards, name="_reward_per_ep")
 
-            self.grad_norm_pure = tf.placeholder(tf.float32, shape=(), name="_grad_norm_pure")
-            self.step_norm = tf.placeholder(tf.float32, shape=(), name="_step_norm")
+            self.advantage_estimator.build_graph()
 
             self.policy.set_exploration(exploration)
             self.prev_policy.set_exploration(exploration)
@@ -43,6 +42,9 @@ class RobustREINFORCE(TRPO):
 
             kl_penalty = tf.cond(self.mean_kl > self.delta, lambda: tf.constant(np.inf), lambda: tf.constant(0.0))
             self.line_search_objective = self.objective - kl_penalty
+
+            self.grad_norm_pure = tf.placeholder(tf.float32, shape=(), name="_grad_norm_pure")
+            self.step_norm = tf.placeholder(tf.float32, shape=(), name="_step_norm")
 
             self.train_summary_op = tf.summary.merge([
                 tf.summary.scalar("grad_norm_pure", self.grad_norm_pure),
@@ -97,7 +99,7 @@ class RobustREINFORCE(TRPO):
             self.prev_policy.set_params_flat(params)
 
             expected_imp = beta * denom
-            success, new_params = maximizing_line_search(
+            success, new_params = line_search(
                 objective, params, full_step, expected_imp,
                 max_backtracks=cfg.max_line_search_steps, verbose=cfg.verbose)
 

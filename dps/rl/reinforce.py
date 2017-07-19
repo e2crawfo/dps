@@ -74,6 +74,8 @@ class REINFORCE(ReinforcementLearner):
             self.rewards = tf.placeholder(tf.float32, shape=(None, None, 1), name="_rewards")
             self.reward_per_ep = episodic_mean(self.rewards, name="_reward_per_ep")
 
+            self.advantage_estimator.build_graph()
+
             self.policy.set_exploration(exploration)
 
             self.pg_objective, _, self.mean_entropy = policy_gradient_objective(
@@ -85,9 +87,9 @@ class REINFORCE(ReinforcementLearner):
                 entropy_param = build_scheduled_value(self.entropy_schedule, 'entropy_param')
                 self.loss += entropy_param * -self.mean_entropy
 
-            scope = None
+            tvars = self.policy.trainable_variables()
             self.train_op, train_summaries = build_gradient_train_op(
-                self.loss, scope, self.optimizer_spec, self.lr_schedule)
+                self.loss, tvars, self.optimizer_spec, self.lr_schedule)
 
             self.train_summary_op = tf.summary.merge(train_summaries)
 

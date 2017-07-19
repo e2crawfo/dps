@@ -85,11 +85,11 @@ class Room(TensorFlowEnv):
                 new_y)
 
         if self.dense_reward:
-            reward = -tf.cast(tf.sqrt(new_x**2 + new_y**2) > self.reward_radius, tf.float32)
+            reward = -tf.cast(tf.sqrt((new_x-goal_x)**2 + (new_y-goal_y)**2) > self.reward_radius, tf.float32)
         else:
             reward = tf.cond(
                 tf.equal(t[0, 0], tf.constant(self.T-1)),
-                lambda: -tf.cast(tf.sqrt(new_x**2 + new_y**2) > self.reward_radius, tf.float32),
+                lambda: -tf.cast(tf.sqrt((new_x-goal_x)**2 + (new_y-goal_y)**2) > self.reward_radius, tf.float32),
                 lambda: tf.fill(tf.shape(x), 0.0))
 
         new_registers = self.rb.wrap(
