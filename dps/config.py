@@ -30,7 +30,7 @@ DEFAULT_CONFIG = DpsConfig(
     get_updater=None,
 
     slim=False,  # If true, tries to use little disk space
-    max_steps=100,
+    max_steps=1000,
     batch_size=100,
     n_train=10000,
     n_val=1000,
@@ -65,7 +65,7 @@ DEFAULT_CONFIG = DpsConfig(
 cfg._stack.append(DEFAULT_CONFIG)
 
 
-def actor_critic_updater(env):
+def actor_critic_get_updater(env):
     action_selection = cfg.action_selection(env)
     policy_controller = cfg.controller(action_selection.n_params, name="actor_controller")
     critic_controller = cfg.controller(1, name="critic_controller")
@@ -89,12 +89,14 @@ ACTOR_CRITIC_CONFIG = Config(
         actor_alg=TRPO,
         delta_schedule='0.01',
         max_cg_steps=10,
-        max_line_search_steps=10,
-        entropy_schedule='0.0',
+        max_line_search_steps=20,
+        entropy_schedule='0.1',
+        exploration_schedule="poly 1.0 10000 1e-6 1.0",
         lmbda=1.0,
         gamma=1.0
     ),
-    name="ActorCritic"
+    name="ActorCritic",
+    get_updater=actor_critic_get_updater,
 )
 
 
@@ -256,12 +258,19 @@ DEBUG_CONFIG = Config(
 )
 
 
+order = [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1]
 HELLO_WORLD_CONFIG = Config(
     build_env=hello_world.build_env,
     curriculum=[
-        dict(order=[0, 1], T=2),
-        dict(order=[0, 1, 0], T=3),
-        dict(order=[0, 1, 0, 1], T=4)],
+        dict(order=order[:2], T=2),
+        dict(order=order[:3], T=3),
+        dict(order=order[:4], T=4),
+        dict(order=order[:5], T=5),
+        dict(order=order[:6], T=6),
+        dict(order=order[:7], T=7),
+        dict(order=order[:8], T=8),
+        dict(order=order[:9], T=9),
+    ],
     log_name='hello_world',
 )
 
@@ -376,7 +385,7 @@ TRANSLATED_MNIST_CONFIG = Config(
     build_classifier=lambda inp, outp_size, is_training=False: tf.nn.softmax(
         MLP([50, 50], activation_fn=tf.nn.sigmoid)(inp, outp_size)),
 
-    n_controller_units=256,
+    n_controller_units=64,
     reward_window=0.5,
 
     log_name='translated_mnist',
@@ -683,6 +692,7 @@ adjust_for_test(ALT_ARITHMETIC_TEST)
 
 
 algorithms = dict(
+    actor_critic=ACTOR_CRITIC_CONFIG,
     reinforce=REINFORCE_CONFIG,
     trpo=TRPO_CONFIG,
     robust=ROBUST_CONFIG,
