@@ -15,16 +15,15 @@ class PolicyGradientCell(RNNCell):
         self.policy = policy
 
     def __call__(self, inp, state, scope=None):
-        with tf.name_scope(scope or 'pg_cell'):
-            obs, actions, advantage = inp
-            policy_state = state
+        obs, actions, advantage = inp
+        policy_state = state
 
-            utils, new_policy_state = self.policy.build_update(obs, policy_state)
-            log_prob = self.policy.build_log_prob(utils, actions)
-            entropy = self.policy.build_entropy(utils)
-            log_prob_times_adv = log_prob * advantage
+        utils, new_policy_state = self.policy.build_update(obs, policy_state)
+        log_prob = self.policy.build_log_prob(utils, actions)
+        entropy = self.policy.build_entropy(utils)
+        log_prob_times_adv = log_prob * advantage
 
-            return (log_prob_times_adv, log_prob, entropy), new_policy_state
+        return (log_prob_times_adv, log_prob, entropy), new_policy_state
 
     @property
     def state_size(self):
@@ -66,40 +65,38 @@ class REINFORCE(ReinforcementLearner):
         self.policy = policy
         super(REINFORCE, self).__init__(**kwargs)
 
-    def build_graph(self, is_training, exploration):
-        with tf.name_scope("update"):
-            self.obs = tf.placeholder(tf.float32, shape=(None, None) + self.policy.obs_shape, name="_obs")
-            self.actions = tf.placeholder(tf.float32, shape=(None, None, self.policy.n_actions), name="_actions")
-            self.advantage = tf.placeholder(tf.float32, shape=(None, None, 1), name="_advantage")
-            self.rewards = tf.placeholder(tf.float32, shape=(None, None, 1), name="_rewards")
-            self.reward_per_ep = episodic_mean(self.rewards, name="_reward_per_ep")
+    def _build_graph(self, is_training, exploration):
+        self.obs = tf.placeholder(tf.float32, shape=(None, None) + self.policy.obs_shape, name="_obs")
+        self.actions = tf.placeholder(tf.float32, shape=(None, None, self.policy.n_actions), name="_actions")
+        self.advantage = tf.placeholder(tf.float32, shape=(None, None, 1), name="_advantage")
+        self.rewards = tf.placeholder(tf.float32, shape=(None, None, 1), name="_rewards")
+        self.reward_per_ep = episodic_mean(self.rewards, name="_reward_per_ep")
 
-            self.advantage_estimator.build_graph()
+        self.advantage_estimator.build_graph()
 
-            self.policy.set_exploration(exploration)
+        self.policy.set_exploration(exploration)
 
-            self.pg_objective, _, self.mean_entropy = policy_gradient_objective(
-                self.policy, self.obs, self.actions, self.advantage)
+        self.pg_objective, _, self.mean_entropy = policy_gradient_objective(
+            self.policy, self.obs, self.actions, self.advantage)
 
-            self.loss = -self.pg_objective
+        self.loss = -self.pg_objective
 
-            if self.entropy_schedule:
-                entropy_param = build_scheduled_value(self.entropy_schedule, 'entropy_param')
-                self.loss += entropy_param * -self.mean_entropy
+        if self.entropy_schedule:
+            entropy_param = build_scheduled_value(self.entropy_schedule, 'entropy_param')
+            self.loss += entropy_param * -self.mean_entropy
 
-            tvars = self.policy.trainable_variables()
-            self.train_op, train_summaries = build_gradient_train_op(
-                self.loss, tvars, self.optimizer_spec, self.lr_schedule)
+        tvars = self.policy.trainable_variables()
+        self.train_op, train_summaries = build_gradient_train_op(
+            self.loss, tvars, self.optimizer_spec, self.lr_schedule)
 
-            self.train_summary_op = tf.summary.merge(train_summaries)
+        self.train_summary_op = tf.summary.merge(train_summaries)
 
-        with tf.name_scope("eval"):
-            self.eval_summary_op = tf.summary.merge([
-                tf.summary.scalar("pg_objective", self.pg_objective),
-                tf.summary.scalar("objective", -self.loss),
-                tf.summary.scalar("reward_per_ep", self.reward_per_ep),
-                tf.summary.scalar("mean_entropy", self.mean_entropy),
-            ])
+        self.eval_summary_op = tf.summary.merge([
+            tf.summary.scalar("pg_objective", self.pg_objective),
+            tf.summary.scalar("objective", -self.loss),
+            tf.summary.scalar("reward_per_ep", self.reward_per_ep),
+            tf.summary.scalar("mean_entropy", self.mean_entropy),
+        ])
 
     def compute_advantage(self, rollouts):
         advantage = self.advantage_estimator.estimate(rollouts)

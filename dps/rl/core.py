@@ -76,11 +76,6 @@ class RLUpdater(Updater):
         self.reward = tf.placeholder(tf.float32, (None, None, 1))
         self.reward_per_ep = episodic_mean(self.reward)
 
-        with tf.name_scope("eval"):
-            self.eval_summary_op = tf.summary.merge([
-                tf.summary.scalar("reward_per_ep", self.reward_per_ep)
-            ])
-
     def _update(self, batch_size, collect_summaries):
         self.set_is_training(True)
         rollouts = self.env.do_rollouts(self.policy, batch_size, mode='train')
@@ -113,9 +108,8 @@ class RLUpdater(Updater):
 
         sess = tf.get_default_session()
         feed_dict = {self.reward: rollouts.r}
-        _summaries, reward_per_ep = (
-            sess.run([self.eval_summary_op, self.reward_per_ep], feed_dict=feed_dict))
-        summaries += _summaries
+        reward_per_ep = (
+            sess.run(self.reward_per_ep, feed_dict=feed_dict))
         record['behaviour_policy_reward_per_ep'] = reward_per_ep
 
         return loss, summaries, record
@@ -127,6 +121,13 @@ class ReinforcementLearner(Parameterized):
     Doesn't necessarily need to learn about policies; can also learn about e.g. value functions.
 
     """
+    def _build_graph(self, is_training, exploration):
+        raise Exception("NotImplemented")
+
+    def build_graph(self, is_training, exploration):
+        with tf.name_scope(self.__class__.__name__):
+            self._build_graph(is_training, exploration)
+
     def update(self, rollouts, collect_summaries):
         pass
 

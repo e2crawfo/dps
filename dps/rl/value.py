@@ -43,7 +43,7 @@ class PolicyEvaluation(ReinforcementLearner):
 
         super(PolicyEvaluation, self).__init__(**kwargs)
 
-    def build_graph(self, is_training, exploration):
+    def _build_graph(self, is_training, exploration):
         self.estimator.build_graph()
         self.rewards = tf.placeholder(tf.float32, shape=(None, None, 1), name="_rewards")
         self.targets = tf.placeholder(tf.float32, shape=(None, None, 1), name="_targets")
@@ -59,13 +59,12 @@ class PolicyEvaluation(ReinforcementLearner):
 
         self.train_summary_op = tf.summary.merge(train_summaries)
 
-        with tf.name_scope("eval"):
-            self.approx_bellman_error = tf.reduce_mean(td_error)
-            self.eval_summary_op = tf.summary.merge([
-                tf.summary.scalar("squared_error", self.loss),
-                tf.summary.scalar("approx_bellman_error", self.approx_bellman_error),
-                tf.summary.scalar("mean_estimated_value", self.mean_estimated_value)
-            ])
+        self.approx_bellman_error = tf.reduce_mean(td_error)
+        self.eval_summary_op = tf.summary.merge([
+            tf.summary.scalar("squared_error", self.loss),
+            tf.summary.scalar("approx_bellman_error", self.approx_bellman_error),
+            tf.summary.scalar("mean_estimated_value", self.mean_estimated_value)
+        ])
 
     def update(self, rollouts, collect_summaries):
         cumsum_rewards = np.flipud(np.cumsum(np.flipud(rollouts.r), axis=0))
@@ -125,7 +124,7 @@ class TrustRegionPolicyEvaluation(ReinforcementLearner):
 
         super(TrustRegionPolicyEvaluation, self).__init__(**kwargs)
 
-    def build_graph(self, is_training, exploration):
+    def _build_graph(self, is_training, exploration):
         self.delta = build_scheduled_value(self.delta_schedule, 'delta')
 
         self.obs = tf.placeholder(tf.float32, shape=(self.T, None) + self.estimator.obs_shape, name="_obs")
@@ -163,14 +162,13 @@ class TrustRegionPolicyEvaluation(ReinforcementLearner):
             tf.summary.scalar("step_norm", self.step_norm),
         ])
 
-        with tf.name_scope("eval"):
-            td_error = compute_td_error(self.value_estimates, self.gamma, self.rewards)
-            self.approx_bellman_error = tf.reduce_mean(td_error)
-            self.eval_summary_op = tf.summary.merge([
-                tf.summary.scalar("squared_error", self.loss),
-                tf.summary.scalar("approx_bellman_error", self.approx_bellman_error),
-                tf.summary.scalar("mean_estimated_value", self.mean_estimated_value)
-            ])
+        td_error = compute_td_error(self.value_estimates, self.gamma, self.rewards)
+        self.approx_bellman_error = tf.reduce_mean(td_error)
+        self.eval_summary_op = tf.summary.merge([
+            tf.summary.scalar("squared_error", self.loss),
+            tf.summary.scalar("approx_bellman_error", self.approx_bellman_error),
+            tf.summary.scalar("mean_estimated_value", self.mean_estimated_value)
+        ])
 
     def update(self, rollouts, collect_summaries):
         cumsum_rewards = np.flipud(np.cumsum(np.flipud(rollouts.r), axis=0))

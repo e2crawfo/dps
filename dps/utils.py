@@ -286,77 +286,6 @@ class MLP(object):
         return fully_connected(hidden, output_size, **fc_kwargs)
 
 
-class FixedController(RNNCell):
-    """ A controller that outputs a fixed sequence of actions.
-
-    Parameters
-    ----------
-    action_sequence: ndarray (n_timesteps, action_dim)
-        t-th row gives the action this controller will select at time t.
-
-    """
-    def __init__(self, action_sequence):
-        self.action_sequence = np.array(action_sequence)
-
-    def __call__(self, inp, state):
-        action_seq = tf.constant(self.action_sequence, tf.float32)
-        int_state = tf.squeeze(tf.cast(state, tf.int32), axis=1)
-        actions = tf.gather(action_seq, int_state)
-
-        return actions, state + 1
-
-    def __len__(self):
-        return len(self.action_sequence)
-
-    @property
-    def state_size(self):
-        return 1
-
-    @property
-    def output_size(self):
-        return self.action_sequence.shape[1]
-
-    def zero_state(self, batch_size, dtype):
-        return tf.cast(tf.fill((batch_size, 1), 0), dtype)
-
-
-class FixedDiscreteController(RNNCell):
-    """ A controller that outputs a fixed sequence of actions.
-
-    Parameters
-    ----------
-    action_sequence: list of int
-        t-th entry gives the idx of the action this controller will select at time t.
-    n_actions: int
-        Number of actions.
-
-    """
-    def __init__(self, action_sequence, n_actions):
-        self.action_sequence = np.array(action_sequence)
-        self.n_actions = n_actions
-
-    def __call__(self, inp, state):
-        action_seq = tf.constant(self.action_sequence, tf.int32)
-        int_state = tf.cast(state, tf.int32)
-        action_idx = tf.gather(action_seq, int_state)
-        actions = tf.one_hot(tf.reshape(action_idx, (-1,)), self.n_actions)
-        return actions, state + 1
-
-    def __len__(self):
-        return len(self.action_sequence)
-
-    @property
-    def state_size(self):
-        return 1
-
-    @property
-    def output_size(self):
-        return self.n_actions
-
-    def zero_state(self, batch_size, dtype):
-        return tf.cast(tf.fill((batch_size, 1), 0), dtype)
-
-
 class ScopedCell(RNNCell):
     """ An RNNCell that creates its own variable scope the first time `resolve_scope` is called.
         The scope is then carried around and used for any subsequent build operations, ensuring
@@ -404,6 +333,79 @@ class ScopedCellWrapper(ScopedCell):
 
     def zero_state(self, batch_size, dtype):
         return self.cell.zero_state(batch_size, dtype)
+
+
+class FixedController(ScopedCell):
+    """ A controller that outputs a fixed sequence of actions.
+
+    Parameters
+    ----------
+    action_sequence: ndarray (n_timesteps, action_dim)
+        t-th row gives the action this controller will select at time t.
+
+    """
+    def __init__(self, action_sequence, name="fixed_controller"):
+        self.action_sequence = np.array(action_sequence)
+        super(FixedController, self).__init__(name)
+
+    def _call(self, inp, state):
+        action_seq = tf.constant(self.action_sequence, tf.float32)
+        int_state = tf.squeeze(tf.cast(state, tf.int32), axis=1)
+        actions = tf.gather(action_seq, int_state)
+
+        return actions, state + 1
+
+    def __len__(self):
+        return len(self.action_sequence)
+
+    @property
+    def state_size(self):
+        return 1
+
+    @property
+    def output_size(self):
+        return self.action_sequence.shape[1]
+
+    def zero_state(self, batch_size, dtype):
+        return tf.cast(tf.fill((batch_size, 1), 0), dtype)
+
+
+class FixedDiscreteController(ScopedCell):
+    """ A controller that outputs a fixed sequence of actions.
+
+    Parameters
+    ----------
+    action_sequence: list of int
+        t-th entry gives the idx of the action this controller will select at time t.
+    n_actions: int
+        Number of actions.
+
+    """
+    def __init__(self, action_sequence, n_actions, name="fixed_discrete_controller"):
+        self.action_sequence = np.array(action_sequence)
+        self.n_actions = n_actions
+        super(FixedDiscreteController, self).__init__(name)
+
+    def _call(self, inp, state):
+        action_seq = tf.constant(self.action_sequence, tf.int32)
+        int_state = tf.cast(state, tf.int32)
+        action_idx = tf.gather(action_seq, int_state)
+        actions = tf.one_hot(tf.reshape(action_idx, (-1,)), self.n_actions)
+        return actions, state + 1
+
+    def __len__(self):
+        return len(self.action_sequence)
+
+    @property
+    def state_size(self):
+        return 1
+
+    @property
+    def output_size(self):
+        return self.n_actions
+
+    def zero_state(self, batch_size, dtype):
+        return tf.cast(tf.fill((batch_size, 1), 0), dtype)
 
 
 class CompositeCell(ScopedCell):
@@ -488,59 +490,6 @@ def print_variables(collection, scope):
         print("\n")
         print(v.name)
         print(sess.run(v))
-
-
-class EarlyStopHook(object):
-    def __init__(self, patience, name=None):
-        self.patience = patience
-        self.name = name
-
-        self._early_stopped = 0
-        self._best_value_gstep = None
-        self._best_value_lstep = None
-        self._best_value = None
-
-        self._stage = 1
-        self._history = []  # each element: (best_global_step, best_local_step, best_loss_value)
-
-    @property
-    def early_stopped(self):
-        """Returns True if this monitor caused an early stop."""
-        return self._early_stopped
-
-    @property
-    def best_step(self):
-        """Returns the step at which the best early stopping metric was found."""
-        return self._best_value_step
-
-    @property
-    def best_value(self):
-        """Returns the best early stopping metric value found so far."""
-        return self._best_value
-
-    def check(self, validation_loss, global_step, local_step=None):
-        local_step = global_step if local_step is None else local_step
-
-        new_best = self._best_value is None or validation_loss < self._best_value
-        if new_best:
-            self._best_value = validation_loss
-            self._best_value_gstep = global_step
-            self._best_value_lstep = local_step
-
-        stop = local_step - self._best_value_lstep > self.patience
-        if stop:
-            print("Stopping. Best step: global {}, local {} with loss = {}." .format(
-                  self._best_value_lstep, self._best_value_gstep, self._best_value))
-            self._early_stopped = True
-        return new_best, stop
-
-    def end_stage(self):
-        self._history.append((self._best_value_gstep, self._best_value_lstep, self._best_value))
-        self._stage += 1
-        self._best_value = None
-        self._best_value_gstep = None
-        self._best_value_lstep = None
-        self._early_stopped = 0
 
 
 def restart_tensorboard(logdir, port=6006, reload_interval=120):

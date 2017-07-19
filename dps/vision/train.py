@@ -9,8 +9,9 @@ import tensorflow as tf
 from spectral_dagger.utils.experiment import ExperimentStore
 
 from dps import cfg
+from dps.train import EarlyStopHook
 from dps.utils import (
-    build_scheduled_value, build_optimizer, EarlyStopHook,
+    build_scheduled_value, build_optimizer,
     gen_seed, DpsConfig, load_or_train)
 from dps.vision.dataset import TranslatedMnistDataset
 

@@ -16,6 +16,7 @@ from dps.experiments import (
     hello_world, room, simple_addition, pointer_following,
     hard_addition, translated_mnist, mnist_arithmetic, simple_arithmetic,
     alt_arithmetic)
+from dps.rl.value import actor_critic, TrustRegionPolicyEvaluation
 
 
 DEFAULT_CONFIG = DpsConfig(
@@ -50,8 +51,8 @@ DEFAULT_CONFIG = DpsConfig(
     max_time=0,
 
     n_controller_units=32,
-    controller=lambda n_params: CompositeCell(
-        tf.contrib.rnn.LSTMCell(num_units=cfg.n_controller_units), MLP(), n_params),
+    controller=lambda n_params, name: CompositeCell(
+        tf.contrib.rnn.LSTMCell(num_units=cfg.n_controller_units), MLP(), n_params, name=name),
     action_selection=lambda env: Softmax(env.n_actions),
 
     deadline='',
@@ -62,6 +63,39 @@ DEFAULT_CONFIG = DpsConfig(
 
 
 cfg._stack.append(DEFAULT_CONFIG)
+
+
+def actor_critic_updater(env):
+    action_selection = cfg.action_selection(env)
+    policy_controller = cfg.controller(action_selection.n_params, name="actor_controller")
+    critic_controller = cfg.controller(1, name="critic_controller")
+
+    return actor_critic(
+        env, policy_controller, action_selection, critic_controller,
+        cfg.actor_config, cfg.critic_config)
+
+
+ACTOR_CRITIC_CONFIG = Config(
+    critic_config=Config(
+        critic_name="TRPE",
+        critic_alg=TrustRegionPolicyEvaluation,
+        delta_schedule='0.01',
+        max_cg_steps=10,
+        max_line_search_steps=10,
+        entropy_schedule='0.0'
+    ),
+    actor_config=Config(
+        actor_name="TRPO",
+        actor_alg=TRPO,
+        delta_schedule='0.01',
+        max_cg_steps=10,
+        max_line_search_steps=10,
+        entropy_schedule='0.0',
+        lmbda=1.0,
+        gamma=1.0
+    ),
+    name="ActorCritic"
+)
 
 
 def reinforce_get_updater(env):
@@ -475,7 +509,7 @@ def adjust_for_test(config):
         n_train = 1
     config.update(
         T=len(config.action_seq),
-        controller=lambda n_params: FixedDiscreteController(config.action_seq, n_params),
+        controller=lambda n_params, name: FixedDiscreteController(config.action_seq, n_params, name=name),
         batch_size=n_train,
         n_train=n_train,
         n_val=0,
@@ -498,7 +532,8 @@ ROOM_CONFIG_TEST = ROOM_CONFIG.copy(
     T=6,
     controller=lambda env: FixedController(
         np.concatenate(
-            [0.1 * np.ones((6, 1)), 0.1 * np.ones((6, 1))], axis=1)
+            [0.1 * np.ones((6, 1)), 0.1 * np.ones((6, 1))], axis=1),
+        name=name
     ),
     action_selection=lambda env: Deterministic(env.n_actions),
     batch_size=2,

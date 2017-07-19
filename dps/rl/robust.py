@@ -10,55 +10,53 @@ from dps.rl.trpo import TRPO, mean_kl, line_search
 class RobustREINFORCE(TRPO):
     """ Combine the KL-divergence line search of TRPO with REINFORCE's use of vanilla policy gradient as search direction. """
 
-    def build_graph(self, is_training, exploration):
-        with tf.name_scope("update"):
-            self.delta = build_scheduled_value(self.delta_schedule, 'delta')
+    def _build_graph(self, is_training, exploration):
+        self.delta = build_scheduled_value(self.delta_schedule, 'delta')
 
-            self.obs = tf.placeholder(tf.float32, shape=(self.T, None)+self.policy.obs_shape, name="_obs")
-            self.actions = tf.placeholder(tf.float32, shape=(self.T, None, self.policy.n_actions), name="_actions")
-            self.advantage = tf.placeholder(tf.float32, shape=(self.T, None, 1), name="_advantage")
-            self.rewards = tf.placeholder(tf.float32, shape=(self.T, None, 1), name="_rewards")
-            self.reward_per_ep = episodic_mean(self.rewards, name="_reward_per_ep")
+        self.obs = tf.placeholder(tf.float32, shape=(self.T, None)+self.policy.obs_shape, name="_obs")
+        self.actions = tf.placeholder(tf.float32, shape=(self.T, None, self.policy.n_actions), name="_actions")
+        self.advantage = tf.placeholder(tf.float32, shape=(self.T, None, 1), name="_advantage")
+        self.rewards = tf.placeholder(tf.float32, shape=(self.T, None, 1), name="_rewards")
+        self.reward_per_ep = episodic_mean(self.rewards, name="_reward_per_ep")
 
-            self.advantage_estimator.build_graph()
+        self.advantage_estimator.build_graph()
 
-            self.policy.set_exploration(exploration)
-            self.prev_policy.set_exploration(exploration)
+        self.policy.set_exploration(exploration)
+        self.prev_policy.set_exploration(exploration)
 
-            self.pg_objective, _, self.mean_entropy = policy_gradient_objective(
-                self.policy, self.obs, self.actions, self.advantage)
+        self.pg_objective, _, self.mean_entropy = policy_gradient_objective(
+            self.policy, self.obs, self.actions, self.advantage)
 
-            self.objective = self.pg_objective
+        self.objective = self.pg_objective
 
-            if self.entropy_schedule:
-                entropy_param = build_scheduled_value(self.entropy_schedule, 'entropy_param')
-                self.objective += entropy_param * self.mean_entropy
+        if self.entropy_schedule:
+            entropy_param = build_scheduled_value(self.entropy_schedule, 'entropy_param')
+            self.objective += entropy_param * self.mean_entropy
 
-            g = tf.get_default_graph()
-            tvars = g.get_collection('trainable_variables', scope=self.policy.scope.name)
-            self.policy_gradient = tf.gradients(self.objective, tvars)
+        g = tf.get_default_graph()
+        tvars = g.get_collection('trainable_variables', scope=self.policy.scope.name)
+        self.policy_gradient = tf.gradients(self.objective, tvars)
 
-            self.mean_kl = mean_kl(self.prev_policy, self.policy, self.obs)
+        self.mean_kl = mean_kl(self.prev_policy, self.policy, self.obs)
 
-            kl_penalty = tf.cond(self.mean_kl > self.delta, lambda: tf.constant(np.inf), lambda: tf.constant(0.0))
-            self.line_search_objective = self.objective - kl_penalty
+        kl_penalty = tf.cond(self.mean_kl > self.delta, lambda: tf.constant(np.inf), lambda: tf.constant(0.0))
+        self.line_search_objective = self.objective - kl_penalty
 
-            self.grad_norm_pure = tf.placeholder(tf.float32, shape=(), name="_grad_norm_pure")
-            self.step_norm = tf.placeholder(tf.float32, shape=(), name="_step_norm")
+        self.grad_norm_pure = tf.placeholder(tf.float32, shape=(), name="_grad_norm_pure")
+        self.step_norm = tf.placeholder(tf.float32, shape=(), name="_step_norm")
 
-            self.train_summary_op = tf.summary.merge([
-                tf.summary.scalar("grad_norm_pure", self.grad_norm_pure),
-                tf.summary.scalar("step_norm", self.step_norm),
-            ])
+        self.train_summary_op = tf.summary.merge([
+            tf.summary.scalar("grad_norm_pure", self.grad_norm_pure),
+            tf.summary.scalar("step_norm", self.step_norm),
+        ])
 
-        with tf.name_scope("eval"):
-            self.eval_summary_op = tf.summary.merge([
-                tf.summary.scalar("pg_objective", self.pg_objective),
-                tf.summary.scalar("objective", self.objective),
-                tf.summary.scalar("reward_per_ep", self.reward_per_ep),
-                tf.summary.scalar("mean_entropy", self.mean_entropy),
-                tf.summary.scalar("mean_kl", self.mean_kl)
-            ])
+        self.eval_summary_op = tf.summary.merge([
+            tf.summary.scalar("pg_objective", self.pg_objective),
+            tf.summary.scalar("objective", self.objective),
+            tf.summary.scalar("reward_per_ep", self.reward_per_ep),
+            tf.summary.scalar("mean_entropy", self.mean_entropy),
+            tf.summary.scalar("mean_kl", self.mean_kl)
+        ])
 
     def update(self, rollouts, collect_summaries):
         # Compute standard policy gradient
