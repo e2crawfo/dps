@@ -294,7 +294,7 @@ class ScopedCell(RNNCell):
     """
     def __init__(self, name):
         self.scope = None
-        self.name = name
+        self.name = name or self.__class__.__name__
 
     def resolve_scope(self):
         reuse = self.scope is not None

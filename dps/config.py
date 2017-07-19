@@ -51,7 +51,7 @@ DEFAULT_CONFIG = DpsConfig(
     max_time=0,
 
     n_controller_units=32,
-    controller=lambda n_params, name: CompositeCell(
+    controller=lambda n_params, name=None: CompositeCell(
         tf.contrib.rnn.LSTMCell(num_units=cfg.n_controller_units), MLP(), n_params, name=name),
     action_selection=lambda env: Softmax(env.n_actions),
 
@@ -509,7 +509,7 @@ def adjust_for_test(config):
         n_train = 1
     config.update(
         T=len(config.action_seq),
-        controller=lambda n_params, name: FixedDiscreteController(config.action_seq, n_params, name=name),
+        controller=lambda n_params, name=None: FixedDiscreteController(config.action_seq, n_params, name=name),
         batch_size=n_train,
         n_train=n_train,
         n_val=0,
@@ -530,7 +530,7 @@ adjust_for_test(HELLO_WORLD_TEST)
 ROOM_CONFIG_TEST = ROOM_CONFIG.copy(
     build_env=room.build_env,
     T=6,
-    controller=lambda env: FixedController(
+    controller=lambda n_params, name=None: FixedController(
         np.concatenate(
             [0.1 * np.ones((6, 1)), 0.1 * np.ones((6, 1))], axis=1),
         name=name
