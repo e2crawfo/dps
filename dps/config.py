@@ -91,10 +91,11 @@ ACTOR_CRITIC_CONFIG = Config(
         max_cg_steps=10,
         max_line_search_steps=20,
         entropy_schedule='0.1',
-        exploration_schedule="poly 1.0 10000 1e-6 1.0",
         lmbda=1.0,
         gamma=1.0
     ),
+    test_time_explore=-1,
+    exploration_schedule="poly 1.0 10000 1e-6 1.0",
     name="ActorCritic",
     get_updater=actor_critic_get_updater,
 )

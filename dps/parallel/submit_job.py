@@ -6,6 +6,9 @@ from future.utils import raise_with_traceback
 from datetime import timedelta
 from pathlib import Path
 import numpy as np
+import glob
+from contextlib import contextmanager
+import time
 
 from spectral_dagger.utils.misc import make_symlink
 
@@ -31,12 +34,28 @@ def parse_timedelta(s):
     return timedelta(hours=args[0], minutes=args[1], seconds=args[2])
 
 
-def submit_job(
-        input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', ppn=12,
-        walltime="1:00:00", cleanup_time="00:15:00", time_slack=0,
-        add_date=True, show_script=0, dry_run=0, parallel_exe="$HOME/.local/bin/parallel",
-        hosts=None, env_vars=None, redirect=False):
-    """ Submit a Job to be executed in parallel.
+@contextmanager
+def cd(path):
+    """ A context manager that changes into given directory on __enter__,
+        change back to original_file directory on exit. Exception safe.
+
+    """
+    old_dir = os.getcwd()
+    os.chdir(path)
+
+    try:
+        yield
+    finally:
+        os.chdir(old_dir)
+
+
+def submit_job(*args, **kwargs):
+    session = ParallelSession(*args, **kwargs)
+    session.run()
+
+
+class ParallelSession(object):
+    """ Run a Job in parallel using gnu-parallel.
 
     A directory for this Job execution is created in `scratch`, and results are saved there.
 
@@ -78,221 +97,205 @@ def submit_job(
         If True, stderr and stdout of jobs is saved in files rather than being printed to screen.
 
     """
-    input_zip = Path(input_zip)
-    input_zip_abs = input_zip.resolve()
-    input_zip_rsync = str(input_zip.parent) + '/./' + input_zip.name
-    input_zip_base = input_zip.name
-    archive_root = zip_root(input_zip)
-    name = Path(input_zip).stem
-    clean_pattern = pattern.replace(' ', '_')
+    def __init__(
+            self, input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', ppn=12,
+            walltime="1:00:00", cleanup_time="00:15:00", time_slack=0,
+            add_date=True, show_script=0, dry_run=0, parallel_exe="$HOME/.local/bin/parallel",
+            hosts=None, env_vars=None, redirect=False):
+        input_zip = Path(input_zip)
+        input_zip_abs = input_zip.resolve()
+        input_zip_base = input_zip.name
+        archive_root = zip_root(input_zip)
+        name = Path(input_zip).stem
+        clean_pattern = pattern.replace(' ', '_')
 
-    # Create directory to run the job from - should be on scratch.
-    scratch = os.path.abspath(scratch)
-    job_directory = make_directory_name(
-        scratch,
-        '{}_{}'.format(name, clean_pattern),
-        add_date=add_date)
-    os.makedirs(job_directory)
+        # Create directory to run the job from - should be on scratch.
+        scratch = os.path.abspath(scratch)
+        job_directory = make_directory_name(
+            scratch,
+            '{}_{}'.format(name, clean_pattern),
+            add_date=add_date)
+        os.makedirs(job_directory + "/results")
 
-    # storage local to each node, from the perspective of that node
-    local_scratch = str(Path(local_scratch_prefix) / Path(job_directory).name)
+        # storage local to each node, from the perspective of that node
+        local_scratch = str(Path(local_scratch_prefix) / Path(job_directory).name)
 
-    cleanup_time = parse_timedelta(cleanup_time)
-    walltime = parse_timedelta(walltime)
-    if cleanup_time > walltime:
-        raise Exception("Cleanup time {} is larger than walltime {}!".format(cleanup_time, walltime))
+        cleanup_time = parse_timedelta(cleanup_time)
+        walltime = parse_timedelta(walltime)
+        if cleanup_time > walltime:
+            raise Exception("Cleanup time {} is larger than walltime {}!".format(cleanup_time, walltime))
 
-    walltime_seconds = int(walltime.total_seconds())
-    cleanup_time_seconds = int(cleanup_time.total_seconds())
+        walltime_seconds = int(walltime.total_seconds())
+        cleanup_time_seconds = int(cleanup_time.total_seconds())
 
-    if not hosts:
-        hosts = [":"]  # Only localhost
-    with (Path(job_directory) / 'nodefile.txt').open('w') as f:
-        f.write('\n'.join(hosts))
-    node_file = " --sshloginfile nodefile.txt "
-    n_nodes = len(hosts)
+        if not hosts:
+            hosts = [":"]  # Only localhost
+        with (Path(job_directory) / 'nodefile.txt').open('w') as f:
+            f.write('\n'.join(hosts))
+        node_file = " --sshloginfile nodefile.txt "
+        n_nodes = len(hosts)
 
-    idx_file = 'job_indices.txt'
+        idx_file = 'job_indices.txt'
 
-    redirect = "--redirect" if redirect else ""
+        redirect = "--redirect" if redirect else ""
 
-    kwargs = locals().copy()
+        env = os.environ.copy()
 
-    env = os.environ.copy()
-    if env_vars is not None:
+        env_vars = env_vars or {}
+        env_vars["OMP_NUM_THREADS"] = 1
+
         env.update({e: str(v) for e, v in env_vars.items()})
-        kwargs['env_vars'] = ' '.join('--env ' + k for k in env_vars)
-    else:
-        kwargs['env_vars'] = ''
+        env_vars = ' '.join('--env ' + k for k in env_vars)
 
-    ro_job = ReadOnlyJob(input_zip)
-    completion = ro_job.completion(pattern)
-    n_jobs_to_run = completion['n_ready_incomplete']
-    if n_jobs_to_run == 0:
-        print("All jobs are finished! Exiting.")
-        return
-    kwargs['n_jobs_to_run'] = n_jobs_to_run
+        n_procs = ppn * n_nodes
 
-    execution_time = int((walltime - cleanup_time).total_seconds())
-    n_procs = ppn * n_nodes
-    total_compute_time = n_procs * execution_time
-    abs_seconds_per_job = int(np.floor(total_compute_time / n_jobs_to_run))
-    seconds_per_job = abs_seconds_per_job - time_slack
+        ro_job = ReadOnlyJob(input_zip)
+        completion = ro_job.completion(pattern)
+        indices_to_run = [i for i, op in completion['ready_incomplete_ops']]
+        n_jobs_to_run = len(indices_to_run)
+        if n_jobs_to_run == 0:
+            print("All jobs are finished! Exiting.")
+            return
 
-    assert execution_time > 0
-    assert total_compute_time > 0
-    assert abs_seconds_per_job > 0
-    assert seconds_per_job > 0
+        n_steps = int(np.ceil(n_jobs_to_run / n_procs))
 
-    kwargs['abs_seconds_per_job'] = abs_seconds_per_job
-    kwargs['seconds_per_job'] = seconds_per_job
-    kwargs['execution_time'] = execution_time
-    kwargs['n_procs'] = n_procs
+        execution_time = int((walltime - cleanup_time).total_seconds())
+        total_compute_time = n_procs * execution_time
+        abs_seconds_per_job = int(np.floor(total_compute_time / n_jobs_to_run))
+        seconds_per_job = abs_seconds_per_job - time_slack
 
-    stage_data_code = '\n'.join(
-        ("scp -q {{input_zip_abs}} {}:{{local_scratch}}".format(h)
-            if h != ":" else "cp {input_zip_abs} {local_scratch}")
-        for h in hosts)
+        assert execution_time > 0
+        assert total_compute_time > 0
+        assert abs_seconds_per_job > 0
+        assert seconds_per_job > 0
 
-    fetch_results_code = '\n'.join(
-        ("scp -q {}:{{local_scratch}}/results.zip ./results/{}.zip".format(h, i)
-            if h != ":" else "cp {{local_scratch}}/results.zip ./results/{}.zip".format(i))
-        for i, h in enumerate(hosts))
+        self.__dict__.update(locals())
 
-    code = '''#!/bin/bash
-# Turn off implicit threading in Python
-export OMP_NUM_THREADS=1
+        # Create convenience `latest` symlinks
+        make_symlink(job_directory, os.path.join(scratch, 'latest'))
 
-cd {job_directory}
-mkdir results
+    def on_all_execute(self, parallel_command, arguments=False):
+        """ Execute a command once on each host. """
+        command = '{parallel_exe} --no-notice {node_file} --nonall {env_vars} -k "' + parallel_command + '"'
+        self.execute_command(command)
 
-echo Starting job at
-date
+    def stage(self):
+        for host in self.hosts:
+            if host == ":":
+                command = "cp {input_zip_abs} {local_scratch}".format(**self.__dict__)
+            else:
+                command = "scp -q {input_zip_abs} {host}:{local_scratch}".format(host=host, **self.__dict__)
+            self.execute_command(command, frmt=False)
 
-echo Creating local scratch directories...
+    def fetch(self):
+        for i, host in enumerate(self.hosts):
+            if host == ":":
+                command = "cp {local_scratch}/results.zip ./results/{i}.zip".format(i=i, **self.__dict__)
+            else:
+                command = "scp -q {host}:{local_scratch}/results.zip ./results/{i}.zip".format(host=host, i=i, **self.__dict__)
+            self.execute_command(command, frmt=False)
 
-{parallel_exe} --no-notice {node_file} --nonall {env_vars} -k \\
-    "mkdir -p {local_scratch}"
+    def step(self, i):
+        print("Beginning step {} at: ".format(i))
+        print(datetime.datetime.now())
 
-echo Printing local scratch directories...
+        indices_for_step = self.indices_to_run[i*self.n_procs:(i+1)*self.n_procs]
+        if not indices_for_step:
+            print("No jobs left to run on step {}.".format(i))
+            return
 
-{parallel_exe} --no-notice {node_file} --nonall {env_vars} -k \\
-    "cd {local_scratch} && echo Local scratch on host \\$(hostname) is {local_scratch}, working directory is \\$(pwd)."
+        indices_for_step = ' '.join(str(i) for i in indices_for_step)
 
-echo Staging input archive...
-
-''' + stage_data_code + '''
-
-echo Unzipping...
-
-{parallel_exe} --no-notice {node_file} --nonall {env_vars} -k \\
-    "cd {local_scratch} && unzip -ouq {input_zip_base} && echo \\$(hostname) && ls"
-
-echo We have {walltime_seconds} seconds to complete {n_jobs_to_run} sub-jobs using {n_procs} processors.
-echo {execution_time} seconds have been reserved for job execution, and {cleanup_time_seconds} seconds have been reserved for cleanup.
-echo Each sub-job has been alloted {abs_seconds_per_job} seconds, {seconds_per_job} seconds of which is pure computation time.
-
-echo Launching jobs at
-date
-
-start=$(date +%s)
-
-# Requires a newish version of parallel, has to accept --timeout
-{parallel_exe} --timeout {abs_seconds_per_job} --no-notice -j {ppn} \\
+        command = '''{parallel_exe} --timeout {abs_seconds_per_job} --no-notice -j {ppn} \\
     --joblog {job_directory}/job_log.txt {node_file} \\
-    --env OMP_NUM_THREADS --env PATH --env LD_LIBRARY_PATH {env_vars} -v \\
-    "cd {local_scratch} && dps-hyper run {archive_root} {pattern} {{}} --max-time {seconds_per_job} {redirect}" < {idx_file}
+    --env PATH --env LD_LIBRARY_PATH {env_vars} -v \\
+    "cd {local_scratch} && dps-hyper run {archive_root} {pattern} {{}} --max-time {seconds_per_job} {redirect}" \\
+    ::: {indices_for_step}
+'''.format(indices_for_step=indices_for_step, **self.__dict__)
+        self.execute_command(command, frmt=False)
 
-end=$(date +%s)
+    def checkpoint(self, i):
+        print("Fetching results of step {} at: ".format(i))
+        print(datetime.datetime.now())
 
-runtime=$((end-start))
+        command = "cd {local_scratch} && echo Zipping results on node \\$(hostname). && zip -rq results {archive_root} && ls"
+        self.on_all_execute(command, arguments=False)
 
-echo Executing jobs took $runtime seconds.
+        self.fetch()
 
-echo Fetching results at
-date
+        print("Unzipping results from nodes...")
+        with cd('results'):
+            results_files = glob.glob("*.zip")
+            if not results_files:
+                raise Exception("Did not find any results files from nodes on step {}.".format(i))
 
-{parallel_exe} --no-notice {node_file} --nonall {env_vars} -k \\
-    "cd {local_scratch} && echo Zipping results on node \\$(hostname). && zip -rq results {archive_root} && ls"
+            for f in results_files:
+                self.execute_command("unzip -nuq {}".format(f))
 
-''' + fetch_results_code + '''
+            self.execute_command("zip -rq {name} {archive_root} && mv {name}.zip ..")
 
-cd results
+        self.execute_command("dps-hyper summary {name}.zip")
+        self.execute_command("dps-hyper view {name}.zip")
 
-echo Unzipping results from nodes...
+    def execute_command(self, command, frmt=True, shell=True):
+        """ Uses `subprocess` to execute `command`, yielding lines from stdout as soon as they are ready. """
+        if frmt:
+            command = command.format(**self.__dict__)
 
-if test -n "$(find . -maxdepth 1 -name '*.zip' -print -quit)"; then
-    echo Results files exist:
-    ls
-else
-    echo Did not find any results files from nodes.
-    echo Contents of results directory is:
-    ls
-    exit 1
-fi
+        print("\nExecuting command: ")
+        print(command)
 
-for f in *zip
-do
-    echo Storing contents of $f
-    unzip -nuq $f
-done
+        if not shell:
+            command = command.split()
 
-echo Zipping final results...
-zip -rq {name} {archive_root}
-mv {name}.zip ..
-cd ..
-
-dps-hyper summary {name}.zip
-dps-hyper view {name}.zip
-mv {input_zip_abs} {input_zip_abs}.bk
-cp -f {name}.zip {input_zip_abs}
-
-'''
-    code = code.format(**kwargs)
-    if show_script:
-        print("\n")
-        print("-" * 20 + " BEGIN SCRIPT " + "-" * 20)
-        print(code)
-        print("-" * 20 + " END SCRIPT " + "-" * 20)
-        print("\n")
-
-    # Create convenience `latest` symlinks
-    make_symlink(job_directory, os.path.join(scratch, 'latest'))
-    make_symlink(
-        job_directory,
-        os.path.join(scratch, 'latest_{}_{}'.format(name, clean_pattern)))
-
-    os.chdir(job_directory)
-    with open(idx_file, 'w') as f:
-        [f.write('{}\n'.format(u)) for u in range(completion['n_ops'])]
-
-    submit_script = "submit_script.sh"
-    with open(submit_script, 'w') as f:
-        f.write(code)
-
-    if dry_run:
-        print("Dry run, so not submitting.")
-    else:
+        start = time.time()
         try:
-            command = ['sh', submit_script]
-            for line in execute(command):
-                print(line)
+            subprocess.run(command, check=True, universal_newlines=True, shell=shell)
+            print("Command took {} seconds.".format(time.time() - start))
         except subprocess.CalledProcessError as e:
-            print("CalledProcessError has been raised while executing command: {}.".format(' '.join(command)))
-            print("Output of process: ")
-            print(e.output.decode())
+            if isinstance(command, list):
+                command = ' '.join(command)
+            print("CalledProcessError has been raised while executing command: {}.".format(command))
             raise_with_traceback(e)
 
+    def run(self):
+        if self.dry_run:
+            print("Dry run, so not running.")
+            return
 
-def execute(cmd):
-    """ Uses `subprocess` to execute `cmd`, yielding lines from stdout as soon as they are ready. """
-    popen = subprocess.Popen(cmd, stdout=subprocess.PIPE)
-    for stdout_line in iter(popen.stdout.readline, b""):
-        yield ''.join([i for i in stdout_line.decode() if i != '\n'])
-    popen.stdout.close()
-    return_code = popen.wait()
-    if return_code:
-        raise subprocess.CalledProcessError(return_code, cmd)
+        with cd(self.job_directory):
+            print("Starting job at {}".format(datetime.datetime.now()))
+            print("Creating local scratch directories...")
+
+            self.on_all_execute("mkdir -p {local_scratch}", arguments=False)
+
+            print("Printing local scratch directories...")
+
+            command = (
+                "cd {local_scratch} && "
+                "echo Local scratch on host \\$(hostname) is {local_scratch}, working directory is \\$(pwd).")
+            self.on_all_execute(command, arguments=False)
+
+            print("Staging input archive...")
+            self.stage()
+
+            print("Unzipping...")
+            command = "cd {local_scratch} && unzip -ouq {input_zip_base} && echo \\$(hostname) && ls"
+            self.on_all_execute(command, arguments=False)
+
+            print("We have {walltime_seconds} seconds to complete {n_jobs_to_run} "
+                  "sub-jobs using {n_procs} processors.".format(**self.__dict__))
+            print("{execution_time} seconds have been reserved for job execution, "
+                  "and {cleanup_time_seconds} seconds have been reserved for cleanup.".format(**self.__dict__))
+            print("Each sub-job has been alloted {abs_seconds_per_job} seconds, "
+                  "{seconds_per_job} seconds of which is pure computation time.".format(**self.__dict__))
+
+            for i in range(self.n_steps):
+                self.step(i)
+                self.checkpoint(i)
+
+            self.execute_command("cp -f {input_zip_abs} {input_zip_abs}.bk")
+            self.execute_command("cp -f {name}.zip {input_zip_abs}")
 
 
 def submit_job_pbs(
@@ -342,7 +345,6 @@ def submit_job_pbs(
     """
     input_zip = Path(input_zip)
     input_zip_abs = input_zip.resolve()
-    input_zip_rsync = str(input_zip.parent) + '/./' + input_zip.name
     input_zip_base = input_zip.name
     archive_root = zip_root(input_zip)
     name = Path(input_zip).stem
@@ -560,7 +562,3 @@ def _submit_job():
     """ Entry point for `dps-submit` command-line utility. """
     from clify import command_line
     command_line(submit_job, collect_kwargs=1, verbose=True)()
-
-
-if __name__ == "__main__":
-    _submit_job()

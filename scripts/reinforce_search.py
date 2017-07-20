@@ -79,15 +79,16 @@ with config:
     alg = 'reinforce'
     task = 'alt_arithmetic'
     # hosts = ['ecrawf6@lab1-{}.cs.mcgill.ca'.format(i+1) for i in range(10, 20)]
-    hosts = None
+    # hosts = [":", "ecrawf6@lab1-1.cs.mcgill.ca"]
+    hosts = [":"]
 
     if 1:
         # Big
         n_param_settings = 20
         n_repeats = 5
-        walltime = "24:00:00"
+        walltime = "12:00:00"
         cleanup_time = "00:30:00"
-        time_slack = 30
+        time_slack = 60
         ppn = 4
     elif 0:
         # Medium
@@ -99,11 +100,11 @@ with config:
         ppn = 4
     else:
         # Small
-        n_param_settings = 2
+        n_param_settings = 4
         n_repeats = 2
-        walltime = "00:03:00"
-        cleanup_time = "00:00:15"
-        time_slack = 10
+        walltime = "00:05:00"
+        cleanup_time = "00:00:45"
+        time_slack = 45
         ppn = 2
 
     job, archive_path = build_search(

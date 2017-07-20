@@ -74,16 +74,16 @@ with config:
 
     alg = 'trpo'
     task = 'alt_arithmetic'
-    hosts = None
+    hosts = [":", "ecrawf6@lab1-1.cs.mcgill.ca"]
 
     if 1:
         # Big
         n_param_settings = 20
         n_repeats = 5
-        walltime = "24:00:00"
+        walltime = "12:00:00"
         cleanup_time = "00:30:00"
-        time_slack = 30
-        ppn = 4
+        time_slack = 60
+        ppn = 2
     elif 0:
         # Medium
         n_param_settings = 8
@@ -94,10 +94,10 @@ with config:
         ppn = 4
     else:
         # Small
-        n_param_settings = 2
+        n_param_settings = 5
         n_repeats = 2
-        walltime = "00:03:00"
-        cleanup_time = "00:00:15"
+        walltime = "00:05:00"
+        cleanup_time = "00:00:45"
         time_slack = 10
         ppn = 2
 

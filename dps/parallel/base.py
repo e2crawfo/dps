@@ -244,19 +244,20 @@ class ReadOnlyJob(object):
     def completion(self, pattern=None):
         operators = list(self.get_ops(pattern, sort=False))
         is_complete = [op.is_complete(self.objects) for op in operators]
-        completed_ops = [op for i, op in enumerate(operators) if is_complete[i]]
-        incomplete_ops = [op for i, op in enumerate(operators) if not is_complete[i]]
+        completed_ops = [(i, op) for i, op in enumerate(operators) if is_complete[i]]
+        incomplete_ops = [(i, op) for i, op in enumerate(operators) if not is_complete[i]]
 
         is_ready = [op.is_ready(self.objects) for op in operators]
-        ready_incomplete_ops = [op for i, op in enumerate(incomplete_ops) if is_ready[i]]
-        not_ready_incomplete_ops = [op for i, op in enumerate(incomplete_ops) if not is_ready[i]]
+        ready_incomplete_ops = [(i, op) for i, op in incomplete_ops if is_ready[i]]
+        not_ready_incomplete_ops = [(i, op) for i, op in incomplete_ops if not is_ready[i]]
 
         return dict(
             n_ops=len(operators),
             n_complete=len(completed_ops),
             n_incomplete=len(incomplete_ops),
             n_ready_incomplete=len(ready_incomplete_ops),
-            n_not_ready_incomplete=len(not_ready_incomplete_ops))
+            n_not_ready_incomplete=len(not_ready_incomplete_ops),
+            ready_incomplete_ops=ready_incomplete_ops)
 
     def completed_ops(self):
         ops = list(self.get_ops(None, sort=False))
