@@ -49,7 +49,6 @@ def get_updater(env):
             delta_schedule='0.01',
             max_cg_steps=10,
             max_line_search_steps=10,
-            entropy_schedule='0.0'
         )
 
     else:

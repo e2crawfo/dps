@@ -30,7 +30,7 @@ DEFAULT_CONFIG = DpsConfig(
     get_updater=None,
 
     slim=False,  # If true, tries to use little disk space
-    max_steps=1000,
+    max_steps=10000,
     batch_size=100,
     n_train=10000,
     n_val=1000,
@@ -111,10 +111,14 @@ def reinforce_get_updater(env):
 
 REINFORCE_CONFIG = Config(
     name="REINFORCE",
+    batch_size=16,
     get_updater=reinforce_get_updater,
     entropy_schedule="0.1",
-    lr_schedule="constant 0.001",
-    exploration_schedule='poly 10 100000 0.1 1',
+    lr_schedule="1e-4",
+    # lr_schedule="poly 1e-4 100000 1e-6 1",  # also good
+    n_controller_units=64,
+    exploration_schedule='exp 10.0 100000 0.1',
+    test_time_explore=0.1
 )
 
 

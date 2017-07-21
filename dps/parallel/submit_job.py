@@ -13,6 +13,7 @@ import time
 from spectral_dagger.utils.misc import make_symlink
 
 from dps.parallel.base import ReadOnlyJob, zip_root
+from dps.utils import parse_date
 
 
 def make_directory_name(experiments_dir, network_name, add_date=True):
@@ -61,6 +62,8 @@ class ParallelSession(object):
 
     Parameters
     ----------
+    name: str
+        Name for the experiment.
     input_zip: str
         Path to a zip archive storing the Job.
     pattern: str
@@ -82,8 +85,6 @@ class ParallelSession(object):
         Whether to add current date/time to the name of the directory where results are stored.
     time_slack: int
         Number of extra seconds to allow per job.
-    show_script: bool
-        Whether to print to console the control script that is generated.
     dry_run: bool
         If True, control script will be generated but not executed/submitted.
     parallel_exe: str
@@ -98,15 +99,15 @@ class ParallelSession(object):
 
     """
     def __init__(
-            self, input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', ppn=12,
+            self, name, input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', ppn=12,
             walltime="1:00:00", cleanup_time="00:15:00", time_slack=0,
-            add_date=True, show_script=0, dry_run=0, parallel_exe="$HOME/.local/bin/parallel",
+            add_date=True, dry_run=0, parallel_exe="$HOME/.local/bin/parallel",
             hosts=None, env_vars=None, redirect=False):
         input_zip = Path(input_zip)
         input_zip_abs = input_zip.resolve()
         input_zip_base = input_zip.name
+        input_zip_stem = input_zip.stem
         archive_root = zip_root(input_zip)
-        name = Path(input_zip).stem
         clean_pattern = pattern.replace(' ', '_')
 
         # Create directory to run the job from - should be on scratch.
@@ -121,7 +122,14 @@ class ParallelSession(object):
         local_scratch = str(Path(local_scratch_prefix) / Path(job_directory).name)
 
         cleanup_time = parse_timedelta(cleanup_time)
-        walltime = parse_timedelta(walltime)
+        try:
+            walltime = parse_timedelta(walltime)
+        except:
+            deadline = parse_date(walltime)
+            walltime = deadline - datetime.datetime.now()
+            if int(walltime.total_seconds()) < 0:
+                raise Exception("Deadline {} is in the past!".format(deadline))
+
         if cleanup_time > walltime:
             raise Exception("Cleanup time {} is larger than walltime {}!".format(cleanup_time, walltime))
 
@@ -134,8 +142,6 @@ class ParallelSession(object):
             f.write('\n'.join(hosts))
         node_file = " --sshloginfile nodefile.txt "
         n_nodes = len(hosts)
-
-        idx_file = 'job_indices.txt'
 
         redirect = "--redirect" if redirect else ""
 
@@ -192,11 +198,12 @@ class ParallelSession(object):
             if host == ":":
                 command = "cp {local_scratch}/results.zip ./results/{i}.zip".format(i=i, **self.__dict__)
             else:
-                command = "scp -q {host}:{local_scratch}/results.zip ./results/{i}.zip".format(host=host, i=i, **self.__dict__)
+                command = "scp -q {host}:{local_scratch}/results.zip ./results/{i}.zip".format(
+                    host=host, i=i, **self.__dict__)
             self.execute_command(command, frmt=False)
 
     def step(self, i):
-        print("Beginning step {} at: ".format(i))
+        print("Beginning step {} at: ".format(i) + "=" * 90)
         print(datetime.datetime.now())
 
         indices_for_step = self.indices_to_run[i*self.n_procs:(i+1)*self.n_procs]
@@ -206,39 +213,48 @@ class ParallelSession(object):
 
         indices_for_step = ' '.join(str(i) for i in indices_for_step)
 
-        command = '''{parallel_exe} --timeout {abs_seconds_per_job} --no-notice -j {ppn} \\
-    --joblog {job_directory}/job_log.txt {node_file} \\
-    --env PATH --env LD_LIBRARY_PATH {env_vars} -v \\
-    "cd {local_scratch} && dps-hyper run {archive_root} {pattern} {{}} --max-time {seconds_per_job} {redirect}" \\
-    ::: {indices_for_step}
-'''.format(indices_for_step=indices_for_step, **self.__dict__)
+        parallel_command = (
+            "cd {local_scratch} && "
+            "dps-hyper run {archive_root} {pattern} {{}} --max-time {seconds_per_job} "
+            "--log-root {local_scratch} --log-name experiments {redirect}")
+
+        command = (
+            '{parallel_exe} --timeout {abs_seconds_per_job} --no-notice -j {ppn} \\\n'
+            '    --joblog {job_directory}/job_log.txt {node_file} \\\n'
+            '    --env PATH --env LD_LIBRARY_PATH {env_vars} -v \\\n'
+            '    "' + parallel_command + '" \\\n'
+            '    ::: {indices_for_step}')
+        command = command.format(
+            indices_for_step=indices_for_step, **self.__dict__)
+
         self.execute_command(command, frmt=False)
 
     def checkpoint(self, i):
         print("Fetching results of step {} at: ".format(i))
         print(datetime.datetime.now())
 
-        command = "cd {local_scratch} && echo Zipping results on node \\$(hostname). && zip -rq results {archive_root} && ls"
+        command = "cd {local_scratch} && echo Zipping results on node \\$(hostname). && zip -rq results {archive_root}"
         self.on_all_execute(command, arguments=False)
 
         self.fetch()
 
         print("Unzipping results from nodes...")
+        results_files = glob.glob("results/*.zip")
+
+        if not results_files:
+            raise Exception("Did not find any results files from nodes on step {}.".format(i))
+
+        for f in results_files:
+            self.execute_command("unzip -nuq {} -d results".format(f))
+
         with cd('results'):
-            results_files = glob.glob("*.zip")
-            if not results_files:
-                raise Exception("Did not find any results files from nodes on step {}.".format(i))
+            self.execute_command("zip -rq ../results.zip {archive_root}")
 
-            for f in results_files:
-                self.execute_command("unzip -nuq {}".format(f))
-
-            self.execute_command("zip -rq {name} {archive_root} && mv {name}.zip ..")
-
-        self.execute_command("dps-hyper summary {name}.zip")
-        self.execute_command("dps-hyper view {name}.zip")
+        self.execute_command("dps-hyper summary results.zip")
+        self.execute_command("dps-hyper view results.zip")
 
     def execute_command(self, command, frmt=True, shell=True):
-        """ Uses `subprocess` to execute `command`, yielding lines from stdout as soon as they are ready. """
+        """ Uses `subprocess` to execute `command`. """
         if frmt:
             command = command.format(**self.__dict__)
 
@@ -251,7 +267,7 @@ class ParallelSession(object):
         start = time.time()
         try:
             subprocess.run(command, check=True, universal_newlines=True, shell=shell)
-            print("Command took {} seconds.".format(time.time() - start))
+            print("Command took {} seconds.\n".format(time.time() - start))
         except subprocess.CalledProcessError as e:
             if isinstance(command, list):
                 command = ' '.join(command)
@@ -280,7 +296,7 @@ class ParallelSession(object):
             self.stage()
 
             print("Unzipping...")
-            command = "cd {local_scratch} && unzip -ouq {input_zip_base} && echo \\$(hostname) && ls"
+            command = "cd {local_scratch} && unzip -ouq {input_zip_base} && echo \\$(hostname)"
             self.on_all_execute(command, arguments=False)
 
             print("We have {walltime_seconds} seconds to complete {n_jobs_to_run} "
@@ -288,14 +304,14 @@ class ParallelSession(object):
             print("{execution_time} seconds have been reserved for job execution, "
                   "and {cleanup_time_seconds} seconds have been reserved for cleanup.".format(**self.__dict__))
             print("Each sub-job has been alloted {abs_seconds_per_job} seconds, "
-                  "{seconds_per_job} seconds of which is pure computation time.".format(**self.__dict__))
+                  "{seconds_per_job} seconds of which is pure computation time.\n".format(**self.__dict__))
 
             for i in range(self.n_steps):
                 self.step(i)
                 self.checkpoint(i)
 
             self.execute_command("cp -f {input_zip_abs} {input_zip_abs}.bk")
-            self.execute_command("cp -f {name}.zip {input_zip_abs}")
+            self.execute_command("cp -f results.zip {input_zip_abs}")
 
 
 def submit_job_pbs(

@@ -106,3 +106,121 @@ def test_config_stack():
         assert set(cfg.keys()) == set()
     finally:
         ConfigStack._stack = old_stack
+
+
+def test_nested():
+    config = Config(
+        a=1,
+        b=2,
+        c=Config(z=2, d=1),
+        e=Config(u=Config(y=3, f=2), x=4),
+        g=dict(h=10),
+        i=dict(j=Config(k=11), r=1),
+        l=Config(m=dict(n=12))
+    )
+
+    config.update(a=10)
+    assert config.a == 10
+
+    config.update(dict(a=100))
+    assert config.a == 100
+
+    config.update(dict(c=dict(d=100)))
+    assert config.c.d == 100
+    assert config.c.z == 2
+
+    config.update(dict(e=dict(x=5)))
+    assert config.e.x == 5
+    assert config.e.u.y == 3
+    assert config.e.u.f == 2
+
+    config.update(dict(e=dict(u=dict(y=4))))
+    assert config.e.x == 5
+    assert config.e.u.y == 4
+    assert config.e.u.f == 2
+
+    config.update(dict(e=dict(u='a')))
+    assert config.e.x == 5
+    assert config.e.u == 'a'
+
+    assert config.a == 100
+    assert config.b == 2
+    assert config.c.d == 100
+    assert config.c.z == 2
+
+    config.update(dict(i=dict(j=dict(k=120))))
+    assert config.i['j'].k == 120
+    assert config.i['r'] == 1
+
+    config.update(dict(i=dict(r=dict(k=120))))
+    assert config.i['j'].k == 120
+    assert config.i['r']['k'] == 120
+
+
+def test_get_set_item():
+    config = Config(
+        a=1,
+        b=2,
+        c=Config(z=2, d=1),
+        e=Config(u=Config(y=3, f=2), x=4),
+        g=dict(h=10),
+        i=dict(j=Config(k=11), r=1),
+        l=Config(m=dict(n=12))
+    )
+
+    assert config['a'] == 1
+    config['a'] = 2
+    assert config['a'] == 2
+
+    assert config.c.z == 2
+    assert config['c:z'] == 2
+    config['c:z'] = 3
+    assert config['c:z'] == 3
+    assert config.c.z == 3
+
+    assert config.e.u.y == 3
+    assert config['e:u:y'] == 3
+    config['e:u:y'] = 4
+    assert config.e.u.y == 4
+    assert config['e:u:f'] == 2
+    assert config.e.u.f == 2
+    assert config['e:u:f'] == 2
+    assert config.e.x == 4
+    assert config['e:x'] == 4
+
+    assert config['i:j:k'] == 11
+    assert config['i:r'] == 1
+    config['i:j:k'] = 23
+    config['i:r'] = 12
+    assert config['i:j:k'] == 23
+    assert config['i:r'] == 12
+
+    with pytest.raises(KeyError):
+        config["z"]
+
+    config.z = 10
+    assert config.z == 10
+
+    with pytest.raises(KeyError):
+        config["c:a"]
+
+    config.c.a = 2
+    assert config["c:a"] == 2
+    assert config.c.a == 2
+
+    with pytest.raises(KeyError):
+        config["c:b"]
+    with pytest.raises(KeyError):
+        config["c:b:c"]
+    config["c:b:c"] = 40
+    assert config["c:b:c"] == 40
+    assert config.c.b.c == 40
+    assert config["c"]["b"]["c"] == 40
+
+    assert "c:b:c" in config
+
+    with config:
+        assert "c:b:c" in cfg
+        assert cfg["c:b:c"] == config["c:b:c"]
+        assert config["c:b:c"] == cfg.c.b.c
+        assert cfg.c.b.c == config.c.b.c

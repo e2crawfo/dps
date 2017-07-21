@@ -90,6 +90,7 @@ class TrainingLoop(object):
         if self.start_time is None:
             self.start_time = time.time()
         print("Starting training {} seconds after given start time.".format(time.time() - self.start_time))
+        print("Max experiments: {}".format(cfg.max_experiments))
 
         es = ExperimentStore(str(cfg.log_dir), max_experiments=cfg.max_experiments, delete_old=1)
         self.exp_dir = exp_dir = es.new_experiment(

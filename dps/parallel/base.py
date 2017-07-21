@@ -233,10 +233,10 @@ class ReadOnlyJob(object):
         ready_incomplete_ops = [op for i, op in enumerate(incomplete_ops) if is_ready[i]]
         not_ready_incomplete_ops = [op for i, op in enumerate(incomplete_ops) if not is_ready[i]]
 
-        s.append("\nn_ready_incomplete_ops: {}".format(len(ready_incomplete_ops)))
+        s.append("n_ready_incomplete_ops: {}".format(len(ready_incomplete_ops)))
         s.append(self._print_ops(ready_incomplete_ops, verbose))
 
-        s.append("\nn_not_ready_incomplete_ops: {}".format(len(not_ready_incomplete_ops)))
+        s.append("n_not_ready_incomplete_ops: {}".format(len(not_ready_incomplete_ops)))
         s.append(self._print_ops(not_ready_incomplete_ops, verbose))
 
         return '\n'.join(s)

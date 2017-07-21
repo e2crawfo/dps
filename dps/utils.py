@@ -75,7 +75,11 @@ class Parameterized(object):
 def parse_date(d, fmt='%a %b  %d %H:%M:%S %Z %Y'):
     # default value for `fmt` is default format used by GNU `date`
     with open(os.devnull, 'w') as devnull:
-        dstr = subprocess.check_output('date -d {}'.format(d).split(), stderr=devnull)
+        # A quick hack since just using the first option was causing weird things to happen, fix later.
+        if " " in d:
+            dstr = subprocess.check_output(["date", "-d", d], stderr=devnull)
+        else:
+            dstr = subprocess.check_output("date -d {}".format(d).split(), stderr=devnull)
 
     dstr = dstr.decode().strip()
     return datetime.datetime.strptime(dstr, fmt)
@@ -662,7 +666,7 @@ def build_scheduled_value(schedule, name, dtype=None):
         initial = float(popleft(args))
         decay_steps = int(popleft(args))
         end = float(popleft(args))
-        power = float(popleft(args))
+        power = float(popleft(args, 1))
         cycle = _bool(popleft(args, False))
         global_step = tf.contrib.framework.get_or_create_global_step()
 
@@ -746,6 +750,17 @@ def trainable_variables(scope=None):
     return tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope)
 
 
+def nested_update(d, other):
+    if not isinstance(d, dict) or not isinstance(other, dict):
+        return
+
+    for k, v in other.items():
+        if k in d and isinstance(d[k], dict) and isinstance(v, dict):
+            nested_update(d[k], v)
+        else:
+            d[k] = v
+
+
 class Config(dict):
     _reserved_keys = None
 
@@ -754,6 +769,29 @@ class Config(dict):
             self.update(_d)
         self.update(kwargs)
 
+    def leaf_keys(self, sep=":"):
+        stack = [iter(self.items())]
+        key_prefix = ''
+        keys = []
+
+        while stack:
+            new = next(stack[-1], None)
+            if new is None:
+                stack.pop()
+                key_prefix = key_prefix.rpartition(sep)[0]
+                continue
+
+            key, value = new
+            nested_key = key_prefix + sep + key
+
+            if isinstance(value, dict):
+                stack.append(iter(value.items()))
+                key_prefix = nested_key
+            else:
+                keys.append(nested_key[1:])
+
+        return sorted(keys)
+
     def __str__(self):
         items = {k: v for k, v in self.items()}
         s = "<{} -\n{}\n>".format(self.__class__.__name__, pformat(items))
@@ -761,6 +799,41 @@ class Config(dict):
 
     def __repr__(self):
         return str(self)
+
+    def __contains__(self, key):
+        try:
+            self[key]
+            return True
+        except KeyError:
+            return False
+
+    def __getitem__(self, key):
+        if ':' in key:
+            keys = key.split(':')
+            value = self
+            for k in keys:
+                try:
+                    value = value[k]
+                except KeyError:
+                    raise KeyError("Calling __getitem__ with key {} failed at component {}.".format(key, k))
+            return value
+        else:
+            return super(Config, self).__getitem__(key)
+
+    def __setitem__(self, key, value):
+        if ':' in key:
+            keys = key.split(':')
+            to_set = self
+            for k in keys[:-1]:
+                try:
+                    to_set = to_set[k]
+                except KeyError:
+                    to_set[k] = Config()
+                    to_set = to_set[k]
+            to_set[keys[-1]] = value
+        else:
+            self._validate_key(key)
+            super(Config, self).__setitem__(key, value)
 
     def __getattr__(self, key):
         try:
@@ -773,10 +846,6 @@ class Config(dict):
             super(Config, self).__setattr__(key, value)
         else:
             self[key] = value
-
-    def __setitem__(self, key, value):
-        self._validate_key(key)
-        super(Config, self).__setitem__(key, value)
 
     def __enter__(self):
         ConfigStack._stack.append(self)
@@ -800,6 +869,10 @@ class Config(dict):
             new.update(_d)
         new.update(**kwargs)
         return new
+
+    def update(self, _d=None, **kwargs):
+        nested_update(self, _d)
+        nested_update(self, kwargs)
 
 
 Config._reserved_keys = dir(Config)
@@ -880,11 +953,21 @@ class ConfigStack(dict, metaclass=Singleton):
         except KeyError:
             return default
 
+    def __contains__(self, key):
+        try:
+            self[key]
+            return True
+        except KeyError:
+            return False
+
     def __getitem__(self, key):
         for config in reversed(ConfigStack._stack):
             if key in config:
                 return config[key]
         raise KeyError("Cannot find a value for key `{}`".format(key))
+
+    def __setitem__(self, key, value):
+        self._stack[-1][key] = value
 
     def __getattr__(self, key):
         try:
@@ -894,9 +977,6 @@ class ConfigStack(dict, metaclass=Singleton):
 
     def __setattr__(self, key, value):
         setattr(self._stack[-1], key, value)
-
-    def __setitem__(self, key, value):
-        self._stack[-1][key] = value
 
     def update(self, *args, **kwargs):
         self._stack[-1].update(*args, **kwargs)

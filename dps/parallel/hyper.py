@@ -7,40 +7,14 @@ import pandas as pd
 from pprint import pprint
 import time
 import datetime
+from collections import Sequence
 
 from dps import cfg
 from dps.train import training_loop
-from dps.utils import gen_seed
+from dps.utils import gen_seed, Config
 from dps.config import algorithms, tasks
 from dps.parallel.base import Job, ReadOnlyJob
 from spectral_dagger.utils.experiment import ExperimentStore
-
-
-class TupleDist(object):
-    def __init__(self, *dists):
-        self.dists = dists
-
-    def rvs(self, shape=None):
-        stack = []
-        for d in self.dists:
-            if hasattr(d, 'rvs'):
-                stack.append(d.rvs(shape))
-            else:
-                s = np.zeros(shape, dtype=np.object)
-                s.fill(d)
-                stack.append(s)
-        outp = np.zeros_like(stack[0], dtype=np.object)
-        if isinstance(shape, int):
-            shape = [shape]
-        for index in np.ndindex(*shape):
-            outp[index] = tuple(s[index] for s in stack)
-        return outp
-
-    def __repr__(self):
-        return str(self)
-
-    def __str__(self):
-        return "TupleDist(\n" + '\n'.join('    {},'.format(d) for d in self.dists) + '\n)'
 
 
 class ChoiceDist(object):
@@ -53,7 +27,8 @@ class ChoiceDist(object):
 
     def rvs(self, shape=None):
         if shape is None:
-            choice = np.random.choice(len(self.choices), p=self.p)
+            choice_idx = np.random.choice(len(self.choices), p=self.p)
+            choice = self.choices[choice_idx]
             if hasattr(choice, 'rvs'):
                 return choice.rvs()
             else:
@@ -99,6 +74,26 @@ class LogUniform(object):
         return "LogUniform(lo={}, hi={}, base={})".format(self.lo, self.hi, self.base)
 
 
+def nested_sample(d):
+    if isinstance(d, dict):
+        _d = d.copy()
+        _d.update({k: nested_sample(v) for k, v in d.items()})
+        return _d
+    elif hasattr(d, 'rvs'):
+        return d.rvs()
+    else:
+        return d
+
+
+def nested_map(d, f):
+    if isinstance(d, dict):
+        _d = d.copy()
+        _d.update({k: nested_map(v, f) for k, v in d.items()})
+        return _d
+    else:
+        return f(d)
+
+
 def sample_configs(n, repeats, base_config, distributions):
     """
     Parameters
@@ -115,13 +110,9 @@ def sample_configs(n, repeats, base_config, distributions):
         an array of samples with that shape).
 
     """
-    _distributions = {}
-    for k, d in distributions.items():
-        if not hasattr(d, 'rvs'):
-            _distributions[k] = ChoiceDist(list(d))
-        else:
-            _distributions[k] = d
-    distributions = _distributions
+    distributions = nested_map(
+        distributions,
+        lambda e: ChoiceDist(list(e)) if isinstance(e, Sequence) else e)
 
     max_tries = 1000
 
@@ -131,8 +122,8 @@ def sample_configs(n, repeats, base_config, distributions):
     for i in range(n):
         n_tries = 0
         while True:
-            sample = {k: d.rvs(1)[0] for k, d in distributions.items()}
-            trace = '|'.join('{}|{}'.format(k, v) for k, v in sample.items())
+            sample = nested_sample(distributions)
+            trace = str(sample)
 
             if trace not in sample_traces:
                 break
@@ -140,7 +131,8 @@ def sample_configs(n, repeats, base_config, distributions):
             n_tries += 1
 
             if n_tries >= max_tries:
-                raise Exception("Tried {} times, could not generate a new unique configuration.")
+                raise Exception("Tried {} times, could not generate "
+                                "a new unique configuration.".format(n_tries))
 
         sample_traces.add(trace)
         samples.append(sample)
@@ -149,7 +141,7 @@ def sample_configs(n, repeats, base_config, distributions):
     for s in samples:
         s['idx'] = i
         for r in range(repeats):
-            _new = copy.copy(s)
+            _new = copy.deepcopy(s)
             _new['repeat'] = r
             _new['seed'] = gen_seed()
             configs.append(_new)
@@ -159,13 +151,14 @@ def sample_configs(n, repeats, base_config, distributions):
 
 def reduce_hyper_results(store, *results):
     distributions = store.load_object('metadata', 'distributions')
-    keys = list(distributions.keys())
+    distributions = Config(distributions)
+    keys = list(distributions.leaf_keys())
 
     # Create a pandas dataframe storing the results
     records = []
     for r in results:
         record = dict(
-            n_stages=len(r['output']),
+            latest_stage=r['output'][-1]['stage'],
             total_steps=sum(s['n_steps'] for s in r['output']),
             final_stage_steps=r['output'][-1]['n_steps'],
             final_stage_loss=r['output'][-1]['best_value'],
@@ -177,24 +170,33 @@ def reduce_hyper_results(store, *results):
         record['seed'] = r['config']['seed']
         records.append(record)
     df = pd.DataFrame.from_records(records)
-    print(df.describe(percentiles=[.05, .25, .75, .95]))
 
     groups = df.groupby(keys)
 
-    _latest_stage = df.n_stages.max()
-
     data = []
     for k, _df in groups:
-        latest_stage = _df.n_stages.max()
-        if latest_stage == _latest_stage:
-            n_reached_latest = (_df.n_stages == latest_stage).sum()
-            data.append(dict(
-                data=_df,
-                keys=k,
-                n_stages=latest_stage,
-                percent_reached=n_reached_latest/len(_df),
-                n_reached=n_reached_latest,
-                final_stage_loss=_df.final_stage_loss.mean()))
+        _df = _df.sort_values(['latest_stage', 'final_stage_loss'])
+        data.append(dict(
+            data=_df,
+            keys=k,
+            latest_stage=_df.latest_stage.max(),
+            stage_sum=_df.latest_stage.sum(),
+            final_stage_loss=_df.final_stage_loss.mean()))
+
+    data = sorted(data, reverse=False, key=lambda x: (x['latest_stage'], -x['final_stage_loss'], x['stage_sum']))
+
+    column_order = [
+        'latest_stage', 'final_stage_loss', 'seed', 'reason', 'total_steps',
+        'final_stage_steps', 'final_stage_last_imp_step']
+
+    print('\n' + '*' * 100)
+    print("RESULTS GROUPED BY PARAM VALUES, WORST COMES FIRST: ")
+    for i, d in enumerate(data):
+        print('\n {} '.format(len(data)-i) + '*' * 40)
+        pprint({n: v for n, v in zip(keys, d['keys'])})
+        _data = d['data'].drop(keys, axis=1)
+        _data = _data[column_order]
+        print(_data)
 
     print('\n' + '*' * 100)
     print("BASE CONFIG")
@@ -203,14 +205,6 @@ def reduce_hyper_results(store, *results):
     print('\n' + '*' * 100)
     print("DISTRIBUTIONS")
     pprint(distributions)
-
-    data = sorted(data, reverse=True, key=lambda x: (x['percent_reached'], x['n_reached'], -x['final_stage_loss']))
-    print('\n' + '*' * 100)
-    print("VARIANTS THAT REACHED FINAL STAGE AT LEAST ONCE, FROM BEST TO WORST: ")
-    for d in data:
-        print('\n' + '*' * 40)
-        pprint({n: v for n, v in zip(keys, d['keys'])})
-        print(d['data'].drop(keys, axis=1))
 
 
 class RunTrainingLoop(object):
@@ -311,7 +305,7 @@ def build_search(path, name, n, repeats, alg, task, _zip, distributions=None, co
     has_built = False
     while not has_built:
         try:
-            exp_dir = es.new_experiment('{}_{}_{}'.format(name, alg, task), use_time=use_time, force_fresh=1)
+            exp_dir = es.new_experiment(name, use_time=use_time, force_fresh=1)
             has_built = True
         except FileExistsError:
             name = "{}_{}".format(base_name, count)
