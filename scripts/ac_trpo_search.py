@@ -129,7 +129,7 @@ with config:
 
     if size == 'big':
         # Big
-        n_param_settings = 20
+        n_param_settings = 50
         n_repeats = 5
         cleanup_time = "00:30:00"
         time_slack = 60

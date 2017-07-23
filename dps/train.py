@@ -251,8 +251,9 @@ class TrainingLoop(object):
             update_duration = time.time() - start_time
 
             if evaluate or display:
-                train_loss, train_summaries, train_record = updater.evaluate(cfg.batch_size, mode='train_eval')
-                val_loss, val_summaries, val_record = updater.evaluate(cfg.batch_size, mode='val')
+                train_summaries, train_record = updater.evaluate(cfg.batch_size, mode='train_eval')
+                val_summaries, val_record = updater.evaluate(cfg.batch_size, mode='val')
+                val_loss = val_record['loss']
 
                 if evaluate and cfg.save_summaries:
                     self.train_writer.add_summary(update_summaries + train_summaries, self.global_step)

@@ -28,6 +28,10 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
     def _update(self, batch_size, collect_summaries=None):
         raise Exception("NotImplemented")
 
+    @abc.abstractmethod
+    def evaluate(self, batch_size, mode):
+        raise Exception("NotImplemented")
+
     def set_is_training(self, is_training):
         tf.get_default_session().run(
             self._assign_is_training, feed_dict={self._set_is_training: is_training})
@@ -48,7 +52,9 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
 
     def save(self, session, filename):
         if self.scope is None:
-            raise Exception("Cannot save variables for an Updater that has not had its `build_graph` method called.")
+            raise Exception(
+                "Cannot save variables for an Updater that "
+                "has not had its `build_graph` method called.")
         updater_variables = trainable_variables(self.scope.name)
         saver = tf.train.Saver(updater_variables)
         path = saver.save(tf.get_default_session(), filename)
@@ -56,7 +62,9 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
 
     def restore(self, session, path):
         if self.scope is None:
-            raise Exception("Cannot save variables for an Updater that has not had its `build_graph` method called.")
+            raise Exception(
+                "Cannot save variables for an Updater that has "
+                "not had its `build_graph` method called.")
         updater_variables = trainable_variables(self.scope.name)
         saver = tf.train.Saver(updater_variables)
         saver.restore(tf.get_default_session(), path)
@@ -144,4 +152,4 @@ class DifferentiableUpdater(Updater):
 
         sess = tf.get_default_session()
         summaries, loss = sess.run([self.eval_summary_op, self.loss], feed_dict=feed_dict)
-        return loss, summaries, {'loss': loss}
+        return summaries, {'loss': loss}

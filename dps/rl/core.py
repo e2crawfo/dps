@@ -94,17 +94,13 @@ class RLUpdater(Updater):
 
         summaries = b''
         record = {}
-        loss = None
 
-        for learner in self.learners:
-            l, s, r = learner.evaluate(rollouts)
-            if loss is None:
-                loss = l
+        # Give precedence to learners that occur earlier.
+        for learner in self.learners[::-1]:
+            s, r = learner.evaluate(rollouts)
             summaries += s
-            overlap = record.keys() & r.keys()
-            if overlap:
-                raise Exception(str(overlap))
             record.update(r)
+        assert 'loss' in record
 
         sess = tf.get_default_session()
         feed_dict = {self.reward: rollouts.r}
@@ -112,7 +108,7 @@ class RLUpdater(Updater):
             sess.run(self.reward_per_ep, feed_dict=feed_dict))
         record['behaviour_policy_reward_per_ep'] = reward_per_ep
 
-        return loss, summaries, record
+        return summaries, record
 
 
 class ReinforcementLearner(Parameterized):
@@ -133,3 +129,65 @@ class ReinforcementLearner(Parameterized):
 
     def evaluate(self, rollouts):
         pass
+
+
+class PolicyOptimization(ReinforcementLearner):
+    def compute_advantage(self, rollouts):
+        advantage = self.advantage_estimator.estimate(rollouts)
+
+        # Standardize advantage
+        advantage = advantage - advantage.mean()
+        adv_std = advantage.std()
+        if adv_std > 1e-6:
+            advantage /= adv_std
+        return advantage
+
+    def build_placeholders(self):
+        self.obs = tf.placeholder(
+            tf.float32, shape=(cfg.T, None) + self.policy.obs_shape, name="_obs")
+        self.actions = tf.placeholder(
+            tf.float32, shape=(cfg.T, None, self.policy.n_actions), name="_actions")
+        self.advantage = tf.placeholder(
+            tf.float32, shape=(cfg.T, None, 1), name="_advantage")
+        self.rewards = tf.placeholder(
+            tf.float32, shape=(cfg.T, None, 1), name="_rewards")
+        self.reward_per_ep = episodic_mean(self.rewards, name="_reward_per_ep")
+
+    def update(self, rollouts, collect_summaries):
+        advantage = self.compute_advantage(rollouts)
+
+        feed_dict = {
+            self.obs: rollouts.o,
+            self.actions: rollouts.a,
+            self.rewards: rollouts.r,
+            self.advantage: advantage,
+        }
+
+        sess = tf.get_default_session()
+        if collect_summaries:
+            train_summaries, _ = sess.run(
+                [self.train_summary_op, self.train_op], feed_dict=feed_dict)
+            return train_summaries
+        else:
+            sess.run(self.train_op, feed_dict=feed_dict)
+            return b''
+
+    def evaluate(self, rollouts):
+        advantage = self.compute_advantage(rollouts)
+
+        feed_dict = {
+            self.obs: rollouts.o,
+            self.actions: rollouts.a,
+            self.rewards: rollouts.r,
+            self.advantage: advantage
+        }
+
+        sess = tf.get_default_session()
+
+        eval_summaries, *values = (
+            sess.run(
+                [self.eval_summary_op] + [v for _, v in self.recorded_values],
+                feed_dict=feed_dict))
+
+        record = {k: v for v, (k, _) in zip(values, self.recorded_values)}
+        return eval_summaries, record

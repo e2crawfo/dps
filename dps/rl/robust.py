@@ -3,7 +3,7 @@ import numpy as np
 
 from dps import cfg
 from dps.utils import build_scheduled_value, lst_to_vec
-from dps.rl import episodic_mean, policy_gradient_objective
+from dps.rl import policy_gradient_objective
 from dps.rl.trpo import TRPO, mean_kl, line_search
 
 
@@ -12,13 +12,7 @@ class RobustREINFORCE(TRPO):
 
     def _build_graph(self, is_training, exploration):
         self.delta = build_scheduled_value(self.delta_schedule, 'delta')
-
-        self.obs = tf.placeholder(tf.float32, shape=(self.T, None)+self.policy.obs_shape, name="_obs")
-        self.actions = tf.placeholder(tf.float32, shape=(self.T, None, self.policy.n_actions), name="_actions")
-        self.advantage = tf.placeholder(tf.float32, shape=(self.T, None, 1), name="_advantage")
-        self.rewards = tf.placeholder(tf.float32, shape=(self.T, None, 1), name="_rewards")
-        self.reward_per_ep = episodic_mean(self.rewards, name="_reward_per_ep")
-
+        self.build_placeholders()
         self.advantage_estimator.build_graph()
 
         self.policy.set_exploration(exploration)
@@ -33,8 +27,7 @@ class RobustREINFORCE(TRPO):
             entropy_param = build_scheduled_value(self.entropy_schedule, 'entropy_param')
             self.objective += entropy_param * self.mean_entropy
 
-        g = tf.get_default_graph()
-        tvars = g.get_collection('trainable_variables', scope=self.policy.scope.name)
+        tvars = self.policy.trainable_variables()
         self.policy_gradient = tf.gradients(self.objective, tvars)
 
         self.mean_kl = mean_kl(self.prev_policy, self.policy, self.obs)
@@ -57,6 +50,14 @@ class RobustREINFORCE(TRPO):
             tf.summary.scalar("mean_entropy", self.mean_entropy),
             tf.summary.scalar("mean_kl", self.mean_kl)
         ])
+
+        self.recorded_values = [
+            ('loss', -self.reward_per_ep),
+            ('reward_per_ep', self.reward_per_ep),
+            ('pg_objective', self.pg_objective),
+            ('mean_entropy', self.mean_entropy),
+            ('mean_kl', self.mean_kl)
+        ]
 
     def update(self, rollouts, collect_summaries):
         # Compute standard policy gradient

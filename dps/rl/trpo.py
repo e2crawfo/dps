@@ -4,13 +4,13 @@ import numpy as np
 from dps import cfg
 from dps.updater import Param
 from dps.rl import (
-    ReinforcementLearner, episodic_mean, policy_gradient_objective,
+    PolicyOptimization, policy_gradient_objective,
     GeneralizedAdvantageEstimator, BasicValueEstimator)
 from dps.rl.trust_region import mean_kl, HessianVectorProduct, cg, line_search
 from dps.utils import build_scheduled_value, lst_to_vec
 
 
-class TRPO(ReinforcementLearner):
+class TRPO(PolicyOptimization):
     delta_schedule = Param()
     entropy_schedule = Param()
     max_cg_steps = Param()
@@ -24,19 +24,11 @@ class TRPO(ReinforcementLearner):
         self.policy = policy
         self.prev_policy = policy.deepcopy("prev_policy")
 
-        self.T = cfg.T
-
         super(TRPO, self).__init__(**kwargs)
 
     def _build_graph(self, is_training, exploration):
         self.delta = build_scheduled_value(self.delta_schedule, 'delta')
-
-        self.obs = tf.placeholder(tf.float32, shape=(self.T, None)+self.policy.obs_shape, name="_obs")
-        self.actions = tf.placeholder(tf.float32, shape=(self.T, None, self.policy.n_actions), name="_actions")
-        self.advantage = tf.placeholder(tf.float32, shape=(self.T, None, 1), name="_advantage")
-        self.rewards = tf.placeholder(tf.float32, shape=(self.T, None, 1), name="_rewards")
-        self.reward_per_ep = episodic_mean(self.rewards, name="_reward_per_ep")
-
+        self.build_placeholders()
         self.advantage_estimator.build_graph()
 
         self.policy.set_exploration(exploration)
@@ -75,15 +67,13 @@ class TRPO(ReinforcementLearner):
             tf.summary.scalar("mean_kl", self.mean_kl)
         ])
 
-    def compute_advantage(self, rollouts):
-        advantage = self.advantage_estimator.estimate(rollouts)
-
-        # Standardize advantage
-        advantage = advantage - advantage.mean()
-        adv_std = advantage.std()
-        if adv_std > 1e-6:
-            advantage /= adv_std
-        return advantage
+        self.recorded_values = [
+            ('loss', -self.reward_per_ep),
+            ('reward_per_ep', self.reward_per_ep),
+            ('pg_objective', self.pg_objective),
+            ('mean_entropy', self.mean_entropy),
+            ('mean_kl', self.mean_kl)
+        ]
 
     def update(self, rollouts, collect_summaries):
         # Compute standard policy gradient
@@ -161,28 +151,3 @@ class TRPO(ReinforcementLearner):
             return train_summaries
         else:
             return b''
-
-    def evaluate(self, rollouts):
-        advantage = self.compute_advantage(rollouts)
-
-        feed_dict = {
-            self.obs: rollouts.o,
-            self.actions: rollouts.a,
-            self.rewards: rollouts.r,
-            self.advantage: advantage
-        }
-
-        sess = tf.get_default_session()
-
-        eval_summaries, pg_objective, reward_per_ep, mean_entropy, mean_kl = (
-            sess.run(
-                [self.eval_summary_op, self.pg_objective, self.reward_per_ep, self.mean_entropy, self.mean_kl],
-                feed_dict=feed_dict))
-
-        record = dict(
-            pg_objective=pg_objective,
-            reward_per_ep=reward_per_ep,
-            mean_entropy=mean_entropy,
-            mean_kl=mean_kl)
-
-        return -reward_per_ep, eval_summaries, record

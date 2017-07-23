@@ -7,7 +7,7 @@ from dps import cfg
 from dps.config import DEFAULT_CONFIG
 from dps.train import training_loop
 from dps.experiments.room import Room
-from dps.rl import TRPO, REINFORCE
+from dps.rl import TRPO, PPO, REINFORCE
 from dps.rl.value import PolicyEvaluation, TrustRegionPolicyEvaluation, actor_critic
 from dps.rl.policy import Deterministic, ProductDist, Normal, NormalWithFixedScale, Gamma
 from dps.utils import CompositeCell, FeedforwardCell, MLP, Config
@@ -59,13 +59,24 @@ def get_updater(env):
             lr_schedule='1e-3',
         )
 
-    if 1:
+    if 0:
         actor_config = Config(
             actor_name="TRPO",
             actor_alg=TRPO,
             delta_schedule='0.01',
             max_cg_steps=10,
             max_line_search_steps=10,
+            entropy_schedule='0.0',
+            lmbda=1.0,
+            gamma=1.0
+        )
+    elif 1:
+        actor_config = Config(
+            actor_name="PPO",
+            actor_alg=PPO,
+            epsilon=0.2,
+            K=10,
+            lr_schedule='1e-4',
             entropy_schedule='0.0',
             lmbda=1.0,
             gamma=1.0
@@ -98,8 +109,8 @@ config = DEFAULT_CONFIG.copy(
     reward_radius=0.25,
     max_step=0.5,
     restart_prob=0.0,
-    dense_reward=True,
-    l2l=True,
+    dense_reward=False,
+    l2l=False,
     n_val=200,
 
     threshold=1e-4,

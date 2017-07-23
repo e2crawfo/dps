@@ -103,9 +103,10 @@ class PolicyEvaluation(ReinforcementLearner):
         record = {
             'mean_estimated_value': mean_estimated_value,
             'squared_error': loss,
+            'loss': loss,
             'approx_bellman_error': approx_bellman_error}
 
-        return loss, eval_summaries, record
+        return eval_summaries, record
 
 
 class TrustRegionPolicyEvaluation(ReinforcementLearner):
@@ -264,9 +265,10 @@ class TrustRegionPolicyEvaluation(ReinforcementLearner):
         record = {
             'mean_estimated_value': mean_estimated_value,
             'squared_error': loss,
+            'loss': loss,
             'approx_bellman_error': approx_bellman_error}
 
-        return loss, eval_summaries, record
+        return eval_summaries, record
 
 
 class BasicValueEstimator(object):

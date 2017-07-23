@@ -24,6 +24,9 @@ class Room(TensorFlowEnv):
         self.l2l = l2l
         self.val = self._make_static_input(n_val)
         self.mode = 'train'
+
+        if self.l2l and not self.dense_reward:
+            raise Exception("When learning to learn, reward must be dense!")
         super(Room, self).__init__()
 
     @property

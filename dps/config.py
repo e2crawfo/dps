@@ -7,7 +7,7 @@ from dps.utils import (
     FixedController, DpsConfig, Config)
 from dps.rl import (
     RLUpdater, rl_render_hook,
-    REINFORCE, TRPO, RobustREINFORCE, QLearning)
+    REINFORCE, PPO, TRPO, RobustREINFORCE, QLearning)
 from dps.rl.policy import (
     Policy, Softmax, EpsilonGreedy, Deterministic,
     Normal, NormalWithFixedScale, Gamma, Bernoulli, ProductDist)
@@ -26,7 +26,7 @@ DEFAULT_CONFIG = DpsConfig(
     preserve_policy=True,  # Whether to use the policy learned on the last stage of the curriculum for each new stage.
     power_through=True,  # Whether to complete the entire curriculum, even if threshold not reached.
 
-    optimizer_spec="rmsprop",
+    optimizer_spec="adam",
     get_updater=None,
 
     slim=False,  # If true, tries to use little disk space
@@ -101,6 +101,29 @@ ACTOR_CRITIC_CONFIG = Config(
 )
 
 
+def ppo_get_updater(env):
+    action_selection = cfg.action_selection(env)
+    controller = cfg.controller(action_selection.n_params)
+    policy = Policy(controller, action_selection, env.obs_shape)
+    updater = RLUpdater(env, policy, PPO(policy))
+    return updater
+
+
+PPO_CONFIG = Config(
+    name="PPO",
+    batch_size=16,
+    get_updater=ppo_get_updater,
+    entropy_schedule="0.1",
+    epsilon=0.2,
+    K=10,
+    lr_schedule="1e-4",
+    # lr_schedule="poly 1e-4 100000 1e-6 1",  # also good
+    n_controller_units=64,
+    exploration_schedule='exp 10.0 100000 0.1',
+    test_time_explore=-1
+)
+
+
 def reinforce_get_updater(env):
     action_selection = cfg.action_selection(env)
     controller = cfg.controller(action_selection.n_params)
@@ -168,7 +191,7 @@ QLEARNING_CONFIG = Config(
     lr_schedule="exponential 0.00025 1000 1.0",
     exploration_schedule="polynomial 1.0 10000 0.1 1",
 
-    optimizer_spec="rmsprop",
+    optimizer_spec="adam",
 
     replay_max_size=1000000,
     replay_threshold=-0.5,
@@ -700,6 +723,7 @@ algorithms = dict(
     actor_critic=ACTOR_CRITIC_CONFIG,
     reinforce=REINFORCE_CONFIG,
     trpo=TRPO_CONFIG,
+    ppo=PPO_CONFIG,
     robust=ROBUST_CONFIG,
     qlearning=QLEARNING_CONFIG)
 

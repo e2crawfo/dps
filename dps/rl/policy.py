@@ -47,7 +47,6 @@ class Policy(RNNCell):
 
     """
     def __init__(self, controller, action_selection, obs_shape, name="policy"):
-
         self.controller = controller
         self.action_selection = action_selection
         self.exploration = None
@@ -109,11 +108,12 @@ class Policy(RNNCell):
     def deepcopy(self, new_name):
         if self.n_builds > 0:
             raise ValueError("Cannot copy Policy once it has been built inside a graph.")
+        new_controller = deepcopy(self.controller)
+        if hasattr(new_controller, 'name'):
+            new_controller.name = "copy_of_" + self.controller.name
 
         new = Policy(
-            deepcopy(self.controller),
-            deepcopy(self.action_selection),
-            self.obs_shape, new_name)
+            new_controller, deepcopy(self.action_selection), self.obs_shape, new_name)
         return new
         # Should work in TF 1.1, will need to be changed in TF 1.2.
         # new_controller = deepcopy(self.controller)

@@ -5,8 +5,7 @@ from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from dps.updater import Param
 from dps.utils import build_scheduled_value
 from dps.rl import (
-    ReinforcementLearner, episodic_mean,
-    GeneralizedAdvantageEstimator, BasicValueEstimator)
+    PolicyOptimization, GeneralizedAdvantageEstimator, BasicValueEstimator)
 from dps.utils import build_gradient_train_op
 
 
@@ -53,7 +52,7 @@ def policy_gradient_objective(policy, obs, actions, advantage):
     return surrogate_objective, log_prob, mean_entropy
 
 
-class REINFORCE(ReinforcementLearner):
+class REINFORCE(PolicyOptimization):
     entropy_schedule = Param()
     optimizer_spec = Param()
     lr_schedule = Param()
@@ -66,11 +65,7 @@ class REINFORCE(ReinforcementLearner):
         super(REINFORCE, self).__init__(**kwargs)
 
     def _build_graph(self, is_training, exploration):
-        self.obs = tf.placeholder(tf.float32, shape=(None, None) + self.policy.obs_shape, name="_obs")
-        self.actions = tf.placeholder(tf.float32, shape=(None, None, self.policy.n_actions), name="_actions")
-        self.advantage = tf.placeholder(tf.float32, shape=(None, None, 1), name="_advantage")
-        self.rewards = tf.placeholder(tf.float32, shape=(None, None, 1), name="_rewards")
-        self.reward_per_ep = episodic_mean(self.rewards, name="_reward_per_ep")
+        self.build_placeholders()
 
         self.advantage_estimator.build_graph()
 
@@ -98,54 +93,9 @@ class REINFORCE(ReinforcementLearner):
             tf.summary.scalar("mean_entropy", self.mean_entropy),
         ])
 
-    def compute_advantage(self, rollouts):
-        advantage = self.advantage_estimator.estimate(rollouts)
-
-        # Standardize advantage
-        advantage = advantage - advantage.mean()
-        adv_std = advantage.std()
-        if adv_std > 1e-6:
-            advantage /= adv_std
-        return advantage
-
-    def update(self, rollouts, collect_summaries):
-        advantage = self.compute_advantage(rollouts)
-
-        feed_dict = {
-            self.obs: rollouts.o,
-            self.actions: rollouts.a,
-            self.rewards: rollouts.r,
-            self.advantage: advantage,
-        }
-
-        sess = tf.get_default_session()
-        if collect_summaries:
-            train_summaries, _ = sess.run([self.train_summary_op, self.train_op], feed_dict=feed_dict)
-            return train_summaries
-        else:
-            sess.run(self.train_op, feed_dict=feed_dict)
-            return b''
-
-    def evaluate(self, rollouts):
-        advantage = self.compute_advantage(rollouts)
-
-        feed_dict = {
-            self.obs: rollouts.o,
-            self.actions: rollouts.a,
-            self.rewards: rollouts.r,
-            self.advantage: advantage
-        }
-
-        sess = tf.get_default_session()
-
-        eval_summaries, pg_objective, reward_per_ep, mean_entropy = (
-            sess.run(
-                [self.eval_summary_op, self.pg_objective, self.reward_per_ep, self.mean_entropy],
-                feed_dict=feed_dict))
-
-        record = dict(
-            pg_objective=pg_objective,
-            reward_per_ep=reward_per_ep,
-            mean_entropy=mean_entropy)
-
-        return -reward_per_ep, eval_summaries, record
+        self.recorded_values = [
+            ('loss', -self.reward_per_ep),
+            ('reward_per_ep', self.reward_per_ep),
+            ('pg_objective', self.pg_objective),
+            ('mean_entropy', self.mean_entropy)
+        ]
