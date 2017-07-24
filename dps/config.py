@@ -56,6 +56,7 @@ DEFAULT_CONFIG = DpsConfig(
     threshold=1e-2,
     patience=np.inf,
 
+    render_step=np.inf,
     display_step=1000,
     eval_step=10,
 
@@ -65,6 +66,8 @@ DEFAULT_CONFIG = DpsConfig(
     reward_window=0.1,
     exploration_schedule='0.1',
     lr_schedule='0.001',
+
+    standardize_advantage=True,
 
     max_time=0,
 

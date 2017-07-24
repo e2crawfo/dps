@@ -140,9 +140,9 @@ class Policy(RNNCell):
             self._policy_state = rnn_cell_placeholder(self.controller.state_size, name='policy_state')
             self._obs = tf.placeholder(tf.float32, (None,)+self.obs_shape, name='obs')
 
-            self._utils, self._next_policy_state = self.build_update(self._obs, self._policy_state, self.exploration)
-            self._samples = self.build_sample(self._utils, self.exploration)
-            self._entropy = self.build_entropy(self._utils, self.exploration)
+            self._utils, self._next_policy_state = self.build_update(self._obs, self._policy_state)
+            self._samples = self.build_sample(self._utils)
+            self._entropy = self.build_entropy(self._utils)
 
             self.act_is_built = True
 
@@ -343,6 +343,13 @@ class Softmax(TensorFlowSelection):
             return tf_dists.OneHotCategorical(logits=logits)
         else:
             return tf_dists.Categorical(logits=logits)
+
+    def sample(self, utils, exploration):
+        return tf.cast(super(Softmax, self).sample(utils, exploration), tf.int32)
+
+    def log_prob(self, utils, actions, exploration):
+        actions = tf.cast(actions, tf.int32)
+        return super(Softmax, self).log_prob(utils, actions, exploration)
 
 
 class EpsilonGreedy(TensorFlowSelection):

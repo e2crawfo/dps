@@ -56,7 +56,7 @@ class BatchBox(gym.Space):
 
     @property
     def shape(self):
-        return self.low.shape
+        return (None,) + self.low.shape
 
     def __repr__(self):
         return "<BatchBox {}>".format(self.shape)
@@ -71,9 +71,9 @@ class Env(with_metaclass(abc.ABCMeta, GymEnv)):
         self.mode = mode
         self.batch_size = batch_size
 
-    def do_rollouts(self, policy, n_rollouts=None, T=None, exploration=None, mode='train'):
+    def do_rollouts(self, policy, n_rollouts=None, T=None, exploration=None, mode='train', render_mode=None):
         T = T or cfg.T
-        start_time = time.time()
+
         self.set_mode(mode, n_rollouts)
         obs = self.reset()
         batch_size = obs.shape[0]
@@ -81,16 +81,27 @@ class Env(with_metaclass(abc.ABCMeta, GymEnv)):
         policy_state = policy.zero_state(batch_size, tf.float32)
         policy_state = tf.get_default_session().run(policy_state)
 
+        rollouts = RolloutBatch()
+
+        t = 0
+
         done = False
         while not done:
+            if T is not None and t >= T:
+                break
             action, policy_state = policy.act(obs, policy_state, exploration)
             new_obs, reward, done, info = self.step(action)
             obs = new_obs
+            rollouts.append(obs, action, reward)
+            t += 1
 
-        print("Took {} seconds to do {} rollouts.".format(time.time() - start_time, n_rollouts))
+            if render_mode is not None:
+                self.render(mode=render_mode)
 
-    def _pprint_rollouts(**kwargs):
-        raise Exception("NotImplemented.")
+        return rollouts
+
+    def _pprint_rollouts(self, rollouts):
+        pass
 
     def visualize(self, render_rollouts=None, **rollout_kwargs):
         rollouts = self.do_rollouts(**rollout_kwargs)
@@ -195,10 +206,7 @@ class RegressionEnv(Env):
         }
 
         self.n_actions = self.train.y.shape[1]
-        self.action_space = BatchBox(low=-np.inf, high=np.inf, shape=(None, self.n_actions))
-
         self.obs_shape = self.train.x.shape[1:]
-        self.observation_space = BatchBox(low=-np.inf, high=np.inf, shape=(None,) + self.obs_shape)
 
         self.reward_range = (-np.inf, 0)
 
@@ -229,8 +237,6 @@ class RegressionEnv(Env):
         return self.train.completion
 
     def _step(self, action):
-        assert self.action_space.contains(action), (
-            "{} ({}) is not a valid action for env {}.".format(action, type(action), self))
         self.t += 1
 
         assert self.y.shape == action.shape
@@ -514,11 +520,8 @@ class CompositeEnv(Env):
         self.external, self.internal = external, internal
         self.rb = internal.rb
 
-        self.n_actions = self.internal.n_actions
-        self.action_space = BatchBox(low=0.0, high=1.0, shape=(None, self.n_actions))
-
         self.obs_shape = (self.rb.visible_width,)
-        self.observation_space = BatchBox(low=-np.inf, high=np.inf, shape=(None,)+self.obs_shape)
+        self.n_actions = self.internal.n_actions
 
         self.reward_range = external.reward_range
         self.sampler = None

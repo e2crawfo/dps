@@ -53,8 +53,8 @@ class RLUpdater(Updater):
         except:
             self.learners = [learners]
 
-        self.obs_shape = env.observation_space.shape[1:]
-        self.n_actions = env.action_space.shape[1]
+        self.obs_shape = env.obs_shape
+        self.n_actions = env.n_actions
 
         super(RLUpdater, self).__init__(env, **kwargs)
 
@@ -139,11 +139,12 @@ class PolicyOptimization(ReinforcementLearner):
     def compute_advantage(self, rollouts):
         advantage = self.advantage_estimator.estimate(rollouts)
 
-        # Standardize advantage
-        advantage = advantage - advantage.mean()
-        adv_std = advantage.std()
-        if adv_std > 1e-6:
-            advantage /= adv_std
+        if cfg.standardize_advantage:
+            advantage = advantage - advantage.mean()
+            adv_std = advantage.std()
+            if adv_std > 1e-6:
+                advantage /= adv_std
+
         return advantage
 
     def build_placeholders(self):

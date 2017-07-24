@@ -13,8 +13,8 @@ class Room(TensorFlowEnv):
 
     def __init__(self, T, reward_radius, max_step, restart_prob, dense_reward, l2l, n_val):
         self.rb = RegisterBank('RoomRB', 'x y r dx dy', 'goal_x goal_y', [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 'x y')
-        self.observation_space = BatchBox(low=-1.0, high=1.0, shape=(None, self.rb.visible_width))
-        self.action_space = BatchBox(low=-np.inf, high=np.inf, shape=(None, self.n_actions))
+        self.obs_shape = (self.rb.visible_width,)
+        self.n_actions = self.n_actions
 
         self.T = T
         self.reward_radius = reward_radius

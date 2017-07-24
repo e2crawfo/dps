@@ -94,8 +94,8 @@ class DifferentiableUpdater(Updater):
             "a method called `build_loss` which builds a differentiable loss function.")
         self.f = f
 
-        self.obs_shape = env.observation_space.shape[1:]
-        self.n_actions = env.action_space.shape[1]
+        self.obs_shape = env.obs_shape
+        self.n_actions = env.n_actions
 
         super(DifferentiableUpdater, self).__init__(env, **kwargs)
 

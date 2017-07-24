@@ -245,6 +245,7 @@ class TrainingLoop(object):
 
             evaluate = self.global_step % cfg.eval_step == 0
             display = self.global_step % cfg.display_step == 0
+            render = self.global_step % cfg.render_step == 0
 
             start_time = time.time()
             update_summaries = updater.update(cfg.batch_size, collect_summaries=evaluate)
@@ -296,6 +297,9 @@ class TrainingLoop(object):
                 self.record('time_per_example', time_per_example)
                 self.record('time_per_batch', time_per_batch)
                 self.record('n_steps', local_step)
+
+            if render and cfg.render_hook is not None:
+                cfg.render_hook(updater)
 
             total_train_time += update_duration
             time_per_example = total_train_time / ((local_step+1) * cfg.batch_size)
