@@ -345,7 +345,7 @@ def actor_critic(
 
     with critic_config:
         value_estimator = NeuralValueEstimator(critic_controller, env.obs_shape)
-        critic = cfg.critic_alg(value_estimator)
+        critic = cfg.alg(value_estimator)
 
     if actor_config is None:
         actor_config = Config()
@@ -353,7 +353,7 @@ def actor_critic(
     with actor_config:
         advantage_estimator = GeneralizedAdvantageEstimator(
             value_estimator, lmbda=cfg.lmbda, gamma=cfg.gamma)
-        actor = cfg.actor_alg(policy, advantage_estimator)
+        actor = cfg.alg(policy, advantage_estimator)
 
     learners = [actor, critic]
 

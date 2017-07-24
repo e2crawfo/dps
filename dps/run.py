@@ -7,7 +7,7 @@ import tensorflow as tf
 import clify
 
 from dps import cfg
-from dps.config import algorithms, tasks, test_configs
+from dps.config import parse_task_actor_critic, tasks, actor_configs, critic_configs, test_configs
 from dps.train import training_loop, gen_seed, uninitialized_variables_initializer
 from dps.utils import pdb_postmortem
 from dps.rl.policy import Policy
@@ -63,30 +63,24 @@ def build_and_visualize():
 
 def run():
     parser = argparse.ArgumentParser()
-    parser.add_argument('alg')
     parser.add_argument('task')
+    parser.add_argument('actor')
+    parser.add_argument('--critic', type=str, default="baseline")
     parser.add_argument('--pdb', action='store_true',
                         help="If supplied, enter post-mortem debugging on error.")
     args, _ = parser.parse_known_args()
 
-    task = [t for t in tasks if t.startswith(args.task)]
-    assert len(task) == 1, "Ambiguity in task selection, possibilities are: {}.".format(task)
-    task = task[0]
-
-    _algorithms = list(algorithms) + ['visualize']
-    alg = [a for a in _algorithms if a.startswith(args.alg)]
-    assert len(alg) == 1, "Ambiguity in alg selection, possibilities are: {}.".format(alg)
-    alg = alg[0]
+    task, actor, critic = parse_task_actor_critic(args.task, args.actor, args.critic)
 
     if args.pdb:
         with pdb_postmortem():
-            _run(alg, task)
+            _run(task, actor, critic)
     else:
-        _run(alg, task)
+        _run(task, actor, critic)
 
 
-def _run(alg, task, _config=None, **kwargs):
-    if alg == 'visualize':
+def _run(task, actor, critic, _config=None, **kwargs):
+    if actor == 'visualize':
         config = test_configs[task]
         if _config is not None:
             config.update(_config)
@@ -100,7 +94,9 @@ def _run(alg, task, _config=None, **kwargs):
             build_and_visualize()
     else:
         config = tasks[task]
-        config.update(algorithms[alg])
+        config.actor_config = actor_configs[actor]
+        config.critic_config = critic_configs[critic]
+
         if _config is not None:
             config.update(_config)
         config.update(kwargs)

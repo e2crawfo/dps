@@ -16,7 +16,26 @@ from dps.experiments import (
     hello_world, room, simple_addition, pointer_following,
     hard_addition, translated_mnist, mnist_arithmetic, simple_arithmetic,
     alt_arithmetic)
-from dps.rl.value import actor_critic, TrustRegionPolicyEvaluation
+from dps.rl.value import actor_critic, TrustRegionPolicyEvaluation, PolicyEvaluation
+
+
+def get_updater(env):
+    action_selection = cfg.action_selection(env)
+    with cfg.actor_config:
+        policy_controller = cfg.controller(action_selection.n_params, name="actor_controller")
+
+    if 'critic_config' in cfg and cfg.critic_config.alg is not None:
+        with cfg.critic_config:
+            critic_controller = cfg.controller(1, name="critic_controller")
+
+        return actor_critic(
+            env, policy_controller, action_selection, critic_controller,
+            cfg.actor_config, cfg.critic_config)
+    else:
+        with cfg.actor_config:
+            policy = Policy(policy_controller, action_selection, env.obs_shape)
+            updater = RLUpdater(env, policy, cfg.alg(policy))
+            return updater
 
 
 DEFAULT_CONFIG = DpsConfig(
@@ -27,7 +46,7 @@ DEFAULT_CONFIG = DpsConfig(
     power_through=True,  # Whether to complete the entire curriculum, even if threshold not reached.
 
     optimizer_spec="adam",
-    get_updater=None,
+    get_updater=get_updater,
 
     slim=False,  # If true, tries to use little disk space
     max_steps=10000,
@@ -40,7 +59,6 @@ DEFAULT_CONFIG = DpsConfig(
     display_step=1000,
     eval_step=10,
 
-    gamma=1.0,
     noise_schedule=None,
     test_time_explore=-1,
     max_grad_norm=0.0,
@@ -58,104 +76,73 @@ DEFAULT_CONFIG = DpsConfig(
     deadline='',
     render_hook=rl_render_hook,
 
-    get_experiment_name=lambda: "name={}_seed={}".format(cfg.name, cfg.seed)
+    get_experiment_name=lambda: "name={}_seed={}".format(cfg.name, cfg.seed),
+
+    lmbda=1.0,
+    gamma=1.0
 )
 
 
 cfg._stack.append(DEFAULT_CONFIG)
 
 
-def actor_critic_get_updater(env):
-    action_selection = cfg.action_selection(env)
-    policy_controller = cfg.controller(action_selection.n_params, name="actor_controller")
-    critic_controller = cfg.controller(1, name="critic_controller")
+# Critic configs.
+BASELINE_CONFIG = Config(
+    name="Baseline",
+    alg=None
+)
 
-    return actor_critic(
-        env, policy_controller, action_selection, critic_controller,
-        cfg.actor_config, cfg.critic_config)
-
-
-ACTOR_CRITIC_CONFIG = Config(
-    critic_config=Config(
-        critic_name="TRPE",
-        critic_alg=TrustRegionPolicyEvaluation,
-        delta_schedule='0.01',
-        max_cg_steps=10,
-        max_line_search_steps=10,
-        entropy_schedule='0.0'
-    ),
-    actor_config=Config(
-        actor_name="TRPO",
-        actor_alg=TRPO,
-        delta_schedule='0.01',
-        max_cg_steps=10,
-        max_line_search_steps=20,
-        entropy_schedule='0.1',
-        lmbda=1.0,
-        gamma=1.0
-    ),
-    test_time_explore=-1,
-    exploration_schedule="poly 1.0 10000 1e-6 1.0",
-    name="ActorCritic",
-    get_updater=actor_critic_get_updater,
+PE_CONFIG = Config(
+    name="PolicyEvaluation",
+    alg=PolicyEvaluation,
+    delta_schedule='0.01',
+    max_cg_steps=10,
+    max_line_search_steps=10,
+    entropy_schedule='0.0'
 )
 
 
-def ppo_get_updater(env):
-    action_selection = cfg.action_selection(env)
-    controller = cfg.controller(action_selection.n_params)
-    policy = Policy(controller, action_selection, env.obs_shape)
-    updater = RLUpdater(env, policy, PPO(policy))
-    return updater
-
-
-PPO_CONFIG = Config(
-    name="PPO",
-    batch_size=16,
-    get_updater=ppo_get_updater,
-    entropy_schedule="0.1",
-    epsilon=0.2,
-    K=10,
-    lr_schedule="1e-4",
-    # lr_schedule="poly 1e-4 100000 1e-6 1",  # also good
-    n_controller_units=64,
-    exploration_schedule='exp 10.0 100000 0.1',
-    test_time_explore=-1
+TRPE_CONFIG = Config(
+    name="TRPE",
+    alg=TrustRegionPolicyEvaluation,
+    delta_schedule='0.01',
+    max_cg_steps=10,
+    max_line_search_steps=10,
+    entropy_schedule='0.0'
 )
 
 
-def reinforce_get_updater(env):
-    action_selection = cfg.action_selection(env)
-    controller = cfg.controller(action_selection.n_params)
-    policy = Policy(controller, action_selection, env.obs_shape)
-    updater = RLUpdater(env, policy, REINFORCE(policy))
-    return updater
-
-
+# Actor configs.
 REINFORCE_CONFIG = Config(
     name="REINFORCE",
+    alg=REINFORCE,
     batch_size=16,
-    get_updater=reinforce_get_updater,
     entropy_schedule="0.1",
     lr_schedule="1e-4",
     # lr_schedule="poly 1e-4 100000 1e-6 1",  # also good
     n_controller_units=64,
-    exploration_schedule='exp 10.0 100000 0.1',
+    # exploration_schedule='exp 10.0 100000 0.1',
+    exploration_schedule='poly 10.0 10000 1e-6 1.0',
     test_time_explore=0.1
 )
 
 
-def trpo_get_updater(env):
-    action_selection = cfg.action_selection(env)
-    controller = cfg.controller(action_selection.n_params)
-    policy = Policy(controller, action_selection, env.obs_shape)
-    updater = RLUpdater(env, policy, TRPO(policy))
-    return updater
+PPO_CONFIG = Config(
+    name="PPO",
+    alg=PPO,
+    entropy_schedule="0.1",
+    epsilon=0.2,
+    K=10,
+    lr_schedule="1e-4",
+    n_controller_units=64,
+    exploration_schedule='poly 1.0 10000 1e-6 1.0',
+    test_time_explore=-1
+)
 
 
 TRPO_CONFIG = Config(
     name="TRPO",
-    get_updater=trpo_get_updater,
+    alg=TRPO,
     entropy_schedule='0.1',
     exploration_schedule="poly 1.0 10000 1e-6 1.0",
     max_cg_steps=10,
@@ -164,17 +151,9 @@ TRPO_CONFIG = Config(
 )
 
 
-def robust_get_updater(env):
-    action_selection = cfg.action_selection(env)
-    controller = cfg.controller(action_selection.n_params)
-    policy = Policy(controller, action_selection, env.obs_shape)
-    updater = RLUpdater(env, policy, RobustREINFORCE(policy))
-    return updater
-
-
 ROBUST_CONFIG = Config(
     name="RobustREINFORCE",
-    get_updater=robust_get_updater,
+    alg=RobustREINFORCE,
     entropy_schedule="0.1",
     exploration_schedule="10.0",
     max_line_search_steps=10,
@@ -184,7 +163,6 @@ ROBUST_CONFIG = Config(
 
 
 QLEARNING_CONFIG = Config(
-    get_updater=QLearning,
     action_selection=lambda env: EpsilonGreedy(env.n_actions),
     double=False,
 
@@ -719,8 +697,14 @@ ALT_ARITHMETIC_TEST = ALT_ARITHMETIC_CONFIG.copy(
 adjust_for_test(ALT_ARITHMETIC_TEST)
 
 
-algorithms = dict(
-    actor_critic=ACTOR_CRITIC_CONFIG,
+critic_configs = dict(
+    trpe=TRPE_CONFIG,
+    pe=PE_CONFIG,
+    baseline=BASELINE_CONFIG
+)
+
+
+actor_configs = dict(
     reinforce=REINFORCE_CONFIG,
     trpo=TRPO_CONFIG,
     ppo=PPO_CONFIG,
@@ -739,6 +723,7 @@ tasks = dict(
     simple_arithmetic=SIMPLE_ARITHMETIC_CONFIG,
     alt_arithmetic=ALT_ARITHMETIC_CONFIG)
 
+
 test_configs = dict(
     hello_world=HELLO_WORLD_TEST,
     room=ROOM_CONFIG_TEST,
@@ -749,3 +734,20 @@ test_configs = dict(
     mnist_arithmetic=MNIST_ARITHMETIC_TEST,
     simple_arithmetic=SIMPLE_ARITHMETIC_TEST,
     alt_arithmetic=ALT_ARITHMETIC_TEST)
+
+
+def parse_task_actor_critic(task, actor, critic):
+    task = [t for t in tasks if t.startswith(task)]
+    assert len(task) == 1, "Ambiguity in task selection, possibilities are: {}.".format(task)
+    task = task[0]
+
+    _actors = list(actor_configs) + ['visualize']
+    actor = [a for a in _actors if a.startswith(actor)]
+    assert len(actor) == 1, "Ambiguity in actor selection, possibilities are: {}.".format(actor)
+    actor = actor[0]
+
+    critic = [c for c in list(critic_configs) if c.startswith(critic)]
+    assert len(critic) == 1, "Ambiguity in critic selection, possibilities are: {}.".format(critic)
+    critic = critic[0]
+
+    return task, actor, critic

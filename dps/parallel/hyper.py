@@ -1,5 +1,4 @@
 import copy
-from scipy.stats import distributions as spdists
 import numpy as np
 from pathlib import Path
 import clify
@@ -12,7 +11,7 @@ from collections import Sequence
 from dps import cfg
 from dps.train import training_loop
 from dps.utils import gen_seed, Config
-from dps.config import algorithms, tasks
+from dps.config import parse_task_actor_critic, tasks, actor_configs, critic_configs
 from dps.parallel.base import Job, ReadOnlyJob
 from spectral_dagger.utils.experiment import ExperimentStore
 
@@ -238,7 +237,7 @@ class RunTrainingLoop(object):
         return val
 
 
-def build_search(path, name, n, repeats, alg, task, _zip, distributions=None, config=None, use_time=0):
+def build_search(path, name, n, repeats, distributions, _zip, config=None, use_time=0):
     """ Create a Job representing a hyper-parameter search.
 
     Parameters
@@ -251,50 +250,16 @@ def build_search(path, name, n, repeats, alg, task, _zip, distributions=None, co
         Number of parameter settings to sample.
     repeats: int
         Number of different random seeds to run each sample with.
-    alg: str
-        Specifies the algorithm to use.
-    task: str
-        Specifies the task to solve.
-    _zip: bool
-        Whether to zip the created search directory.
     distributions: dict (str -> distribution)
         Distributions to sample from.
+    _zip: bool
+        Whether to zip the created search directory.
     config: Config instance
         The base configuration.
     use_time: bool
         Whether to add time to name of experiment directory.
 
     """
-    _config = tasks[task]
-    _config.update(algorithms[alg])
-
-    if config:
-        _config.update(config)
-    config = _config
-
-    if not distributions:
-        if alg == 'reinforce' :
-            distributions = dict(
-                lr_start=LogUniform(-3., 0., 1),
-                exploration_start=spdists.uniform(0, 0.5),
-                batch_size=ChoiceDist(10 * np.arange(1, 11)),
-                scaled=ChoiceDist([0, 1]),
-                entropy_start=ChoiceDist([0.0, LogUniform(-3., 0., 1)]),
-                max_grad_norm=ChoiceDist([0.0, 1.0, 2.0])
-            )
-        elif alg == 'qlearning':
-            distributions = dict(
-                lr_start=LogUniform(-3., 0., 10),
-                exploration_start=spdists.uniform(0, 0.5),
-                batch_size=ChoiceDist(10 * np.arange(1, 11).astype('i')),
-                replay_max_size=ChoiceDist(2 ** np.arange(6, 14)),
-                double=ChoiceDist([0, 1])
-            )
-        elif alg == 'diff':
-            pass
-        else:
-            raise Exception("Unknown algorithm: {}.".format(alg))
-
     with config:
         cl_args = clify.wrap_object(cfg).parse()
         config.update(cl_args)
@@ -349,18 +314,6 @@ def _zip_search(args):
 
 def hyper_search_cl():
     from dps.parallel.base import parallel_cl
-    build_cmd = (
-        'build', 'Build a hyper-parameter search.', _build_search,
-        ('path', dict(help="Location to save the built job.", type=str)),
-        ('name', dict(help="Memorable name for the search.", type=str)),
-        ('n', dict(help="Number of parameter settings to try. "
-                        "If 0, a grid search is performed in which all combinations are tried.", type=int)),
-        ('repeats', dict(help="Number of repeats for each parameter setting.", type=int)),
-        ('alg', dict(help="Algorithm to use for learning.", type=str)),
-        ('task', dict(help="Task to test on.", type=str)),
-        ('--no-zip', dict(action='store_true', help="If True, no zip file is produced.")),
-    )
-
     summary_cmd = (
         'summary', 'Summarize results of a hyper-parameter search.', _summarize_search,
         ('path', dict(help="Location of data store for job.", type=str)),
@@ -373,4 +326,4 @@ def hyper_search_cl():
         ('--delete', dict(help="If True, delete the original.", action='store_true'))
     )
 
-    parallel_cl('Build, run and view hyper-parameter searches.', [build_cmd, summary_cmd, zip_cmd])
+    parallel_cl('Build, run and view hyper-parameter searches.', [summary_cmd, zip_cmd])
