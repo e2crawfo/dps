@@ -41,7 +41,7 @@ def search(config, distributions, hosts=None):
             time_slack = 10
             ppn = 2
         else:
-            raise Exception()
+            raise Exception("Unknown size: `{}`.".format(size))
 
         job, archive_path = build_search(
             '/tmp/dps/search', config.name, n_param_settings, n_repeats,

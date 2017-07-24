@@ -84,7 +84,7 @@ class PPO(PolicyOptimization):
 
         super(PPO, self).__init__(**kwargs)
 
-    def build_graph(self, is_training, exploration):
+    def _build_graph(self, is_training, exploration):
         self.build_placeholders()
         self.advantage_estimator.build_graph()
 

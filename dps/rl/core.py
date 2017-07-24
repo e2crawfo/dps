@@ -117,11 +117,15 @@ class ReinforcementLearner(Parameterized):
     Doesn't necessarily need to learn about policies; can also learn about e.g. value functions.
 
     """
+    def __init__(self, **kwargs):
+        self.name = kwargs.get("name", self.__class__.__name__)
+        super(ReinforcementLearner, self).__init__(**kwargs)
+
     def _build_graph(self, is_training, exploration):
         raise Exception("NotImplemented")
 
     def build_graph(self, is_training, exploration):
-        with tf.name_scope(self.__class__.__name__):
+        with tf.name_scope(self.name):
             self._build_graph(is_training, exploration)
 
     def update(self, rollouts, collect_summaries):

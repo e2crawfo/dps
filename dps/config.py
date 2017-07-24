@@ -34,7 +34,7 @@ def get_updater(env):
     else:
         with cfg.actor_config:
             policy = Policy(policy_controller, action_selection, env.obs_shape)
-            updater = RLUpdater(env, policy, cfg.alg(policy))
+            updater = RLUpdater(env, policy, cfg.alg(policy, name="actor"))
             return updater
 
 
@@ -301,7 +301,7 @@ ROOM_CONFIG = Config(
     dense_reward=False,
     restart_prob=0.0,
     max_step=0.1,
-    room_angular=True,
+    room_angular=False,
     l2l=False,
     reward_radius=0.2,
 )

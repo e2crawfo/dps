@@ -17,7 +17,6 @@ config.update(Config(
         dict(T=30, shape=(2, 2), n_digits=3, upper_bound=True),
     ],
     base=10,
-    gamma=0.99,
     upper_bound=True,
     mnist=False,
     op_loc=(0, 0),
@@ -61,7 +60,6 @@ config.update(Config(
     critic_config=Config(
         name="TRPE",
         alg=TrustRegionPolicyEvaluation,
-        delta_schedule='0.01',
         max_cg_steps=10,
         max_line_search_steps=10,
     ),
@@ -69,6 +67,7 @@ config.update(Config(
     actor_config=Config(
         name="REINFORCE",
         alg=REINFORCE,
+        optimizer_spec="adam"
     )
 ))
 
@@ -88,9 +87,8 @@ distributions = dict(
     actor_config=dict(
         lmbda=list(np.linspace(0.8, 1.0, 10)),
         gamma=list(np.linspace(0.9, 1.0, 10)),
-        entropy_schedule=[0.0] + list(0.5**np.arange(2, 5, step=1)) +
-                         ['poly {} 100000 1e-6 1'.format(n) for n in 0.5**np.arange(2, 5, step=1)],
-        optimizer_spec=["rmsprop 0.95 0.95 1e-8", "rmsprop 0.9 0.0 1e-10", "adam"],
+        entropy_schedule=[0.0] + list(0.5**np.arange(2, 5)) +
+                         ['poly {} 100000 1e-6 1'.format(n) for n in 0.5**np.arange(2, 5)],
         lr_schedule=[1e-3, 1e-4, 1e-5]
     )
 )

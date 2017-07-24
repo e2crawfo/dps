@@ -3,7 +3,7 @@ import tensorflow as tf
 
 from dps import cfg
 from dps.utils import Config, CompositeCell, MLP
-from dps.rl import TRPO
+from dps.rl import PPO
 from dps.rl.policy import Softmax
 from dps.rl.value import TrustRegionPolicyEvaluation
 from dps.config import get_updater, tasks
@@ -55,7 +55,7 @@ config.update(Config(
 
     noise_schedule=None,
 
-    name="TRPOActorCritic",
+    name="PPOActorCritic",
 
     critic_config=Config(
         name="TRPE",
@@ -65,10 +65,10 @@ config.update(Config(
     ),
 
     actor_config=Config(
-        name="TRPO",
-        alg=TRPO,
-        max_cg_steps=10,
-        max_line_search_steps=10,
+        name="PPO",
+        alg=PPO,
+        K=10,
+        optimizer_spec="adam"
     )
 ))
 
@@ -91,7 +91,8 @@ distributions = dict(
         gamma=list(np.linspace(0.9, 1.0, 10)),
         entropy_schedule=[0.0] + list(0.5**np.arange(2, 5)) +
                          ['poly {} 100000 1e-6 1'.format(n) for n in 0.5**np.arange(2, 5)],
-        delta_schedule=['1e-4', '1e-3', '1e-2'],
+        lr_schedule=['1e-5', '1e-4', '1e-3'],
+        epsilon=[0.1, 0.2, 0.3]
     ),
 )
 
