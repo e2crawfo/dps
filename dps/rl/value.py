@@ -156,7 +156,7 @@ class TrustRegionPolicyEvaluation(ReinforcementLearner):
         tvars = self.policy.trainable_variables()
         self.gradient = tf.gradients(self.loss, tvars)
 
-        self.mean_kl = mean_kl(self.prev_policy, self.policy, self.obs)
+        self.mean_kl = mean_kl(self.prev_policy, self.policy, self.obs, self.mask)
         self.fv_product = HessianVectorProduct(self.mean_kl, tvars)
 
         self.grad_norm_pure = tf.placeholder(tf.float32, shape=(), name="_grad_norm_pure")
@@ -183,6 +183,7 @@ class TrustRegionPolicyEvaluation(ReinforcementLearner):
         feed_dict = {
             self.obs: rollouts.o,
             self.targets: cumsum_rewards,
+            self.mask: rollouts.mask
         }
 
         sess = tf.get_default_session()

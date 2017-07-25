@@ -64,10 +64,11 @@ DEFAULT_CONFIG = DpsConfig(
     test_time_explore=-1,
     max_grad_norm=0.0,
     reward_window=0.1,
-    exploration_schedule='0.1',
+    exploration_schedule='10.0',
     lr_schedule='0.001',
 
     standardize_advantage=True,
+    reset_env=True,
 
     max_time=0,
 

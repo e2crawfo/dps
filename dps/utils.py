@@ -311,7 +311,7 @@ class ScopedCell(RNNCell):
                 self.scope = tf.get_variable_scope()
         return self.scope, reuse
 
-    def call(self, inp, state):
+    def _call(self, inp, state):
         raise Exception("NotImplemented")
 
     def __call__(self, inp, state):

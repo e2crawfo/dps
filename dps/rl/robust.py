@@ -19,7 +19,7 @@ class RobustREINFORCE(TRPO):
         self.prev_policy.set_exploration(exploration)
 
         self.pg_objective, _, self.mean_entropy = policy_gradient_objective(
-            self.policy, self.obs, self.actions, self.advantage)
+            self.policy, self.obs, self.actions, self.advantage, self.mask)
 
         self.objective = self.pg_objective
 
@@ -30,7 +30,7 @@ class RobustREINFORCE(TRPO):
         tvars = self.policy.trainable_variables()
         self.policy_gradient = tf.gradients(self.objective, tvars)
 
-        self.mean_kl = mean_kl(self.prev_policy, self.policy, self.obs)
+        self.mean_kl = mean_kl(self.prev_policy, self.policy, self.obs, self.mask)
 
         kl_penalty = tf.cond(self.mean_kl > self.delta, lambda: tf.constant(np.inf), lambda: tf.constant(0.0))
         self.line_search_objective = self.objective - kl_penalty
@@ -69,6 +69,7 @@ class RobustREINFORCE(TRPO):
             self.actions: rollouts.a,
             self.rewards: rollouts.r,
             self.advantage: advantage,
+            self.mask: rollouts.mask
         }
 
         sess = tf.get_default_session()

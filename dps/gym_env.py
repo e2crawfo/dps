@@ -23,6 +23,9 @@ class GymEnvWrapper(Env):
         assert isinstance(gym_env.action_space, Discrete)
         self.n_actions = gym_env.action_space.n
 
+        self._obs = np.zeros((0,)+self.obs_shape)
+        self._done = np.ones((0, 1)).astype('bool')
+
     def set_mode(self, mode, batch_size):
         assert mode in 'train train_eval val'.split(), "Unknown mode: {}.".format(mode)
         self.mode = mode
@@ -33,14 +36,25 @@ class GymEnvWrapper(Env):
         if n_needed > 0:
             self._env_copies.extend(
                 [copy.deepcopy(self.gym_env) for i in range(n_needed)])
+            self._obs = np.concatenate(
+                [self._obs, np.zeros((n_needed,)+self.obs_shape)], axis=0)
+            self._done = np.concatenate(
+                [self._done, np.ones((n_needed, 1))], axis=0)
+
         self._active_envs = self._env_copies[:batch_size]
+        self.obs = self._obs[:batch_size, ...]
+        self.done = self._done[:batch_size, ...]
 
     def reset(self):
-        obs = []
-        for env in self._active_envs:
-            obs.append(env.reset())
-        self.done = [False for env in self._active_envs]
-        self.obs = np.array(obs)
+        if cfg.reset_env:
+            for i, env in enumerate(self._active_envs):
+                self.done[i, 0] = True
+
+        for idx, env in enumerate(self._active_envs):
+            if self.done[idx, 0]:
+                self.obs[idx, ...] = env.reset()
+                self.done[idx, 0] = False
+
         return self.obs.copy()
 
     def step(self, actions):
@@ -51,19 +65,21 @@ class GymEnvWrapper(Env):
 
         for idx, (a, env) in enumerate(zip(actions, self._active_envs)):
             a = np.squeeze(np.array(a))
-            if self.done[idx]:
+            if self.done[idx, 0]:
                 rewards.append(0.0)
                 info.append({})
             else:
                 o, r, d, i = env.step(a)
                 self.obs[idx, ...] = o
                 rewards.append(r)
-                self.done[idx] = d
+                self.done[idx, 0] = d
                 info.append(i)
 
-        done = self.done + []
-
-        return self.obs.copy(), np.array(rewards).reshape(-1, 1), done, info
+        return (
+            self.obs.copy(),
+            np.array(rewards).reshape(-1, 1),
+            self.done.copy(),
+            info)
 
     def render(self, mode='human', close=False):
         self._active_envs[0].render(mode=mode, close=close)
@@ -106,7 +122,6 @@ class GymEnvWrapper(Env):
                 break
             action, policy_state = policy.act(obs, policy_state, exploration)
             new_obs, reward, done, info = self.step(action)
-            done = np.array(done)[:, np.newaxis].astype('f')
             rollouts.append(obs, action, reward, done=done)
             obs = new_obs
             t += 1
