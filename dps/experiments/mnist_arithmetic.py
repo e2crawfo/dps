@@ -183,7 +183,10 @@ class MnistArithmetic(TensorFlowEnv):
                 op_vision=tf.identity(op_vision, "op_vision"),
                 delta=tf.identity(delta, "delta"))
 
-        return tf.fill((tf.shape(r)[0], 1), 0.0), new_registers
+        return (
+            tf.fill((tf.shape(r)[0], 1), 0.0),
+            tf.fill((tf.shape(r)[0], 1), 0.0),
+            new_registers)
 
 
 def build_env():

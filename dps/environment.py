@@ -1,6 +1,5 @@
 import abc
 from future.utils import with_metaclass
-import time
 
 import numpy as np
 import tensorflow as tf
@@ -71,7 +70,9 @@ class Env(with_metaclass(abc.ABCMeta, GymEnv)):
         self.mode = mode
         self.batch_size = batch_size
 
-    def do_rollouts(self, policy, n_rollouts=None, T=None, exploration=None, mode='train', render_mode=None):
+    def do_rollouts(
+            self, policy, n_rollouts=None, T=None, exploration=None,
+            mode='train', render_mode=None):
         T = T or cfg.T
 
         self.set_mode(mode, n_rollouts)
@@ -92,7 +93,7 @@ class Env(with_metaclass(abc.ABCMeta, GymEnv)):
             action, policy_state = policy.act(obs, policy_state, exploration)
             new_obs, reward, done, info = self.step(action)
             obs = new_obs
-            rollouts.append(obs, action, reward)
+            rollouts.append(obs, action, reward, done=float(done))
             t += 1
 
             if render_mode is not None:
@@ -278,7 +279,7 @@ class SamplerCell(RNNCell):
         self._state_size = (self.env.rb.width, self.policy.state_size)
 
         self._output_size = (
-            self.env.rb.visible_width, self.env.rb.hidden_width,
+            self.env.rb.visible_width, self.env.rb.hidden_width, 1,
             self.policy.n_params, 1, self.env.n_actions, 1, 1, self.policy.state_size)
 
         self.static_inp = static_inp
@@ -296,9 +297,12 @@ class SamplerCell(RNNCell):
                 entropy = self.policy.build_entropy(utils)
 
             with tf.name_scope('env_step'):
-                reward, new_registers = self.env.build_step(t, registers, action, self.static_inp)
+                done, reward, new_registers = self.env.build_step(t, registers, action, self.static_inp)
 
-            return (obs, hidden, utils, entropy, action, log_prob, reward, policy_state), (new_registers, new_policy_state)
+            return (
+                (obs, hidden, done, utils, entropy, action,
+                    log_prob, reward, policy_state),
+                (new_registers, new_policy_state))
 
     @property
     def state_size(self):
@@ -378,12 +382,13 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
                     sampler_cell, t, initial_state=(initial_registers, initial_policy_state),
                     parallel_iterations=1, swap_memory=False, time_major=True)
 
-                obs, hidden, utils, entropy, actions, log_probs, rewards, policy_states = _output[0]
+                obs, hidden, done, utils, entropy, actions, log_probs, rewards, policy_states = _output[0]
                 final_registers, final_policy_state = _output[1]
 
                 output = dict(
                     obs=obs,
                     hidden=hidden,
+                    done=done,
                     utils=utils,
                     entropy=entropy,
                     actions=actions,
@@ -420,7 +425,7 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
         sess = tf.get_default_session()
 
         # sample rollouts
-        obs, hidden, final_registers, utils, entropy, actions, log_probs, rewards = sess.run(
+        obs, hidden, final_registers, utils, entropy, actions, log_probs, rewards, done = sess.run(
             [output['obs'],
              output['hidden'],
              output['final_registers'],
@@ -428,11 +433,12 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
              output['entropy'],
              output['actions'],
              output['log_probs'],
-             output['rewards']],
+             output['rewards'],
+             output['done']],
             feed_dict=feed_dict)
 
         rollouts = RolloutBatch(
-            obs, actions, rewards, log_probs=log_probs, utils=utils, entropy=entropy, hidden=hidden,
+            obs, actions, rewards, log_probs=log_probs, utils=utils, entropy=entropy, hidden=hidden, done=done,
             metadata={'final_registers': final_registers})
         return rollouts
 
@@ -530,9 +536,7 @@ class CompositeEnv(Env):
     def completion(self):
         return self.external.completion
 
-    def do_rollouts(
-            self, policy, n_rollouts=None, T=None, exploration=None, mode='train'):
-
+    def do_rollouts(self, policy, n_rollouts=None, T=None, exploration=None, mode='train'):
         T = T or cfg.T
         (n_rollouts_ph, T_ph, initial_policy_state,
          initial_registers, static_inp_ph, output) = self.internal.get_sampler(policy)
@@ -575,7 +579,7 @@ class CompositeEnv(Env):
 
             sess = tf.get_default_session()
 
-            (obs, hidden, final_registers, final_policy_state, utils, entropy,
+            (obs, hidden, done, final_registers, final_policy_state, utils, entropy,
              actions, log_probs, rewards) = sess.run(
                 [output['obs'],
                  output['hidden'],

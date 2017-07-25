@@ -3,7 +3,7 @@ from tensorflow.python.ops.rnn import dynamic_rnn
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 
 from dps.updater import Param
-from dps.utils import build_scheduled_value
+from dps.utils import build_scheduled_value, masked_mean
 from dps.rl import (
     PolicyOptimization, GeneralizedAdvantageEstimator, BasicValueEstimator)
 from dps.utils import build_gradient_train_op
@@ -36,7 +36,7 @@ class PolicyGradientCell(RNNCell):
         return self.policy.zero_state(batch_size, dtype)
 
 
-def policy_gradient_objective(policy, obs, actions, advantage):
+def policy_gradient_objective(policy, obs, actions, advantage, mask):
     inp = obs, actions, advantage
 
     pg_cell = PolicyGradientCell(policy)
@@ -47,8 +47,10 @@ def policy_gradient_objective(policy, obs, actions, advantage):
         pg_cell, inp, initial_state=initial_state, parallel_iterations=1,
         swap_memory=False, time_major=True)
 
-    surrogate_objective = tf.reduce_mean(tf.reduce_sum(log_prob_times_adv, axis=0))
-    mean_entropy = tf.reduce_mean(entropy)
+    surrogate_objective = tf.reduce_mean(tf.reduce_sum(log_prob_times_adv*mask, axis=0))
+
+    mean_entropy = masked_mean(entropy, mask)
+
     return surrogate_objective, log_prob, mean_entropy
 
 
@@ -72,7 +74,7 @@ class REINFORCE(PolicyOptimization):
         self.policy.set_exploration(exploration)
 
         self.pg_objective, _, self.mean_entropy = policy_gradient_objective(
-            self.policy, self.obs, self.actions, self.advantage)
+            self.policy, self.obs, self.actions, self.advantage, self.mask)
 
         self.loss = -self.pg_objective
 

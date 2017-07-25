@@ -156,7 +156,10 @@ class HardAddition(TensorFlowEnv):
                 carry=tf.identity(carry, "carry"),
                 digit=tf.identity(digit, "digit"))
 
-        return tf.fill((tf.shape(r)[0], 1), 0.0), new_registers
+        return (
+            tf.fill((tf.shape(r)[0], 1), 0.0),
+            tf.fill((tf.shape(r)[0], 1), 0.0),
+            new_registers)
 
 
 def build_env():

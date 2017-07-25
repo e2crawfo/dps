@@ -158,7 +158,10 @@ class TranslatedMnist(TensorFlowEnv):
                 vision=tf.identity(vision, "vision"),
                 delta=tf.identity(delta, "delta"))
 
-        return tf.fill((tf.shape(r)[0], 1), 0.0), new_registers
+        return (
+            tf.fill((tf.shape(r)[0], 1), 0.0),
+            tf.fill((tf.shape(r)[0], 1), 0.0),
+            new_registers)
 
 
 def render_rollouts(env, rollouts):

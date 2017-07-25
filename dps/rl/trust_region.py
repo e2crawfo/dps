@@ -3,7 +3,7 @@ from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from tensorflow.python.ops.gradients_impl import _hessian_vector_product
 import numpy as np
 
-from dps.utils import lst_to_vec, vec_to_lst
+from dps.utils import lst_to_vec, vec_to_lst, masked_mean
 
 
 class KLCell(RNNCell):
@@ -35,7 +35,7 @@ class KLCell(RNNCell):
         return initial_state
 
 
-def mean_kl(p, q, obs):
+def mean_kl(p, q, obs, mask):
     """ `p` and `q` are instances of `Policy`. """
     # from tensorflow.python.ops.rnn import dynamic_rnn
     # kl_cell = KLCell(policy, prev_policy)
@@ -56,17 +56,14 @@ def mean_kl(p, q, obs):
     dtype = tf.float32
     p_state, q_state = p.zero_state(batch_size, dtype), q.zero_state(batch_size, dtype)
 
-    kl = None
+    kl = []
     T = int(obs.shape[0])
     for t in range(T):
         p_utils, p_state = p.build_update(obs[t, :, :], p_state)
         q_utils, q_state = q.build_update(obs[t, :, :], q_state)
-
-        if kl is None:
-            kl = p.build_kl(p_utils, q_utils)
-        else:
-            kl += p.build_kl(p_utils, q_utils)
-    return tf.reduce_mean(kl) / T
+        kl.append(p.build_kl(p_utils, q_utils))
+    kl = tf.stack(kl)
+    return masked_mean(kl, mask)
 
 
 class HessianVectorProduct(object):

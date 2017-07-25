@@ -4,7 +4,7 @@ from tensorflow.python.ops.rnn import dynamic_rnn
 
 from dps import cfg
 from dps.utils import (
-    build_gradient_train_op, Param, lst_to_vec,
+    build_gradient_train_op, Param, lst_to_vec, masked_mean,
     build_scheduled_value, trainable_variables, Config)
 from dps.rl import ReinforcementLearner, RLUpdater
 from dps.rl.policy import Policy, NormalWithExploration
@@ -47,19 +47,19 @@ class PolicyEvaluation(ReinforcementLearner):
         self.estimator.build_graph()
         self.rewards = tf.placeholder(tf.float32, shape=(None, None, 1), name="_rewards")
         self.targets = tf.placeholder(tf.float32, shape=(None, None, 1), name="_targets")
-        error = self.estimator.value_estimates - self.targets
-        self.loss = tf.reduce_mean(error**2)
-        self.mean_estimated_value = tf.reduce_mean(self.estimator.value_estimates)
+        self.mask = tf.placeholder(tf.float32, shape=(None, None, 1), name="_mask")
+        squared_error = (self.estimator.value_estimates - self.targets)**2
+        self.loss = masked_mean(squared_error, self.mask)
+        self.mean_estimated_value = masked_mean(self.estimator.value_estimates, self.mask)
 
         tvars = self.estimator.trainable_variables()
         self.train_op, train_summaries = build_gradient_train_op(
             self.loss, tvars, self.optimizer_spec, self.lr_schedule)
 
-        td_error = compute_td_error(self.estimator.value_estimates, self.gamma, self.rewards)
-
         self.train_summary_op = tf.summary.merge(train_summaries)
 
-        self.approx_bellman_error = tf.reduce_mean(td_error)
+        td_error = compute_td_error(self.estimator.value_estimates, self.gamma, self.rewards)
+        self.approx_bellman_error = masked_mean(td_error, self.mask)
         self.eval_summary_op = tf.summary.merge([
             tf.summary.scalar("squared_error", self.loss),
             tf.summary.scalar("approx_bellman_error", self.approx_bellman_error),
@@ -67,27 +67,32 @@ class PolicyEvaluation(ReinforcementLearner):
         ])
 
     def update(self, rollouts, collect_summaries):
-        cumsum_rewards = np.flipud(np.cumsum(np.flipud(rollouts.r), axis=0))
+        masked_rewards = rollouts.r * rollouts.mask
+        cumsum_rewards = np.flipud(np.cumsum(np.flipud(masked_rewards), axis=0))
         feed_dict = {
             self.estimator.obs: rollouts.o,
             self.targets: cumsum_rewards,
+            self.mask: rollouts.mask
         }
 
         sess = tf.get_default_session()
 
         if collect_summaries:
-            train_summaries, _ = sess.run([self.train_summary_op, self.train_op], feed_dict=feed_dict)
+            train_summaries, _ = sess.run(
+                [self.train_summary_op, self.train_op], feed_dict=feed_dict)
             return train_summaries
         else:
             sess.run(self.train_op, feed_dict=feed_dict)
             return b''
 
     def evaluate(self, rollouts):
-        cumsum_rewards = np.flipud(np.cumsum(np.flipud(rollouts.r), axis=0))
+        masked_rewards = rollouts.r * rollouts.mask
+        cumsum_rewards = np.flipud(np.cumsum(np.flipud(masked_rewards), axis=0))
         feed_dict = {
             self.estimator.obs: rollouts.o,
             self.targets: cumsum_rewards,
-            self.rewards: rollouts.r
+            self.rewards: rollouts.r,
+            self.mask: rollouts.mask
         }
 
         sess = tf.get_default_session()
@@ -131,6 +136,7 @@ class TrustRegionPolicyEvaluation(ReinforcementLearner):
         self.obs = tf.placeholder(tf.float32, shape=(self.T, None) + self.estimator.obs_shape, name="_obs")
         self.rewards = tf.placeholder(tf.float32, shape=(self.T, None, 1), name="_rewards")
         self.targets = tf.placeholder(tf.float32, shape=(self.T, None, 1), name="_targets")
+        self.mask = tf.placeholder(tf.float32, shape=(self.T, None, 1), name="_mask")
 
         self.std_dev = tf.placeholder(tf.float32, ())
 
@@ -143,9 +149,9 @@ class TrustRegionPolicyEvaluation(ReinforcementLearner):
             self.policy, self.obs, initial_state=initial_state,
             parallel_iterations=1, swap_memory=False, time_major=True)
 
-        error = self.value_estimates - self.targets
-        self.loss = tf.reduce_mean(error**2)
-        self.mean_estimated_value = tf.reduce_mean(self.value_estimates)
+        squared_error = (self.value_estimates - self.targets)**2
+        self.loss = masked_mean(squared_error, self.mask)
+        self.mean_estimated_value = masked_mean(self.value_estimates, self.mask)
 
         tvars = self.policy.trainable_variables()
         self.gradient = tf.gradients(self.loss, tvars)
@@ -164,7 +170,7 @@ class TrustRegionPolicyEvaluation(ReinforcementLearner):
         ])
 
         td_error = compute_td_error(self.value_estimates, self.gamma, self.rewards)
-        self.approx_bellman_error = tf.reduce_mean(td_error)
+        self.approx_bellman_error = masked_mean(td_error, self.mask)
         self.eval_summary_op = tf.summary.merge([
             tf.summary.scalar("squared_error", self.loss),
             tf.summary.scalar("approx_bellman_error", self.approx_bellman_error),
@@ -172,7 +178,8 @@ class TrustRegionPolicyEvaluation(ReinforcementLearner):
         ])
 
     def update(self, rollouts, collect_summaries):
-        cumsum_rewards = np.flipud(np.cumsum(np.flipud(rollouts.r), axis=0))
+        masked_rewards = rollouts.r * rollouts.mask
+        cumsum_rewards = np.flipud(np.cumsum(np.flipud(masked_rewards), axis=0))
         feed_dict = {
             self.obs: rollouts.o,
             self.targets: cumsum_rewards,
@@ -245,11 +252,13 @@ class TrustRegionPolicyEvaluation(ReinforcementLearner):
             return b''
 
     def evaluate(self, rollouts):
-        cumsum_rewards = np.flipud(np.cumsum(np.flipud(rollouts.r), axis=0))
+        masked_rewards = rollouts.r * rollouts.mask
+        cumsum_rewards = np.flipud(np.cumsum(np.flipud(masked_rewards), axis=0))
         feed_dict = {
             self.obs: rollouts.o,
             self.targets: cumsum_rewards,
-            self.rewards: rollouts.r
+            self.rewards: rollouts.r,
+            self.mask: rollouts.mask
         }
 
         sess = tf.get_default_session()
@@ -279,7 +288,7 @@ class BasicValueEstimator(object):
         pass
 
     def estimate(self, rollouts):
-        obs, rewards = rollouts.o, rollouts.r
+        obs, rewards = rollouts.o, rollouts.r * rollouts.mask
         T = len(obs)
         discounts = np.logspace(0, T-1, T, base=self.gamma).reshape(-1, 1, 1)
         discounted_rewards = rewards * discounts
@@ -329,7 +338,7 @@ class GeneralizedAdvantageEstimator(object):
         T = len(value_estimates)
         discounts = np.logspace(0, T-1, T, base=self.gamma*self.lmbda)
         discount_matrix = np.triu(symmetricize(discounts))
-        td_error = compute_td_error(value_estimates, self.gamma, rollouts.r)
+        td_error = compute_td_error(value_estimates, self.gamma, rollouts.r) * rollouts.mask
         advantage_estimates = np.tensordot(discount_matrix, td_error, axes=1)
         return advantage_estimates
 

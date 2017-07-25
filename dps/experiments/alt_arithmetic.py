@@ -325,7 +325,10 @@ class AltArithmetic(TensorFlowEnv):
                 prev_action=tf.identity(prev_action, "prev_action"),
                 glimpse=glimpse)
 
-        return tf.fill((tf.shape(digit)[0], 1), 0.0), new_registers
+        return (
+            tf.fill((tf.shape(digit)[0], 1), 0.0),
+            tf.fill((tf.shape(digit)[0], 1), 0.0),
+            new_registers)
 
     def build_step(self, t, r, a, inp):
         _digit, _op, _acc, _fovea_x, _fovea_y, _, _glimpse = self.rb.as_tuple(r)

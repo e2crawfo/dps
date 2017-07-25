@@ -63,7 +63,10 @@ class HelloWorld(TensorFlowEnv):
             r0=add * (_r0 + _r1) + (1 - add) * _r0,
             r1=mult * (_r0 * _r1) + (1 - mult) * _r1,
             r2=_r2+1)
-        return tf.fill((tf.shape(r)[0], 1), 0.0), new_registers
+        return (
+            tf.fill((tf.shape(r)[0], 1), 0.0),
+            tf.fill((tf.shape(r)[0], 1), 0.0),
+            new_registers)
 
 
 def build_env():

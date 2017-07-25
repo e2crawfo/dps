@@ -81,7 +81,10 @@ class SimpleAddition(TensorFlowEnv):
         new_registers = self.rb.wrap(
             fovea=fovea, vision=vision, wm1=wm1, wm2=wm2, output=output)
 
-        return tf.fill((tf.shape(r)[0], 1), 0.0), new_registers
+        return (
+            tf.fill((tf.shape(r)[0], 1), 0.0),
+            tf.fill((tf.shape(r)[0], 1), 0.0),
+            new_registers)
 
 
 def build_env():

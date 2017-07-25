@@ -71,7 +71,10 @@ class Pointer(TensorFlowEnv):
 
         new_registers = self.rb.wrap(fovea=fovea, vision=vision, wm=wm)
 
-        return tf.fill((tf.shape(r)[0], 1), 0.0), new_registers
+        return (
+            tf.fill((tf.shape(r)[0], 1), 0.0),
+            tf.fill((tf.shape(r)[0], 1), 0.0),
+            new_registers)
 
 
 def build_env():

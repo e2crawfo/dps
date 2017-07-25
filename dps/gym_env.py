@@ -1,9 +1,12 @@
 import copy
 import numpy as np
+import tensorflow as tf
 
 from gym.spaces import Discrete, Box
 
+from dps import cfg
 from dps.environment import Env
+from dps.rl import RolloutBatch
 from dps.utils import gen_seed
 
 
@@ -58,7 +61,9 @@ class GymEnvWrapper(Env):
                 self.done[idx] = d
                 info.append(i)
 
-        return self.obs.copy(), np.array(rewards).reshape(-1, 1), all(self.done), info
+        done = self.done + []
+
+        return self.obs.copy(), np.array(rewards).reshape(-1, 1), done, info
 
     def render(self, mode='human', close=False):
         self._active_envs[0].render(mode=mode, close=close)
@@ -78,3 +83,35 @@ class GymEnvWrapper(Env):
 
     def visualize(self, render_rollouts=None, **rollout_kwargs):
         self.do_rollouts(render_mode="human", **rollout_kwargs)
+
+    def do_rollouts(
+            self, policy, n_rollouts=None, T=None, exploration=None,
+            mode='train', render_mode=None):
+        T = T or cfg.T
+
+        self.set_mode(mode, n_rollouts)
+        obs = self.reset()
+        batch_size = obs.shape[0]
+
+        policy_state = policy.zero_state(batch_size, tf.float32)
+        policy_state = tf.get_default_session().run(policy_state)
+
+        rollouts = RolloutBatch()
+
+        t = 0
+
+        done = [False]
+        while not all(done):
+            if T is not None and t >= T:
+                break
+            action, policy_state = policy.act(obs, policy_state, exploration)
+            new_obs, reward, done, info = self.step(action)
+            done = np.array(done)[:, np.newaxis].astype('f')
+            rollouts.append(obs, action, reward, done=done)
+            obs = new_obs
+            t += 1
+
+            if render_mode is not None:
+                self.render(mode=render_mode)
+
+        return rollouts

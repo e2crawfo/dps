@@ -3,7 +3,7 @@ import numpy as np
 
 from dps import cfg
 from dps.register import RegisterBank
-from dps.environment import TensorFlowEnv, BatchBox
+from dps.environment import TensorFlowEnv
 
 
 class Room(TensorFlowEnv):
@@ -11,11 +11,13 @@ class Room(TensorFlowEnv):
     make_input_available = False
     static_inp_width = 4
 
-    def __init__(self, T, reward_radius, max_step, restart_prob, dense_reward, l2l, n_val):
-        self.rb = RegisterBank('RoomRB', 'x y r dx dy', 'goal_x goal_y', [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 'x y')
-        self.obs_shape = (self.rb.visible_width,)
-        self.n_actions = self.n_actions
+    def __init__(
+            self, T, reward_radius, max_step, restart_prob,
+            dense_reward, l2l, n_val):
 
+        self.rb = RegisterBank(
+            'RoomRB', 'x y r dx dy', 'goal_x goal_y',
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 'x y')
         self.T = T
         self.reward_radius = reward_radius
         self.max_step = max_step
@@ -38,7 +40,8 @@ class Room(TensorFlowEnv):
 
     def _make_static_input(self, batch_size):
         if self.l2l:
-            return np.random.uniform(low=-1.0, high=1.0, size=(batch_size, self.static_inp_width))
+            return np.random.uniform(
+                low=-1.0, high=1.0, size=(batch_size, self.static_inp_width))
         else:
             return np.concatenate(
                 [np.random.uniform(low=-1.0, high=1.0, size=(batch_size, 2)),
@@ -99,7 +102,7 @@ class Room(TensorFlowEnv):
             x=new_x, y=new_y, goal_x=goal_x, goal_y=goal_y,
             dx=delta_x, dy=delta_y, r=reward)
 
-        return reward, new_registers
+        return tf.fill((tf.shape(r)[0], 1), 0.0), reward, new_registers
 
 
 class RoomAngular(Room):

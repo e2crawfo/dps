@@ -1,8 +1,15 @@
+import numpy as np
 import tensorflow as tf
 
 from dps import cfg
 from dps.utils import build_scheduled_value, Param, Parameterized
 from dps.updater import Updater
+
+
+def shift_zero_fill(a, n, axis=0):
+    shifted = np.roll(a, n, axis=axis)
+    shifted[:n, ...] = 0.0
+    return shifted
 
 
 def rl_render_hook(updater):
@@ -79,6 +86,7 @@ class RLUpdater(Updater):
     def _update(self, batch_size, collect_summaries):
         self.set_is_training(True)
         rollouts = self.env.do_rollouts(self.policy, batch_size, mode='train')
+        rollouts['mask'] = (1-shift_zero_fill(rollouts.done, 1)).astype('f')
 
         summaries = (b'').join(
             learner.update(rollouts, collect_summaries)
@@ -91,6 +99,7 @@ class RLUpdater(Updater):
         self.set_is_training(mode == 'train_eval')
 
         rollouts = self.env.do_rollouts(self.policy, batch_size, mode=mode)
+        rollouts['mask'] = 1-shift_zero_fill(rollouts.done, 1)
 
         summaries = b''
         record = {}
@@ -138,12 +147,13 @@ class ReinforcementLearner(Parameterized):
 class PolicyOptimization(ReinforcementLearner):
     def compute_advantage(self, rollouts):
         advantage = self.advantage_estimator.estimate(rollouts)
-
         if cfg.standardize_advantage:
-            advantage = advantage - advantage.mean()
-            adv_std = advantage.std()
+            _advantage = advantage[rollouts.mask.nonzero()]
+            _advantage = _advantage - _advantage.mean()
+            adv_std = _advantage.std()
             if adv_std > 1e-6:
-                advantage /= adv_std
+                _advantage /= adv_std
+            advantage[rollouts.mask.nonzero()] = _advantage
 
         return advantage
 
@@ -156,6 +166,8 @@ class PolicyOptimization(ReinforcementLearner):
             tf.float32, shape=(cfg.T, None, 1), name="_advantage")
         self.rewards = tf.placeholder(
             tf.float32, shape=(cfg.T, None, 1), name="_rewards")
+        self.mask = tf.placeholder(
+            tf.float32, shape=(cfg.T, None, 1), name="_mask")
         self.reward_per_ep = episodic_mean(self.rewards, name="_reward_per_ep")
 
     def update(self, rollouts, collect_summaries):
@@ -166,6 +178,7 @@ class PolicyOptimization(ReinforcementLearner):
             self.actions: rollouts.a,
             self.rewards: rollouts.r,
             self.advantage: advantage,
+            self.mask: rollouts.mask
         }
 
         sess = tf.get_default_session()
@@ -184,7 +197,8 @@ class PolicyOptimization(ReinforcementLearner):
             self.obs: rollouts.o,
             self.actions: rollouts.a,
             self.rewards: rollouts.r,
-            self.advantage: advantage
+            self.advantage: advantage,
+            self.mask: rollouts.mask
         }
 
         sess = tf.get_default_session()

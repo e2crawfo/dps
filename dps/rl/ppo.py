@@ -6,7 +6,7 @@ from dps.updater import Param
 from dps.utils import build_scheduled_value
 from dps.rl import (
     PolicyOptimization, GeneralizedAdvantageEstimator, BasicValueEstimator)
-from dps.utils import build_gradient_train_op
+from dps.utils import build_gradient_train_op, masked_mean
 
 
 class LogProbCell(RNNCell):
@@ -33,7 +33,7 @@ class LogProbCell(RNNCell):
         return self.policy.zero_state(batch_size, dtype)
 
 
-def cpi_surrogate_objective(prev_policy, policy, obs, actions, advantage, epsilon=None):
+def cpi_surrogate_objective(prev_policy, policy, obs, actions, advantage, mask, epsilon=None):
     """ If `epsilon` is not None, compute PPO objective instead of CPI. """
     batch_size = tf.shape(obs)[1]
 
@@ -61,8 +61,8 @@ def cpi_surrogate_objective(prev_policy, policy, obs, actions, advantage, epsilo
             advantage * ratio,
             advantage * tf.clip_by_value(ratio, 1-epsilon, 1+epsilon))
 
-    surrogate_objective = tf.reduce_sum(tf.reduce_mean(log_prob_times_adv, axis=0))
-    mean_entropy = tf.reduce_mean(entropy)
+    surrogate_objective = tf.reduce_sum(tf.reduce_mean(log_prob_times_adv*mask, axis=0))
+    mean_entropy = masked_mean(entropy, mask)
 
     return surrogate_objective, mean_entropy
 
@@ -92,8 +92,8 @@ class PPO(PolicyOptimization):
         self.policy.set_exploration(exploration)
 
         self.cpi_objective, self.mean_entropy = cpi_surrogate_objective(
-            self.prev_policy, self.policy,
-            self.obs, self.actions, self.advantage, self.epsilon)
+            self.prev_policy, self.policy, self.obs, self.actions,
+            self.advantage, self.mask, self.epsilon)
 
         self.loss = -self.cpi_objective
 
@@ -129,6 +129,7 @@ class PPO(PolicyOptimization):
             self.actions: rollouts.a,
             self.rewards: rollouts.r,
             self.advantage: advantage,
+            self.mask: rollouts.mask
         }
 
         sess = tf.get_default_session()

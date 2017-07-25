@@ -25,6 +25,10 @@ from tensorflow.contrib.slim import fully_connected
 import dps
 
 
+def masked_mean(array, mask):
+    return tf.reduce_mean(tf.boolean_mask(array, tf.cast(mask, tf.bool)))
+
+
 def build_gradient_train_op(loss, tvars, optimizer_spec, lr_schedule, max_grad_norm=None, noise_schedule=None):
     pure_gradients = tf.gradients(loss, tvars)
 
