@@ -548,13 +548,13 @@ class CompositeEnv(Env):
         final_registers = None
         final_policy_state = None
 
-        done = False
         e = 0
 
         external_rollouts = RolloutBatch()
         rollouts = RolloutBatch()
+        external_done = False
 
-        while not done:
+        while not external_done:
             if e > 0:
                 feed_dict = {
                     n_rollouts_ph: n_rollouts,
@@ -583,6 +583,7 @@ class CompositeEnv(Env):
              actions, log_probs, rewards) = sess.run(
                 [output['obs'],
                  output['hidden'],
+                 output['done'],
                  output['final_registers'],
                  output['final_policy_state'],
                  output['utils'],
@@ -593,7 +594,7 @@ class CompositeEnv(Env):
                 feed_dict=feed_dict)
 
             external_action = self.rb.get_output(final_registers)
-            new_external_obs, external_reward, done, i = \
+            new_external_obs, external_reward, external_done, i = \
                 self.external.step(external_action)
 
             rewards[-1, :, :] += external_reward
@@ -602,10 +603,10 @@ class CompositeEnv(Env):
                 RolloutBatch(
                     obs, actions, rewards,
                     log_probs=log_probs, utils=utils,
-                    entropy=entropy, hidden=hidden))
+                    entropy=entropy, hidden=hidden, done=done))
 
             external_rollouts.append(
-                external_obs, external_action, external_reward,
+                external_obs, external_action, external_reward, done=external_done,
                 info=dict(length=len(rollouts)))
 
             external_obs = new_external_obs

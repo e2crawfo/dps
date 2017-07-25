@@ -9,7 +9,7 @@ from dps.rl import (
     RLUpdater, rl_render_hook,
     REINFORCE, PPO, TRPO, RobustREINFORCE, QLearning)
 from dps.rl.policy import (
-    Policy, Softmax, EpsilonGreedy, Deterministic,
+    Policy, Softmax, EpsilonSoftmax, EpsilonGreedy, Deterministic,
     Normal, NormalWithFixedScale, Gamma, Bernoulli, ProductDist)
 from dps.vision import LeNet, MNIST_CONFIG
 from dps.experiments import (
@@ -50,7 +50,7 @@ DEFAULT_CONFIG = DpsConfig(
 
     slim=False,  # If true, tries to use little disk space
     max_steps=10000,
-    batch_size=100,
+    batch_size=32,
     n_train=10000,
     n_val=1000,
     threshold=1e-2,
@@ -61,10 +61,10 @@ DEFAULT_CONFIG = DpsConfig(
     eval_step=10,
 
     noise_schedule=None,
-    test_time_explore=-1,
+    test_time_explore=-1.,
     max_grad_norm=0.0,
     reward_window=0.1,
-    exploration_schedule='10.0',
+    exploration_schedule=10.,
     lr_schedule='0.001',
 
     standardize_advantage=True,
@@ -75,6 +75,7 @@ DEFAULT_CONFIG = DpsConfig(
     n_controller_units=32,
     controller=lambda n_params, name=None: CompositeCell(
         tf.contrib.rnn.LSTMCell(num_units=cfg.n_controller_units), MLP(), n_params, name=name),
+    # action_selection=lambda env: EpsilonSoftmax(env.n_actions),
     action_selection=lambda env: Softmax(env.n_actions),
 
     deadline='',
@@ -99,10 +100,8 @@ BASELINE_CONFIG = Config(
 PE_CONFIG = Config(
     name="PolicyEvaluation",
     alg=PolicyEvaluation,
-    delta_schedule='0.01',
-    max_cg_steps=10,
-    max_line_search_steps=10,
-    entropy_schedule='0.0'
+    lr_schedule=1e-4,
+    optimizer_spec='adam',
 )
 
 
@@ -112,7 +111,6 @@ TRPE_CONFIG = Config(
     delta_schedule='0.01',
     max_cg_steps=10,
     max_line_search_steps=10,
-    entropy_schedule='0.0'
 )
 
 
@@ -122,11 +120,12 @@ REINFORCE_CONFIG = Config(
     alg=REINFORCE,
     batch_size=16,
     entropy_schedule="0.1",
-    lr_schedule="1e-4",
+    lr_schedule="1e-2",
+    # lr_schedule="1e-4",
     # lr_schedule="poly 1e-4 100000 1e-6 1",  # also good
     n_controller_units=64,
     # exploration_schedule='exp 10.0 100000 0.1',
-    exploration_schedule='poly 10.0 10000 1e-6 1.0',
+    # exploration_schedule='poly 10.0 10000 1e-6 1.0',
     test_time_explore=0.1
 )
 
@@ -137,9 +136,9 @@ PPO_CONFIG = Config(
     entropy_schedule="0.1",
     epsilon=0.2,
     K=10,
-    lr_schedule="1e-4",
+    lr_schedule="1e-3",
     n_controller_units=64,
-    exploration_schedule='poly 1.0 10000 1e-6 1.0',
+    # exploration_schedule='poly 1.0 10000 1e-6 1.0',
     test_time_explore=-1
 )
 
@@ -148,7 +147,7 @@ TRPO_CONFIG = Config(
     name="TRPO",
     alg=TRPO,
     entropy_schedule='0.1',
-    exploration_schedule="poly 1.0 10000 1e-6 1.0",
+    # exploration_schedule="poly 1.0 10000 1e-6 1.0",
     max_cg_steps=10,
     max_line_search_steps=20,
     delta_schedule="0.01"
@@ -159,7 +158,7 @@ ROBUST_CONFIG = Config(
     name="RobustREINFORCE",
     alg=RobustREINFORCE,
     entropy_schedule="0.1",
-    exploration_schedule="10.0",
+    # exploration_schedule="10.0",
     max_line_search_steps=10,
     delta_schedule="0.01",
     max_cg_steps=0,

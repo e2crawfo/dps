@@ -212,7 +212,7 @@ class AltArithmetic(TensorFlowEnv):
             [np.zeros(np.product(self.element_shape), dtype='f')])
         self.rb = RegisterBank(
             'AltArithmeticRB',
-            'digit op acc fovea_x fovea_y prev_action glimpse', None, values=values,
+            'digit op acc fovea_x fovea_y prev_action', 'glimpse', values=values,
             output_names='acc', no_display='glimpse')
 
     def init_classifiers(self):
@@ -279,7 +279,7 @@ class AltArithmetic(TensorFlowEnv):
 
         fovea_y, fovea_x = self.build_init_fovea(batch_size, fovea_y, fovea_x)
 
-        _, ret = self.build_return(digit, op, acc, fovea_x, fovea_y, prev_action, glimpse)
+        _, _, ret = self.build_return(digit, op, acc, fovea_x, fovea_y, prev_action, glimpse)
         return ret
 
     def build_update_glimpse(self, inp, fovea_y, fovea_x):
@@ -331,7 +331,7 @@ class AltArithmetic(TensorFlowEnv):
             new_registers)
 
     def build_step(self, t, r, a, inp):
-        _digit, _op, _acc, _fovea_x, _fovea_y, _, _glimpse = self.rb.as_tuple(r)
+        _digit, _op, _acc, _fovea_x, _fovea_y, _, _ = self.rb.as_tuple(r)
 
         (right, left, down, up, classify_digit, classify_op, add, inc, multiply, store, no_op) = (
             tf.split(a, self.n_actions, axis=1))

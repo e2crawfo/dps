@@ -330,12 +330,26 @@ class Bernoulli(TensorFlowSelection):
         return tf_dists.BernoulliWithSigmoidProbs(utils[:, 0])
 
 
-class Softmax(TensorFlowSelection):
+class Categorical(TensorFlowSelection):
     def __init__(self, n_actions, one_hot=True):
         self.n_params = n_actions
         self.n_actions = n_actions if one_hot else 1
         self.one_hot = one_hot
 
+    def sample(self, utils, exploration):
+        sample = super(Categorical, self).sample(utils, exploration)
+        if not self.one_hot:
+            return tf.cast(sample, tf.int32)
+        else:
+            return sample
+
+    def log_prob(self, utils, actions, exploration):
+        if not self.one_hot:
+            actions = tf.cast(actions, tf.int32)
+        return super(Categorical, self).log_prob(utils, actions, exploration)
+
+
+class Softmax(Categorical):
     def _dist(self, utils, exploration):
         logits = utils / exploration
 
@@ -344,20 +358,8 @@ class Softmax(TensorFlowSelection):
         else:
             return tf_dists.Categorical(logits=logits)
 
-    def sample(self, utils, exploration):
-        return tf.cast(super(Softmax, self).sample(utils, exploration), tf.int32)
 
-    def log_prob(self, utils, actions, exploration):
-        actions = tf.cast(actions, tf.int32)
-        return super(Softmax, self).log_prob(utils, actions, exploration)
-
-
-class EpsilonGreedy(TensorFlowSelection):
-    def __init__(self, n_actions, one_hot=True):
-        self.n_params = n_actions
-        self.n_actions = n_actions if one_hot else 1
-        self.one_hot = one_hot
-
+class EpsilonGreedy(Categorical):
     def _probs(self, q_values, exploration):
         epsilon = exploration
         mx = tf.reduce_max(q_values, axis=1, keep_dims=True)
@@ -371,6 +373,20 @@ class EpsilonGreedy(TensorFlowSelection):
 
     def _dist(self, q_values, exploration):
         probs = self._probs(q_values, exploration)
+        if self.one_hot:
+            return tf_dists.OneHotCategorical(probs=probs)
+        else:
+            return tf_dists.Categorical(probs=probs)
+
+
+class EpsilonSoftmax(Categorical):
+    """ Mixture between a softmax distribution and a uniform distribution.
+        Weight of the uniform distribution is given by the exploration
+        coefficient epsilon, and the softmax uses a temperature of 1.
+
+    """
+    def _dist(self, utils, epsilon):
+        probs = (1 - epsilon) * tf.nn.softmax(utils) + epsilon / self.n_params
         if self.one_hot:
             return tf_dists.OneHotCategorical(probs=probs)
         else:
