@@ -3,14 +3,12 @@ import tensorflow as tf
 
 from dps import cfg
 from dps.utils import (
-    CompositeCell, MLP, FixedDiscreteController,
+    CompositeCell, FeedforwardCell, MLP, FixedDiscreteController,
     FixedController, DpsConfig, Config)
 from dps.rl import (
-    RLUpdater, rl_render_hook,
-    REINFORCE, PPO, TRPO, RobustREINFORCE, QLearning)
+    RLUpdater, rl_render_hook, REINFORCE, PPO, TRPO, RobustREINFORCE, QLearning)
 from dps.rl.policy import (
-    Policy, Softmax, EpsilonSoftmax, EpsilonGreedy, Deterministic,
-    Normal, NormalWithFixedScale, Gamma, Bernoulli, ProductDist)
+    Policy, Softmax, EpsilonSoftmax, EpsilonGreedy, Deterministic, Normal, Gamma, ProductDist)
 from dps.vision import LeNet, MNIST_CONFIG
 from dps.experiments import (
     hello_world, room, simple_addition, pointer_following,
@@ -166,31 +164,33 @@ ROBUST_CONFIG = Config(
 
 
 QLEARNING_CONFIG = Config(
+    name="QLearning",
+    alg=QLearning,
+
     action_selection=lambda env: EpsilonGreedy(env.n_actions),
+    controller=lambda n_params, name=None: FeedforwardCell(MLP([8, 8]), n_params, name=name),
     double=False,
 
-    lr_schedule="exponential 0.00025 1000 1.0",
-    exploration_schedule="polynomial 1.0 10000 0.1 1",
+    lr_schedule=0.00025,
+    exploration_schedule="poly 0.5 20000 0.01",
+    test_time_explore=0.05,
 
     optimizer_spec="adam",
 
-    replay_max_size=1000000,
+    replay_max_size=20000,
     replay_threshold=-0.5,
     replay_proportion=0.0,
-    gamma=0.99,
+    gamma=1.0,
 
     target_update_rate=None,
-    steps_per_target_update=10000,
-    recurrent=True,
+    steps_per_target_update=1000,
     patience=np.inf,
-    samples_per_update=32,  # Number of rollouts between parameter updates
     update_batch_size=32,  # Number of sample rollouts to use for each parameter update
-    batch_size=64,  # Number of sample experiences to execute
-    test_time_explore=0.05,
+    batch_size=1,  # Number of sample experiences per update
 
     max_grad_norm=0.0,
 
-    n_controller_units=256,
+    n_controller_units=64,
 )
 
 

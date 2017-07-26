@@ -165,6 +165,24 @@ class RolloutBatch(dict):
             raise Exception("Cannot concatenate a RolloutBatch with {}.".format(other))
         return RolloutBatch.concat([self, other])
 
+    def split(self):
+        """ Return a list of RolloutBatches, each containing a single rollout from the current batch. """
+        rollouts = []
+        for b in range(self.batch_size):
+            rollouts.append(
+                RolloutBatch(**{k: self[k][:, b:b+1, :] for k in self.keys()}))
+        return rollouts
+
+    @staticmethod
+    def join(rollouts):
+        """ Join a collection of RolloutBatches of the same temporal length into a single rollout batch. """
+        keys = set(rollouts[0].keys())
+        for r in rollouts[1:]:
+            assert set(r.keys()) == keys, "Cannot join rollouts, they do not have the same set of keys."
+
+        return RolloutBatch(
+            **{k: np.concatenate([r[k] for r in rollouts], axis=1) for k in keys})
+
 
 def list_concat(lsts):
     return [item for l in lsts for item in l]

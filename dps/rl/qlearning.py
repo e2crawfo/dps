@@ -1,225 +1,156 @@
 import numpy as np
 import tensorflow as tf
 from tensorflow.python.ops.rnn import dynamic_rnn
-from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from collections import deque
 
-from dps.rl import ReinforcementLearner
-from dps.utils import trainable_variables, Param
+from dps.rl import PolicyOptimization, RolloutBatch
+from dps.utils import Param, build_gradient_train_op
 
 
 def clipped_error(x):
     return tf.where(tf.abs(x) < 1.0, 0.5 * tf.square(x), tf.abs(x) - 0.5)
 
 
-class QLearning(ReinforcementLearner):
+class QLearning(PolicyOptimization):
     double = Param()
     replay_max_size = Param()
     replay_threshold = Param()
     replay_proportion = Param()
     target_update_rate = Param()
     steps_per_target_update = Param()
-    samples_per_update = Param()
     update_batch_size = Param()
+    optimizer_spec = Param()
+    lr_schedule = Param()
+    gamma = Param()
 
-    def __init__(self, env, q_network, target_network, **kwargs):
-        self.q_network = q_network
-        self.target_network = target_network
+    def __init__(self, q_network, **kwargs):
+        self.policy = self.q_network = q_network
+        self.target_network = q_network.deepcopy("target_network")
 
-        super(QLearning, self).__init__(env, q_network, **kwargs)
+        super(QLearning, self).__init__(**kwargs)
 
-        self.n_rollouts_since_target_update = 0
+        self.n_steps_since_target_update = 0
 
         self.replay_buffer = PrioritizedReplayBuffer(
             self.replay_max_size, self.replay_proportion, self.replay_threshold)
 
-        self.clear_buffers()
+    def _build_graph(self, is_training, exploration):
+        self.build_placeholders()
 
-    def build_graph(self):
-        with tf.name_scope("train"):
-            self.obs = tf.placeholder(tf.float32, shape=(None, None)+self.obs_shape, name="_obs")
-            self.actions = tf.placeholder(tf.float32, shape=(None, None, self.n_actions), name="_actions")
-            self.rewards = tf.placeholder(tf.float32, shape=(None, None, 1), name="_rewards")
-            self.reward_per_ep = tf.squeeze(tf.reduce_sum(tf.reduce_mean(self.rewards, axis=1), axis=0, name="_reward_per_ep"))
+        self.q_network.set_exploration(exploration)
+        self.target_network.set_exploration(exploration)
 
-            first_obs = self.obs[0, :, :]
-            rest_obs = self.obs[1:, :, :]
+        batch_size = tf.shape(self.obs)[1]
 
-            first_actions = self.actions[0, :, :]
-            rest_actions = self.actions[1:, :, :]
+        # Q values
+        (_, q_values), _ = dynamic_rnn(
+            self.q_network, self.obs, initial_state=self.q_network.zero_state(batch_size, tf.float32),
+            parallel_iterations=1, swap_memory=False, time_major=True)
+        q_values_selected_actions = q_values * self.actions
 
-            rest_rewards = self.rewards[:-1, :, :]
-            final_rewards = self.rewards[-1, :, :]
+        # Bootstrap values
+        (_, bootstrap_values), _ = dynamic_rnn(
+            self.target_network, self.obs, initial_state=self.target_network.zero_state(batch_size, tf.float32),
+            parallel_iterations=1, swap_memory=False, time_major=True)
 
-            inp = (rest_obs, rest_actions, rest_rewards)
+        bootstrap_values = tf.concat(
+            [bootstrap_values[1:, :, :], tf.zeros_like(bootstrap_values[0:1, :, :])],
+            axis=0)
+        bootstrap_values = tf.reduce_max(bootstrap_values, axis=-1, keep_dims=True)
+        bootstrap_values = tf.stop_gradient(bootstrap_values)
 
-            q_learning_cell = QLearningCell(self.q_network, self.target_network, self.double, self.gamma)
-            batch_size = tf.shape(self.obs)[1]
-            initial_state = q_learning_cell.initial_state(first_obs, first_actions, batch_size, tf.float32)
+        if self.double:
+            # Select maximum action using policy network
+            action_selection = tf.argmax(tf.stop_gradient(q_values), 1, name="action_selection")
+            action_selection_mask = tf.cast(tf.one_hot(action_selection, self.q_network.n_actions, 1, 0), tf.float32)
 
-            td_error, (prev_q_value, _, _) = dynamic_rnn(
-                q_learning_cell, inp, initial_state=initial_state,
-                parallel_iterations=1, swap_memory=False,
-                time_major=True)
+            # Evaluate selected action using target network
+            bootstrap_values = tf.reduce_sum(action_selection_mask * bootstrap_values, axis=-1, keep_dims=True)
 
-            final_td_error = final_rewards - prev_q_value
-            td_error = tf.concat((td_error, tf.expand_dims(final_td_error, 0)), axis=0)
-            self.loss = self.q_loss = tf.reduce_mean(clipped_error(td_error))
+        td_error = self.rewards + self.gamma * bootstrap_values - q_values_selected_actions
 
-            tf.summary.scalar("loss_q", self.q_loss)
-            tf.summary.scalar("reward_per_ep", self.reward_per_ep)
+        self.q_loss = tf.reduce_mean(clipped_error(td_error))
 
-            self._build_train()
+        tvars = self.q_network.trainable_variables()
+        self.train_op, train_summaries = build_gradient_train_op(
+            self.q_loss, tvars, self.optimizer_spec, self.lr_schedule)
 
-        if self.steps_per_target_update is None:
-            assert self.target_update_rate is not None
+        self.train_summary_op = tf.summary.merge(train_summaries)
 
-            with tf.name_scope("update_target_network"):
-                q_network_variables = trainable_variables(self.q_network.scope.name)
-                target_network_variables = trainable_variables(self.target_network.scope.name)
-                target_network_update = []
+        self.eval_summary_op = tf.summary.merge([
+            tf.summary.scalar("q_loss", self.q_loss),
+            tf.summary.scalar("reward_per_ep", self.reward_per_ep),
+        ])
 
-                for v_source, v_target in zip(q_network_variables, target_network_variables):
-                    update_op = v_target.assign_sub(self.target_update_rate * (v_target - v_source))
-                    target_network_update.append(update_op)
-                self.target_network_update = tf.group(*target_network_update)
-        else:
-            with tf.name_scope("update_target_network"):
-                q_network_variables = trainable_variables(self.q_network.scope.name)
-                target_network_variables = trainable_variables(self.target_network.scope.name)
-                target_network_update = []
+        self.recorded_values = [
+            ('loss', -self.reward_per_ep),
+            ('reward_per_ep', self.reward_per_ep),
+            ('q_loss', self.q_loss),
+        ]
 
+        q_network_variables = self.q_network.trainable_variables()
+        target_network_variables = self.target_network.trainable_variables()
+
+        with tf.name_scope("update_target_network"):
+            target_network_update = []
+
+            if self.steps_per_target_update is not None:
                 for v_source, v_target in zip(q_network_variables, target_network_variables):
                     update_op = v_target.assign(v_source)
                     target_network_update.append(update_op)
-                self.target_network_update = tf.group(*target_network_update)
+            else:
+                assert self.target_update_rate is not None
+                for v_source, v_target in zip(q_network_variables, target_network_variables):
+                    update_op = v_target.assign_sub(self.target_update_rate * (v_target - v_source))
+                    target_network_update.append(update_op)
 
-    def _build_feeddict(self):
-        obs = np.array(self.obs_buffer)
-        actions = np.array(self.action_buffer)
-        rewards = np.array(self.reward_buffer)
+            self.target_network_update = tf.group(*target_network_update)
+
+    def update(self, rollouts, collect_summaries):
+        self.replay_buffer.add(rollouts)
+        rollouts = self.replay_buffer.get_batch(self.update_batch_size)
 
         feed_dict = {
-            self.obs: obs,
-            self.actions: actions,
-            self.rewards: rewards}
-        return feed_dict
+            self.obs: rollouts.o,
+            self.actions: rollouts.a,
+            self.rewards: rollouts.r,
+            self.mask: rollouts.mask
+        }
 
-    def _update(self, batch_size, summary_op=None):
-        rollouts_remaining = batch_size
+        # Perform the update
+        sess = tf.get_default_session()
+        if collect_summaries:
+            train_summaries, _ = sess.run([self.train_summary_op, self.train_op], feed_dict=feed_dict)
+            summaries = train_summaries
+        else:
+            sess.run(self.train_op, feed_dict=feed_dict)
+            summaries = b''
+
+        if (self.steps_per_target_update is None) or (self.n_steps_since_target_update > self.steps_per_target_update):
+            sess.run(self.target_network_update)
+            self.n_steps_since_target_update = 0
+        else:
+            self.n_steps_since_target_update += 1
+
+        return summaries
+
+    def evaluate(self, rollouts):
+        feed_dict = {
+            self.obs: rollouts.o,
+            self.actions: rollouts.a,
+            self.rewards: rollouts.r,
+            self.mask: rollouts.mask
+        }
+
         sess = tf.get_default_session()
 
-        while rollouts_remaining > 0:
-            n_rollouts = min(rollouts_remaining, self.samples_per_update)
-            rollouts_remaining -= n_rollouts
+        eval_summaries, *values = (
+            sess.run(
+                [self.eval_summary_op] + [v for _, v in self.recorded_values],
+                feed_dict=feed_dict))
 
-            # Collect experiences
-            self.clear_buffers()
-            self.env.do_rollouts(self, self.q_network, n_rollouts, mode='train')
-            self.replay_buffer.add(self.obs_buffer, self.action_buffer, self.reward_buffer)
-
-            # Get a batch from replay buffer for performing update
-            (self.obs_buffer,
-             self.action_buffer,
-             self.reward_buffer) = self.replay_buffer.get_batch(self.update_batch_size)
-
-            # Perform the update
-            feed_dict = self._build_feeddict()
-            sess.run([self.train_op], feed_dict=feed_dict)
-
-            if (self.steps_per_target_update is None) or (self.n_rollouts_since_target_update > self.steps_per_target_update):
-                # Update target network
-                sess.run(self.target_network_update)
-                self.n_rollouts_since_target_update = 0
-            else:
-                self.n_rollouts_since_target_update += n_rollouts
-
-        # Run some evaluation rollouts
-        if summary_op is not None:
-            self.clear_buffers()
-            self.env.do_rollouts(self, self.q_network, batch_size, mode='train')
-            feed_dict = self._build_feeddict()
-
-            train_summary, train_loss, train_reward = sess.run(
-                [summary_op, self.loss, self.reward_per_ep], feed_dict=feed_dict)
-
-            self.clear_buffers()
-            self.env.do_rollouts(self, self.q_network, batch_size, mode='val')
-            feed_dict = self._build_feeddict()
-
-            val_summary, val_loss, val_reward = sess.run(
-                [summary_op, self.loss, self.reward_per_ep], feed_dict=feed_dict)
-
-            return_value = train_summary, -train_reward, val_summary, -val_reward
-        else:
-            self.clear_buffers()
-            self.env.do_rollouts(self, self.q_network, batch_size, mode='train')
-            feed_dict = self._build_feeddict()
-
-            train_reward, = sess.run([self.reward_per_ep], feed_dict=feed_dict)
-
-            return_value = -train_reward
-
-        return return_value
-
-
-class QLearningCell(RNNCell):
-    """ Used in defining the loss function that we differentiate to perform QLearning.
-
-    Reward needs to be offset by one time step; we always want to be working with
-    reward caused by previous state and action.
-
-    """
-    def __init__(self, q_network, target_network, double, gamma):
-        self.q_network = q_network
-        self.target_network = target_network
-        self.double = double
-        self.gamma = gamma
-
-    def __call__(self, inp, state, scope=None):
-        with tf.name_scope(scope or 'q_learning_cell'):
-            observations, actions, rewards = inp
-            prev_q_value, qn_state, tn_state = state
-
-            _, target_values, new_tn_state = self.target_network.build(observations, tn_state)
-            _, q_values, new_qn_state = self.q_network.build(observations, qn_state)
-
-            if self.double:
-                action_selection = tf.argmax(tf.stop_gradient(target_values), 1, name="action_selection")
-                action_selection_mask = tf.cast(tf.one_hot(action_selection, self.q_network.n_actions, 1, 0), tf.float32)
-                bootstrap = tf.reduce_sum(action_selection_mask * q_values, axis=-1, keep_dims=True)
-            else:
-                bootstrap = tf.reduce_max(tf.stop_gradient(target_values), axis=-1, keep_dims=True)
-
-            td_error = rewards + self.gamma * bootstrap - prev_q_value
-            q_value_selected_action = tf.reduce_sum(actions * q_values, axis=1, keep_dims=True)
-
-            new_state = (q_value_selected_action, new_qn_state, new_tn_state)
-            return td_error, new_state
-
-    @property
-    def state_size(self):
-        return (1, 1, self.q_network.state_size, self.target_network.state_size)
-
-    @property
-    def output_size(self):
-        return 1
-
-    def zero_state(self, batch_size, dtype):
-        initial_state = (
-            tf.fill((batch_size, 1), 0.0),  # q-value of action selected on previous time step
-            self.q_network.zero_state(batch_size, dtype),  # hidden state for q network
-            self.target_network.zero_state(batch_size, dtype))  # hidden state for target network
-        return initial_state
-
-    def initial_state(self, first_obs, first_actions, batch_size, dtype):
-        _, qn_state, tn_state = self.zero_state(batch_size, dtype)
-
-        _, _, new_tn_state = self.target_network.build(first_obs, tn_state)
-        _, q_values, new_qn_state = self.q_network.build(first_obs, qn_state)
-        q_value_selected_action = tf.reduce_sum(first_actions * q_values, axis=1, keep_dims=True)
-
-        return q_value_selected_action, new_qn_state, new_tn_state
+        record = {k: v for v, (k, _) in zip(values, self.recorded_values)}
+        return eval_summaries, record
 
 
 class PrioritizedReplayBuffer(object):
@@ -246,19 +177,7 @@ class PrioritizedReplayBuffer(object):
     def _get_batch(batch_size, buff):
         replace = batch_size > len(buff)
         idx = np.random.choice(len(buff), batch_size, replace=replace)
-        obs, actions, rewards = [], [], []
-        for i in idx:
-            o, a, r = buff[i]
-            obs.append(o)
-            actions.append(a)
-            rewards.append(r)
-
-        # TODO: need to pad returned array with zeros if trajectories are different lengths
-        obs = np.transpose(obs, (1, 0, 2))
-        actions = np.transpose(actions, (1, 0, 2))
-        rewards = np.transpose(rewards, (1, 0, 2))
-
-        return obs, actions, rewards
+        return RolloutBatch.join([buff[i] for i in idx])
 
     def get_batch(self, batch_size):
         if self.ro > 0 and len(self.high_buffer) > 0:
@@ -267,22 +186,14 @@ class PrioritizedReplayBuffer(object):
 
             low_priority = self._get_batch(n_low_priority, self.low_buffer)
             high_priority = self._get_batch(n_high_priority, self.high_buffer)
-
-            obs = np.concatenate((low_priority[0], high_priority[0]), axis=1)
-            actions = np.concatenate((low_priority[1], high_priority[1]), axis=1)
-            rewards = np.concatenate((low_priority[2], high_priority[2]), axis=1)
-            return obs, actions, rewards
+            return RolloutBatch.join([low_priority, high_priority])
         else:
             return self._get_batch(batch_size, self.low_buffer)
 
-    def add(self, obs, actions, rewards):
-        # Assumes shape is (n_timesteps, batch_size, dim)
-        obs = list(np.transpose(obs, (1, 0, 2)))
-        actions = list(np.transpose(actions, (1, 0, 2)))
-        rewards = list(np.transpose(rewards, (1, 0, 2)))
-
-        for o, a, r in zip(obs, actions, rewards):
-            buff = self.high_buffer if (r.sum() > self.threshold and self.ro > 0) else self.low_buffer
-            buff.append((o, a, r))
+    def add(self, rollouts):
+        assert isinstance(rollouts, RolloutBatch)
+        for r in rollouts.split():
+            buff = self.high_buffer if (r.rewards.sum() > self.threshold and self.ro > 0) else self.low_buffer
+            buff.append(r)
             while len(buff) > self.max_size:
                 buff.popleft()
