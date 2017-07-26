@@ -28,6 +28,7 @@ def numbers_to_digits(numbers, shape, base=10):
 
 
 class Container(object):
+    """ X: real-world representation, Y: numerical representation. """
     def __init__(self, X, Y):
         assert len(X) == len(Y)
         self.X, self.Y = X, Y
@@ -76,9 +77,9 @@ class AltArithmeticDataset(RegressionDataset):
         else:
             sorted_symbols = sorted(symbols, key=lambda x: x[0])
             functions = {i: f for i, (_, f) in enumerate(sorted_symbols)}
-            symbol_values = sorted(functions.keys())
+            symbol_values = np.array(sorted(functions.keys()))
 
-            symbol_reps = Container(symbol_values, symbol_values)
+            symbol_reps = Container(symbol_values + 10, symbol_values)
             digit_reps = Container(np.arange(base), np.arange(base))
 
             blank_element = np.array([[-1]])
@@ -208,7 +209,7 @@ class AltArithmetic(TensorFlowEnv):
 
     def init_rb(self):
         values = (
-            [0., 0., 0., 0., 0., -1.] +
+            [0., 0., -1., 0., 0., -1.] +
             [np.zeros(np.product(self.element_shape), dtype='f')])
         self.rb = RegisterBank(
             'AltArithmeticRB',
@@ -240,8 +241,8 @@ class AltArithmetic(TensorFlowEnv):
             self.build_op_classifier = ClassifierFunc(op_pretrained, len(op_config.symbols) + 1)
 
         else:
-            self.build_digit_classifier = lambda x: tf.identity(x)
-            self.build_op_classifier = lambda x: tf.identity(x)
+            self.build_digit_classifier = lambda x: tf.where(x < 10, x, -1 * tf.ones_like(x))
+            self.build_op_classifier = lambda x: tf.where(x >= 10, x, -1 * tf.ones_like(x))
 
     def build_init_glimpse(self, batch_size, inp, fovea_y, fovea_x):
         indices = tf.concat([
@@ -314,7 +315,7 @@ class AltArithmetic(TensorFlowEnv):
         fovea_x = tf.clip_by_value(fovea_x, 0, self.shape[1]-1)
         return fovea_y, fovea_x
 
-    def build_return(self, digit, op, acc, fovea_x, fovea_y, prev_action, glimpse):
+    def build_return(self, digit, op, acc, fovea_x, fovea_y, prev_action, glimpse, actions=None):
         with tf.name_scope("AltArithmetic"):
             new_registers = self.rb.wrap(
                 digit=tf.identity(digit, "digit"),
@@ -325,9 +326,17 @@ class AltArithmetic(TensorFlowEnv):
                 prev_action=tf.identity(prev_action, "prev_action"),
                 glimpse=glimpse)
 
+        if actions is not None:
+            (right, left, down, up, classify_digit, classify_op, add, inc, multiply, store, no_op) = (
+                tf.split(actions, self.n_actions, axis=1))
+            information_action = tf.cast(tf.logical_or(classify_digit > 0.5, classify_op > 0.5), tf.float32)
+            reward = 0.01 * information_action
+        else:
+            reward = tf.fill((tf.shape(digit)[0], 1), 0.0),
+
         return (
             tf.fill((tf.shape(digit)[0], 1), 0.0),
-            tf.fill((tf.shape(digit)[0], 1), 0.0),
+            reward,
             new_registers)
 
     def build_step(self, t, r, a, inp):
@@ -350,7 +359,7 @@ class AltArithmetic(TensorFlowEnv):
 
         prev_action = tf.cast(tf.reshape(tf.argmax(a, axis=1), (-1, 1)), tf.float32)
 
-        return self.build_return(digit, op, acc, fovea_x, fovea_y, prev_action, glimpse)
+        return self.build_return(digit, op, acc, fovea_x, fovea_y, prev_action, glimpse, a)
 
 
 class AltArithmeticBadWiring(AltArithmetic):
