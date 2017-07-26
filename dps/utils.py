@@ -29,7 +29,11 @@ def masked_mean(array, mask):
     return tf.reduce_mean(tf.boolean_mask(array, tf.cast(mask, tf.bool)))
 
 
-def build_gradient_train_op(loss, tvars, optimizer_spec, lr_schedule, max_grad_norm=None, noise_schedule=None):
+def build_gradient_train_op(
+        loss, tvars, optimizer_spec, lr_schedule,
+        max_grad_norm=None, noise_schedule=None, global_step=None):
+    """ By default, `global_step` is None, so the global step is not incremented. """
+
     pure_gradients = tf.gradients(loss, tvars)
 
     clipped_gradients = pure_gradients
@@ -46,8 +50,6 @@ def build_gradient_train_op(loss, tvars, optimizer_spec, lr_schedule, max_grad_n
 
     lr = build_scheduled_value(lr_schedule, 'learning_rate')
     optimizer = build_optimizer(optimizer_spec, lr)
-
-    global_step = tf.contrib.framework.get_or_create_global_step()
 
     train_op = optimizer.apply_gradients(grads_and_vars, global_step=global_step)
 
@@ -606,7 +608,11 @@ def popleft(l, default=None):
         return l.popleft()
 
 
-def build_scheduled_value(schedule, name, dtype=None):
+def scheduled_value_summaries():
+    return tf.get_collection('scheduled_value_summaries')
+
+
+def build_scheduled_value(schedule, name, global_step=None, dtype=None):
     """
     Parameters
     ----------
@@ -653,6 +659,7 @@ def build_scheduled_value(schedule, name, dtype=None):
     kind, *args = schedule.split()
     kind = kind.lower()
     args = deque(args)
+    global_step = tf.contrib.framework.get_or_create_global_step() if global_step is None else global_step
 
     if kind == "constant":
         scheduled_value = tf.constant(float(args[0]), dtype=dtype)
@@ -661,7 +668,6 @@ def build_scheduled_value(schedule, name, dtype=None):
         decay_steps = int(popleft(args))
         decay_rate = float(popleft(args))
         staircase = _bool(popleft(args, False))
-        global_step = tf.contrib.framework.get_or_create_global_step()
 
         scheduled_value = tf.train.exponential_decay(
             initial, global_step, decay_steps, decay_rate, staircase, name=op_name)
@@ -672,7 +678,6 @@ def build_scheduled_value(schedule, name, dtype=None):
         end = float(popleft(args))
         power = float(popleft(args, 1))
         cycle = _bool(popleft(args, False))
-        global_step = tf.contrib.framework.get_or_create_global_step()
 
         scheduled_value = tf.train.polynomial_decay(
             initial, global_step, decay_steps, end, power, cycle, name=op_name)
@@ -681,7 +686,6 @@ def build_scheduled_value(schedule, name, dtype=None):
         decay_steps = int(popleft(args))
         decay_rate = float(popleft(args))
         staircase = _bool(popleft(args, False))
-        global_step = tf.contrib.framework.get_or_create_global_step()
 
         scheduled_value = tf.train.inverse_time_decay(
             initial, global_step, decay_steps, decay_rate, staircase, name=op_name)
@@ -692,7 +696,6 @@ def build_scheduled_value(schedule, name, dtype=None):
         decay_rate = float(popleft(args))
         gamma = float(popleft(args))
         staircase = _bool(popleft(args, False))
-        global_step = tf.contrib.framework.get_or_create_global_step()
 
         scheduled_value = adj_inverse_time_decay(
             initial, global_step, decay_steps, decay_rate, gamma, staircase, name=op_name)
@@ -705,7 +708,7 @@ def build_scheduled_value(schedule, name, dtype=None):
         scheduled_value = tf.cast(scheduled_value, dtype, name=op_name+"_cast")
 
     if name is not None:
-        tf.summary.scalar(name, scheduled_value)
+        tf.summary.scalar(name, scheduled_value, collections=['scheduled_value_summaries'])
 
     return scheduled_value
 

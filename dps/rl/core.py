@@ -93,7 +93,7 @@ class RLUpdater(Updater):
             for learner in self.learners)
         return summaries
 
-    def evaluate(self, batch_size, mode):
+    def _evaluate(self, batch_size, mode):
         """ Return list of tf summaries and a dictionary of values to be displayed. """
         assert mode in 'train_eval val'.split()
         self.set_is_training(mode == 'train_eval')

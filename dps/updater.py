@@ -4,7 +4,8 @@ from future.utils import with_metaclass
 import tensorflow as tf
 
 from dps.utils import (
-    build_gradient_train_op, Parameterized, Param, trainable_variables)
+    build_gradient_train_op, Parameterized, Param,
+    trainable_variables, scheduled_value_summaries)
 
 
 class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
@@ -20,22 +21,6 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
     def n_experiences(self):
         return self._n_experiences
 
-    def update(self, batch_size, collect_summaries):
-        self._n_experiences += batch_size
-        return self._update(batch_size, collect_summaries)
-
-    @abc.abstractmethod
-    def _update(self, batch_size, collect_summaries=None):
-        raise Exception("NotImplemented")
-
-    @abc.abstractmethod
-    def evaluate(self, batch_size, mode):
-        raise Exception("NotImplemented")
-
-    def set_is_training(self, is_training):
-        tf.get_default_session().run(
-            self._assign_is_training, feed_dict={self._set_is_training: is_training})
-
     def build_graph(self):
         with tf.variable_scope(self.__class__.__name__) as scope:
             self.scope = scope
@@ -46,9 +31,37 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
 
             self._build_graph()
 
+            self.scheduled_value_summaries_op = tf.summary.merge(scheduled_value_summaries())
+            global_step = tf.contrib.framework.get_or_create_global_step()
+            self.inc_global_step_op = tf.assign_add(global_step, 1)
+
     @abc.abstractmethod
     def _build_graph(self):
         raise Exception("NotImplemented")
+
+    def update(self, batch_size, collect_summaries):
+        self._n_experiences += batch_size
+        update = self._update(batch_size, collect_summaries)
+        tf.get_default_session().run(self.inc_global_step_op)
+        return update
+
+    @abc.abstractmethod
+    def _update(self, batch_size, collect_summaries=None):
+        raise Exception("NotImplemented")
+
+    def evaluate(self, batch_size, mode):
+        summaries, record = self._evaluate(batch_size, mode)
+        _scheduled_value_summaries = tf.get_default_session().run(self.scheduled_value_summaries_op)
+        summaries += _scheduled_value_summaries
+        return summaries, record
+
+    @abc.abstractmethod
+    def _evaluate(self, batch_size, mode):
+        raise Exception("NotImplemented")
+
+    def set_is_training(self, is_training):
+        tf.get_default_session().run(
+            self._assign_is_training, feed_dict={self._set_is_training: is_training})
 
     def save(self, session, filename):
         if self.scope is None:
@@ -139,7 +152,7 @@ class DifferentiableUpdater(Updater):
             sess.run(self.train_op, feed_dict=feed_dict)
             return b''
 
-    def evaluate(self, batch_size, mode):
+    def _evaluate(self, batch_size, mode):
         assert mode in 'train_eval val'.split()
         self.set_is_training(mode == 'train_eval')
 
