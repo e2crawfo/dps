@@ -612,7 +612,7 @@ def scheduled_value_summaries():
     return tf.get_collection('scheduled_value_summaries')
 
 
-def build_scheduled_value(schedule, name, global_step=None, dtype=None):
+def build_scheduled_value(schedule, name=None, global_step=None, dtype=None):
     """
     Parameters
     ----------
@@ -649,7 +649,7 @@ def build_scheduled_value(schedule, name, global_step=None, dtype=None):
         scheduled_value = learning_rate / (1 + decay_rate * t)
 
     """
-    op_name = name + "_schedule"
+    op_name = name + "_schedule" if name else None
     try:
         schedule = "constant {}".format(float(schedule))
     except (TypeError, ValueError):

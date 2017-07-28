@@ -11,7 +11,7 @@ from dps.rl.policy import (
     Policy, Softmax, EpsilonSoftmax, EpsilonGreedy, Deterministic, Normal, Gamma, ProductDist)
 from dps.vision import LeNet, MNIST_CONFIG
 from dps.experiments import (
-    hello_world, room, simple_addition, pointer_following,
+    hello_world, room, grid, simple_addition, pointer_following,
     hard_addition, translated_mnist, mnist_arithmetic, simple_arithmetic,
     alt_arithmetic)
 from dps.rl.value import actor_critic, TrustRegionPolicyEvaluation, PolicyEvaluation
@@ -168,12 +168,15 @@ QLEARNING_CONFIG = Config(
     alg=QLearning,
 
     action_selection=lambda env: EpsilonGreedy(env.n_actions),
-    controller=lambda n_params, name=None: FeedforwardCell(MLP([8, 8]), n_params, name=name),
-    double=False,
+    n_controller_units=64,
+    # controller=lambda n_params, name=None: FeedforwardCell(MLP([64, 64]), n_params, name=name),
+    # controller=lambda n_params, name=None: CompositeCell(
+    #     tf.contrib.rnn.LSTMCell(num_units=cfg.n_controller_units), DuelingHead(MLP(), MLP()), n_params, name=name),
+    double=True,
 
-    lr_schedule=0.00025,
-    exploration_schedule="poly 0.5 20000 0.01",
-    test_time_explore=0.05,
+    lr_schedule="poly 0.00025 100000 1e-6",
+    exploration_schedule="0.1",
+    test_time_explore="0.01",
 
     optimizer_spec="adam",
 
@@ -182,15 +185,14 @@ QLEARNING_CONFIG = Config(
     replay_proportion=0.0,
     gamma=1.0,
 
+    opt_steps_per_batch=1,
     target_update_rate=None,
-    steps_per_target_update=1000,
+    steps_per_target_update=100,
     patience=np.inf,
     update_batch_size=32,  # Number of sample rollouts to use for each parameter update
     batch_size=1,  # Number of sample experiences per update
 
     max_grad_norm=0.0,
-
-    n_controller_units=64,
 )
 
 
@@ -211,7 +213,7 @@ DQN_CONFIG = QLEARNING_CONFIG.copy(
     # max number of frames/states: 10 million
 
     test_time_explore=0.05,
-    # target_network_update Once every 10000 frames
+    # Once every 10000 frames
     steps_per_target_update=10000,
 
     gamma=0.99,
@@ -307,6 +309,22 @@ ROOM_CONFIG = Config(
     room_angular=False,
     l2l=False,
     reward_radius=0.2,
+)
+
+
+GRID_CONFIG = Config(
+    build_env=grid.build_env,
+    curriculum=[dict()],
+    n_controller_units=32,
+    action_selection=lambda env: Softmax(env.n_actions),
+    log_name='grid',
+    eval_step=10,
+    batch_size=10,
+    dense_reward=True,
+    restart_prob=0.0,
+    l2l=False,
+    shape=(5, 5),
+    T=20
 )
 
 
@@ -718,6 +736,7 @@ actor_configs = dict(
 tasks = dict(
     hello_world=HELLO_WORLD_CONFIG,
     room=ROOM_CONFIG,
+    grid=GRID_CONFIG,
     simple_addition=SIMPLE_ADDITION_CONFIG,
     pointer=POINTER_CONFIG,
     hard_addition=HARD_ADDITION_CONFIG,

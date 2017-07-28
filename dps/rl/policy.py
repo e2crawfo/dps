@@ -367,9 +367,7 @@ class EpsilonGreedy(Categorical):
         float_is_max = tf.cast(bool_is_max, tf.float32)
         max_count = tf.reduce_sum(float_is_max, axis=1, keep_dims=True)
         _probs = (float_is_max / max_count) * (1 - epsilon)
-        n_actions = tf.shape(q_values)[1]
-        probs = _probs + epsilon / tf.cast(n_actions, tf.float32)
-        return probs
+        return _probs + epsilon / tf.cast(self.n_params, tf.float32)
 
     def _dist(self, q_values, exploration):
         probs = self._probs(q_values, exploration)

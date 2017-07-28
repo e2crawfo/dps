@@ -66,25 +66,25 @@ class RLUpdater(Updater):
         super(RLUpdater, self).__init__(env, **kwargs)
 
     def _build_graph(self):
-        training_exploration = build_scheduled_value(self.exploration_schedule, 'exploration')
-
-        if self.test_time_explore >= 0:
-            testing_exploration = tf.constant(self.test_time_explore, tf.float32, name='testing_exploration')
+        training_exploration = build_scheduled_value(self.exploration_schedule)
+        if isinstance(self.test_time_explore, str) or self.test_time_explore >= 0:
+            testing_exploration = build_scheduled_value(self.test_time_explore)
             self.exploration = tf.cond(self.is_training, lambda: training_exploration, lambda: testing_exploration)
         else:
             self.exploration = training_exploration
+        tf.summary.scalar('exploration', self.exploration, collections=['scheduled_value_summaries'])
 
         self.policy.set_exploration(self.exploration)
 
         # self.policy.build_update()
+
         for learner in self.learners:
             learner.build_graph(self.is_training, self.exploration)
 
-        self.reward = tf.placeholder(tf.float32, (None, None, 1))
-        self.reward_per_ep = episodic_mean(self.reward)
+        self.reward = tf.placeholder(tf.float32, (None, None, 1), "_bp_reward")
+        self.reward_per_ep = episodic_mean(self.reward, name="_bp_reward_per_ep")
 
     def _update(self, batch_size, collect_summaries):
-        self.set_is_training(True)
         rollouts = self.env.do_rollouts(self.policy, batch_size, mode='train')
         rollouts['mask'] = (1-shift_zero_fill(rollouts.done, 1)).astype('f')
 
@@ -95,9 +95,6 @@ class RLUpdater(Updater):
 
     def _evaluate(self, batch_size, mode):
         """ Return list of tf summaries and a dictionary of values to be displayed. """
-        assert mode in 'train_eval val'.split()
-        self.set_is_training(mode == 'train_eval')
-
         rollouts = self.env.do_rollouts(self.policy, batch_size, mode=mode)
         rollouts['mask'] = 1-shift_zero_fill(rollouts.done, 1)
 
@@ -113,9 +110,7 @@ class RLUpdater(Updater):
 
         sess = tf.get_default_session()
         feed_dict = {self.reward: rollouts.r}
-        reward_per_ep = (
-            sess.run(self.reward_per_ep, feed_dict=feed_dict))
-        record['behaviour_policy_reward_per_ep'] = reward_per_ep
+        record['behaviour_policy_reward_per_ep'] = sess.run(self.reward_per_ep, feed_dict=feed_dict)
 
         return summaries, record
 
