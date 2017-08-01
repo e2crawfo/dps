@@ -8,8 +8,6 @@ from dps.environment import TensorFlowEnv
 
 class Room(TensorFlowEnv):
     action_names = ['delta_x', 'delta_y']
-    make_input_available = False
-    static_inp_width = 4
 
     def __init__(
             self, T, reward_radius, max_step, restart_prob,
@@ -24,7 +22,7 @@ class Room(TensorFlowEnv):
         self.restart_prob = restart_prob
         self.dense_reward = dense_reward
         self.l2l = l2l
-        self.val = self._make_static_input(n_val)
+        self.val_input = self._make_input(n_val)
         self.mode = 'train'
 
         if self.l2l and not self.dense_reward:
@@ -35,31 +33,30 @@ class Room(TensorFlowEnv):
     def completion(self):
         return 0.0
 
-    def static_inp_type_and_shape(self):
-        return (tf.float32, (self.static_inp_width,))
-
-    def _make_static_input(self, batch_size):
+    def _make_input(self, batch_size):
         if self.l2l:
-            return np.random.uniform(
-                low=-1.0, high=1.0, size=(batch_size, self.static_inp_width))
+            return np.random.uniform(low=-1.0, high=1.0, size=(batch_size, 4))
         else:
             return np.concatenate(
                 [np.random.uniform(low=-1.0, high=1.0, size=(batch_size, 2)),
                  np.zeros((batch_size, 2))],
                 axis=1)
 
-    def make_static_input(self, batch_size):
+    def start_episode(self, n_rollouts):
         if self.mode in 'train train_eval'.split():
-            return self._make_static_input(batch_size)
+            self.input = self._make_input(n_rollouts)
         elif self.mode == 'val':
-            return self.val
+            self.input = self.val_input
         else:
             raise Exception("Unknown mode: {}.".format(self.mode))
+        return self.input.shape[0], {self.input_ph: self.input}
 
-    def build_init(self, r, inp):
+    def build_init(self, r):
         batch_size = tf.shape(r)[0]
+        self.input_ph = tf.placeholder(tf.float32, (None, 4))
         return self.rb.wrap(
-            x=inp[:, 0:1], y=inp[:, 1:2], goal_x=inp[:, 2:3], goal_y=inp[:, 3:4],
+            x=self.input_ph[:, 0:1], y=self.input_ph[:, 1:2],
+            goal_x=self.input_ph[:, 2:3], goal_y=self.input_ph[:, 3:4],
             dx=tf.fill((batch_size, 1), 0.0),
             dy=tf.fill((batch_size, 1), 0.0),
             r=tf.fill((batch_size, 1), 0.0))
@@ -68,7 +65,7 @@ class Room(TensorFlowEnv):
         delta_x, delta_y = tf.split(a, 2, axis=1)
         return delta_x, delta_y
 
-    def build_step(self, t, r, a, static_inp):
+    def build_step(self, t, r, a):
         x, y, _, _, _, goal_x, goal_y = self.rb.as_tuple(r)
         delta_x, delta_y = self.process_actions(a)
 

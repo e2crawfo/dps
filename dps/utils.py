@@ -25,6 +25,35 @@ from tensorflow.contrib.slim import fully_connected
 import dps
 
 
+class DataContainer(object):
+    def __init__(self, X, Y):
+        assert len(X) == len(Y)
+        self.X, self.Y = X, Y
+
+    def get_random(self):
+        idx = np.random.randint(len(self.X))
+        return self.X[idx], self.Y[idx]
+
+
+def digits_to_numbers(digits, base=10, axis=-1, keepdims=False):
+    """ Convert array of digits to number, assumes little-endian (least-significant first). """
+    mult = base ** np.arange(digits.shape[axis])
+    shape = [1] * digits.ndim
+    shape[axis] = mult.shape[axis]
+    mult = mult.reshape(shape)
+    return (digits * mult).sum(axis=axis, keepdims=keepdims)
+
+
+def numbers_to_digits(numbers, n_digits, base=10):
+    """ Convert number to array of digits, assumed little-endian. """
+    numbers = numbers.copy()
+    digits = []
+    for i in range(n_digits):
+        digits.append(numbers % base)
+        numbers //= base
+    return np.stack(digits, -1)
+
+
 def masked_mean(array, mask):
     return tf.reduce_mean(tf.boolean_mask(array, tf.cast(mask, tf.bool)))
 
@@ -66,16 +95,30 @@ class Param(object):
 
 
 class Parameterized(object):
+    _resolved = False
+
     def __init__(self, **kwargs):
-        for p in self.params:
-            value = kwargs.get(p)
-            if value is None:
-                value = getattr(dps.cfg, p)
-            setattr(self, p, value)
+        self._resolve_params(**kwargs)
+
+    def _resolve_params(self, **kwargs):
+        if not self._resolved:
+            for p in self._params:
+                value = kwargs.get(p)
+                if value is None:
+                    value = getattr(dps.cfg, p)
+                setattr(self, p, value)
+            self._resolved = True
 
     @property
-    def params(self):
-        return [p for p in dir(self) if p != 'params' and isinstance(getattr(self, p), Param)]
+    def _params(self):
+        params = []
+        for p in dir(self):
+            try:
+                if p != 'params' and isinstance(getattr(self, p), Param):
+                    params.append(p)
+            except:
+                pass
+        return params
 
 
 def parse_date(d, fmt='%a %b  %d %H:%M:%S %Z %Y'):

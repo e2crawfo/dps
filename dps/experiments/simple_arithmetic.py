@@ -7,90 +7,64 @@ from pathlib import Path
 from dps import cfg
 from dps.register import RegisterBank
 from dps.environment import (
-    RegressionDataset, RegressionEnv, CompositeEnv, TensorFlowEnv)
+    RegressionDataset, RegressionEnv, CompositeEnv, InternalEnv)
 from dps.vision import MnistPretrained, ClassifierFunc
 from dps.vision.dataset import char_to_idx, load_emnist
-
-
-def digits_to_numbers(digits, base=10, axis=-1, keepdims=False):
-    """ Assumes little-endian (least-significant stored first). """
-    mult = base ** np.arange(digits.shape[axis])
-    shape = [1] * digits.ndim
-    shape[axis] = mult.shape[axis]
-    mult = mult.reshape(shape)
-    return (digits * mult).sum(axis=axis, keepdims=keepdims)
-
-
-def numbers_to_digits(numbers, shape, base=10):
-    numbers = numbers.copy()
-    digits = []
-    for i in range(shape):
-        digits.append(numbers % base)
-        numbers //= base
-    return np.stack(digits, -1)
-
-
-class Container(object):
-    def __init__(self, X, Y):
-        assert len(X) == len(Y)
-        self.X, self.Y = X, Y
-
-    def get_random(self):
-        idx = np.random.randint(len(self.X))
-        return self.X[idx], self.Y[idx]
+from dps.utils import DataContainer, Param
 
 
 class SimpleArithmeticDataset(RegressionDataset):
-    def __init__(self, mnist, symbols, shape, n_digits, upper_bound,
-                 base, blank_char, n_examples, op_loc):
 
-        assert 1 <= base <= 10
+    mnist = Param()
+    symbols = Param()
+    shape = Param()
+    n_digits = Param()
+    upper_bound = Param()
+    base = Param()
+    n_examples = Param()
+    op_loc = Param()
 
-        # symbols is a list of pairs of the form (letter, reduction function)
-        self.mnist = mnist
-        self.symbols = symbols
-        self.shape = shape
-        self.n_digits = n_digits
-        self.upper_bound = upper_bound
-        self.base = base
-        self.blank_char = blank_char
-        self.op_loc = op_loc
+    def __init__(self, **kwargs):
+        self._resolve_params(**kwargs)
 
-        assert np.product(shape) >= n_digits + 1
+        assert 1 <= self.base <= 10
+
+        assert np.product(self.shape) >= self.n_digits + 1
 
         if self.mnist:
-            functions = {char_to_idx(s): f for s, f in symbols}
+            functions = {char_to_idx(s): f for s, f in self.symbols}
 
-            emnist_x, emnist_y, symbol_map = load_emnist(list(functions.keys()), balance=True)
+            emnist_x, emnist_y, symbol_map = load_emnist(
+                list(functions.keys()), balance=True)
             emnist_x = emnist_x.reshape(-1, 28, 28)
             emnist_x = np.uint8(255*np.minimum(emnist_x, 1))
             emnist_y = np.squeeze(emnist_y, 1)
 
             functions = {symbol_map[k]: v for k, v in functions.items()}
 
-            symbol_reps = Container(emnist_x, emnist_y)
+            symbol_reps = DataContainer(emnist_x, emnist_y)
 
-            mnist_x, mnist_y, symbol_map = load_emnist(list(range(base)), balance=True)
+            mnist_x, mnist_y, symbol_map = load_emnist(list(range(self.base)), balance=True)
             mnist_x = mnist_x.reshape(-1, 28, 28)
             mnist_x = np.uint8(255*np.minimum(mnist_x, 1))
             mnist_y = np.squeeze(mnist_y, 1)
 
-            digit_reps = Container(mnist_x, mnist_y)
+            digit_reps = DataContainer(mnist_x, mnist_y)
             blank_element = np.zeros((28, 28))
         else:
-            sorted_symbols = sorted(symbols, key=lambda x: x[0])
+            sorted_symbols = sorted(self.symbols, key=lambda x: x[0])
             functions = {i: f for i, (_, f) in enumerate(sorted_symbols)}
             symbol_values = sorted(functions.keys())
 
-            symbol_reps = Container(symbol_values, symbol_values)
-            digit_reps = Container(np.arange(base), np.arange(base))
+            symbol_reps = DataContainer(symbol_values, symbol_values)
+            digit_reps = DataContainer(np.arange(self.base), np.arange(self.base))
 
             blank_element = np.array([-1])
 
         x, y = self.make_dataset(
             self.shape, self.n_digits, self.upper_bound, self.base,
             blank_element, symbol_reps, digit_reps,
-            functions, n_examples, op_loc)
+            functions, self.n_examples, self.op_loc)
 
         super(SimpleArithmeticDataset, self).__init__(x, y)
 
@@ -100,7 +74,10 @@ class SimpleArithmeticDataset(RegressionDataset):
             symbol_reps, digit_reps, functions, n_examples, op_loc):
 
         if n_examples == 0:
-            return np.zeros((0,) + shape + blank_element.shape).astype('f'), np.zeros((0, 1)).astype('i')
+            return (
+                np.zeros((0,) + shape + blank_element.shape).astype('f'),
+                np.zeros((0, 1)).astype('i')
+            )
 
         new_X, new_Y = [], []
 
@@ -147,94 +124,66 @@ class SimpleArithmeticDataset(RegressionDataset):
         return new_X, new_Y
 
 
-class SimpleArithmeticEnv(RegressionEnv):
-    def __init__(self, mnist, shape, n_digits, upper_bound, base,
-                 n_train, n_val, op_loc=None, start_loc=None):
-        self.mnist = mnist
-        self.shape = shape
-        self.n_digits = n_digits
-        self.upper_bound = upper_bound
-        self.base = base
-        self.blank_char = blank_char = 'b'
-        self.symbols = symbols = [
-            ('A', lambda x: sum(x)),
-            ('M', lambda x: np.product(x)),
-            ('C', lambda x: len(x))]
+class SimpleArithmetic(InternalEnv):
+    """ Top left is (x=0, y=0). Sign is in the bottom left of the input grid. """
 
-        self.op_loc = op_loc
-        self.start_loc = op_loc
-
-        super(SimpleArithmeticEnv, self).__init__(
-            train=SimpleArithmeticDataset(
-                mnist, symbols, shape, n_digits, upper_bound, base, blank_char, n_train, op_loc),
-            val=SimpleArithmeticDataset(
-                mnist, symbols, shape, n_digits, upper_bound, base, blank_char, n_val, op_loc))
-
-    def __str__(self):
-        return "<SimpleArithmeticEnv shape={} base={}>".format(self.height, self.shape, self.base)
-
-
-class SimpleArithmetic(TensorFlowEnv):
-    """ Top left is (x=0, y=0). Sign is in the bottom left of the input grid.
-
-    For now, the location of the write head is the same as the x location of the read head.
-
-    """
     action_names = ['>', '<', 'v', '^', 'store_op', '+', '+1', '*', 'store', 'noop']
+
+    mnist = Param()
+    symbols = Param()
+    shape = Param()
+    n_digits = Param()
+    upper_bound = Param()
+    base = Param()
+    start_loc = Param()
+    build_classifier = Param()
+    classifier_str = Param()
 
     @property
     def element_shape(self):
         return (28, 28) if self.mnist else (1,)
 
-    def static_inp_type_and_shape(self):
-        return (tf.float32, self.shape + self.element_shape)
+    @property
+    def input_shape(self):
+        return self.shape + self.element_shape
 
-    make_input_available = True
-
-    def __init__(self, env):
-        self.mnist = env.mnist
-        self.symbols = env.symbols
-        self.shape = env.shape
+    def __init__(self, **kwargs):
+        self._resolve_params(**kwargs)
 
         if not len(self.shape) == 2:
             raise Exception("Shape must have length 2.")
 
-        self.n_digits = env.n_digits
-        self.upper_bound = env.upper_bound
-        self.base = env.base
-        self.blank_char = env.blank_char
-
-        self.start_loc = env.start_loc
-
         if self.mnist:
-            build_classifier = cfg.build_classifier
-            classifier_str = cfg.classifier_str
-
             digit_config = cfg.mnist_config.copy(symbol=list(range(self.base)))
 
             name = '{}_symbols={}.chk'.format(
-                classifier_str, '_'.join(str(s) for s in digit_config.symbols))
+                self.classifier_str, '_'.join(str(s) for s in digit_config.symbols))
+
             digit_pretrained = MnistPretrained(
-                None, build_classifier, name=name, model_dir='/tmp/dps/mnist_pretrained/',
+                None, self.build_classifier, name=name,
+                model_dir='/tmp/dps/mnist_pretrained/',
                 var_scope_name='digit_classifier', mnist_config=digit_config)
-            self.build_digit_classifier = ClassifierFunc(digit_pretrained, self.base + 1)
+            self.build_digit_classifier = ClassifierFunc(
+                digit_pretrained, self.base + 1)
 
             op_config = cfg.mnist_config.copy(symbols=[10, 12, 22])
 
             name = '{}_symbols={}.chk'.format(
-                classifier_str, '_'.join(str(s) for s in op_config.symbols))
+                self.classifier_str, '_'.join(str(s) for s in op_config.symbols))
 
             op_pretrained = MnistPretrained(
-                None, build_classifier, name=name, model_dir='/tmp/dps/mnist_pretrained/',
+                None, self.build_classifier, name=name,
+                model_dir='/tmp/dps/mnist_pretrained/',
                 var_scope_name='op_classifier', mnist_config=op_config)
-            self.build_op_classifier = ClassifierFunc(op_pretrained, len(op_config.symbols) + 1)
+            self.build_op_classifier = ClassifierFunc(
+                op_pretrained, len(op_config.symbols) + 1)
 
         else:
             self.build_digit_classifier = lambda x: tf.identity(x)
             self.build_op_classifier = lambda x: tf.identity(x)
 
         values = (
-            [0., 0., 0., 0., 0., 0.] +
+            [0., -1, 0., 0., 0., 0.] +
             [np.zeros(np.product(self.element_shape), dtype='f')])
 
         self.rb = RegisterBank(
@@ -244,19 +193,22 @@ class SimpleArithmetic(TensorFlowEnv):
 
         super(SimpleArithmetic, self).__init__()
 
-    def build_init(self, r, inp):
+    def build_init(self, r):
+        self.build_placeholders(r)
+
         op, acc, fovea_x, fovea_y, vision, op_vision, glimpse = self.rb.as_tuple(r)
 
         _fovea_x = tf.cast(fovea_x, tf.int32)
         _fovea_y = tf.cast(fovea_y, tf.int32)
 
-        batch_size = tf.shape(inp)[0]
+        batch_size = tf.shape(self.input_ph)[0]
         indices = tf.concat([
             tf.reshape(tf.range(batch_size), (-1, 1)),
             _fovea_y,
             _fovea_x], axis=1)
-        glimpse = tf.gather_nd(inp, indices)
-        glimpse = tf.reshape(glimpse, (-1, np.product(self.element_shape)), name="glimpse")
+        glimpse = tf.gather_nd(self.input_ph, indices)
+        glimpse = tf.reshape(
+            glimpse, (-1, np.product(self.element_shape)), name="glimpse")
 
         digit_classification = self.build_digit_classifier(glimpse)
         vision = tf.cast(digit_classification, tf.float32)
@@ -268,8 +220,10 @@ class SimpleArithmetic(TensorFlowEnv):
             fovea_y = tf.fill((batch_size, 1), self.start_loc[0])
             fovea_x = tf.fill((batch_size, 1), self.start_loc[1])
         else:
-            fovea_y = tf.random_uniform(tf.shape(fovea_y), 0, self.shape[0], dtype=tf.int32)
-            fovea_x = tf.random_uniform(tf.shape(fovea_x), 0, self.shape[1], dtype=tf.int32)
+            fovea_y = tf.random_uniform(
+                tf.shape(fovea_y), 0, self.shape[0], dtype=tf.int32)
+            fovea_x = tf.random_uniform(
+                tf.shape(fovea_x), 0, self.shape[1], dtype=tf.int32)
 
         fovea_x = tf.cast(fovea_x, tf.float32)
         fovea_y = tf.cast(fovea_y, tf.float32)
@@ -286,7 +240,7 @@ class SimpleArithmetic(TensorFlowEnv):
 
         return new_registers
 
-    def build_step(self, t, r, a, inp):
+    def build_step(self, t, r, a):
         _op, _acc, _fovea_x, _fovea_y, _vision, _op_vision, _glimpse = self.rb.as_tuple(r)
 
         (inc_fovea_x, dec_fovea_x,
@@ -315,13 +269,14 @@ class SimpleArithmetic(TensorFlowEnv):
         _fovea_x = tf.cast(fovea_x, tf.int32)
         _fovea_y = tf.cast(fovea_y, tf.int32)
 
-        batch_size = tf.shape(inp)[0]
+        batch_size = tf.shape(self.input_ph)[0]
         indices = tf.concat([
             tf.reshape(tf.range(batch_size), (-1, 1)),
             _fovea_y,
             _fovea_x], axis=1)
-        glimpse = tf.gather_nd(inp, indices)
-        glimpse = tf.reshape(glimpse, (-1, np.product(self.element_shape)), name="glimpse")
+        glimpse = tf.gather_nd(self.input_ph, indices)
+        glimpse = tf.reshape(
+            glimpse, (-1, np.product(self.element_shape)), name="glimpse")
 
         digit_classification = self.build_digit_classifier(glimpse)
         vision = tf.cast(digit_classification, tf.float32)
@@ -339,13 +294,17 @@ class SimpleArithmetic(TensorFlowEnv):
                 vision=tf.identity(vision, "vision"),
                 op_vision=tf.identity(op_vision, "op_vision"))
 
+        rewards = self.build_rewards(new_registers)
+
         return (
             tf.fill((tf.shape(r)[0], 1), 0.0),
-            tf.fill((tf.shape(r)[0], 1), 0.0),
+            rewards,
             new_registers)
 
 
 def render_rollouts(env, rollouts):
+    """ Display rollouts using an animation """
+
     external_rollouts = rollouts._metadata['external_rollouts']
     external_obs = external_rollouts.o
 
@@ -386,7 +345,10 @@ def render_rollouts(env, rollouts):
     mn = images.min()
     images = (images - mn) / (mx - mn)
 
-    [ax.imshow(im, cmap='gray', origin='upper', extent=(0, shape[1], shape[0], 0), vmin=0.0, vmax=1.0) for im, ax in zip(images, env_subplots)]
+    for im, ax in zip(images, env_subplots):
+        ax.imshow(
+            im, cmap='gray', origin='upper',
+            extent=(0, shape[1], shape[0], 0), vmin=0.0, vmax=1.0)
 
     offset = 0.1
     s = 1 - 2*offset
@@ -398,7 +360,9 @@ def render_rollouts(env, rollouts):
     # When specifying rectangles, you supply the bottom left corner, but not "bottom left" as your looking at it,
     # but bottom left in the co-ordinate system you're drawing in.
     rectangles = [
-        ax.add_patch(patches.Rectangle((offset, offset), s, s, alpha=0.6, fill=True, transform=ax.transData))
+        ax.add_patch(
+            patches.Rectangle(
+                (offset, offset), s, s, alpha=0.6, fill=True, transform=ax.transData))
         for ax in env_subplots]
 
     glimpse_shape = env.internal.element_shape
@@ -418,9 +382,12 @@ def render_rollouts(env, rollouts):
         for n, t in enumerate(titles1):
             t.set_text(env.internal.action_names[actions_reduced[i, n]])
         for n, t in enumerate(titles2):
-            t.set_text("t={},y={},r={}".format(i, external_rollouts.info[0]['y'][n][0], rollouts.r[i, n, 0]))
+            t.set_text(
+                "t={},y={},r={}".format(
+                    i, external_rollouts.info[0]['y'][n][0], rollouts.r[i, n, 0]))
 
-        # Find locations of bottom-left in fovea co-ordinate system, then transform to axis co-ordinate system.
+        # Find locations of bottom-left in fovea co-ordinate system,
+        # then transform to axis co-ordinate system.
         fx = fovea_x[i, :, :] + offset
         fy = fovea_y[i, :, :] + offset
 
@@ -445,6 +412,7 @@ def render_rollouts(env, rollouts):
 
 
 def render_rollouts_static(env, rollouts):
+    """ Display rollouts without using an animation """
     external_rollouts = rollouts._metadata['external_rollouts']
     external_obs = external_rollouts.o
 
@@ -508,16 +476,14 @@ def render_rollouts_static(env, rollouts):
 
     plt.subplots_adjust(left=0.01, right=0.99, top=0.94, bottom=0.00, wspace=0.03, hspace=0.0)
 
-    if cfg.save_display:
-        pass  # TODO
-
     if cfg.display:
         plt.show()
 
 
 def build_env():
-    external = SimpleArithmeticEnv(
-        cfg.mnist, cfg.shape, cfg.n_digits, cfg.upper_bound, cfg.base,
-        cfg.n_train, cfg.n_val, cfg.op_loc, cfg.start_loc)
-    internal = SimpleArithmetic(external)
+    train = SimpleArithmeticDataset(n_examples=cfg.n_train)
+    val = SimpleArithmeticDataset(n_examples=cfg.n_val)
+
+    external = RegressionEnv(train, val)
+    internal = SimpleArithmetic()
     return CompositeEnv(external, internal)

@@ -4,26 +4,9 @@ import numpy as np
 from dps import cfg
 from dps.register import RegisterBank
 from dps.environment import (
-    RegressionDataset, RegressionEnv, CompositeEnv, TensorFlowEnv)
+    RegressionDataset, RegressionEnv, CompositeEnv, InternalEnv)
 from dps.vision.attention import gaussian_filter
-
-
-def digits_to_numbers(digits, base=10, axis=-1, keepdims=False):
-    """ Assumes little-endian (least-significant stored first). """
-    mult = base ** np.arange(digits.shape[axis])
-    shape = [1] * digits.ndim
-    shape[axis] = mult.shape[axis]
-    mult = mult.reshape(shape)
-    return (digits * mult).sum(axis=axis, keepdims=keepdims)
-
-
-def numbers_to_digits(numbers, n_digits, base=10):
-    numbers = numbers.copy()
-    digits = []
-    for i in range(n_digits):
-        digits.append(numbers % base)
-        numbers //= base
-    return np.stack(digits, -1)
+from dps.utils import Param, digits_to_numbers, numbers_to_digits
 
 
 class HardAdditionDataset(RegressionDataset):
@@ -47,20 +30,7 @@ class HardAdditionDataset(RegressionDataset):
         super(HardAdditionDataset, self).__init__(x, y)
 
 
-class HardAdditionEnv(RegressionEnv):
-    def __init__(self, height, width, n_digits, n_train, n_val):
-        self.height = height
-        self.width = width
-        self.n_digits = n_digits
-        super(HardAdditionEnv, self).__init__(
-            train=HardAdditionDataset(height, width, n_digits, n_train),
-            val=HardAdditionDataset(height, width, n_digits, n_val))
-
-    def __str__(self):
-        return "<HardAdditionEnv height={} width={} n_digits={}>".format(self.height, self.width, self.n_digits)
-
-
-class HardAddition(TensorFlowEnv):
+class HardAddition(InternalEnv):
     """ Top left is (x=0, y=0).
 
     For now, the location of the write head is the same as the x location of the read head.
@@ -69,14 +39,19 @@ class HardAddition(TensorFlowEnv):
     action_names = ['fovea_x += 1', 'fovea_x -= 1', 'fovea_y += 1', 'fovea_y -= 1',
                     'wm1 = vision', 'wm2 = vision', 'add', 'write_digit', 'no-op/stop']
 
-    def static_inp_type_and_shape(self):
-        return (tf.float32, (self.width*self.height,))
+    width = Param()
+    height = Param()
 
-    make_input_available = True
+    @property
+    def input_shape(self):
+        return (self.width*self.height,)
 
-    def __init__(self, env):
-        self.height = env.height
-        self.width = env.width
+    @property
+    def target_shape(self):
+        return (self.width,)
+
+    def __init__(self, **kwargs):
+        self._resolve_params(**kwargs)
 
         values = (
             ([0.0] * 7) +
@@ -89,13 +64,15 @@ class HardAddition(TensorFlowEnv):
 
         super(HardAddition, self).__init__()
 
-    def build_init(self, r, static_inp):
+    def build_init(self, r):
+        self.build_placeholders(r)
+
         fovea_x, fovea_y, _vision, wm1, wm2, carry, digit, outp = self.rb.as_tuple(r)
 
         # Read input
         fovea = tf.concat([fovea_y, fovea_x], 1)
         std = tf.fill(tf.shape(fovea), 0.01)
-        static_inp = tf.reshape(static_inp, (-1, self.height, self.width))
+        static_inp = tf.reshape(self.input_ph, (-1, self.height, self.width))
         x_filter = gaussian_filter(fovea[:, 1:], std[:, 1:], np.arange(self.width, dtype='f'))
         y_filter = gaussian_filter(fovea[:, :1], std[:, :1], np.arange(self.height, dtype='f'))
         vision = tf.matmul(y_filter, tf.matmul(static_inp, x_filter, adjoint_b=True))
@@ -113,8 +90,7 @@ class HardAddition(TensorFlowEnv):
                 digit=tf.identity(digit, "digit"))
         return new_registers
 
-    def build_step(self, t, r, a, static_inp):
-
+    def build_step(self, t, r, a):
         _fovea_x, _fovea_y, _vision, _wm1, _wm2, _carry, _digit, _outp = self.rb.as_tuple(r)
 
         (inc_fovea_x, dec_fovea_x, inc_fovea_y, dec_fovea_y,
@@ -134,7 +110,7 @@ class HardAddition(TensorFlowEnv):
         # Read input
         fovea = tf.concat([fovea_y, fovea_x], 1)
         std = tf.fill(tf.shape(fovea), 0.01)
-        static_inp = tf.reshape(static_inp, (-1, self.height, self.width))
+        static_inp = tf.reshape(self.input_ph, (-1, self.height, self.width))
         x_filter = gaussian_filter(fovea[:, 1:], std[:, 1:], np.arange(self.width, dtype='f'))
         y_filter = gaussian_filter(fovea[:, :1], std[:, :1], np.arange(self.height, dtype='f'))
         vision = tf.matmul(y_filter, tf.matmul(static_inp, x_filter, adjoint_b=True))
@@ -156,14 +132,20 @@ class HardAddition(TensorFlowEnv):
                 carry=tf.identity(carry, "carry"),
                 digit=tf.identity(digit, "digit"))
 
+        rewards = self.build_rewards(new_registers)
+
         return (
             tf.fill((tf.shape(r)[0], 1), 0.0),
-            tf.fill((tf.shape(r)[0], 1), 0.0),
+            rewards,
             new_registers)
 
 
 def build_env():
-    external = HardAdditionEnv(
-        cfg.height, cfg.width, cfg.n_digits, cfg.n_train, cfg.n_val)
-    internal = HardAddition(external)
+    height, width, n_digits = cfg.height, cfg.width, cfg.n_digits
+
+    train = HardAdditionDataset(height, width, n_digits, cfg.n_train)
+    val = HardAdditionDataset(height, width, n_digits, cfg.n_val)
+
+    external = RegressionEnv(train, val)
+    internal = HardAddition()
     return CompositeEnv(external, internal)

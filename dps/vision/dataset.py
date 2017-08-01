@@ -1,5 +1,6 @@
 from pathlib import Path
 import dill
+import gzip
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -8,19 +9,22 @@ from dps import cfg
 from dps.environment import RegressionDataset
 
 
-chars = "$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\|()1{}[]?-_+~<>i!lI;:,\"^`'. "
+# Character used for ascii art, sorted in order of increasing sparsity
+ascii_art_chars = \
+    "$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\|()1{}[]?-_+~<>i!lI;:,\"^`'. "
 
 
 def char_map(value):
-    """ Assumes value between 0 and 1. """
+    """ Maps a relative "sparsity" or "lightness" value in [0, 1) to a character. """
     if value >= 1:
         value = 1 - 1e-6
-    n_bins = len(chars)
+    n_bins = len(ascii_art_chars)
     bin_id = int(value * n_bins)
-    return chars[bin_id]
+    return ascii_art_chars[bin_id]
 
 
 def image_to_string(array):
+    """ Convert an image stored as an array to an ascii art string """
     if array.ndim == 1:
         array = array.reshape(-1, int(np.sqrt(array.shape[0])))
     image = [char_map(value) for value in array.flatten()]
@@ -37,14 +41,14 @@ def view_emnist(x, y, n):
 
 
 def load_emnist(classes, balance=False, include_blank=False):
-    """
+    """ Load emnist data from disk by class.
+
     Elements of `classes` pick out which emnist classes to load, but different labels
-    end up getting turned because most classifiers require that the labels
-    be {0...max_label}. We return a dictionary `class_map` which maps from
-    elements of `classes` down to {0...len(classes)}.
+    end up getting returned because most classifiers require that the labels
+    be in range(len(classes)). We return a dictionary `class_map` which maps from
+    elements of `classes` down to range(len(classes)).
 
     """
-    import gzip
     classes = list(classes)[:]
     data_dir = Path(cfg.data_dir).expanduser()
     emnist_dir = data_dir / 'emnist/emnist-byclass'
@@ -130,7 +134,11 @@ class PatchesDataset(RegressionDataset):
             n_rects = len(images)
             i = 0
             while True:
-                rects = [Rect(np.random.randint(0, W-m+1), np.random.randint(0, W-n+1), m, n) for m, n in image_shapes]
+                rects = [
+                    Rect(
+                        np.random.randint(0, W-m+1),
+                        np.random.randint(0, W-n+1), m, n)
+                    for m, n in image_shapes]
                 area = np.zeros((W, W), 'f')
 
                 for rect in rects:
@@ -144,7 +152,8 @@ class PatchesDataset(RegressionDataset):
                 if i > 1000:
                     raise Exception(
                         "Could not fit rectangles. "
-                        "(n_rects: {}, W: {}, max_overlap: {})".format(n_rects, W, max_overlap))
+                        "(n_rects: {}, W: {}, max_overlap: {})".format(
+                            n_rects, W, max_overlap))
 
             # Populate rectangles
             o = np.zeros((W, W), 'f')
@@ -243,8 +252,9 @@ class MnistArithmeticDataset(PatchesDataset):
 
 
 class TranslatedMnistDataset(PatchesDataset):
-    def __init__(self, n_digits=1, reduction=None, upper_bound=True, base=10, symbols=None, include_blank=True,
-                 W=28, max_overlap=np.inf, n_examples=10):
+    def __init__(
+            self, n_digits=1, reduction=None, upper_bound=True, base=10,
+            symbols=None, include_blank=True, W=28, max_overlap=np.inf, n_examples=10):
 
         self.n_digits = n_digits
 
@@ -258,7 +268,8 @@ class TranslatedMnistDataset(PatchesDataset):
         self.symbols = symbols or list(range(10))
         self.include_blank = include_blank
 
-        self.X, self.Y, self.symbol_map = load_emnist(self.symbols, include_blank=include_blank)
+        self.X, self.Y, self.symbol_map = load_emnist(
+            self.symbols, include_blank=include_blank)
         self.X = self.X.reshape(-1, 28, 28)
 
         super(TranslatedMnistDataset, self).__init__(n_examples, W, max_overlap)

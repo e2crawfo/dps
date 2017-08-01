@@ -8,51 +8,34 @@ import numpy as np
 from dps import cfg
 from dps.register import RegisterBank
 from dps.environment import (
-    RegressionEnv, CompositeEnv, TensorFlowEnv)
+    RegressionEnv, CompositeEnv, InternalEnv)
 from dps.vision import (
     TranslatedMnistDataset, DRAW, DiscreteAttn,
     MnistPretrained, MNIST_CONFIG, ClassifierFunc)
+from dps.utils import Param
 
 
-class TranslatedMnistEnv(RegressionEnv):
-    def __init__(self, scaled, discrete_attn, W, N, n_train, n_val, inc_delta, inc_x, inc_y):
-        self.scaled = scaled
-        self.discrete_attn = discrete_attn
-        self.W = W
-        self.N = N
-        self.inc_delta = inc_delta
-        self.inc_x = inc_x
-        self.inc_y = inc_y
-        n_digits = 1
-        max_overlap = 200
-        kwargs = dict(W=W, n_digits=n_digits, max_overlap=max_overlap)
-        super(TranslatedMnistEnv, self).__init__(
-            train=TranslatedMnistDataset(n_examples=n_train, **kwargs),
-            val=TranslatedMnistDataset(n_examples=n_val, **kwargs))
-
-    def __str__(self):
-        return "<TranslatedMnistEnv W={}>".format(self.W)
-
-    def _render(self, mode='human', close=False):
-        pass
-
-
-class TranslatedMnist(TensorFlowEnv):
+class TranslatedMnist(InternalEnv):
     """ Top left is (y=0, x=0). Corresponds to using origin='upper' in plt.imshow. """
+    N = Param()
+    W = Param()
+    scaled = Param()
+    inc_delta = Param()
+    inc_x = Param()
+    inc_y = Param()
+    discrete_attn = Param()
 
     action_names = [
         'fovea_x += ', 'fovea_x -= ', 'fovea_x ++= ', 'fovea_x --= ',
         'fovea_y += ', 'fovea_y -= ', 'fovea_y ++= ', 'fovea_y --= ',
         'delta += ', 'delta -= ', 'delta ++= ', 'delta --= ', 'store', 'no-op/stop']
 
-    def __init__(self, env):
-        self.W = env.W
-        self.N = env.N
-        self.scaled = env.scaled
-        self.inc_delta = env.inc_delta
-        self.inc_x = env.inc_x
-        self.inc_y = env.inc_y
-        self.discrete_attn = env.discrete_attn
+    @property
+    def input_shape(self):
+        return (self.N*self.N,)
+
+    def __init__(self):
+        self._resolve_params()
 
         if self.discrete_attn:
             self.build_attention = DiscreteAttn(self.N)
@@ -76,15 +59,13 @@ class TranslatedMnist(TensorFlowEnv):
             output_names='outp', no_display='glimpse')
         super(TranslatedMnist, self).__init__()
 
-    def static_inp_type_and_shape(self):
-        return (tf.float32, (self.W, self.W))
+    def build_init(self, r):
+        self.build_placeholders(r)
 
-    make_input_available = True
-
-    def build_init(self, r, inp):
         outp, fovea_x, fovea_y, vision, delta, glimpse = self.rb.as_tuple(r)
 
-        glimpse = self.build_attention(inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta)
+        glimpse = self.build_attention(
+            self.input_ph, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta)
         glimpse = tf.reshape(glimpse, (-1, int(np.product(glimpse.shape[1:]))))
 
         digit_classification = self.build_digit_classifier(glimpse)
@@ -101,7 +82,7 @@ class TranslatedMnist(TensorFlowEnv):
 
         return new_registers
 
-    def build_step(self, t, r, a, inp):
+    def build_step(self, t, r, a):
         _outp, _fovea_x, _fovea_y, _vision, _delta, _glimpse = self.rb.as_tuple(r)
 
         (inc_fovea_x, dec_fovea_x, inc_fovea_x_big, dec_fovea_x_big,
@@ -143,7 +124,8 @@ class TranslatedMnist(TensorFlowEnv):
 
         outp = (1 - store) * _outp + store * _vision
 
-        glimpse = self.build_attention(inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta)
+        glimpse = self.build_attention(
+            self.input_ph, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta)
         glimpse = tf.reshape(glimpse, (-1, int(np.product(glimpse.shape[1:]))))
 
         digit_classification = self.build_digit_classifier(glimpse)
@@ -158,9 +140,11 @@ class TranslatedMnist(TensorFlowEnv):
                 vision=tf.identity(vision, "vision"),
                 delta=tf.identity(delta, "delta"))
 
+        rewards = self.build_rewards(new_registers)
+
         return (
             tf.fill((tf.shape(r)[0], 1), 0.0),
-            tf.fill((tf.shape(r)[0], 1), 0.0),
+            rewards,
             new_registers)
 
 
@@ -234,8 +218,10 @@ def render_rollouts(env, rollouts):
 
 
 def build_env():
-    external = TranslatedMnistEnv(
-        cfg.scaled, cfg.discrete_attn, cfg.W, cfg.N, cfg.n_train, cfg.n_val,
-        cfg.inc_delta, cfg.inc_x, cfg.inc_y)
-    internal = TranslatedMnist(external)
+    train = TranslatedMnistDataset(W=cfg.W, n_examples=cfg.n_train)
+    val = TranslatedMnistDataset(W=cfg.W, n_examples=cfg.n_val)
+
+    external = RegressionEnv(train, val)
+
+    internal = TranslatedMnist()
     return CompositeEnv(external, internal)

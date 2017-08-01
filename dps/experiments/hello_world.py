@@ -4,7 +4,7 @@ import numpy as np
 from dps import cfg
 from dps.register import RegisterBank
 from dps.environment import (
-    RegressionDataset, RegressionEnv, CompositeEnv, TensorFlowEnv)
+    RegressionDataset, RegressionEnv, CompositeEnv, InternalEnv)
 
 
 class HelloWorldDataset(RegressionDataset):
@@ -23,33 +23,27 @@ class HelloWorldDataset(RegressionDataset):
         super(HelloWorldDataset, self).__init__(x, y)
 
 
-class HelloWorldEnv(RegressionEnv):
-    def __init__(self, order, n_train, n_val):
-        super(HelloWorldEnv, self).__init__(
-            train=HelloWorldDataset(order, n_train),
-            val=HelloWorldDataset(order, n_val))
-
-
-class HelloWorld(TensorFlowEnv):
+class HelloWorld(InternalEnv):
     action_names = ['r0 = r0 + r1', 'r1 = r0 * r1', 'no-op/stop']
-    input_shape = (3,)
-    make_input_available = False
+    rb = RegisterBank('HelloWorldRB', 'r0 r1 r2', None, [1.0, 0.0, 0.0], 'r0 r1')
 
-    def __init__(self, env):
-        self.rb = RegisterBank(
-            'HelloWorldRB', 'r0 r1 r2', None, [1.0, 0.0, 0.0], 'r0 r1')
-        super(HelloWorld, self).__init__()
+    @property
+    def input_shape(self):
+        return (3,)
 
-    def static_inp_type_and_shape(self):
-        return (tf.float32, (3,))
+    @property
+    def target_shape(self):
+        return (2,)
 
-    def build_init(self, r, inp):
-        r0 = inp[:, :1]
-        r1 = inp[:, 1:2]
-        r2 = inp[:, 2:]
+    def build_init(self, r):
+        self.build_placeholders(r)
+
+        r0 = self.input_ph[:, :1]
+        r1 = self.input_ph[:, 1:2]
+        r2 = self.input_ph[:, 2:]
         return self.rb.wrap(r0=r0, r1=r1, r2=r2)
 
-    def build_step(self, t, r, a, static_inp):
+    def build_step(self, t, r, a):
         """ Action 0: add the variables in the registers, store in r0.
             Action 1: multiply the variables in the registers, store in r1.
             Action 2: no-op
@@ -63,13 +57,18 @@ class HelloWorld(TensorFlowEnv):
             r0=add * (_r0 + _r1) + (1 - add) * _r0,
             r1=mult * (_r0 * _r1) + (1 - mult) * _r1,
             r2=_r2+1)
+
+        rewards = self.build_rewards(new_registers)
+
         return (
             tf.fill((tf.shape(r)[0], 1), 0.0),
-            tf.fill((tf.shape(r)[0], 1), 0.0),
+            rewards,
             new_registers)
 
 
 def build_env():
-    external = HelloWorldEnv(cfg.order, cfg.n_train, cfg.n_val)
-    internal = HelloWorld(external)
+    train = HelloWorldDataset(cfg.order, cfg.n_train)
+    val = HelloWorldDataset(cfg.order, cfg.n_val)
+    external = RegressionEnv(train, val)
+    internal = HelloWorld()
     return CompositeEnv(external, internal)

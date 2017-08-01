@@ -4,8 +4,9 @@ import numpy as np
 from dps import cfg
 from dps.register import RegisterBank
 from dps.environment import (
-    RegressionDataset, RegressionEnv, CompositeEnv, TensorFlowEnv)
+    RegressionDataset, RegressionEnv, CompositeEnv, InternalEnv)
 from dps.vision.attention import apply_gaussian_filter
+from dps.utils import Param
 
 
 class PointerDataset(RegressionDataset):
@@ -19,45 +20,32 @@ class PointerDataset(RegressionDataset):
         super(PointerDataset, self).__init__(x, y)
 
 
-class PointerEnv(RegressionEnv):
-    def __init__(self, width, n_digits, n_train, n_val):
-        self.width = width
-        self.n_digits = n_digits
-        super(PointerEnv, self).__init__(
-            train=PointerDataset(width, n_digits, n_train),
-            val=PointerDataset(width, n_digits, n_val))
-
-    def __str__(self):
-        return "<PointerEnv width={} n_digits={}>".format(self.width, self.n_digits)
-
-
-class Pointer(TensorFlowEnv):
+class Pointer(InternalEnv):
     action_names = ['fovea += 1', 'fovea -= 1', 'wm = vision', 'no-op/stop']
+    rb = RegisterBank(
+        'PointerRB', 'fovea vision wm', None,
+        values=([0.0] * 3), output_names='wm')
 
-    def __init__(self, env):
-        self.width = env.width
-        self.rb = RegisterBank(
-            'PointerRB', 'fovea vision wm', None,
-            values=([0.0] * 3), output_names='wm')
-        super(Pointer, self).__init__()
+    width = Param()
 
-    def static_inp_type_and_shape(self):
-        return (tf.float32, (2*self.width+1,))
+    @property
+    def input_shape(self):
+        return (2*self.width+1,)
 
-    make_input_available = True
+    def build_init(self, r):
+        self.build_placeholders(r)
 
-    def build_init(self, r, static_inp):
         fovea, vision, wm = self.rb.as_tuple(r)
 
         diag_std = tf.fill(tf.shape(fovea), 0.01)
         locations = tf.constant(np.linspace(-self.width, self.width, 2*self.width+1, dtype='f').reshape(-1, 1))
-        vision = apply_gaussian_filter(fovea, diag_std, locations, static_inp)
+        vision = apply_gaussian_filter(fovea, diag_std, locations, self.input_ph)
 
         new_registers = self.rb.wrap(fovea=fovea, vision=vision, wm=wm)
 
         return new_registers
 
-    def build_step(self, t, r, a, static_inp):
+    def build_step(self, t, r, a):
         _fovea, _vision, _wm = self.rb.as_tuple(r)
 
         inc_fovea, dec_fovea, vision_to_wm, no_op = tf.split(a, self.n_actions, axis=1)
@@ -67,17 +55,23 @@ class Pointer(TensorFlowEnv):
 
         diag_std = tf.fill(tf.shape(fovea), 0.01)
         locations = tf.constant(np.linspace(-self.width, self.width, 2*self.width+1, dtype='f').reshape(-1, 1))
-        vision = apply_gaussian_filter(fovea, diag_std, locations, static_inp)
+        vision = apply_gaussian_filter(fovea, diag_std, locations, self.input_ph)
 
         new_registers = self.rb.wrap(fovea=fovea, vision=vision, wm=wm)
 
+        rewards = self.build_rewards(new_registers)
+
         return (
             tf.fill((tf.shape(r)[0], 1), 0.0),
-            tf.fill((tf.shape(r)[0], 1), 0.0),
+            rewards,
             new_registers)
 
 
 def build_env():
-    external = PointerEnv(cfg.width, cfg.n_digits, cfg.n_train, cfg.n_val)
-    internal = Pointer(external)
+    width, n_digits = cfg.width, cfg.n_digits
+
+    train = PointerDataset(width, n_digits, cfg.n_train)
+    val = PointerDataset(width, n_digits, cfg.n_val)
+    external = RegressionEnv(train, val)
+    internal = Pointer()
     return CompositeEnv(external, internal)

@@ -21,7 +21,7 @@ class Grid(TensorFlowEnv):
         self.restart_prob = restart_prob
         self.dense_reward = dense_reward
         self.l2l = l2l
-        self.val = self._make_static_input(n_val)
+        self.val = self._make_input(n_val)
         self.mode = 'train'
 
         if self.l2l and not self.dense_reward:
@@ -32,10 +32,7 @@ class Grid(TensorFlowEnv):
     def completion(self):
         return 0.0
 
-    def static_inp_type_and_shape(self):
-        return (tf.float32, (self.static_inp_width,))
-
-    def _make_static_input(self, batch_size):
+    def _make_input(self, batch_size):
         start_x = np.random.randint(self.shape[0], size=(batch_size, 1))
         start_y = np.random.randint(self.shape[1], size=(batch_size, 1))
 
@@ -48,23 +45,26 @@ class Grid(TensorFlowEnv):
 
         return np.concatenate([start_x, start_y, goal_x, goal_y], axis=1).astype('f')
 
-    def make_static_input(self, batch_size):
+    def start_episode(self, batch_size):
         if self.mode in 'train train_eval'.split():
-            return self._make_static_input(batch_size)
+            self.input = self._make_input(batch_size)
         elif self.mode == 'val':
-            return self.val
+            self.input = self.val
         else:
             raise Exception("Unknown mode: {}.".format(self.mode))
+        return self.input.shape[0], {self.input_ph: self.input}
 
-    def build_init(self, r, inp):
+    def build_init(self, r):
         batch_size = tf.shape(r)[0]
+        self.input_ph = tf.placeholder(tf.float32, (None, 4))
         return self.rb.wrap(
-            x=inp[:, 0:1], y=inp[:, 1:2], goal_x=inp[:, 2:3], goal_y=inp[:, 3:4],
+            x=self.input_ph[:, 0:1], y=self.input_ph[:, 1:2],
+            goal_x=self.input_ph[:, 2:3], goal_y=self.input_ph[:, 3:4],
             dx=tf.fill((batch_size, 1), 0.0),
             dy=tf.fill((batch_size, 1), 0.0),
             r=tf.fill((batch_size, 1), 0.0))
 
-    def build_step(self, t, r, a, static_inp):
+    def build_step(self, t, r, a):
         x, y, _, _, _, goal_x, goal_y = self.rb.as_tuple(r)
         up, right, down, left = tf.split(a, 4, axis=1)
 

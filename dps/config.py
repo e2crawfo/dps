@@ -20,7 +20,8 @@ from dps.rl.value import actor_critic, TrustRegionPolicyEvaluation, PolicyEvalua
 def get_updater(env):
     action_selection = cfg.action_selection(env)
     with cfg.actor_config:
-        policy_controller = cfg.controller(action_selection.n_params, name="actor_controller")
+        policy_controller = cfg.controller(
+            action_selection.n_params, name="actor_controller")
 
     if 'critic_config' in cfg and cfg.critic_config.alg is not None:
         with cfg.critic_config:
@@ -34,6 +35,23 @@ def get_updater(env):
             policy = Policy(policy_controller, action_selection, env.obs_shape)
             updater = RLUpdater(env, policy, cfg.alg(policy, name="actor"))
             return updater
+
+
+def get_experiment_name():
+    name = []
+    try:
+        name.append('actor={}'.format(cfg.actor_config.name))
+    except:
+        pass
+    try:
+        name.append('critic={}'.format(cfg.critic_config.name))
+    except:
+        pass
+    try:
+        name.append('seed={}'.format(cfg.seed))
+    except:
+        pass
+    return '_'.join(name)
 
 
 DEFAULT_CONFIG = DpsConfig(
@@ -68,6 +86,8 @@ DEFAULT_CONFIG = DpsConfig(
     standardize_advantage=True,
     reset_env=True,
 
+    dense_reward=False,
+
     max_time=0,
 
     n_controller_units=32,
@@ -79,10 +99,10 @@ DEFAULT_CONFIG = DpsConfig(
     deadline='',
     render_hook=rl_render_hook,
 
-    get_experiment_name=lambda: "name={}_seed={}".format(cfg.name, cfg.seed),
-
     lmbda=1.0,
-    gamma=1.0
+    gamma=1.0,
+
+    get_experiment_name=get_experiment_name,
 )
 
 
@@ -175,19 +195,19 @@ QLEARNING_CONFIG = Config(
     double=True,
 
     lr_schedule="poly 0.00025 100000 1e-6",
-    exploration_schedule="0.1",
+    exploration_schedule="0.5",
     test_time_explore="0.01",
 
     optimizer_spec="adam",
 
     replay_max_size=20000,
     replay_threshold=-0.5,
-    replay_proportion=0.0,
+    replay_proportion=0.25,
     gamma=1.0,
 
     opt_steps_per_batch=1,
     target_update_rate=None,
-    steps_per_target_update=100,
+    steps_per_target_update=1000,
     patience=np.inf,
     update_batch_size=32,  # Number of sample rollouts to use for each parameter update
     batch_size=1,  # Number of sample experiences per update
@@ -329,6 +349,7 @@ GRID_CONFIG = Config(
 
 
 SIMPLE_ADDITION_CONFIG = Config(
+    dense_reward=False,
     build_env=simple_addition.build_env,
     T=30,
     curriculum=[
@@ -369,6 +390,7 @@ SIMPLE_ADDITION_CONFIG = Config(
 POINTER_CONFIG = Config(
     build_env=pointer_following.build_env,
     T=30,
+    dense_reward=True,
     curriculum=[
         dict(width=1, n_digits=10),
         dict(width=2, n_digits=10)],
@@ -451,17 +473,18 @@ MNIST_ARITHMETIC_CONFIG = Config(
 
 SIMPLE_ARITHMETIC_CONFIG = Config(
     build_env=simple_arithmetic.build_env,
+    symbols=[
+        ('A', lambda x: sum(x)),
+        ('M', lambda x: np.product(x)),
+        ('C', lambda x: len(x))],
 
     curriculum=[
-        dict(T=10, n_digits=3, shape=(2, 2), upper_bound=True),
+        dict(T=30, n_digits=3, shape=(2, 2), upper_bound=True),
     ],
     display=False,
     mnist=False,
-    shape=(1, 2),
     op_loc=(0, 0),
     start_loc=(0, 0),
-    n_digits=1,
-    upper_bound=False,
     base=10,
     batch_size=64,
     threshold=0.04,
@@ -501,21 +524,24 @@ def alt_arithmetic_action_selection(env):
 
 ALT_ARITHMETIC_CONFIG = Config(
     build_env=alt_arithmetic.build_env,
+    symbols=[
+        ('A', lambda x: sum(x)),
+        ('M', lambda x: np.product(x)),
+        ('C', lambda x: len(x))],
 
     curriculum=[
         dict(T=10, n_digits=2, shape=(3, 1), upper_bound=True),
     ],
+    force_2d=False,
     display=False,
     mnist=False,
-    shape=(1, 2),
     op_loc=(0, 0),
     start_loc=(0, 0),
-    n_digits=1,
-    upper_bound=False,
     base=10,
     batch_size=64,
     threshold=0.04,
 
+    dense_reward=True,
     reward_window=0.4,
 
     n_controller_units=64,

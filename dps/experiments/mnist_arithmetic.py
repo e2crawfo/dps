@@ -4,10 +4,11 @@ import numpy as np
 from dps import cfg
 from dps.register import RegisterBank
 from dps.environment import (
-    RegressionEnv, CompositeEnv, TensorFlowEnv)
+    RegressionEnv, CompositeEnv, InternalEnv)
 from dps.vision import (
     TranslatedMnistDataset, MnistArithmeticDataset, DRAW,
     MnistPretrained, MNIST_CONFIG, ClassifierFunc)
+from dps.utils import Param
 
 
 class MnistArithmeticEnv(RegressionEnv):
@@ -46,36 +47,35 @@ class MnistArithmeticEnv(RegressionEnv):
         pass
 
 
-class MnistArithmetic(TensorFlowEnv):
-    """ Top left is (y=0, x=0). Corresponds to using origin='upper' in plt.imshow.
-
-    Need 2 working memories: one for operation, one for accumulator.
-
-    Assume the operations accept the output of vision and the accumulator as their input,
-    and store the result in the accumulator. Having the operations be more general is
-    in terms of their input arguments is a matter of neural engineering.
-
-    """
+class MnistArithmetic(InternalEnv):
+    """ Top left is (y=0, x=0). Corresponds to using origin='upper' in plt.imshow. """
     action_names = [
         'fovea_x += ', 'fovea_x -= ', 'fovea_x ++= ', 'fovea_x --= ',
         'fovea_y += ', 'fovea_y -= ', 'fovea_y ++= ', 'fovea_y --= ',
         'delta += ', 'delta -= ', 'delta ++= ', 'delta --= ',
         'store_op', 'add', 'inc', 'multiply', 'store', 'no-op/stop']
 
+    W = Param()
+    N = Param()
+    upper_bound = Param()
+    inc_delta = Param()
+    inc_x = Param()
+    inc_y = Param()
+    base = Param()
+
+    @property
+    def input_shape(self):
+        return (self.N*self.N,)
+
     def __init__(self, env):
-        self.W = env.W
-        self.N = env.N
-        self.upper_bound = env.upper_bound
-        self.inc_delta = env.inc_delta
-        self.inc_x = env.inc_x
-        self.inc_y = env.inc_y
-        self.base = env.base
+        self._resolve_params()
 
         self.build_attention = DRAW(self.N)
 
         digit_config = MNIST_CONFIG.copy(symbols=range(self.base))
 
-        name = '{}_N={}_symbols={}.chk'.format(cfg.classifier_str, self.N, '_'.join(str(s) for s in range(self.base)))
+        name = '{}_N={}_symbols={}.chk'.format(
+            cfg.classifier_str, self.N, '_'.join(str(s) for s in range(self.base)))
         digit_pretrained = MnistPretrained(
             self.build_attention, cfg.build_classifier, name=name,
             var_scope_name='digit_classifier', mnist_config=digit_config)
@@ -83,7 +83,8 @@ class MnistArithmetic(TensorFlowEnv):
 
         op_config = MNIST_CONFIG.copy(symbols=[10, 12, 22])
 
-        name = '{}_N={}_symbols={}.chk'.format(cfg.classifier_str, self.N, '_'.join(str(s) for s in op_config.symbols))
+        name = '{}_N={}_symbols={}.chk'.format(
+            cfg.classifier_str, self.N, '_'.join(str(s) for s in op_config.symbols))
         op_pretrained = MnistPretrained(
             self.build_attention, cfg.build_classifier, name=name,
             var_scope_name='op_classifier', mnist_config=op_config)
@@ -95,19 +96,17 @@ class MnistArithmetic(TensorFlowEnv):
 
         self.rb = RegisterBank(
             'MnistArithmeticRB',
-            'op acc fovea_x fovea_y delta vision op_vision glimpse', None, values=values,
-            output_names='acc', no_display='glimpse')
+            'op acc fovea_x fovea_y delta vision op_vision glimpse', None,
+            values=values, output_names='acc', no_display='glimpse')
         super(MnistArithmetic, self).__init__()
 
-    def static_inp_type_and_shape(self):
-        return (tf.float32, (self.W, self.W))
+    def build_init(self, r):
+        self.build_placeholders(r)
 
-    make_input_available = True
-
-    def build_init(self, r, inp):
         op, acc, fovea_x, fovea_y, delta, vision, op_vision, glimpse = self.rb.as_tuple(r)
 
-        glimpse = self.build_attention(inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta, sigma=1.0)
+        glimpse = self.build_attention(
+            self.input_ph, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta, sigma=1.0)
         glimpse = tf.reshape(glimpse, (-1, int(np.product(glimpse.shape[1:]))))
 
         digit_classification = tf.stop_gradient(self.build_digit_classifier(glimpse))
@@ -129,7 +128,7 @@ class MnistArithmetic(TensorFlowEnv):
 
         return new_registers
 
-    def build_step(self, t, r, a, inp):
+    def build_step(self, t, r, a):
         _op, _acc, _fovea_x, _fovea_y, _delta, _vision, _op_vision, _glimpse = self.rb.as_tuple(r)
 
         (inc_fovea_x, dec_fovea_x, inc_fovea_x_big, dec_fovea_x_big,
@@ -163,7 +162,8 @@ class MnistArithmetic(TensorFlowEnv):
             dec_delta * (_delta - self.inc_delta) + \
             dec_delta_big * (_delta - 5 * self.inc_delta)
 
-        glimpse = self.build_attention(inp, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta, sigma=1.0)
+        glimpse = self.build_attention(
+            self.input_ph, fovea_x=fovea_x, fovea_y=fovea_y, delta=delta, sigma=1.0)
         glimpse = tf.reshape(glimpse, (-1, int(np.product(glimpse.shape[1:]))))
 
         digit_classification = tf.stop_gradient(self.build_digit_classifier(glimpse))
@@ -183,15 +183,18 @@ class MnistArithmetic(TensorFlowEnv):
                 op_vision=tf.identity(op_vision, "op_vision"),
                 delta=tf.identity(delta, "delta"))
 
+        rewards = self.build_rewards(new_registers)
+
         return (
             tf.fill((tf.shape(r)[0], 1), 0.0),
-            tf.fill((tf.shape(r)[0], 1), 0.0),
+            rewards,
             new_registers)
 
 
 def build_env():
-    external = MnistArithmeticEnv(
-        cfg.simple, cfg.base, cfg.n_digits, cfg.upper_bound, cfg.W, cfg.N,
-        cfg.n_train, cfg.n_val, cfg.inc_delta, cfg.inc_x, cfg.inc_y)
-    internal = MnistArithmetic(external)
+    train = TranslatedMnistDataset(W=cfg.W, n_examples=cfg.n_train)
+    val = TranslatedMnistDataset(W=cfg.W, n_examples=cfg.n_val)
+
+    external = RegressionEnv(train, val)
+    internal = MnistArithmetic()
     return CompositeEnv(external, internal)
