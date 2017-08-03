@@ -6,45 +6,9 @@ from dps.register import RegisterBank
 from dps.environment import (
     RegressionEnv, CompositeEnv, InternalEnv)
 from dps.vision import (
-    TranslatedMnistDataset, MnistArithmeticDataset, DRAW,
+    MnistArithmeticDataset, DRAW,
     MnistPretrained, MNIST_CONFIG, ClassifierFunc)
 from dps.utils import Param
-
-
-class MnistArithmeticEnv(RegressionEnv):
-    def __init__(self, simple, base, n_digits, upper_bound, W, N, n_train, n_val, inc_delta, inc_x, inc_y):
-        self.simple = simple
-        self.base = base
-        self.n_digits = n_digits
-        self.upper_bound = upper_bound
-        self.W = W
-        self.N = N
-        self.inc_delta = inc_delta
-        self.inc_x = inc_x
-        self.inc_y = inc_y
-        max_overlap = 100
-
-        if simple:
-            kwargs = dict(W=W, n_digits=n_digits, max_overlap=max_overlap)
-            super(MnistArithmeticEnv, self).__init__(
-                train=TranslatedMnistDataset(n_examples=n_train, **kwargs),
-                val=TranslatedMnistDataset(n_examples=n_val, **kwargs))
-        else:
-            reductions = [('A', lambda x: sum(x)), ('M', lambda x: np.product(x)), ('C', lambda x: len(x))]
-            kwargs = dict(
-                W=W, n_digits=n_digits, max_overlap=max_overlap,
-                reductions=reductions, upper_bound=upper_bound, base=base)
-
-            train = MnistArithmeticDataset(n_examples=n_train, **kwargs)
-            val = MnistArithmeticDataset(n_examples=n_train, **kwargs)
-
-        super(MnistArithmeticEnv, self).__init__(train=train, val=val)
-
-    def __str__(self):
-        return "<MnistArithmeticEnv W={}>".format(self.W)
-
-    def _render(self, mode='human', close=False):
-        pass
 
 
 class MnistArithmetic(InternalEnv):
@@ -68,8 +32,6 @@ class MnistArithmetic(InternalEnv):
         return (self.N*self.N,)
 
     def __init__(self, env):
-        self._resolve_params()
-
         self.build_attention = DRAW(self.N)
 
         digit_config = MNIST_CONFIG.copy(symbols=range(self.base))
@@ -192,8 +154,8 @@ class MnistArithmetic(InternalEnv):
 
 
 def build_env():
-    train = TranslatedMnistDataset(W=cfg.W, n_examples=cfg.n_train)
-    val = TranslatedMnistDataset(W=cfg.W, n_examples=cfg.n_val)
+    train = MnistArithmeticDataset(n_examples=cfg.n_train)
+    val = MnistArithmeticDataset(n_examples=cfg.n_val)
 
     external = RegressionEnv(train, val)
     internal = MnistArithmetic()

@@ -63,7 +63,7 @@ class RLUpdater(Updater):
         self.obs_shape = env.obs_shape
         self.n_actions = env.n_actions
 
-        super(RLUpdater, self).__init__(env, **kwargs)
+        super(RLUpdater, self).__init__(env)
 
     def _build_graph(self):
         training_exploration = build_scheduled_value(self.exploration_schedule)

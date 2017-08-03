@@ -10,12 +10,13 @@ from dps.utils import Param
 
 
 class PointerDataset(RegressionDataset):
-    def __init__(self, width, n_digits, n_examples):
-        self.width = width
-        self.n_digits = n_digits
+    width = Param()
+    n_digits = Param()
 
-        x = np.random.randint(0, n_digits, size=(n_examples, 2*width+1))
-        x[:, width] = np.random.randint(-width, width+1, size=n_examples)
+    def __init__(self, **kwargs):
+        width = self.width
+        x = np.random.randint(0, self.n_digits, size=(self.n_examples, 2*width+1))
+        x[:, width] = np.random.randint(-width, width+1, size=self.n_examples)
         y = x[range(x.shape[0]), x[:, width]+width].reshape(-1, 1)
         super(PointerDataset, self).__init__(x, y)
 
@@ -68,10 +69,8 @@ class Pointer(InternalEnv):
 
 
 def build_env():
-    width, n_digits = cfg.width, cfg.n_digits
-
-    train = PointerDataset(width, n_digits, cfg.n_train)
-    val = PointerDataset(width, n_digits, cfg.n_val)
+    train = PointerDataset(n_examples=cfg.n_train)
+    val = PointerDataset(n_examples=cfg.n_val)
     external = RegressionEnv(train, val)
     internal = Pointer()
     return CompositeEnv(external, internal)

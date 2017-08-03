@@ -7,6 +7,7 @@ import numpy as np
 
 from dps import cfg
 from dps.environment import RegressionDataset
+from dps.utils import Param
 
 
 # Character used for ascii art, sorted in order of increasing sparsity
@@ -110,10 +111,11 @@ class Rect(object):
 
 
 class PatchesDataset(RegressionDataset):
-    def __init__(self, n_examples, W, max_overlap):
-        self.W = W
-        self.max_overlap = max_overlap
-        x, y = self._make_dataset(n_examples)
+    W = Param()
+    max_overlap = Param()
+
+    def __init__(self, **kwargs):
+        x, y = self._make_dataset(self.n_examples)
         super(PatchesDataset, self).__init__(x, y)
 
     def _sample_patches(self):
@@ -207,21 +209,19 @@ def char_to_idx(c):
 
 
 class MnistArithmeticDataset(PatchesDataset):
-    def __init__(self, n_digits, reductions, upper_bound=True, base=10,
-                 W=28, max_overlap=np.inf, n_examples=10):
+    n_digits = Param()
+    reductions = Param()
+    upper_bound = Param()
+    base = Param()
 
-        self.n_digits = n_digits
-        self.upper_bound = upper_bound
-        assert 1 <= base <= 10
-        self.base = base
-
-        self.X, self.Y, self.class_map = load_emnist(list(range(base)))
+    def __init__(self, **kwargs):
+        self.X, self.Y, self.class_map = load_emnist(list(range(self.base)))
         self.X = self.X.reshape(-1, 28, 28)
 
         # reductions is a list of pairs of the form (character, reduction function)
 
         # map each character to its index according to the emnist dataset
-        reductions = {char_to_idx(s): f for s, f in reductions}
+        reductions = {char_to_idx(s): f for s, f in self.reductions}
 
         self.eX, self.eY, _class_map = load_emnist(list(reductions.keys()))
         self.eX = self.eX.reshape(-1, 28, 28)
@@ -229,7 +229,7 @@ class MnistArithmeticDataset(PatchesDataset):
 
         self.reductions = {self.class_map[k]: v for k, v in reductions.items()}
 
-        super(MnistArithmeticDataset, self).__init__(n_examples, W, max_overlap)
+        super(MnistArithmeticDataset, self).__init__()
 
         del self.X
         del self.Y
@@ -252,27 +252,23 @@ class MnistArithmeticDataset(PatchesDataset):
 
 
 class TranslatedMnistDataset(PatchesDataset):
-    def __init__(
-            self, n_digits=1, reduction=None, upper_bound=True, base=10,
-            symbols=None, include_blank=True, W=28, max_overlap=np.inf, n_examples=10):
+    n_digits = Param()
+    reduction = Param()
+    upper_bound = Param()
+    base = Param
+    symbols = Param()
+    include_blank = Param()
 
-        self.n_digits = n_digits
-
-        if reduction is None:
-            reduction = lambda inputs: sum(inputs)
-        self.reduction = reduction
-
-        self.upper_bound = upper_bound
-        assert 1 <= base <= 10
-        self.base = base
-        self.symbols = symbols or list(range(10))
-        self.include_blank = include_blank
+    def __init__(self, **kwargs):
+        if self.reduction is None:
+            self.reduction = lambda inputs: sum(inputs)
+        self.symbols = self.symbols or list(range(10))
 
         self.X, self.Y, self.symbol_map = load_emnist(
-            self.symbols, include_blank=include_blank)
+            self.symbols, include_blank=self.include_blank)
         self.X = self.X.reshape(-1, 28, 28)
 
-        super(TranslatedMnistDataset, self).__init__(n_examples, W, max_overlap)
+        super(TranslatedMnistDataset, self).__init__()
 
         del self.X
         del self.Y

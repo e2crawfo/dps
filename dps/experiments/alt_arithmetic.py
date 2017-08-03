@@ -22,8 +22,6 @@ class AltArithmeticDataset(RegressionDataset):
     force_2d = Param()
 
     def __init__(self, **kwargs):
-        self._resolve_params(**kwargs)
-
         assert 1 <= self.base <= 10
         assert np.product(self.shape) >= self.n_digits + 1
 
@@ -125,7 +123,9 @@ class AltArithmeticDataset(RegressionDataset):
 
 
 class AltArithmetic(InternalEnv):
-    action_names = ['>', '<', 'v', '^', 'classify_digit', 'classify_op', '+', '+1', '*', '=', 'noop']
+    action_names = [
+        '>', '<', 'v', '^', 'classify_digit', 'classify_op',
+        '+', '+1', '*', '=', 'noop']
 
     @property
     def element_shape(self):
@@ -148,8 +148,6 @@ class AltArithmetic(InternalEnv):
     force_2d = Param()
 
     def __init__(self, **kwargs):
-        self._resolve_params(**kwargs)
-
         self.init_classifiers()
         self.init_rb()
 

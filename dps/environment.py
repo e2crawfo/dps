@@ -113,6 +113,7 @@ class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
 
 
 class RegressionDataset(Parameterized):
+    n_examples = Param()
 
     def __init__(self, x, y, shuffle=True, **kwargs):
         self.x = x
@@ -127,10 +128,6 @@ class RegressionDataset(Parameterized):
     @property
     def obs_shape(self):
         return self.x.shape[1:]
-
-    @property
-    def n_examples(self):
-        return self.x.shape[0]
 
     @property
     def epochs_completed(self):

@@ -4,25 +4,26 @@ import numpy as np
 from dps import cfg
 from dps.register import RegisterBank
 from dps.environment import TensorFlowEnv
+from dps.utils import Param
 
 
 class Room(TensorFlowEnv):
     action_names = ['delta_x', 'delta_y']
 
-    def __init__(
-            self, T, reward_radius, max_step, restart_prob,
-            dense_reward, l2l, n_val):
+    rb = RegisterBank(
+        'RoomRB', 'x y r dx dy', 'goal_x goal_y',
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 'x y')
 
-        self.rb = RegisterBank(
-            'RoomRB', 'x y r dx dy', 'goal_x goal_y',
-            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 'x y')
-        self.T = T
-        self.reward_radius = reward_radius
-        self.max_step = max_step
-        self.restart_prob = restart_prob
-        self.dense_reward = dense_reward
-        self.l2l = l2l
-        self.val_input = self._make_input(n_val)
+    T = Param()
+    reward_radius = Param()
+    max_step = Param()
+    restart_prob = Param()
+    dense_reward = Param()
+    l2l = Param()
+    n_val = Param()
+
+    def __init__(self, **kwargs):
+        self.val_input = self._make_input(self.n_val)
         self.mode = 'train'
 
         if self.l2l and not self.dense_reward:
@@ -115,8 +116,7 @@ class RoomAngular(Room):
 
 
 def build_env():
-    args = [cfg.T, cfg.reward_radius, cfg.max_step, cfg.restart_prob, cfg.dense_reward, cfg.l2l, cfg.n_val]
     if cfg.room_angular:
-        return RoomAngular(*args)
+        return RoomAngular()
     else:
-        return Room(*args)
+        return Room()

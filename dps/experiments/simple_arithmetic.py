@@ -25,8 +25,6 @@ class SimpleArithmeticDataset(RegressionDataset):
     op_loc = Param()
 
     def __init__(self, **kwargs):
-        self._resolve_params(**kwargs)
-
         assert 1 <= self.base <= 10
 
         assert np.product(self.shape) >= self.n_digits + 1
@@ -44,7 +42,8 @@ class SimpleArithmeticDataset(RegressionDataset):
 
             symbol_reps = DataContainer(emnist_x, emnist_y)
 
-            mnist_x, mnist_y, symbol_map = load_emnist(list(range(self.base)), balance=True)
+            mnist_x, mnist_y, symbol_map = load_emnist(
+                list(range(self.base)), balance=True)
             mnist_x = mnist_x.reshape(-1, 28, 28)
             mnist_x = np.uint8(255*np.minimum(mnist_x, 1))
             mnist_y = np.squeeze(mnist_y, 1)
@@ -148,8 +147,6 @@ class SimpleArithmetic(InternalEnv):
         return self.shape + self.element_shape
 
     def __init__(self, **kwargs):
-        self._resolve_params(**kwargs)
-
         if not len(self.shape) == 2:
             raise Exception("Shape must have length 2.")
 

@@ -11,11 +11,8 @@ from dps.utils import (
 class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
     def __init__(self, env, **kwargs):
         self.scope = None
-
         self.env = env
         self._n_experiences = 0
-
-        super(Updater, self).__init__(**kwargs)
 
     @property
     def n_experiences(self):
@@ -108,13 +105,13 @@ class DifferentiableUpdater(Updater):
     def __init__(self, env, f, **kwargs):
         assert hasattr(env, 'build_loss'), (
             "Environments used with DifferentiableUpdater must possess "
-            "a method called `build_loss` which builds a differentiable loss function.")
+            "a method called `build_loss` which builds a differentiable "
+            "loss function.")
         self.f = f
-
         self.obs_shape = env.obs_shape
         self.n_actions = env.n_actions
 
-        super(DifferentiableUpdater, self).__init__(env, **kwargs)
+        super(DifferentiableUpdater, self).__init__()
 
     def _build_graph(self):
         with tf.name_scope("update"):
@@ -122,7 +119,8 @@ class DifferentiableUpdater(Updater):
             self.target_ph = tf.placeholder(tf.float32, (None, None))
             self.output = self.f(self.x_ph)
             self.loss = tf.reduce_mean(self.env.build_loss(self.output, self.target_ph))
-            self.reward = tf.reduce_mean(self.env.build_reward(self.output, self.target_ph))
+            self.reward = tf.reduce_mean(
+                self.env.build_reward(self.output, self.target_ph))
 
             tvars = trainable_variables()
             self.train_op, train_summaries = build_gradient_train_op(

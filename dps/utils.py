@@ -97,8 +97,13 @@ class Param(object):
 class Parameterized(object):
     _resolved = False
 
-    def __init__(self, **kwargs):
-        self._resolve_params(**kwargs)
+    def __new__(cls, *args, **kwargs):
+        obj = super(Parameterized, cls).__new__(cls)
+        obj._resolve_params(**kwargs)
+        return obj
+
+    def __init__(self, *args, **kwargs):
+        pass
 
     def _resolve_params(self, **kwargs):
         if not self._resolved:

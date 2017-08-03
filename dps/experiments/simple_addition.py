@@ -10,11 +10,12 @@ from dps.utils import Param
 
 
 class SimpleAdditionDataset(RegressionDataset):
-    def __init__(self, width, n_digits, n_examples):
-        self.width = width
-        self.n_digits = n_digits
+    width = Param()
+    n_digits = Param()
 
-        x = np.random.randint(0, n_digits, size=(n_examples, 2*width+1))
+    def __init__(self, **kwargs):
+        x = np.random.randint(
+            0, self.n_digits, size=(self.n_examples, 2*self.width+1))
         y = x[:, :1] + x[:, -1:]
         super(SimpleAdditionDataset, self).__init__(x, y)
 
@@ -77,10 +78,8 @@ class SimpleAdditionInternal(InternalEnv):
 
 
 def build_env():
-    width, n_digits = cfg.width, cfg.n_digits
-
-    train = SimpleAdditionDataset(width, n_digits, cfg.n_train)
-    val = SimpleAdditionDataset(width, n_digits, cfg.n_val)
+    train = SimpleAdditionDataset(n_examples=cfg.n_train)
+    val = SimpleAdditionDataset(n_examples=cfg.n_val)
     external = RegressionEnv(train, val)
     internal = SimpleAdditionInternal()
     return CompositeEnv(external, internal)

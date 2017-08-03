@@ -2,19 +2,20 @@ import tensorflow as tf
 import numpy as np
 
 from dps import cfg
+from dps.utils import Param
 from dps.register import RegisterBank
 from dps.environment import (
     RegressionDataset, RegressionEnv, CompositeEnv, InternalEnv)
 
 
 class HelloWorldDataset(RegressionDataset):
-    def __init__(self, order, n_examples):
-        self.order = order
+    order = Param()
 
-        x = np.random.randn(n_examples, 2)
+    def __init__(self, **kwargs):
+        x = np.random.randn(self.n_examples, 2)
         x = np.concatenate((x.copy(), np.zeros((x.shape[0], 1))), axis=1)
         y = x[:, :2].copy()
-        for i in order:
+        for i in self.order:
             if i == 0:
                 y[:, 0] = y[:, 0] + y[:, 1]
             else:
@@ -67,8 +68,8 @@ class HelloWorld(InternalEnv):
 
 
 def build_env():
-    train = HelloWorldDataset(cfg.order, cfg.n_train)
-    val = HelloWorldDataset(cfg.order, cfg.n_val)
+    train = HelloWorldDataset(n_examples=cfg.n_train)
+    val = HelloWorldDataset(n_examples=cfg.n_val)
     external = RegressionEnv(train, val)
     internal = HelloWorld()
     return CompositeEnv(external, internal)

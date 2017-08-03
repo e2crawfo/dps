@@ -10,12 +10,13 @@ from dps.utils import Param, digits_to_numbers, numbers_to_digits
 
 
 class HardAdditionDataset(RegressionDataset):
-    def __init__(self, height, width, n_digits, n_examples):
-        self.height = height
-        self.width = width
-        self.n_digits = n_digits
+    width = Param()
+    height = Param()
+    n_digits = Param()
 
-        x = np.random.randint(0, n_digits, size=(n_examples, width*height))
+    def __init__(self, **kwargs):
+        width, height = self.width, self.height
+        x = np.random.randint(0, self.n_digits, size=(self.n_examples, width*height))
         for h in range(height):
             x[:, (h+1)*width - 1] = 0
         y = digits_to_numbers(x[:, :width])
@@ -25,7 +26,8 @@ class HardAdditionDataset(RegressionDataset):
             offset += width
         y = numbers_to_digits(y, width)
         if height > 2:
-            raise Exception("Need to specify greater number of digits when adding > 2 numbers.")
+            raise Exception(
+                "Need to specify greater number of digits when adding > 2 numbers.")
 
         super(HardAdditionDataset, self).__init__(x, y)
 
@@ -33,7 +35,8 @@ class HardAdditionDataset(RegressionDataset):
 class HardAddition(InternalEnv):
     """ Top left is (x=0, y=0).
 
-    For now, the location of the write head is the same as the x location of the read head.
+    For now, the location of the write head is the same as the x location of
+    the read head.
 
     """
     action_names = ['fovea_x += 1', 'fovea_x -= 1', 'fovea_y += 1', 'fovea_y -= 1',
@@ -51,8 +54,6 @@ class HardAddition(InternalEnv):
         return (self.width,)
 
     def __init__(self, **kwargs):
-        self._resolve_params(**kwargs)
-
         values = (
             ([0.0] * 7) +
             [np.zeros(self.width, dtype='f')])
@@ -141,10 +142,8 @@ class HardAddition(InternalEnv):
 
 
 def build_env():
-    height, width, n_digits = cfg.height, cfg.width, cfg.n_digits
-
-    train = HardAdditionDataset(height, width, n_digits, cfg.n_train)
-    val = HardAdditionDataset(height, width, n_digits, cfg.n_val)
+    train = HardAdditionDataset(n_examples=cfg.n_train)
+    val = HardAdditionDataset(n_examples=cfg.n_val)
 
     external = RegressionEnv(train, val)
     internal = HardAddition()

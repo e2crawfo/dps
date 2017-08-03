@@ -4,6 +4,7 @@ import numpy as np
 from dps import cfg
 from dps.register import RegisterBank
 from dps.environment import TensorFlowEnv
+from dps.utils import Param
 
 
 class Grid(TensorFlowEnv):
@@ -11,17 +12,19 @@ class Grid(TensorFlowEnv):
     make_input_available = False
     static_inp_width = 4
 
-    def __init__(self, T, shape, restart_prob, dense_reward, l2l, n_val):
+    rb = RegisterBank(
+        'GridRB', 'x y r dx dy', 'goal_x goal_y',
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 'x y')
 
-        self.rb = RegisterBank(
-            'GridRB', 'x y r dx dy', 'goal_x goal_y',
-            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 'x y')
-        self.T = T
-        self.shape = shape
-        self.restart_prob = restart_prob
-        self.dense_reward = dense_reward
-        self.l2l = l2l
-        self.val = self._make_input(n_val)
+    T = Param()
+    shape = Param()
+    restart_prob = Param()
+    dense_reward = Param()
+    l2l = Param()
+    n_val = Param()
+
+    def __init__(self, **kwargs):
+        self.val = self._make_input(self.n_val)
         self.mode = 'train'
 
         if self.l2l and not self.dense_reward:
@@ -102,5 +105,4 @@ class Grid(TensorFlowEnv):
 
 
 def build_env():
-    args = [cfg.T, cfg.shape, cfg.restart_prob, cfg.dense_reward, cfg.l2l, cfg.n_val]
-    return Grid(*args)
+    return Grid()

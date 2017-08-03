@@ -35,8 +35,6 @@ class TranslatedMnist(InternalEnv):
         return (self.N*self.N,)
 
     def __init__(self):
-        self._resolve_params()
-
         if self.discrete_attn:
             self.build_attention = DiscreteAttn(self.N)
         else:
@@ -218,8 +216,8 @@ def render_rollouts(env, rollouts):
 
 
 def build_env():
-    train = TranslatedMnistDataset(W=cfg.W, n_examples=cfg.n_train)
-    val = TranslatedMnistDataset(W=cfg.W, n_examples=cfg.n_val)
+    train = TranslatedMnistDataset(n_examples=cfg.n_train)
+    val = TranslatedMnistDataset(n_examples=cfg.n_val)
 
     external = RegressionEnv(train, val)
 
