@@ -12,11 +12,11 @@ from dps.utils import Param, digits_to_numbers, numbers_to_digits
 class HardAdditionDataset(RegressionDataset):
     width = Param()
     height = Param()
-    n_digits = Param()
+    base = Param()
 
     def __init__(self, **kwargs):
         width, height = self.width, self.height
-        x = np.random.randint(0, self.n_digits, size=(self.n_examples, width*height))
+        x = np.random.randint(0, self.base, size=(self.n_examples, width*height))
         for h in range(height):
             x[:, (h+1)*width - 1] = 0
         y = digits_to_numbers(x[:, :width])

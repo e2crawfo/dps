@@ -8,7 +8,8 @@ from dps.utils import (
 from dps.rl import (
     RLUpdater, rl_render_hook, REINFORCE, PPO, TRPO, RobustREINFORCE, QLearning)
 from dps.rl.policy import (
-    Policy, Softmax, EpsilonSoftmax, EpsilonGreedy, Deterministic, Normal, Gamma, ProductDist)
+    Policy, Softmax, EpsilonSoftmax, EpsilonGreedy, Deterministic,
+    Normal, Gamma, ProductDist)
 from dps.vision import LeNet, MNIST_CONFIG
 from dps.experiments import (
     hello_world, room, grid, simple_addition, pointer_following,
@@ -353,36 +354,12 @@ SIMPLE_ADDITION_CONFIG = Config(
     build_env=simple_addition.build_env,
     T=30,
     curriculum=[
-        dict(width=1, n_digits=10),
-        dict(width=2, n_digits=10),
-        dict(width=3, n_digits=10),
+        dict(width=1, base=10),
+        dict(width=2, base=10),
+        dict(width=3, base=10),
     ],
 
     n_controller_units=32,
-
-    # curriculum=[
-    #     dict(width=1, n_digits=10),
-    #     dict(width=2, n_digits=10),
-    #     dict(width=3, n_digits=10),
-    #     dict(width=4, n_digits=10),
-    #     dict(width=5, n_digits=10),
-    #     dict(width=6, n_digits=10),
-    #     dict(width=7, n_digits=10),
-    #     dict(width=8, n_digits=10),
-    #     dict(width=9, n_digits=10),
-    #     dict(width=9, n_digits=10, T=40),
-    #     dict(width=10, n_digits=10, T=40),
-    #     dict(width=11, n_digits=10, T=40),
-    #     dict(width=12, n_digits=10, T=50),
-    #     dict(width=13, n_digits=10, T=50),
-    #     dict(width=15, n_digits=10, T=60),
-    #     dict(width=17, n_digits=10, T=70),
-    #     dict(width=20, n_digits=10, T=80),
-    #     dict(width=25, n_digits=10, T=90),
-    #     dict(width=30, n_digits=10, T=100),
-    #     dict(width=35, n_digits=10, T=110),
-    # ]
-
     log_name='simple_addition',
 )
 
@@ -392,8 +369,8 @@ POINTER_CONFIG = Config(
     T=30,
     dense_reward=True,
     curriculum=[
-        dict(width=1, n_digits=10),
-        dict(width=2, n_digits=10)],
+        dict(width=1, base=10),
+        dict(width=2, base=10)],
     log_name='pointer',
 )
 
@@ -402,8 +379,8 @@ HARD_ADDITION_CONFIG = Config(
     build_env=hard_addition.build_env,
     T=40,
     curriculum=[
-        dict(height=2, width=3, n_digits=2, entropy_start=1.0),
-        dict(height=2, width=3, n_digits=2, entropy_start=0.0)],
+        dict(height=2, width=3, base=2, entropy_start=1.0),
+        dict(height=2, width=3, base=2, entropy_start=0.0)],
     log_name='hard_addition',
 )
 
@@ -449,12 +426,11 @@ MNIST_ARITHMETIC_CONFIG = Config(
     build_env=mnist_arithmetic.build_env,
 
     curriculum=[
-        dict(W=100, N=16, T=20, n_digits=3, base=10),
+        dict(W=100, N=16, T=20, min_digits=2, max_digits=3, base=10),
     ],
     simple=False,
     threshold=0.15,
     verbose=4,
-    upper_bound=False,
 
     classifier_str="MLP_30_30",
     build_classifier=lambda inp, outp_size, is_training=False: tf.nn.softmax(
@@ -479,7 +455,7 @@ SIMPLE_ARITHMETIC_CONFIG = Config(
         ('C', lambda x: len(x))],
 
     curriculum=[
-        dict(T=30, n_digits=3, shape=(2, 2), upper_bound=True),
+        dict(T=30, min_digits=2, max_digits=3, shape=(2, 2)),
     ],
     display=False,
     mnist=False,
@@ -530,7 +506,7 @@ ALT_ARITHMETIC_CONFIG = Config(
         ('C', lambda x: len(x))],
 
     curriculum=[
-        dict(T=10, n_digits=2, shape=(3, 1), upper_bound=True),
+        dict(T=10, min_digits=2, max_digits=2, shape=(3, 1)),
     ],
     force_2d=False,
     display=False,
@@ -609,7 +585,7 @@ ROOM_CONFIG_TEST = ROOM_CONFIG.copy(
 
 SIMPLE_ADDITION_TEST = SIMPLE_ADDITION_CONFIG.copy(
     width=1,
-    n_digits=10,
+    base=10,
     action_seq=[0, 2, 1, 1, 3, 5, 0],
 )
 adjust_for_test(SIMPLE_ADDITION_TEST)
@@ -617,7 +593,7 @@ adjust_for_test(SIMPLE_ADDITION_TEST)
 
 POINTER_TEST = POINTER_CONFIG.copy(
     width=1,
-    n_digits=10,
+    base=10,
     action_seq=[0, 2, 1],
 )
 adjust_for_test(POINTER_TEST)
@@ -626,7 +602,7 @@ adjust_for_test(POINTER_TEST)
 HARD_ADDITION_TEST = HARD_ADDITION_CONFIG.copy(
     width=2,
     height=2,
-    n_digits=10,
+    base=10,
     action_seq=[4, 2, 5, 6, 7, 0, 4, 3, 5, 6, 7, 0],
 )
 adjust_for_test(HARD_ADDITION_TEST)
@@ -661,7 +637,8 @@ MNIST_ARITHMETIC_TEST = MNIST_ARITHMETIC_CONFIG.copy(
     N=8,
     simple=False,
     base=3,
-    n_digits=2,
+    min_digits=2,
+    max_digits=3,
 
     reward_window=0.5,
 
@@ -686,14 +663,12 @@ SIMPLE_ARITHMETIC_TEST = SIMPLE_ARITHMETIC_CONFIG.copy(
     shape=(5, 5),
     op_loc=(0, 0),
     start_loc=(0, 0),
-    n_digits=3,
-    upper_bound=True,
     base=10,
     n_examples=1,
     batch_size=1,
     n_train=1,
     n_val=0,
-    curriculum=[dict(T=10, n_digits=2, shape=(1, 3))],
+    curriculum=[dict(T=10, min_digits=2, max_digits=3, shape=(1, 3))],
 
     reward_window=0.5,
 
@@ -714,8 +689,8 @@ ALT_ARITHMETIC_TEST = ALT_ARITHMETIC_CONFIG.copy(
     shape=(3, 1),
     op_loc=(0, 0),
     start_loc=(0, 0),
-    n_digits=2,
-    upper_bound=False,
+    min_digits=2,
+    max_digits=3,
     base=10,
     batch_size=16,
     threshold=0.04,

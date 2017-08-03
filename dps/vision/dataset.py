@@ -209,9 +209,9 @@ def char_to_idx(c):
 
 
 class MnistArithmeticDataset(PatchesDataset):
-    n_digits = Param()
+    min_digits = Param()
+    max_digits = Param()
     reductions = Param()
-    upper_bound = Param()
     base = Param()
 
     def __init__(self, **kwargs):
@@ -237,11 +237,7 @@ class MnistArithmeticDataset(PatchesDataset):
         del self.eY
 
     def _sample_patches(self):
-        if self.upper_bound:
-            n = np.random.randint(1, self.n_digits+1)
-        else:
-            n = self.n_digits
-
+        n = np.random.randint(self.min_digits, self.max_digits+1)
         symbol_idx = np.random.randint(0, self.eY.shape[0])
         symbol_class = self.eY[symbol_idx, 0]
         func = self.reductions[symbol_class]
@@ -252,9 +248,9 @@ class MnistArithmeticDataset(PatchesDataset):
 
 
 class TranslatedMnistDataset(PatchesDataset):
-    n_digits = Param()
+    min_digits = Param()
+    max_digits = Param()
     reduction = Param()
-    upper_bound = Param()
     base = Param
     symbols = Param()
     include_blank = Param()
@@ -274,11 +270,7 @@ class TranslatedMnistDataset(PatchesDataset):
         del self.Y
 
     def _sample_patches(self):
-        if self.upper_bound:
-            n = np.random.randint(1, self.n_digits+1)
-        else:
-            n = self.n_digits
-
+        n = np.random.randint(self.min_digits, self.max_digits+1)
         digit_indices = np.random.randint(0, self.Y.shape[0], n)
         images = [self.X[i] for i in digit_indices]
         y = self.reduction([self.Y[i] for i in digit_indices])

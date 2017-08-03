@@ -8,17 +8,9 @@ from dps import cfg
 from dps.config import DEFAULT_CONFIG
 from dps.train import training_loop
 from dps.updater import DifferentiableUpdater
-from dps.experiments.alt_arithmetic import AltArithmeticEnv
+from dps.experiments.alt_arithmetic import build_env
 # from dps.utils import MLP
 from dps.vision import LeNet
-
-
-def build_env():
-    return AltArithmeticEnv(
-        mnist=True, shape=cfg.shape, n_digits=cfg.n_digits,
-        upper_bound=cfg.upper_bound, base=cfg.base, n_train=cfg.n_train,
-        n_val=cfg.n_val, op_loc=cfg.op_loc,
-        start_loc=cfg.start_loc, force_2d=cfg.force_2d)
 
 
 config = DEFAULT_CONFIG.copy(
@@ -27,13 +19,13 @@ config = DEFAULT_CONFIG.copy(
     n_val=1000,
     shape=(2, 2),
     start_loc=(0, 0),
-    n_digits=3,
+    min_digits=2,
+    max_digits=3,
     symbols=[
         ('A', lambda x: sum(x)),
         ('M', lambda x: np.product(x)),
         ('C', lambda x: len(x))],
     op_loc=(0, 0),
-    upper_bound=True,
     base=10,
     n_controller_units=256,
     get_updater=lambda env: DifferentiableUpdater(env, LeNet(n_units=cfg.n_controller_units, output_size=1)),

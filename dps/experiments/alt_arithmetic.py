@@ -14,8 +14,8 @@ class AltArithmeticDataset(RegressionDataset):
     mnist = Param()
     symbols = Param()
     shape = Param()
-    n_digits = Param()
-    upper_bound = Param()
+    min_digits = Param()
+    max_digits = Param()
     base = Param()
     n_examples = Param()
     op_loc = Param()
@@ -56,7 +56,7 @@ class AltArithmeticDataset(RegressionDataset):
             blank_element = np.array([[-1]])
 
         x, y = self.make_dataset(
-            self.shape, self.n_digits, self.upper_bound, self.base,
+            self.shape, self.min_digits, self.max_digits, self.base,
             blank_element, symbol_reps, digit_reps,
             functions, self.n_examples, self.op_loc, force_2d=self.force_2d)
 
@@ -64,7 +64,7 @@ class AltArithmeticDataset(RegressionDataset):
 
     @staticmethod
     def make_dataset(
-            shape, n_digits, upper_bound, base, blank_element,
+            shape, min_digits, max_digits, base, blank_element,
             symbol_reps, digit_reps, functions, n_examples, op_loc, force_2d):
 
         if n_examples == 0:
@@ -82,16 +82,12 @@ class AltArithmeticDataset(RegressionDataset):
             (1,)*len(shape) + blank_element.shape)
 
         for j in range(n_examples):
-            if upper_bound:
-                current_n_digits = np.random.randint(0, n_digits+1)
-            else:
-                current_n_digits = n_digits
-
+            nd = np.random.randint(min_digits, max_digits+1)
             if op_loc is None:
-                indices = np.random.choice(size, current_n_digits+1, replace=False)
+                indices = np.random.choice(size, nd+1, replace=False)
             else:
                 _op_loc = np.ravel_multi_index(op_loc, shape)
-                indices = np.random.choice(size-1, current_n_digits, replace=False)
+                indices = np.random.choice(size-1, nd, replace=False)
                 indices[indices == _op_loc] = size-1
                 indices = np.append(_op_loc, indices)
 
@@ -141,8 +137,6 @@ class AltArithmetic(InternalEnv):
     mnist = Param()
     symbols = Param()
     shape = Param()
-    n_digits = Param()
-    upper_bound = Param()
     base = Param()
     start_loc = Param()
     force_2d = Param()

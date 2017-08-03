@@ -21,7 +21,6 @@ class MnistArithmetic(InternalEnv):
 
     W = Param()
     N = Param()
-    upper_bound = Param()
     inc_delta = Param()
     inc_x = Param()
     inc_y = Param()

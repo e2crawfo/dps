@@ -11,11 +11,10 @@ from dps.utils import Param
 
 class SimpleAdditionDataset(RegressionDataset):
     width = Param()
-    n_digits = Param()
+    base = Param()
 
     def __init__(self, **kwargs):
-        x = np.random.randint(
-            0, self.n_digits, size=(self.n_examples, 2*self.width+1))
+        x = np.random.randint(0, self.base, size=(self.n_examples, 2*self.width+1))
         y = x[:, :1] + x[:, -1:]
         super(SimpleAdditionDataset, self).__init__(x, y)
 

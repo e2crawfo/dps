@@ -14,10 +14,9 @@ config = tasks['alt_arithmetic']
 
 config.update(Config(
     curriculum=[
-        dict(T=30, shape=(2, 2), n_digits=3, upper_bound=True),
+        dict(T=30, shape=(2, 2), min_digits=2, max_digits=3),
     ],
     base=10,
-    upper_bound=True,
     mnist=False,
     op_loc=(0, 0),
     start_loc=(0, 0),

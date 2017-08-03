@@ -58,7 +58,7 @@ config = DEFAULT_CONFIG.copy(
     build_env=alt_arithmetic.build_env,
 
     curriculum=[
-        dict(T=20, n_digits=3, shape=(2, 2), upper_bound=True),
+        dict(T=20, min_digits=2, max_digits=3, shape=(2, 2)),
     ],
     display=False,
     mnist=False,

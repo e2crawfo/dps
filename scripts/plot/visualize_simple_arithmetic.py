@@ -7,14 +7,13 @@ import numpy as np
 
 class Config(DpsConfig):
     curriculum = [
-        dict(T=6, shape=(2, 2), n_digits=3, upper_bound=True),
-        dict(T=12, shape=(3, 3), n_digits=3, upper_bound=True),
-        dict(T=20, shape=(4, 4), n_digits=3, upper_bound=True),
-        dict(T=30, shape=(5, 5), n_digits=3, upper_bound=True),
+        dict(T=6, shape=(2, 2), min_digits=2, max_digits=3),
+        dict(T=12, shape=(3, 3), min_digits=2, max_digits=3),
+        dict(T=20, shape=(4, 4), min_digits=2, max_digits=3),
+        dict(T=30, shape=(5, 5), min_digits=2, max_digits=3),
     ]
     base = 10
     gamma = 0.99
-    upper_bound = True
     mnist = 1
     op_loc = (0, 0)
     start_loc = (0, 0)

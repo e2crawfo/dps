@@ -11,11 +11,11 @@ from dps.utils import Param
 
 class PointerDataset(RegressionDataset):
     width = Param()
-    n_digits = Param()
+    base = Param()
 
     def __init__(self, **kwargs):
         width = self.width
-        x = np.random.randint(0, self.n_digits, size=(self.n_examples, 2*width+1))
+        x = np.random.randint(0, self.base, size=(self.n_examples, 2*width+1))
         x[:, width] = np.random.randint(-width, width+1, size=self.n_examples)
         y = x[range(x.shape[0]), x[:, width]+width].reshape(-1, 1)
         super(PointerDataset, self).__init__(x, y)

@@ -18,8 +18,8 @@ class SimpleArithmeticDataset(RegressionDataset):
     mnist = Param()
     symbols = Param()
     shape = Param()
-    n_digits = Param()
-    upper_bound = Param()
+    min_digits = Param()
+    max_digits = Param()
     base = Param()
     n_examples = Param()
     op_loc = Param()
@@ -61,15 +61,15 @@ class SimpleArithmeticDataset(RegressionDataset):
             blank_element = np.array([-1])
 
         x, y = self.make_dataset(
-            self.shape, self.n_digits, self.upper_bound, self.base,
-            blank_element, symbol_reps, digit_reps,
+            self.shape, self.min_digits, self.max_digits,
+            self.base, blank_element, symbol_reps, digit_reps,
             functions, self.n_examples, self.op_loc)
 
         super(SimpleArithmeticDataset, self).__init__(x, y)
 
     @staticmethod
     def make_dataset(
-            shape, n_digits, upper_bound, base, blank_element,
+            shape, min_digits, max_digits, base, blank_element,
             symbol_reps, digit_reps, functions, n_examples, op_loc):
 
         if n_examples == 0:
@@ -87,10 +87,7 @@ class SimpleArithmeticDataset(RegressionDataset):
         _blank_element = blank_element.reshape((1,)*len(shape) + blank_element.shape)
 
         for j in range(n_examples):
-            if upper_bound:
-                n = np.random.randint(0, n_digits+1)
-            else:
-                n = n_digits
+            n = np.random.randint(min_digits, max_digits+1)
 
             if op_loc is None:
                 indices = np.random.choice(size, n+1, replace=False)
@@ -131,8 +128,6 @@ class SimpleArithmetic(InternalEnv):
     mnist = Param()
     symbols = Param()
     shape = Param()
-    n_digits = Param()
-    upper_bound = Param()
     base = Param()
     start_loc = Param()
     build_classifier = Param()
