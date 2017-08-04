@@ -38,8 +38,14 @@ class TrainingLoop(object):
         self.start_time = start_time
         self.history = []
 
-    def record(self, name, value):
-        self.history[-1][name] = value
+    def record(self, d=None, **kwargs):
+        d = d or {}
+        self.history[-1].update(d)
+        self.history[-1].update(kwargs)
+
+    @property
+    def latest(self):
+        return self.history[-1]
 
     def summarize(self):
         s = "\n"
@@ -135,7 +141,8 @@ class TrainingLoop(object):
 
                 if cfg.save_summaries:
                     self.train_writer = tf.summary.FileWriter(
-                        exp_dir.path_for('train'), graph, flush_secs=cfg.reload_interval)
+                        exp_dir.path_for('train'), graph,
+                        flush_secs=cfg.reload_interval)
                     self.val_writer = tf.summary.FileWriter(
                         exp_dir.path_for('val'), flush_secs=cfg.reload_interval)
 
@@ -169,24 +176,29 @@ class TrainingLoop(object):
                 sess.run(uninitialized_variables_initializer())
                 sess.run(tf.assert_variables_initialized())
 
-                threshold_reached, reason, best = self.run_stage(stage, updater)
+                threshold_reached, reason = self.run_stage(stage, updater)
+
+                self.record(reason=reason)
 
                 print("Optimization complete. Reason: {}.".format(reason))
                 print("Best hypothesis for this stage was found on "
-                      "step (g: {}, l: {}) with validation loss = {}.".format(*best))
+                      "step (g: {best_global_step}, l: {best_local_step}) "
+                      "with validation loss = {best_loss}.".format(**self.latest))
 
-                self.record('reason', reason)
-                self.record('best_global_step', best[0])
-                self.record('best_local_step', best[1])
-                self.record('best_value', best[2])
+                s = "~" * 40
+                for k, v in self.latest.items():
+                    s += '\n{}: {}'.format(k, v)
+                s += "\n" + "~" * 40
+                print(s)
 
-                best_path = self.history[-1]['best_path']
+                best_path = self.latest['best_path']
                 print("Loading best hypothesis for this stage "
                       "from file {}...".format(best_path))
                 updater.restore(tf.get_default_session(), best_path)
 
                 if cfg.start_tensorboard:
-                    restart_tensorboard(str(cfg.log_dir), cfg.tbport, cfg.reload_interval)
+                    restart_tensorboard(
+                        str(cfg.log_dir), cfg.tbport, cfg.reload_interval)
 
                 if cfg.render_hook is not None:
                     cfg.render_hook(updater)
@@ -198,7 +210,7 @@ class TrainingLoop(object):
                           "of the curriculum, terminating.".format(stage))
                     break
 
-            self.record("stage_duration", time.time() - stage_start)
+            self.record(stage_duration=time.time()-stage_start)
 
         print(self.summarize())
         result = dict(
@@ -214,7 +226,8 @@ class TrainingLoop(object):
         early_stop = EarlyStopHook(patience=cfg.patience)
         time_remaining = self.time_remaining
 
-        print("{} seconds left at the beginning of stage {}.".format(time_remaining, stage))
+        print("{} seconds left "
+              "at the beginning of stage {}.".format(time_remaining, stage))
 
         with time_limit(self.time_remaining, verbose=True) as limiter:
             try:
@@ -225,7 +238,7 @@ class TrainingLoop(object):
 
         if limiter.ran_out:
             reason = "Time limit reached"
-        return threshold_reached, reason, early_stop.best
+        return threshold_reached, reason
 
     def _run_stage(self, stage, updater, early_stop):
         """ Run a stage of a curriculum. """
@@ -248,25 +261,25 @@ class TrainingLoop(object):
             render = self.global_step % cfg.render_step == 0
 
             start_time = time.time()
-            update_summaries = updater.update(cfg.batch_size, collect_summaries=evaluate)
+            update_summaries = updater.update(
+                cfg.batch_size, collect_summaries=evaluate)
             update_duration = time.time() - start_time
 
             if evaluate or display:
-                train_summaries, train_record = updater.evaluate(cfg.batch_size, mode='train_eval')
-                val_summaries, val_record = updater.evaluate(cfg.batch_size, mode='val')
-                val_loss = val_record['loss']
+                _, train_summaries, train_record = \
+                    updater.evaluate(cfg.batch_size, mode='train_eval')
+                val_loss, val_summaries, val_record = \
+                    updater.evaluate(cfg.batch_size, mode='val')
+
+                record = {k + '(train)': v for k, v in train_record.items()}
+                record.update({k + '(val)': v for k, v in val_record.items()})
 
                 if evaluate and cfg.save_summaries:
-                    self.train_writer.add_summary(update_summaries + train_summaries, self.global_step)
+                    self.train_writer.add_summary(
+                        update_summaries + train_summaries, self.global_step)
                     self.val_writer.add_summary(val_summaries, self.global_step)
 
                 if display:
-                    record = {k + '(train)': v for k, v in train_record.items()}
-                    record.update({k + '(val)': v for k, v in val_record.items()})
-                    record['Sec/Batch'] = time_per_example
-                    record['Sec/Example'] = time_per_example
-                    record['Epoch'] = updater.env.completion
-
                     s = "~" * 40
                     s += "\nStep(g: {}, l: {}): ".format(self.global_step, local_step)
                     for k, v in record.items():
@@ -274,17 +287,20 @@ class TrainingLoop(object):
                     s += "\n" + "~" * 40
                     print(s)
 
-                new_best, stop = early_stop.check(val_loss, self.global_step, local_step)
+                new_best, stop = early_stop.check(val_loss, local_step, **record)
 
                 if new_best:
                     print("Storing new best on local step {} (global step {}) "
-                          "with validation loss of {}.".format(local_step, self.global_step, val_loss))
+                          "with validation loss of {}.".format(
+                              local_step, self.global_step, val_loss))
+
                     filename = self.exp_dir.path_for('best_of_stage_{}'.format(stage))
                     best_path = updater.save(tf.get_default_session(), filename)
-                    self.record('best_path', best_path)
+
+                    self.record(best_path=best_path, best_global_step=self.global_step)
+                    self.record(**{'best_' + k: v for k, v in early_stop.best.items()})
 
                 if stop:
-                    best_gstep, best_lstep, best_value = early_stop.best
                     print("Early stopping triggered.")
                     reason = "Early stopping triggered"
                     break
@@ -294,9 +310,12 @@ class TrainingLoop(object):
                     threshold_reached = True
                     break
 
-                self.record('time_per_example', time_per_example)
-                self.record('time_per_batch', time_per_batch)
-                self.record('n_steps', local_step)
+                self.record(
+                    time_per_example=time_per_example,
+                    time_per_batch=time_per_batch,
+                    n_steps=local_step,
+                    epoch=updater.env.completion
+                )
 
             if render and cfg.render_hook is not None:
                 cfg.render_hook(updater)
@@ -316,24 +335,26 @@ class EarlyStopHook(object):
         self.patience = patience
         self.reset()
 
-    def check(self, validation_loss, global_step, local_step=None):
-        local_step = global_step if local_step is None else local_step
-
-        new_best = self._best_value is None or validation_loss < self._best_value
+    def check(self, loss, step, **kwargs):
+        new_best = self._best_loss is None or loss < self._best_loss
         if new_best:
-            self._best_value = validation_loss
-            self._best_value_gstep = global_step
-            self._best_value_lstep = local_step
+            self._best_loss = loss
+            self._best_step = step
+            self._best_record = kwargs.copy()
 
-        self._early_stopped = self._early_stopped or (local_step - self._best_value_lstep > self.patience)
+        self._early_stopped = (
+            self._early_stopped or
+            (step - self._best_step > self.patience))
         return new_best, self._early_stopped
 
     @property
     def best(self):
-        return self._best_value_gstep, self._best_value_lstep, self._best_value
+        best = self._best_record.copy()
+        best.update(loss=self._best_loss, local_step=self._best_step)
+        return best
 
     def reset(self):
-        self._best_value = None
-        self._best_value_gstep = None
-        self._best_value_lstep = None
+        self._best_loss = None
+        self._best_record = None
+        self._best_step = None
         self._early_stopped = 0

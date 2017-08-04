@@ -13,7 +13,6 @@ class RobustREINFORCE(TRPO):
     def _build_graph(self, is_training, exploration):
         self.delta = build_scheduled_value(self.delta_schedule, 'delta')
         self.build_placeholders()
-        self.advantage_estimator.build_graph()
 
         self.policy.set_exploration(exploration)
         self.prev_policy.set_exploration(exploration)

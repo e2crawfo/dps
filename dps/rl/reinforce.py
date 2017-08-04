@@ -69,8 +69,6 @@ class REINFORCE(PolicyOptimization):
     def _build_graph(self, is_training, exploration):
         self.build_placeholders()
 
-        self.advantage_estimator.build_graph()
-
         self.policy.set_exploration(exploration)
 
         self.pg_objective, _, self.mean_entropy = policy_gradient_objective(

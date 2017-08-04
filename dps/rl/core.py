@@ -50,7 +50,7 @@ class RLUpdater(Updater):
     exploration_schedule = Param()
     test_time_explore = Param()
 
-    def __init__(self, env, policy, learners=None, **kwargs):
+    def __init__(self, env, policy, learners=None, loss_func=None, **kwargs):
         self.env = env
         self.policy = policy
 
@@ -59,6 +59,10 @@ class RLUpdater(Updater):
             self.learners = list(learners)
         except:
             self.learners = [learners]
+
+        if loss_func is None:
+            loss_func = lambda records: records[0]['loss']
+        self.loss_func = loss_func
 
         self.obs_shape = env.obs_shape
         self.n_actions = env.n_actions
@@ -99,20 +103,23 @@ class RLUpdater(Updater):
         rollouts['mask'] = 1-shift_zero_fill(rollouts.done, 1)
 
         summaries = b''
+        records = []
         record = {}
-
-        # Give precedence to learners that occur earlier.
-        for learner in self.learners[::-1]:
+        for learner in self.learners:
             s, r = learner.evaluate(rollouts)
             summaries += s
-            record.update(r)
-        assert 'loss' in record
+
+            for k, v in r.items():
+                record[learner.name + ":" + k] = v
+            records.append(r)
+        loss = self.loss_func(records)
 
         sess = tf.get_default_session()
         feed_dict = {self.reward: rollouts.r}
-        record['behaviour_policy_reward_per_ep'] = sess.run(self.reward_per_ep, feed_dict=feed_dict)
+        record['behaviour_policy_reward_per_ep'] = \
+            sess.run(self.reward_per_ep, feed_dict=feed_dict)
 
-        return summaries, record
+        return loss, summaries, record
 
 
 class ReinforcementLearner(Parameterized):

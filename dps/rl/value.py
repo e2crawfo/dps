@@ -44,13 +44,24 @@ class PolicyEvaluation(ReinforcementLearner):
         super(PolicyEvaluation, self).__init__(**kwargs)
 
     def _build_graph(self, is_training, exploration):
-        self.estimator.build_graph()
-        self.rewards = tf.placeholder(tf.float32, shape=(None, None, 1), name="_rewards")
-        self.targets = tf.placeholder(tf.float32, shape=(None, None, 1), name="_targets")
+        self.obs = tf.placeholder(
+            tf.float32, shape=(None, None) + self.estimator.obs_shape, name="_obs")
+        self.rewards = tf.placeholder(
+            tf.float32, shape=(None, None, 1), name="_rewards")
+        self.targets = tf.placeholder(
+            tf.float32, shape=(None, None, 1), name="_targets")
         self.mask = tf.placeholder(tf.float32, shape=(None, None, 1), name="_mask")
-        squared_error = (self.estimator.value_estimates - self.targets)**2
+
+        batch_size = tf.shape(self.obs)[1]
+        initial_state = self.estimator.controller.zero_state(batch_size, tf.float32)
+        self.value_estimates, _ = dynamic_rnn(
+            self.estimator.controller, self.obs, initial_state=initial_state,
+            parallel_iterations=1, swap_memory=False, time_major=True)
+
+        squared_error = (self.value_estimates - self.targets)**2
         self.loss = masked_mean(squared_error, self.mask)
-        self.mean_estimated_value = masked_mean(self.estimator.value_estimates, self.mask)
+        self.mean_estimated_value = masked_mean(
+            self.value_estimates, self.mask)
 
         tvars = self.estimator.trainable_variables()
         self.train_op, train_summaries = build_gradient_train_op(
@@ -58,7 +69,8 @@ class PolicyEvaluation(ReinforcementLearner):
 
         self.train_summary_op = tf.summary.merge(train_summaries)
 
-        td_error = compute_td_error(self.estimator.value_estimates, self.gamma, self.rewards)
+        td_error = compute_td_error(
+            self.value_estimates, self.gamma, self.rewards)
         self.approx_bellman_error = masked_mean(td_error, self.mask)
         self.eval_summary_op = tf.summary.merge([
             tf.summary.scalar("squared_error", self.loss),
@@ -70,7 +82,7 @@ class PolicyEvaluation(ReinforcementLearner):
         masked_rewards = rollouts.r * rollouts.mask
         cumsum_rewards = np.flipud(np.cumsum(np.flipud(masked_rewards), axis=0))
         feed_dict = {
-            self.estimator.obs: rollouts.o,
+            self.obs: rollouts.o,
             self.targets: cumsum_rewards,
             self.mask: rollouts.mask
         }
@@ -89,7 +101,7 @@ class PolicyEvaluation(ReinforcementLearner):
         masked_rewards = rollouts.r * rollouts.mask
         cumsum_rewards = np.flipud(np.cumsum(np.flipud(masked_rewards), axis=0))
         feed_dict = {
-            self.estimator.obs: rollouts.o,
+            self.obs: rollouts.o,
             self.targets: cumsum_rewards,
             self.rewards: rollouts.r,
             self.mask: rollouts.mask
@@ -123,7 +135,9 @@ class TrustRegionPolicyEvaluation(ReinforcementLearner):
         self.estimator = estimator
         self.gamma = gamma
 
-        self.policy = Policy(estimator.controller, NormalWithExploration(), estimator.obs_shape, name="policy_eval")
+        self.policy = Policy(
+            estimator.controller, NormalWithExploration(),
+            estimator.obs_shape, name="policy_eval")
         self.prev_policy = self.policy.deepcopy("prev_policy")
 
         self.T = cfg.T
@@ -133,10 +147,14 @@ class TrustRegionPolicyEvaluation(ReinforcementLearner):
     def _build_graph(self, is_training, exploration):
         self.delta = build_scheduled_value(self.delta_schedule, 'delta')
 
-        self.obs = tf.placeholder(tf.float32, shape=(self.T, None) + self.estimator.obs_shape, name="_obs")
-        self.rewards = tf.placeholder(tf.float32, shape=(self.T, None, 1), name="_rewards")
-        self.targets = tf.placeholder(tf.float32, shape=(self.T, None, 1), name="_targets")
-        self.mask = tf.placeholder(tf.float32, shape=(self.T, None, 1), name="_mask")
+        self.obs = tf.placeholder(
+            tf.float32, shape=(self.T, None) + self.estimator.obs_shape, name="_obs")
+        self.rewards = tf.placeholder(
+            tf.float32, shape=(self.T, None, 1), name="_rewards")
+        self.targets = tf.placeholder(
+            tf.float32, shape=(self.T, None, 1), name="_targets")
+        self.mask = tf.placeholder(
+            tf.float32, shape=(self.T, None, 1), name="_mask")
 
         self.std_dev = tf.placeholder(tf.float32, ())
 
@@ -293,7 +311,8 @@ class BasicValueEstimator(object):
         T = len(obs)
         discounts = np.logspace(0, T-1, T, base=self.gamma).reshape(-1, 1, 1)
         discounted_rewards = rewards * discounts
-        sum_discounted_rewards = np.flipud(np.cumsum(np.flipud(discounted_rewards), axis=0))
+        sum_discounted_rewards = np.flipud(
+            np.cumsum(np.flipud(discounted_rewards), axis=0))
         value_t = sum_discounted_rewards.mean(axis=1, keepdims=True)
         value_t = np.tile(value_t, (1, obs.shape[1], 1))
         return value_t
@@ -306,19 +325,26 @@ class NeuralValueEstimator(object):
     def __init__(self, controller, obs_shape, **kwargs):
         self.controller = controller
         self.obs_shape = obs_shape
+        self.estimate_is_built = False
         super(NeuralValueEstimator, self).__init__(**kwargs)
 
-    def build_graph(self):
-        self.obs = tf.placeholder(tf.float32, shape=(None, None) + self.obs_shape, name="_obs")
-        batch_size = tf.shape(self.obs)[1]
-        initial_state = self.controller.zero_state(batch_size, tf.float32)
-        self.value_estimates, _ = dynamic_rnn(
-            self.controller, self.obs, initial_state=initial_state,
-            parallel_iterations=1, swap_memory=False, time_major=True)
+    def build_estimate(self):
+        if not self.estimate_is_built:
+            self.obs = tf.placeholder(
+                tf.float32, shape=(None, None) + self.obs_shape, name="obs")
+            batch_size = tf.shape(self.obs)[1]
+            initial_state = self.controller.zero_state(batch_size, tf.float32)
+            self.value_estimates, _ = dynamic_rnn(
+                self.controller, self.obs, initial_state=initial_state,
+                parallel_iterations=1, swap_memory=False, time_major=True)
+            self.estimate_is_built = True
 
     def estimate(self, rollouts):
+        self.build_estimate()
+
         sess = tf.get_default_session()
-        value_estimates = sess.run(self.value_estimates, feed_dict={self.obs: rollouts.o})
+        value_estimates = sess.run(
+            self.value_estimates, feed_dict={self.obs: rollouts.o})
         return value_estimates
 
     def trainable_variables(self):
@@ -330,9 +356,6 @@ class GeneralizedAdvantageEstimator(object):
         self.value_estimator = value_estimator
         self.gamma = gamma
         self.lmbda = lmbda
-
-    def build_graph(self):
-        self.value_estimator.build_graph()
 
     def estimate(self, rollouts):
         value_estimates = self.value_estimator.estimate(rollouts)
@@ -365,6 +388,10 @@ def actor_critic(
             value_estimator, lmbda=cfg.lmbda, gamma=cfg.gamma)
         actor = cfg.alg(policy, advantage_estimator, name="actor")
 
-    learners = [actor, critic]
+    # Make sure we update critic before actor, so that the critic
+    # is really giving us a more accurate view of the performance
+    # of the current actor
+    learners = [critic, actor]
+    loss_func = lambda records: records[1]['loss']
 
-    return RLUpdater(env, policy, learners)
+    return RLUpdater(env, policy, learners=learners, loss_func=loss_func)

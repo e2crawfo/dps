@@ -86,7 +86,6 @@ class PPO(PolicyOptimization):
 
     def _build_graph(self, is_training, exploration):
         self.build_placeholders()
-        self.advantage_estimator.build_graph()
 
         self.prev_policy.set_exploration(exploration)
         self.policy.set_exploration(exploration)

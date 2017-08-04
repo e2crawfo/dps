@@ -51,10 +51,13 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
         assert mode in 'train_eval val'.split()
         self.set_is_training(mode == 'train_eval')
 
-        summaries, record = self._evaluate(batch_size, mode)
-        _scheduled_value_summaries = tf.get_default_session().run(self.scheduled_value_summaries_op)
-        summaries += _scheduled_value_summaries
-        return summaries, record
+        loss, summaries, record = self._evaluate(batch_size, mode)
+
+        scheduled_value_summaries = \
+            tf.get_default_session().run(self.scheduled_value_summaries_op)
+        summaries += scheduled_value_summaries
+
+        return loss, summaries, record
 
     @abc.abstractmethod
     def _evaluate(self, batch_size, mode):
@@ -161,5 +164,6 @@ class DifferentiableUpdater(Updater):
         }
 
         sess = tf.get_default_session()
-        summaries, loss = sess.run([self.eval_summary_op, self.loss], feed_dict=feed_dict)
-        return summaries, {'loss': loss}
+        summaries, loss = sess.run(
+            [self.eval_summary_op, self.loss], feed_dict=feed_dict)
+        return loss, summaries, {}
