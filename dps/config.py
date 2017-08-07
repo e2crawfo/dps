@@ -15,7 +15,7 @@ from dps.experiments import (
     hello_world, room, grid, simple_addition, pointer_following,
     hard_addition, translated_mnist, mnist_arithmetic, simple_arithmetic,
     alt_arithmetic)
-from dps.rl.value import actor_critic, TrustRegionPolicyEvaluation, PolicyEvaluation
+from dps.rl.value import actor_critic, TrustRegionPolicyEvaluation, ProximalPolicyEvaluation, PolicyEvaluation
 
 
 def get_updater(env):
@@ -40,14 +40,23 @@ def get_updater(env):
 
 def get_experiment_name():
     name = []
+
     try:
         name.append('actor={}'.format(cfg.actor_config.name))
     except:
         pass
+
     try:
         name.append('critic={}'.format(cfg.critic_config.name))
     except:
         pass
+
+    if not name:
+        try:
+            name.append('name={}'.format(cfg.name))
+        except:
+            pass
+
     try:
         name.append('seed={}'.format(cfg.seed))
     except:
@@ -119,8 +128,20 @@ BASELINE_CONFIG = Config(
 PE_CONFIG = Config(
     name="PolicyEvaluation",
     alg=PolicyEvaluation,
-    lr_schedule=1e-4,
+    lr_schedule=1e-2,
     optimizer_spec='adam',
+    K=10,
+)
+
+
+PPE_CONFIG = Config(
+    name="ProximalPolicyEvaluation",
+    alg=ProximalPolicyEvaluation,
+    lr_schedule=1e-2,
+    optimizer_spec='adam',
+    epsilon=0.2,
+    K=10,
+    S=5,
 )
 
 
@@ -354,9 +375,9 @@ SIMPLE_ADDITION_CONFIG = Config(
     build_env=simple_addition.build_env,
     T=30,
     curriculum=[
-        dict(width=1, base=10),
-        dict(width=2, base=10),
-        dict(width=3, base=10),
+        dict(width=1, base=10, threshold=6.0),
+        dict(width=2, base=10, threshold=8.0),
+        dict(width=3, base=10, threshold=10.0),
     ],
 
     n_controller_units=32,
@@ -721,6 +742,7 @@ adjust_for_test(ALT_ARITHMETIC_TEST)
 
 critic_configs = dict(
     trpe=TRPE_CONFIG,
+    ppe=PPE_CONFIG,
     pe=PE_CONFIG,
     baseline=BASELINE_CONFIG
 )

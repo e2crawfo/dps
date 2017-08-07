@@ -32,42 +32,26 @@ def symmetricize(a):
     return a[np.abs(ID - ID[:, None])]
 
 
-class PolicyEvaluation(ReinforcementLearner):
-    """ Evaluate a policy by performing regression. """
-    optimizer_spec = Param()
-    lr_schedule = Param()
-
+class AbstractPolicyEvaluation(ReinforcementLearner):
     def __init__(self, estimator, gamma=1.0, **kwargs):
         self.estimator = estimator
         self.gamma = gamma
 
-        super(PolicyEvaluation, self).__init__(**kwargs)
+        super(AbstractPolicyEvaluation, self).__init__(**kwargs)
 
-    def _build_graph(self, is_training, exploration):
+    def build_placeholders(self):
         self.obs = tf.placeholder(
-            tf.float32, shape=(None, None) + self.estimator.obs_shape, name="_obs")
+            tf.float32, shape=(cfg.T, None) + self.estimator.obs_shape, name="_obs")
         self.rewards = tf.placeholder(
-            tf.float32, shape=(None, None, 1), name="_rewards")
+            tf.float32, shape=(cfg.T, None, 1), name="_rewards")
         self.targets = tf.placeholder(
-            tf.float32, shape=(None, None, 1), name="_targets")
-        self.mask = tf.placeholder(tf.float32, shape=(None, None, 1), name="_mask")
+            tf.float32, shape=(cfg.T, None, 1), name="_targets")
+        self.mask = tf.placeholder(tf.float32, shape=(cfg.T, None, 1), name="_mask")
 
-        batch_size = tf.shape(self.obs)[1]
-        initial_state = self.estimator.controller.zero_state(batch_size, tf.float32)
-        self.value_estimates, _ = dynamic_rnn(
-            self.estimator.controller, self.obs, initial_state=initial_state,
-            parallel_iterations=1, swap_memory=False, time_major=True)
-
-        squared_error = (self.value_estimates - self.targets)**2
-        self.loss = masked_mean(squared_error, self.mask)
-        self.mean_estimated_value = masked_mean(
-            self.value_estimates, self.mask)
-
-        tvars = self.estimator.trainable_variables()
-        self.train_op, train_summaries = build_gradient_train_op(
-            self.loss, tvars, self.optimizer_spec, self.lr_schedule)
-
-        self.train_summary_op = tf.summary.merge(train_summaries)
+    def build_eval_ops(self):
+        self.squared_error = (self.value_estimates - self.targets)**2
+        self.loss = masked_mean(self.squared_error, self.mask)
+        self.mean_estimated_value = masked_mean(self.value_estimates, self.mask)
 
         td_error = compute_td_error(
             self.value_estimates, self.gamma, self.rewards)
@@ -77,25 +61,6 @@ class PolicyEvaluation(ReinforcementLearner):
             tf.summary.scalar("approx_bellman_error", self.approx_bellman_error),
             tf.summary.scalar("mean_estimated_value", self.mean_estimated_value)
         ])
-
-    def update(self, rollouts, collect_summaries):
-        masked_rewards = rollouts.r * rollouts.mask
-        cumsum_rewards = np.flipud(np.cumsum(np.flipud(masked_rewards), axis=0))
-        feed_dict = {
-            self.obs: rollouts.o,
-            self.targets: cumsum_rewards,
-            self.mask: rollouts.mask
-        }
-
-        sess = tf.get_default_session()
-
-        if collect_summaries:
-            train_summaries, _ = sess.run(
-                [self.train_summary_op, self.train_op], feed_dict=feed_dict)
-            return train_summaries
-        else:
-            sess.run(self.train_op, feed_dict=feed_dict)
-            return b''
 
     def evaluate(self, rollouts):
         masked_rewards = rollouts.r * rollouts.mask
@@ -126,38 +91,174 @@ class PolicyEvaluation(ReinforcementLearner):
         return eval_summaries, record
 
 
-class TrustRegionPolicyEvaluation(ReinforcementLearner):
+class PolicyEvaluation(AbstractPolicyEvaluation):
+    """ Evaluate a policy by performing batch regression. """
+    optimizer_spec = Param()
+    lr_schedule = Param()
+    K = Param(1)
+
+    def _build_graph(self, is_training, exploration):
+        self.build_placeholders()
+
+        batch_size = tf.shape(self.obs)[1]
+        initial_state = self.estimator.controller.zero_state(batch_size, tf.float32)
+        self.value_estimates, _ = dynamic_rnn(
+            self.estimator.controller, self.obs, initial_state=initial_state,
+            parallel_iterations=1, swap_memory=False, time_major=True)
+
+        self.build_eval_ops()
+
+        tvars = self.estimator.trainable_variables()
+        self.train_op, train_summaries = build_gradient_train_op(
+            self.loss, tvars, self.optimizer_spec, self.lr_schedule)
+
+        self.train_summary_op = tf.summary.merge(train_summaries)
+
+    def update(self, rollouts, collect_summaries):
+        masked_rewards = rollouts.r * rollouts.mask
+        cumsum_rewards = np.flipud(np.cumsum(np.flipud(masked_rewards), axis=0))
+        feed_dict = {
+            self.obs: rollouts.o,
+            self.targets: cumsum_rewards,
+            self.mask: rollouts.mask
+        }
+
+        sess = tf.get_default_session()
+        for k in range(self.K):
+            if collect_summaries:
+                train_summaries, _ = sess.run(
+                    [self.train_summary_op, self.train_op], feed_dict=feed_dict)
+            else:
+                sess.run(self.train_op, feed_dict=feed_dict)
+                train_summaries = b''
+
+        return train_summaries
+
+
+class ProximalPolicyEvaluation(AbstractPolicyEvaluation):
+    """ Evaluate a policy by performing batch regression, but stick close to previous value function.
+
+    Allows us to take big steps, but not so big that catastrophic steps are likely.
+
+    To implement this, we basically treat the value function as parameterizing a gaussian policy with
+    standard deviation given by self.std_dev. The goal of said policy is to accurately predict the
+    return given that we are currently in state s, and following policy pi. The reward received by
+    such a return-prediction policy is thus the negative squared error between the estimated return
+    and the observed return. Then we basically perform straightforward PPO on this surrogate policy/MDP
+    combination.
+
+    """
+    optimizer_spec = Param()
+    lr_schedule = Param()
+    epsilon = Param()
+    K = Param()  # number of optimization steps per batch
+    S = Param()  # number of samples from normal distribution
+
+    def __init__(self, estimator, gamma=1.0, **kwargs):
+        super(ProximalPolicyEvaluation, self).__init__(estimator, gamma, **kwargs)
+
+        self.policy = Policy(
+            estimator.controller, NormalWithExploration(),
+            estimator.obs_shape, name="ppe")
+        self.prev_policy = self.policy.deepcopy("prev_policy")
+
+    def _build_graph(self, is_training, exploration):
+        self.build_placeholders()
+
+        self.std_dev = tf.placeholder(tf.float32, ())
+
+        batch_size = tf.shape(self.obs)[1]
+        initial_state = self.estimator.controller.zero_state(batch_size, tf.float32)
+        self.value_estimates, _ = dynamic_rnn(
+            self.policy.controller, self.obs, initial_state=initial_state,
+            parallel_iterations=1, swap_memory=False, time_major=True)
+
+        initial_state = self.estimator.controller.zero_state(batch_size, tf.float32)
+        self.prev_value_estimates, _ = dynamic_rnn(
+            self.prev_policy.controller, self.obs, initial_state=initial_state,
+            parallel_iterations=1, swap_memory=False, time_major=True)
+
+        alpha = (tf.stop_gradient(self.prev_value_estimates) - self.value_estimates) / self.std_dev
+
+        samples_shape = (tf.shape(self.obs)[0], batch_size, self.S)
+        samples = tf.random_normal(samples_shape)
+
+        ratio = tf.exp(-alpha * (samples + 0.5 * alpha))
+
+        noisy_value_estimates = tf.stop_gradient(self.value_estimates + samples * self.std_dev)
+
+        # MSE = Variance + Bias^2
+        mse = self.std_dev**2 + (self.value_estimates - self.targets)**2
+        baseline = -mse
+        baseline = tf.stop_gradient(baseline)
+
+        reward = -(noisy_value_estimates - self.targets)**2
+
+        advantage = reward - baseline
+
+        ratio_times_adv = tf.minimum(
+            advantage * ratio,
+            advantage * tf.clip_by_value(ratio, 1 - self.epsilon, 1 + self.epsilon)
+        )
+
+        ratio_times_adv = tf.reduce_mean(ratio_times_adv, axis=2, keep_dims=True)
+
+        self.cpi_objective = masked_mean(ratio_times_adv, self.mask)
+        self.loss = -self.cpi_objective
+
+        tvars = self.estimator.trainable_variables()
+        self.train_op, train_summaries = build_gradient_train_op(
+            self.loss, tvars, self.optimizer_spec, self.lr_schedule)
+
+        self.train_summary_op = tf.summary.merge(train_summaries)
+
+        self.build_eval_ops()
+
+    def update(self, rollouts, collect_summaries):
+        self.prev_policy.set_params_flat(self.policy.get_params_flat())
+
+        masked_rewards = rollouts.r * rollouts.mask
+        cumsum_rewards = np.flipud(np.cumsum(np.flipud(masked_rewards), axis=0))
+        feed_dict = {
+            self.obs: rollouts.o,
+            self.targets: cumsum_rewards,
+            self.mask: rollouts.mask
+        }
+
+        sess = tf.get_default_session()
+        loss = sess.run(self.loss, feed_dict=feed_dict)
+
+        feed_dict[self.std_dev] = np.sqrt(loss)
+        for k in range(self.K):
+            if collect_summaries:
+                train_summaries, _ = sess.run(
+                    [self.train_summary_op, self.train_op], feed_dict=feed_dict)
+            else:
+                sess.run(self.train_op, feed_dict=feed_dict)
+                train_summaries = b''
+
+        return train_summaries
+
+
+class TrustRegionPolicyEvaluation(AbstractPolicyEvaluation):
     delta_schedule = Param()
     max_cg_steps = Param()
     max_line_search_steps = Param()
 
     def __init__(self, estimator, gamma=1.0, **kwargs):
-        self.estimator = estimator
-        self.gamma = gamma
+        super(TrustRegionPolicyEvaluation, self).__init__(estimator, gamma, **kwargs)
 
         self.policy = Policy(
             estimator.controller, NormalWithExploration(),
             estimator.obs_shape, name="policy_eval")
         self.prev_policy = self.policy.deepcopy("prev_policy")
 
-        self.T = cfg.T
-
-        super(TrustRegionPolicyEvaluation, self).__init__(**kwargs)
-
     def _build_graph(self, is_training, exploration):
         self.delta = build_scheduled_value(self.delta_schedule, 'delta')
 
-        self.obs = tf.placeholder(
-            tf.float32, shape=(self.T, None) + self.estimator.obs_shape, name="_obs")
-        self.rewards = tf.placeholder(
-            tf.float32, shape=(self.T, None, 1), name="_rewards")
-        self.targets = tf.placeholder(
-            tf.float32, shape=(self.T, None, 1), name="_targets")
-        self.mask = tf.placeholder(
-            tf.float32, shape=(self.T, None, 1), name="_mask")
+        self.build_placeholders()
 
         self.std_dev = tf.placeholder(tf.float32, ())
-
         self.policy.set_exploration(self.std_dev)
         self.prev_policy.set_exploration(self.std_dev)
 
@@ -167,9 +268,7 @@ class TrustRegionPolicyEvaluation(ReinforcementLearner):
             self.policy, self.obs, initial_state=initial_state,
             parallel_iterations=1, swap_memory=False, time_major=True)
 
-        squared_error = (self.value_estimates - self.targets)**2
-        self.loss = masked_mean(squared_error, self.mask)
-        self.mean_estimated_value = masked_mean(self.value_estimates, self.mask)
+        self.build_eval_ops()
 
         tvars = self.policy.trainable_variables()
         self.gradient = tf.gradients(self.loss, tvars)
@@ -185,14 +284,6 @@ class TrustRegionPolicyEvaluation(ReinforcementLearner):
             tf.summary.scalar("grad_norm_pure", self.grad_norm_pure),
             tf.summary.scalar("grad_norm_natural", self.grad_norm_natural),
             tf.summary.scalar("step_norm", self.step_norm),
-        ])
-
-        td_error = compute_td_error(self.value_estimates, self.gamma, self.rewards)
-        self.approx_bellman_error = masked_mean(td_error, self.mask)
-        self.eval_summary_op = tf.summary.merge([
-            tf.summary.scalar("squared_error", self.loss),
-            tf.summary.scalar("approx_bellman_error", self.approx_bellman_error),
-            tf.summary.scalar("mean_estimated_value", self.mean_estimated_value)
         ])
 
     def update(self, rollouts, collect_summaries):
@@ -269,34 +360,6 @@ class TrustRegionPolicyEvaluation(ReinforcementLearner):
             return train_summaries
         else:
             return b''
-
-    def evaluate(self, rollouts):
-        masked_rewards = rollouts.r * rollouts.mask
-        cumsum_rewards = np.flipud(np.cumsum(np.flipud(masked_rewards), axis=0))
-        feed_dict = {
-            self.obs: rollouts.o,
-            self.targets: cumsum_rewards,
-            self.rewards: rollouts.r,
-            self.mask: rollouts.mask
-        }
-
-        sess = tf.get_default_session()
-
-        eval_summaries, loss, approx_bellman_error, mean_estimated_value = (
-            sess.run(
-                [self.eval_summary_op,
-                 self.loss,
-                 self.approx_bellman_error,
-                 self.mean_estimated_value],
-                feed_dict=feed_dict))
-
-        record = {
-            'mean_estimated_value': mean_estimated_value,
-            'squared_error': loss,
-            'loss': loss,
-            'approx_bellman_error': approx_bellman_error}
-
-        return eval_summaries, record
 
 
 class BasicValueEstimator(object):

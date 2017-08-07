@@ -90,8 +90,12 @@ def build_gradient_train_op(
     return train_op, summaries
 
 
+NotSupplied = object()
+
+
 class Param(object):
-    pass
+    def __init__(self, default=NotSupplied):
+        self.default = default
 
 
 class Parameterized(object):
@@ -110,7 +114,15 @@ class Parameterized(object):
             for p in self._params:
                 value = kwargs.get(p)
                 if value is None:
-                    value = getattr(dps.cfg, p)
+                    try:
+                        value = getattr(dps.cfg, p)
+                    except AttributeError as e:
+                        param = getattr(self, p)
+                        if param.default is not NotSupplied:
+                            value = param.default
+                        else:
+                            raise e
+
                 setattr(self, p, value)
             self._resolved = True
 

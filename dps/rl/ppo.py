@@ -54,14 +54,14 @@ def cpi_surrogate_objective(prev_policy, policy, obs, actions, advantage, mask, 
         swap_memory=False, time_major=True)
 
     if epsilon is None:
-        log_prob_times_adv = tf.exp(log_probs - prev_log_probs) * advantage
+        ratio_times_adv = tf.exp(log_probs - prev_log_probs) * advantage
     else:
         ratio = tf.exp(log_probs - prev_log_probs)
-        log_prob_times_adv = tf.minimum(
+        ratio_times_adv = tf.minimum(
             advantage * ratio,
             advantage * tf.clip_by_value(ratio, 1-epsilon, 1+epsilon))
 
-    surrogate_objective = tf.reduce_sum(tf.reduce_mean(log_prob_times_adv*mask, axis=0))
+    surrogate_objective = tf.reduce_sum(tf.reduce_mean(ratio_times_adv*mask, axis=0))
     mean_entropy = masked_mean(entropy, mask)
 
     return surrogate_objective, mean_entropy
