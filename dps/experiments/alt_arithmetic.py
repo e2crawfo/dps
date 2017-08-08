@@ -23,7 +23,8 @@ class AltArithmeticDataset(RegressionDataset):
 
     def __init__(self, **kwargs):
         assert 1 <= self.base <= 10
-        assert np.product(self.shape) >= self.n_digits + 1
+        assert self.min_digits <= self.max_digits
+        assert np.product(self.shape) >= self.max_digits + 1
 
         if self.mnist:
             functions = {char_to_idx(s): f for s, f in self.symbols}
@@ -185,8 +186,13 @@ class AltArithmetic(InternalEnv):
                 op_pretrained, len(op_config.symbols) + 1)
 
         else:
-            self.build_digit_classifier = lambda x: tf.where(x < 10, x, -1 * tf.ones_like(x))
-            self.build_op_classifier = lambda x: tf.where(x >= 10, x, -1 * tf.ones_like(x))
+
+            self.build_digit_classifier = lambda x: tf.where(
+                tf.logical_and(x >= 0, x < 10),
+                x, tf.random_uniform(tf.shape(x), -1000, -100, dtype=tf.float32))
+            self.build_op_classifier = lambda x: tf.where(
+                x >= 10,
+                x, tf.random_uniform(tf.shape(x), -1000, -100, dtype=tf.float32))
 
     def build_init_glimpse(self, batch_size, inp, fovea_y, fovea_x):
         indices = tf.concat([
@@ -199,8 +205,8 @@ class AltArithmetic(InternalEnv):
         return glimpse
 
     def build_init_storage(self, batch_size):
-        digit = tf.fill((batch_size, 1), -1.0)
-        op = tf.fill((batch_size, 1), -1.0)
+        digit = tf.random_uniform((batch_size, 1), -1000, -100, dtype=tf.float32)
+        op = tf.random_uniform((batch_size, 1), -1000, -100, dtype=tf.float32)
         return digit, op
 
     def build_init_fovea(self, batch_size, fovea_y, fovea_x):
@@ -221,6 +227,8 @@ class AltArithmetic(InternalEnv):
         self.build_placeholders(r)
 
         digit, op, acc, fovea_x, fovea_y, prev_action, glimpse = self.rb.as_tuple(r)
+
+        acc = tf.random_uniform(tf.shape(digit), -1000, -100, dtype=tf.float32)
 
         batch_size = tf.shape(self.input_ph)[0]
 
@@ -304,8 +312,7 @@ class AltArithmetic(InternalEnv):
         digit, op = self.build_update_storage(
             glimpse, _digit, classify_digit, _op, classify_op)
 
-        fovea_y, fovea_x = self.build_update_fovea(
-            right, left, down, up, _fovea_y, _fovea_x)
+        fovea_y, fovea_x = self.build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
 
         prev_action = tf.cast(tf.reshape(tf.argmax(a, axis=1), (-1, 1)), tf.float32)
 

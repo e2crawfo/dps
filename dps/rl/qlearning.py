@@ -7,7 +7,7 @@ from itertools import cycle, islice
 
 from dps import cfg
 from dps.rl import PolicyOptimization, RolloutBatch
-from dps.utils import Param, build_gradient_train_op, masked_mean
+from dps.utils import Param, build_gradient_train_op, masked_mean, build_scheduled_value
 
 
 class DuelingHead(object):
@@ -46,6 +46,9 @@ class QLearning(PolicyOptimization):
     gamma = Param()
     opt_steps_per_batch = Param()
 
+    alpha_schedule = Param()
+    beta_schedule = Param()
+
     def __init__(self, q_network, **kwargs):
         self.policy = self.q_network = q_network
         self.target_network = q_network.deepcopy("target_network")
@@ -54,14 +57,16 @@ class QLearning(PolicyOptimization):
 
         self.n_steps_since_target_update = 0
 
-        self.replay_buffer = HeuristicReplayBuffer(
-            self.replay_max_size, self.replay_proportion, self.replay_threshold)
-
     def build_placeholders(self):
         self.weights = tf.placeholder(tf.float32, shape=(cfg.T, None, 1), name="_weights")
         super(QLearning, self).build_placeholders()
 
     def _build_graph(self, is_training, exploration):
+        self.alpha = build_scheduled_value(self.alpha_schedule, 'alpha')
+        self.beta = build_scheduled_value(self.beta_schedule, 'beta')
+
+        self.replay_buffer = PrioritizedReplayBuffer(self.replay_max_size, 100, self.alpha, self.beta)
+
         self.build_placeholders()
 
         self.q_network.set_exploration(exploration)
@@ -257,6 +262,25 @@ class HeuristicReplayBuffer(object):
 
 
 class PrioritizedReplayBuffer(object):
+    """
+    Implements Prioritized Experience Replay.
+
+    Parameters
+    ----------
+    size: int
+        Maximum number of experiences to store.
+    n_partitions: int
+        Number of partitions to use for the sampling approximation.
+    alpha: float > 0
+        Degree of prioritization (similar to a softmax temperature); 0 corresponds to no prioritization
+        (uniform distribution), inf corresponds to degenerate distribution which always picks element
+        with highest priority.
+    beta: 1> float > 0
+        Degree of importance sampling correction, 0 corresponds to no correction, 1 corresponds to
+        full correction. Usually anneal linearly from an initial value beta_0 to a value of 1 by the
+        end of learning.
+
+    """
     def __init__(self, size, n_partitions, alpha, beta):
         self.size = size
         self.n_partitions = n_partitions

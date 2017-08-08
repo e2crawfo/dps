@@ -5,7 +5,7 @@ from dps import cfg
 from dps.utils import Config, CompositeCell, MLP
 from dps.rl import PPO
 from dps.rl.policy import Softmax
-from dps.rl.value import TrustRegionPolicyEvaluation
+from dps.rl.value import TrustRegionPolicyEvaluation, ProximalPolicyEvaluation
 from dps.config import get_updater, tasks
 
 
@@ -57,11 +57,18 @@ config.update(Config(
     name="PPOActorCritic",
 
     critic_config=Config(
-        name="TRPE",
-        alg=TrustRegionPolicyEvaluation,
-        max_cg_steps=10,
-        max_line_search_steps=10,
+        name="PPE",
+        alg=ProximalPolicyEvaluation,
+        optimizer_spec='adam',
+        K=10,
     ),
+
+    # critic_config=Config(
+    #     name="TRPE",
+    #     alg=TrustRegionPolicyEvaluation,
+    #     max_cg_steps=10,
+    #     max_line_search_steps=10,
+    # ),
 
     actor_config=Config(
         name="PPO",
@@ -82,8 +89,13 @@ distributions = dict(
         'poly 10.0 100000 0.1',
     ],
     test_time_explore=[1.0, 0.1, -1],
+    # critic_config=dict(
+    #     delta_schedule=['1e-3', '1e-2'],
+    # ),
     critic_config=dict(
-        delta_schedule=['1e-3', '1e-2'],
+        epsilon=[0.1, 0.2, 0.3, 0.4],
+        lr_schedule=['1e-5', '1e-4', '1e-3', '1e-2'],
+        S=[1, 4, 8]
     ),
     actor_config=dict(
         lmbda=list(np.linspace(0.8, 1.0, 10)),

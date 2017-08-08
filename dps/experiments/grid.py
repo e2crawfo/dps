@@ -9,8 +9,6 @@ from dps.utils import Param
 
 class Grid(TensorFlowEnv):
     action_names = '^ > v <'.split()
-    make_input_available = False
-    static_inp_width = 4
 
     rb = RegisterBank(
         'GridRB', 'x y r dx dy', 'goal_x goal_y',

@@ -12,7 +12,7 @@ from dps.rl.policy import (
     Normal, Gamma, ProductDist)
 from dps.vision import LeNet, MNIST_CONFIG
 from dps.experiments import (
-    hello_world, room, grid, simple_addition, pointer_following,
+    hello_world, room, grid, l2l, simple_addition, pointer_following,
     hard_addition, translated_mnist, mnist_arithmetic, simple_arithmetic,
     alt_arithmetic)
 from dps.rl.value import actor_critic, TrustRegionPolicyEvaluation, ProximalPolicyEvaluation, PolicyEvaluation
@@ -234,6 +234,9 @@ QLEARNING_CONFIG = Config(
     update_batch_size=32,  # Number of sample rollouts to use for each parameter update
     batch_size=1,  # Number of sample experiences per update
 
+    alpha_schedule=0.7,
+    beta_schedule="poly 0.5 10000 1.0",
+
     max_grad_norm=0.0,
 )
 
@@ -367,6 +370,20 @@ GRID_CONFIG = Config(
     l2l=False,
     shape=(5, 5),
     T=20
+)
+
+
+L2L_CONFIG = Config(
+    build_env=l2l.build_env,
+    curriculum=[dict()],
+    n_controller_units=32,
+    action_selection=lambda env: Softmax(env.n_actions),
+    log_name='l2l',
+    eval_step=10,
+    batch_size=32,
+    shape=(2, 2),
+    T=5,
+    n_arms=10
 )
 
 
@@ -521,13 +538,13 @@ def alt_arithmetic_action_selection(env):
 
 ALT_ARITHMETIC_CONFIG = Config(
     build_env=alt_arithmetic.build_env,
-    symbols=[
-        ('A', lambda x: sum(x)),
-        ('M', lambda x: np.product(x)),
-        ('C', lambda x: len(x))],
+    symbols=[('M', lambda x: np.product(x))],
+    # symbols=[('A', lambda x: sum(x))],
+        # ('M', lambda x: np.product(x)),
+        # ('C', lambda x: len(x))],
 
     curriculum=[
-        dict(T=10, min_digits=2, max_digits=2, shape=(3, 1)),
+        dict(T=20, min_digits=2, max_digits=3, shape=(2, 2)),
     ],
     force_2d=False,
     display=False,
@@ -602,6 +619,16 @@ ROOM_CONFIG_TEST = ROOM_CONFIG.copy(
     verbose=4,
     dense_reward=True,
 )
+
+
+L2L_CONFIG_TEST = Config(
+    shape=(2, 2),
+    T=10,
+    action_seq=[4, 1, 4, 2, 4, 3, 4, 5, 6],
+    build_env=l2l.build_env,
+    n_arms=3
+)
+adjust_for_test(L2L_CONFIG_TEST)
 
 
 SIMPLE_ADDITION_TEST = SIMPLE_ADDITION_CONFIG.copy(
@@ -760,6 +787,7 @@ tasks = dict(
     hello_world=HELLO_WORLD_CONFIG,
     room=ROOM_CONFIG,
     grid=GRID_CONFIG,
+    l2l=L2L_CONFIG,
     simple_addition=SIMPLE_ADDITION_CONFIG,
     pointer=POINTER_CONFIG,
     hard_addition=HARD_ADDITION_CONFIG,
@@ -772,6 +800,7 @@ tasks = dict(
 test_configs = dict(
     hello_world=HELLO_WORLD_TEST,
     room=ROOM_CONFIG_TEST,
+    l2l=L2L_CONFIG_TEST,
     simple_addition=SIMPLE_ADDITION_TEST,
     pointer=POINTER_TEST,
     hard_addition=HARD_ADDITION_TEST,
