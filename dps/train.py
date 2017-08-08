@@ -118,6 +118,7 @@ class TrainingLoop(object):
 
         for stage_config in self.curriculum:
             stage_config = Config(stage_config)
+
             if self.time_remaining <= 1:
                 print("Time limit exceeded.")
                 break
@@ -215,7 +216,7 @@ class TrainingLoop(object):
         print(self.summarize())
         result = dict(
             config=cfg.freeze(),
-            output=self.history,
+            history=self.history,
         )
 
         return result

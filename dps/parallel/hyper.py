@@ -157,12 +157,12 @@ def reduce_hyper_results(store, *results):
     records = []
     for r in results:
         record = dict(
-            latest_stage=r['output'][-1]['stage'],
-            total_steps=sum(s['n_steps'] for s in r['output']),
-            final_stage_steps=r['output'][-1]['n_steps'],
-            final_stage_loss=r['output'][-1]['best_value'],
-            final_stage_last_imp_step=r['output'][-1]['best_local_step'],
-            reason=r['output'][-1]['reason'])
+            latest_stage=r['history'][-1]['stage'],
+            total_steps=sum(s['n_steps'] for s in r['history']),
+            final_stage_steps=r['history'][-1]['n_steps'],
+            final_stage_loss=r['history'][-1]['best_loss'],
+            final_stage_last_imp_step=r['history'][-1]['best_local_step'],
+            reason=r['history'][-1]['reason'])
 
         for k in keys:
             record[k] = r['config'][k]
