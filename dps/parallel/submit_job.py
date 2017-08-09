@@ -96,13 +96,15 @@ class ParallelSession(object):
         by the submit script, and will also be sent to the worker nodes.
     redirect: bool
         If True, stderr and stdout of jobs is saved in files rather than being printed to screen.
+    n_retries: int
+        Number of retries.
 
     """
     def __init__(
             self, name, input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', ppn=12,
             walltime="1:00:00", cleanup_time="00:15:00", time_slack=0,
             add_date=True, dry_run=0, parallel_exe="$HOME/.local/bin/parallel",
-            hosts=None, env_vars=None, redirect=False):
+            hosts=None, env_vars=None, redirect=False, n_retries=10):
         input_zip = Path(input_zip)
         input_zip_abs = input_zip.resolve()
         input_zip_base = input_zip.name
@@ -153,8 +155,6 @@ class ParallelSession(object):
         env.update({e: str(v) for e, v in env_vars.items()})
         env_vars = ' '.join('--env ' + k for k in env_vars)
 
-        n_procs = ppn * n_nodes
-
         ro_job = ReadOnlyJob(input_zip)
         completion = ro_job.completion(pattern)
         indices_to_run = [i for i, op in completion['ready_incomplete_ops']]
@@ -163,17 +163,16 @@ class ParallelSession(object):
             print("All jobs are finished! Exiting.")
             return
 
+        n_procs = min(ppn * n_nodes, n_jobs_to_run)
         n_steps = int(np.ceil(n_jobs_to_run / n_procs))
 
         execution_time = int((walltime - cleanup_time).total_seconds())
-        total_compute_time = n_procs * execution_time
-        abs_seconds_per_job = int(np.floor(total_compute_time / n_jobs_to_run))
-        seconds_per_job = abs_seconds_per_job - time_slack
+        abs_seconds_per_step = int(np.floor(execution_time / n_steps))
+        seconds_per_step = abs_seconds_per_step - time_slack
 
         assert execution_time > 0
-        assert total_compute_time > 0
-        assert abs_seconds_per_job > 0
-        assert seconds_per_job > 0
+        assert abs_seconds_per_step > 0
+        assert seconds_per_step > 0
 
         self.__dict__.update(locals())
 
@@ -215,11 +214,11 @@ class ParallelSession(object):
 
         parallel_command = (
             "cd {local_scratch} && "
-            "dps-hyper run {archive_root} {pattern} {{}} --max-time {seconds_per_job} "
+            "dps-hyper run {archive_root} {pattern} {{}} --max-time {seconds_per_step} "
             "--log-root {local_scratch} --log-name experiments {redirect}")
 
         command = (
-            '{parallel_exe} --timeout {abs_seconds_per_job} --no-notice -j {ppn} \\\n'
+            '{parallel_exe} --timeout {abs_seconds_per_step} --no-notice -j {ppn} --retries {n_retries} \\\n'
             '    --joblog {job_directory}/job_log.txt {node_file} \\\n'
             '    --env PATH --env LD_LIBRARY_PATH {env_vars} -v \\\n'
             '    "' + parallel_command + '" \\\n'
@@ -300,11 +299,11 @@ class ParallelSession(object):
             self.on_all_execute(command, arguments=False)
 
             print("We have {walltime_seconds} seconds to complete {n_jobs_to_run} "
-                  "sub-jobs using {n_procs} processors.".format(**self.__dict__))
+                  "sub-jobs (grouped into {n_steps} steps) using {n_procs} processors.".format(**self.__dict__))
             print("{execution_time} seconds have been reserved for job execution, "
                   "and {cleanup_time_seconds} seconds have been reserved for cleanup.".format(**self.__dict__))
-            print("Each sub-job has been alloted {abs_seconds_per_job} seconds, "
-                  "{seconds_per_job} seconds of which is pure computation time.\n".format(**self.__dict__))
+            print("Each step has been allotted {abs_seconds_per_step} seconds, "
+                  "{seconds_per_step} seconds of which is pure computation time.\n".format(**self.__dict__))
 
             for i in range(self.n_steps):
                 self.step(i)
@@ -472,7 +471,7 @@ echo Unzipping... {stderr}
 
 echo We have {walltime_seconds} seconds to complete {n_jobs_to_run} sub-jobs using {n_procs} processors.
 echo {execution_time} seconds have been reserved for job execution, and {cleanup_time_seconds} seconds have been reserved for cleanup.
-echo Each sub-job has been alloted {abs_seconds_per_job} seconds, {seconds_per_job} seconds of which is pure computation time.
+echo Each sub-job has been allotted {abs_seconds_per_job} seconds, {seconds_per_job} seconds of which is pure computation time.
 
 echo Launching jobs at {stderr}
 date {stderr}
@@ -480,7 +479,7 @@ date {stderr}
 start=$(date +%s)
 
 # Requires a newish version of parallel, has to accept --timeout
-{parallel_exe} --timeout {abs_seconds_per_job} --no-notice -j {ppn} \\
+{parallel_exe} --timeout {abs_seconds_per_job} --no-notice -j {ppn} --retries 10 \\
     --joblog {job_directory}/job_log.txt {node_file} \\
     --env OMP_NUM_THREADS --env PATH --env LD_LIBRARY_PATH {env_vars} \\
     "cd {local_scratch} && dps-hyper run {archive_root} {pattern} {{}} --max-time {seconds_per_job}" < {idx_file}

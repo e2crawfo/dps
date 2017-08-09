@@ -108,5 +108,5 @@ distributions = dict(
 )
 
 from ac_search import search
-hosts = [':'] + ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i+1) for i in range(3)]
+hosts = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i+1) for i in range(10)]
 search(config, distributions, hosts=hosts)
