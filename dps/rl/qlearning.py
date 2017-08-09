@@ -2,8 +2,8 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.python.ops.rnn import dynamic_rnn
 from collections import deque
-import sys
 from itertools import cycle, islice
+from pyskiplist import SkipList
 
 from dps import cfg
 from dps.rl import PolicyOptimization, RolloutBatch
@@ -45,8 +45,9 @@ class QLearning(PolicyOptimization):
     lr_schedule = Param()
     gamma = Param()
     opt_steps_per_batch = Param()
+    init_steps = Param(0)
 
-    alpha_schedule = Param()
+    alpha = Param()
     beta_schedule = Param()
 
     def __init__(self, q_network, **kwargs):
@@ -62,10 +63,11 @@ class QLearning(PolicyOptimization):
         super(QLearning, self).build_placeholders()
 
     def _build_graph(self, is_training, exploration):
-        self.alpha = build_scheduled_value(self.alpha_schedule, 'alpha')
         self.beta = build_scheduled_value(self.beta_schedule, 'beta')
 
-        self.replay_buffer = PrioritizedReplayBuffer(self.replay_max_size, 100, self.alpha, self.beta)
+        self.replay_buffer = HeuristicReplayBuffer(
+            self.replay_max_size, threshold=self.replay_threshold, ro=self.replay_proportion)
+        # self.replay_buffer = PrioritizedReplayBuffer(self.replay_max_size, 100, self.alpha, self.beta)
 
         self.build_placeholders()
 
@@ -97,7 +99,6 @@ class QLearning(PolicyOptimization):
             bootstrap_values = tf.reduce_sum(action_selection_mask * bootstrap_values, axis=-1, keep_dims=True)
         else:
             bootstrap_values = tf.reduce_max(bootstrap_values, axis=-1, keep_dims=True)
-            bootstrap_values = tf.stop_gradient(bootstrap_values)
 
         bootstrap_values = tf.concat(
             [bootstrap_values[1:, :, :], tf.zeros_like(bootstrap_values[0:1, :, :])],
@@ -108,16 +109,26 @@ class QLearning(PolicyOptimization):
 
         self.td_error = (self.rewards + self.gamma * bootstrap_values - q_values_selected_actions) * self.mask
         self.weighted_td_error = self.td_error * self.weights
-        self.q_loss = masked_mean(clipped_error(self.td_error), self.mask)
+        self.q_loss = masked_mean(clipped_error(self.weighted_td_error), self.mask)
+        self.unweighted_q_loss = masked_mean(clipped_error(self.td_error), self.mask)
 
         tvars = self.q_network.trainable_variables()
+
         self.train_op, train_summaries = build_gradient_train_op(
             self.q_loss, tvars, self.optimizer_spec, self.lr_schedule)
 
         self.train_summary_op = tf.summary.merge(train_summaries)
 
+        masked_rewards = self.rewards * self.mask
+        init_error = q_values_selected_actions - tf.cumsum(masked_rewards, axis=0, reverse=True)
+        self.init_q_loss = masked_mean(clipped_error(init_error), self.mask)
+
+        self.init_train_op, train_summaries = build_gradient_train_op(
+            self.init_q_loss, tvars, self.optimizer_spec, self.lr_schedule)
+
         self.eval_summary_op = tf.summary.merge([
             tf.summary.scalar("q_loss", self.q_loss),
+            tf.summary.scalar("unweighted_q_loss", self.unweighted_q_loss),
             tf.summary.scalar("reward_per_ep", self.reward_per_ep),
             tf.summary.scalar("mean_q_value", mean_q_value),
             tf.summary.scalar("mean_q_value_target_network", mean_q_value_target_network),
@@ -167,14 +178,22 @@ class QLearning(PolicyOptimization):
         }
 
         sess = tf.get_default_session()
+
+        global_step = sess.run(tf.contrib.framework.get_or_create_global_step())
+
+        if global_step > self.init_steps:
+            train_op = self.train_op
+        else:
+            train_op = self.init_train_op
+
         for i in range(self.opt_steps_per_batch-1):
-            sess.run(self.train_op, feed_dict=feed_dict)
+            sess.run(train_op, feed_dict=feed_dict)
 
         if collect_summaries:
-            train_summaries, _ = sess.run([self.train_summary_op, self.train_op], feed_dict=feed_dict)
+            train_summaries, _ = sess.run([self.train_summary_op, train_op], feed_dict=feed_dict)
             summaries = train_summaries
         else:
-            sess.run(self.train_op, feed_dict=feed_dict)
+            sess.run(train_op, feed_dict=feed_dict)
             summaries = b''
 
         # Update rollout priorities in replay buffer.
@@ -290,10 +309,13 @@ class PrioritizedReplayBuffer(object):
         self.index = 0
 
         self._experiences = {}
-        self.priority_queue = BinaryHeap(self.size)
+
+        # Note this is actually a MIN priority queue, so to make it act like a MAX priority
+        # queue, we use the negative of the provided priorities.
+        self.skip_list = SkipList()
         self.distributions = self.build_distribution()
 
-        self._active_indices = None
+        self._active_set = None
 
     @property
     def n_experiences(self):
@@ -308,9 +330,12 @@ class PrioritizedReplayBuffer(object):
         strata_ends = []
         i = 0
         for s in range(self.n_partitions):
-            while i < len(cdf) and (cdf[i] < (s+1) / self.n_partitions):
-                i += 1
-            strata_ends[s] = i
+            if s == self.n_partitions-1:
+                strata_ends.append(len(cdf))
+            else:
+                while cdf[i] < (s+1) / self.n_partitions:
+                    i += 1
+                strata_ends.append(i+1)
 
         self.strata_ends = strata_ends
         self.pdf = pdf
@@ -318,261 +343,58 @@ class PrioritizedReplayBuffer(object):
     def add(self, rollouts):
         assert isinstance(rollouts, RolloutBatch)
         for r in rollouts.split():
-            self._experience[self.index] = r
+            # If there was already an experience at location `self.index`, it is effectively ejected.
+            self._experiences[self.index] = r
 
-            # Insert with maximum priority initially.
-            priority = self.priority_queue.get_max_priority()
-            self.priority_queue.update(priority, self.index)
+            # Insert with minimum priority initially.
+            if self.skip_list:
+                priority = self.skip_list[0][0]
+            else:
+                priority = 0.0
+            self.skip_list.insert(priority, self.index)
 
             self.index = (self.index + 1) % self.size
 
-    def rebalance(self):
-        """ rebalance priority queue """
-        self.priority_queue.balance_tree()
-
     def update_priority(self, priorities):
         """ update priority after calling `get_batch` """
-        if self._active_indices is None:
+        if self._active_set is None:
             raise Exception("``update_priority`` should only called after calling ``get_batch``.")
 
-        for idx, p in zip(self._active_indices, priorities):
-            self.priority_queue.update(p, idx)
+        for (p_idx, e_idx, old_priority), new_priority in zip(self._active_set, priorities):
+            # negate `new_priority` because SkipList puts lowest first.
+            if old_priority != -new_priority:
+                del self.skip_list[p_idx]
+                self.skip_list.insert(-new_priority, e_idx)
 
     def get_batch(self, batch_size):
-        indices = []
+        priority_indices = []
         start = 0
-        for end in islice(cycle(self.strata_ends), batch_size):
-            indices.append(np.random.randint(start, end))
-            start = end
+        permutation = np.random.permutation(self.n_partitions)
+        for i in islice(cycle(permutation), batch_size):
+            if i == 0:
+                start, end = 0, self.strata_ends[0]
+            else:
+                start, end = self.strata_ends[i-1], self.strata_ends[i]
+            priority_indices.append(np.random.randint(start, end))
 
-        p_x = [self.pdf[idx] for idx in indices]
+        p_x = [self.pdf[idx] for idx in priority_indices]
 
-        w = (np.array(p_x) * self.size)**-self.beta
+        beta = self.beta
+        if isinstance(beta, tf.Tensor):
+            beta = tf.get_default_session().run(beta)
+
+        w = (np.array(p_x) * self.size)**-beta
         w /= w.max()
 
-        # When we aren't full, map indices (which are in range(self.size)) down to range(self.n_experiences)
+        # When we aren't full, map priority_indices (which are in range(self.size)) down to range(self.n_experiences)
         if self.n_experiences < self.size:
-            indices = [int(np.floor(self.n_experiences * (i / self.size))) for i in indices]
+            priority_indices = [int(np.floor(self.n_experiences * (i / self.size))) for i in priority_indices]
 
-        experience_indices = self.priority_queue.priority_to_experience(indices)
-        experiences = RolloutBatch.join([self._experiences[i] for i in experience_indices])
+        self._active_set = []
+        for p_idx in priority_indices:
+            priority, e_idx = self.skip_list[p_idx]
+            self._active_set.append((p_idx, e_idx, priority))
 
-        self._active_indices = experience_indices
+        experiences = RolloutBatch.join([self._experiences[e_idx] for _, e_idx, _ in self._active_set])
 
         return experiences, w
-
-
-def list_to_dict(in_list):
-    return dict((i, in_list[i]) for i in range(0, len(in_list)))
-
-
-def exchange_key_value(in_dict):
-    return dict((in_dict[i], i) for i in in_dict)
-
-
-class BinaryHeap(object):
-    def __init__(self, priority_size=100, priority_init=None, replace=True):
-        self.e2p = {}
-        self.p2e = {}
-        self.replace = replace
-
-        if priority_init is None:
-            self.priority_queue = {}
-            self.size = 0
-            self.max_size = priority_size
-        else:
-            # not yet test
-            self.priority_queue = priority_init
-            self.size = len(self.priority_queue)
-            self.max_size = None or self.size
-
-            experience_list = list(map(lambda x: self.priority_queue[x], self.priority_queue))
-            self.p2e = list_to_dict(experience_list)
-            self.e2p = exchange_key_value(self.p2e)
-            for i in range(int(self.size / 2), -1, -1):
-                self.down_heap(i)
-
-    def __repr__(self):
-        """
-        :return: string of the priority queue, with level info
-        """
-        if self.size == 0:
-            return 'No element in heap!'
-        to_string = ''
-        level = -1
-        max_level = np.floor(np.log(self.size, 2))
-
-        for i in range(1, self.size + 1):
-            now_level = np.floor(np.log(i, 2))
-            if level != now_level:
-                to_string = to_string + ('\n' if level != -1 else '') + '    ' * (max_level - now_level)
-                level = now_level
-            to_string = to_string + '%.2f ' % self.priority_queue[i][1] + '    ' * (max_level - now_level)
-
-        return to_string
-
-    def check_full(self):
-        return self.size > self.max_size
-
-    def _insert(self, priority, e_id):
-        """
-        insert new experience id with priority
-        (maybe don't need get_max_priority and implement it in this function)
-        :param priority: priority value
-        :param e_id: experience id
-        :return: bool
-        """
-        self.size += 1
-
-        if self.check_full() and not self.replace:
-            sys.stderr.write('Error: no space left to add experience id %d with priority value %f\n' % (e_id, priority))
-            return False
-        else:
-            self.size = min(self.size, self.max_size)
-
-        self.priority_queue[self.size] = (priority, e_id)
-        self.p2e[self.size] = e_id
-        self.e2p[e_id] = self.size
-
-        self.up_heap(self.size)
-        return True
-
-    def update(self, priority, e_id):
-        """
-        update priority value according its experience id
-        :param priority: new priority value
-        :param e_id: experience id
-        :return: bool
-        """
-        if e_id in self.e2p:
-            p_id = self.e2p[e_id]
-            self.priority_queue[p_id] = (priority, e_id)
-            self.p2e[p_id] = e_id
-
-            self.down_heap(p_id)
-            self.up_heap(p_id)
-            return True
-        else:
-            # this e id is new, do insert
-            return self._insert(priority, e_id)
-
-    def get_max_priority(self):
-        """
-        get max priority, if no experience, return 1
-        :return: max priority if size > 0 else 1
-        """
-        if self.size > 0:
-            return self.priority_queue[1][0]
-        else:
-            return 1
-
-    def pop(self):
-        """
-        pop out the max priority value with its experience id
-        :return: priority value & experience id
-        """
-        if self.size == 0:
-            sys.stderr.write('Error: no value in heap, pop failed\n')
-            return False, False
-
-        pop_priority, pop_e_id = self.priority_queue[1]
-        self.e2p[pop_e_id] = -1
-        # replace first
-        last_priority, last_e_id = self.priority_queue[self.size]
-        self.priority_queue[1] = (last_priority, last_e_id)
-        self.size -= 1
-        self.e2p[last_e_id] = 1
-        self.p2e[1] = last_e_id
-
-        self.down_heap(1)
-
-        return pop_priority, pop_e_id
-
-    def up_heap(self, i):
-        """
-        upward balance
-        :param i: tree node i
-        :return: None
-        """
-        if i > 1:
-            parent = np.floor(i / 2)
-            if self.priority_queue[parent][0] < self.priority_queue[i][0]:
-                tmp = self.priority_queue[i]
-                self.priority_queue[i] = self.priority_queue[parent]
-                self.priority_queue[parent] = tmp
-                # change e2p & p2e
-                self.e2p[self.priority_queue[i][1]] = i
-                self.e2p[self.priority_queue[parent][1]] = parent
-                self.p2e[i] = self.priority_queue[i][1]
-                self.p2e[parent] = self.priority_queue[parent][1]
-                # up heap parent
-                self.up_heap(parent)
-
-    def down_heap(self, i):
-        """
-        downward balance
-        :param i: tree node i
-        :return: None
-        """
-        if i < self.size:
-            greatest = i
-            left, right = i * 2, i * 2 + 1
-            if left < self.size and self.priority_queue[left][0] > self.priority_queue[greatest][0]:
-                greatest = left
-            if right < self.size and self.priority_queue[right][0] > self.priority_queue[greatest][0]:
-                greatest = right
-
-            if greatest != i:
-                tmp = self.priority_queue[i]
-                self.priority_queue[i] = self.priority_queue[greatest]
-                self.priority_queue[greatest] = tmp
-                # change e2p & p2e
-                self.e2p[self.priority_queue[i][1]] = i
-                self.e2p[self.priority_queue[greatest][1]] = greatest
-                self.p2e[i] = self.priority_queue[i][1]
-                self.p2e[greatest] = self.priority_queue[greatest][1]
-                # down heap greatest
-                self.down_heap(greatest)
-
-    def get_priority(self):
-        """
-        get all priority value
-        :return: list of priority
-        """
-        return list(map(lambda x: x[0], self.priority_queue.values()))[0:self.size]
-
-    def get_e_id(self):
-        """
-        get all experience id in priority queue
-        :return: list of experience ids order by their priority
-        """
-        return list(map(lambda x: x[1], self.priority_queue.values()))[0:self.size]
-
-    def balance_tree(self):
-        """
-        rebalance priority queue
-        :return: None
-        """
-        sort_array = sorted(self.priority_queue.values(), key=lambda x: x[0], reverse=True)
-        # reconstruct priority_queue
-        self.priority_queue.clear()
-        self.p2e.clear()
-        self.e2p.clear()
-        cnt = 1
-        while cnt <= self.size:
-            priority, e_id = sort_array[cnt - 1]
-            self.priority_queue[cnt] = (priority, e_id)
-            self.p2e[cnt] = e_id
-            self.e2p[e_id] = cnt
-            cnt += 1
-        # sort the heap
-        for i in range(np.floor(self.size / 2), 1, -1):
-            self.down_heap(i)
-
-    def priority_to_experience(self, priority_ids):
-        """
-        retrieve experience ids by priority ids
-        :param priority_ids: list of priority id
-        :return: list of experience id
-        """
-        return [self.p2e[i] for i in priority_ids]

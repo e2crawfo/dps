@@ -7,6 +7,7 @@ from dps.utils import (
     FixedController, DpsConfig, Config)
 from dps.rl import (
     RLUpdater, rl_render_hook, REINFORCE, PPO, TRPO, RobustREINFORCE, QLearning)
+from dps.rl.qlearning import DuelingHead
 from dps.rl.policy import (
     Policy, Softmax, EpsilonSoftmax, EpsilonGreedy, Deterministic,
     Normal, Gamma, ProductDist)
@@ -213,29 +214,39 @@ QLEARNING_CONFIG = Config(
     n_controller_units=64,
     # controller=lambda n_params, name=None: FeedforwardCell(MLP([64, 64]), n_params, name=name),
     # controller=lambda n_params, name=None: CompositeCell(
-    #     tf.contrib.rnn.LSTMCell(num_units=cfg.n_controller_units), DuelingHead(MLP(), MLP()), n_params, name=name),
-    double=True,
+    #     tf.contrib.rnn.LSTMCell(num_units=cfg.n_controller_units),
+    #     DuelingHead(MLP(), MLP()),
+    #     n_params,
+    #     name=name),
+    # double=True,
+    double=False,
 
-    lr_schedule="poly 0.00025 100000 1e-6",
+    lr_schedule="0.001",
+    # lr_schedule="poly 0.00025 100000 1e-6",
     exploration_schedule="0.5",
-    test_time_explore="0.01",
+    test_time_explore="0.05",
 
     optimizer_spec="adam",
 
-    replay_max_size=20000,
+    replay_max_size=1000,
     replay_threshold=-0.5,
-    replay_proportion=0.25,
+    replay_proportion=-1,
     gamma=1.0,
 
+    init_steps=1000,
+
     opt_steps_per_batch=1,
+    # target_update_rate=0.01,
     target_update_rate=None,
     steps_per_target_update=1000,
     patience=np.inf,
     update_batch_size=32,  # Number of sample rollouts to use for each parameter update
     batch_size=1,  # Number of sample experiences per update
 
-    alpha_schedule=0.7,
-    beta_schedule="poly 0.5 10000 1.0",
+    alpha=0.7,
+    beta_schedule="0.5",
+    # alpha=0.0,
+    # beta_schedule=0.0,
 
     max_grad_norm=0.0,
 )
@@ -392,10 +403,15 @@ SIMPLE_ADDITION_CONFIG = Config(
     build_env=simple_addition.build_env,
     T=30,
     curriculum=[
-        dict(width=1, base=10, threshold=6.0),
-        dict(width=2, base=10, threshold=8.0),
-        dict(width=3, base=10, threshold=10.0),
+        dict(width=1, base=10, threshold=0.01),
+        dict(width=2, base=10, threshold=0.01),
+        dict(width=3, base=10, threshold=0.01),
     ],
+    # curriculum=[
+    #     dict(width=1, base=10, threshold=6.0),
+    #     dict(width=2, base=10, threshold=8.0),
+    #     dict(width=3, base=10, threshold=10.0),
+    # ],
 
     n_controller_units=32,
     log_name='simple_addition',
