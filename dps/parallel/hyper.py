@@ -162,7 +162,8 @@ def reduce_hyper_results(store, *results):
             final_stage_steps=r['history'][-1]['n_steps'],
             final_stage_loss=r['history'][-1]['best_loss'],
             final_stage_last_imp_step=r['history'][-1]['best_local_step'],
-            reason=r['history'][-1]['reason'])
+            reason=r['history'][-1]['reason'],
+            host=r['host'])
 
         for k in keys:
             record[k] = r['config'][k]
@@ -186,7 +187,7 @@ def reduce_hyper_results(store, *results):
 
     column_order = [
         'latest_stage', 'final_stage_loss', 'seed', 'reason', 'total_steps',
-        'final_stage_steps', 'final_stage_last_imp_step']
+        'final_stage_steps', 'final_stage_last_imp_step', 'host']
 
     print('\n' + '*' * 100)
     print("RESULTS GROUPED BY PARAM VALUES, WORST COMES FIRST: ")

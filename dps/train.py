@@ -10,6 +10,7 @@ import datetime
 import shutil
 import dill
 import os
+import socket
 
 from spectral_dagger.utils.experiment import ExperimentStore
 from dps import cfg
@@ -217,6 +218,7 @@ class TrainingLoop(object):
         result = dict(
             config=cfg.freeze(),
             history=self.history,
+            host=socket.gethostname()
         )
 
         return result

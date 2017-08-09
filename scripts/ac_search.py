@@ -1,4 +1,5 @@
 import argparse
+import numpy as np
 
 import clify
 
@@ -19,29 +20,29 @@ def search(config, distributions, hosts=None):
         walltime = args.walltime
         size = args.size
 
+        if hosts is not None:
+            time_slack = 60
+        else:
+            time_slack = 30
+
         if size == 'big':
             # Big
             n_param_settings = 50
             n_repeats = 5
             cleanup_time = "00:30:00"
-            time_slack = 60
-            ppn = 4
         elif size == 'medium':
             # Medium
             n_param_settings = 8
             n_repeats = 4
             cleanup_time = "00:02:15"
-            time_slack = 30
-            ppn = 4
         elif size == 'small':
             # Small
             n_param_settings = 2
             n_repeats = 2
             cleanup_time = "00:00:45"
-            time_slack = 10
-            ppn = 2
         else:
             raise Exception("Unknown size: `{}`.".format(size))
+        ppn = 2
 
         job, archive_path = build_search(
             '/tmp/dps/search', config.name, n_param_settings, n_repeats,

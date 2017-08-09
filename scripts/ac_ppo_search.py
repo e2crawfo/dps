@@ -14,7 +14,7 @@ config = tasks['alt_arithmetic']
 
 config.update(Config(
     curriculum=[
-        dict(T=30, shape=(2, 2), min_digits=2, max_digits=3),
+        dict(T=30, shape=(2, 2), min_digits=2, max_digits=3, dense_reward=True),
     ],
     base=10,
     mnist=False,
@@ -56,19 +56,19 @@ config.update(Config(
 
     name="PPOActorCritic",
 
-    critic_config=Config(
-        name="PPE",
-        alg=ProximalPolicyEvaluation,
-        optimizer_spec='adam',
-        K=10,
-    ),
-
     # critic_config=Config(
-    #     name="TRPE",
-    #     alg=TrustRegionPolicyEvaluation,
-    #     max_cg_steps=10,
-    #     max_line_search_steps=10,
+    #     name="PPE",
+    #     alg=ProximalPolicyEvaluation,
+    #     optimizer_spec='adam',
+    #     K=10,
     # ),
+
+    critic_config=Config(
+        name="TRPE",
+        alg=TrustRegionPolicyEvaluation,
+        max_cg_steps=10,
+        max_line_search_steps=10,
+    ),
 
     actor_config=Config(
         name="PPO",
@@ -89,14 +89,14 @@ distributions = dict(
         'poly 10.0 100000 0.1',
     ],
     test_time_explore=[1.0, 0.1, -1],
-    # critic_config=dict(
-    #     delta_schedule=['1e-3', '1e-2'],
-    # ),
     critic_config=dict(
-        epsilon=[0.1, 0.2, 0.3, 0.4],
-        lr_schedule=['1e-5', '1e-4', '1e-3', '1e-2'],
-        S=[1, 4, 8]
+        delta_schedule=['1e-3', '1e-2'],
     ),
+    # critic_config=dict(
+    #     epsilon=[0.1, 0.2, 0.3, 0.4],
+    #     lr_schedule=['1e-5', '1e-4', '1e-3', '1e-2'],
+    #     S=[1, 4, 8]
+    # ),
     actor_config=dict(
         lmbda=list(np.linspace(0.8, 1.0, 10)),
         gamma=list(np.linspace(0.9, 1.0, 10)),
@@ -108,4 +108,5 @@ distributions = dict(
 )
 
 from ac_search import search
-search(config, distributions)
+hosts = [':'] + ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i+1) for i in range(3)]
+search(config, distributions, hosts=hosts)
