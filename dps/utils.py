@@ -208,7 +208,7 @@ class Alarm(Exception):
 
 
 def raise_alarm(*args, **kwargs):
-    raise Alarm()
+    raise Alarm("Raised by `raise_alarm`.")
 
 
 class time_limit(object):
@@ -230,7 +230,7 @@ class time_limit(object):
     def __enter__(self):
         self.old_handler = signal.signal(signal.SIGALRM, raise_alarm)
         if self.seconds <= 0:
-            raise_alarm()
+            raise_alarm("Didn't get started.")
         if not np.isinf(self.seconds):
             signal.alarm(int(np.floor(self.seconds)))
         self.then = time.time()
