@@ -114,11 +114,13 @@ class TrainingLoop(object):
             dill.dump(cfg.freeze(), f, protocol=dill.HIGHEST_PROTOCOL)
 
         threshold_reached = True
-        stage = 0
         self.global_step = 0
 
-        for stage_config in self.curriculum:
+        for stage, stage_config in enumerate(self.curriculum):
             stage_config = Config(stage_config)
+
+            if stage > 0:
+                stage_config.init_steps = 0
 
             if self.time_remaining <= 1:
                 print("Time limit exceeded.")
@@ -205,9 +207,7 @@ class TrainingLoop(object):
                 if cfg.render_hook is not None:
                     cfg.render_hook(updater)
 
-                if threshold_reached or cfg.power_through:
-                    stage += 1
-                else:
+                if not (threshold_reached or cfg.power_through):
                     print("Failed to reach error threshold on stage {} "
                           "of the curriculum, terminating.".format(stage))
                     break

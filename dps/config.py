@@ -6,7 +6,7 @@ from dps.utils import (
     CompositeCell, FeedforwardCell, MLP, FixedDiscreteController,
     FixedController, DpsConfig, Config)
 from dps.rl import (
-    RLUpdater, rl_render_hook, REINFORCE, PPO, TRPO, RobustREINFORCE, QLearning)
+    RLUpdater, rl_render_hook, REINFORCE, PPO, TRPO, RobustREINFORCE, QLearning, TrustRegionQLearning, ProximalQLearning)
 from dps.rl.qlearning import DuelingHead
 from dps.rl.policy import (
     Policy, Softmax, EpsilonSoftmax, EpsilonGreedy, Deterministic,
@@ -19,9 +19,41 @@ from dps.experiments import (
 from dps.rl.value import actor_critic, TrustRegionPolicyEvaluation, ProximalPolicyEvaluation, PolicyEvaluation
 
 
+def softmax(env):
+    return Softmax(env.n_actions)
+
+
+def epsilon_greedy(env):
+    return EpsilonGreedy(env.n_actions)
+
+
+class LstmController(object):
+    def __call__(self, n_params, name=None):
+        return CompositeCell(
+            tf.contrib.rnn.LSTMCell(num_units=cfg.n_controller_units),
+            MLP(), n_params, name=name)
+
+
+class DuelingLstmController(object):
+    def __call__(self, n_params, name=None):
+        return CompositeCell(
+            tf.contrib.rnn.LSTMCell(num_units=cfg.n_controller_units),
+            DuelingHead(MLP(), MLP()),
+            n_params,
+            name=name)
+
+
+class FeedforwardController(object):
+    def __init__(self, *args, **kwargs):
+        self.args, self.kwargs = args, kwargs
+
+    def __call__(self, n_params, name=None):
+        return FeedforwardCell(MLP(*self.args, **self.kwargs), n_paramsname=name)
+
+
 def get_updater(env):
-    action_selection = cfg.action_selection(env)
     with cfg.actor_config:
+        action_selection = cfg.action_selection(env)
         policy_controller = cfg.controller(
             action_selection.n_params, name="actor_controller")
 
@@ -102,13 +134,11 @@ DEFAULT_CONFIG = DpsConfig(
     max_time=0,
 
     n_controller_units=32,
-    controller=lambda n_params, name=None: CompositeCell(
-        tf.contrib.rnn.LSTMCell(num_units=cfg.n_controller_units), MLP(), n_params, name=name),
-    # action_selection=lambda env: EpsilonSoftmax(env.n_actions),
-    action_selection=lambda env: Softmax(env.n_actions),
+    controller=LstmController(),
+    action_selection=softmax,
 
     deadline='',
-    render_hook=rl_render_hook,
+    render_hook=None,
 
     lmbda=1.0,
     gamma=1.0,
@@ -118,7 +148,6 @@ DEFAULT_CONFIG = DpsConfig(
 
 
 cfg._stack.append(DEFAULT_CONFIG)
-
 
 # Critic configs.
 BASELINE_CONFIG = Config(
@@ -131,7 +160,7 @@ PE_CONFIG = Config(
     alg=PolicyEvaluation,
     lr_schedule=1e-2,
     optimizer_spec='adam',
-    K=10,
+    opt_steps_per_batch=10,
 )
 
 
@@ -141,7 +170,7 @@ PPE_CONFIG = Config(
     lr_schedule=1e-2,
     optimizer_spec='adam',
     epsilon=0.2,
-    K=10,
+    opt_steps_per_batch=10,
     S=5,
 )
 
@@ -176,7 +205,7 @@ PPO_CONFIG = Config(
     alg=PPO,
     entropy_schedule="0.1",
     epsilon=0.2,
-    K=10,
+    opt_steps_per_batch=10,
     lr_schedule="1e-3",
     n_controller_units=64,
     # exploration_schedule='poly 1.0 10000 1e-6 1.0',
@@ -210,45 +239,51 @@ QLEARNING_CONFIG = Config(
     name="QLearning",
     alg=QLearning,
 
-    action_selection=lambda env: EpsilonGreedy(env.n_actions),
+    action_selection=epsilon_greedy,
     n_controller_units=64,
-    # controller=lambda n_params, name=None: FeedforwardCell(MLP([64, 64]), n_params, name=name),
-    # controller=lambda n_params, name=None: CompositeCell(
-    #     tf.contrib.rnn.LSTMCell(num_units=cfg.n_controller_units),
-    #     DuelingHead(MLP(), MLP()),
-    #     n_params,
-    #     name=name),
-    # double=True,
-    double=False,
+    controller=DuelingLstmController(),
+    double=True,
 
-    lr_schedule="0.001",
-    # lr_schedule="poly 0.00025 100000 1e-6",
-    exploration_schedule="0.5",
-    test_time_explore="0.05",
+    lr_schedule="0.00025",
+    exploration_schedule="pwc 1.0 40000 0.1",
+    test_time_explore="0.01",
 
     optimizer_spec="adam",
 
-    replay_max_size=1000,
-    replay_threshold=-0.5,
-    replay_proportion=-1,
     gamma=1.0,
 
-    init_steps=1000,
+    init_steps=5000,
 
-    opt_steps_per_batch=1,
-    # target_update_rate=0.01,
-    target_update_rate=None,
-    steps_per_target_update=1000,
+    opt_steps_per_batch=10,
+    target_update_rate=0.01,
+    steps_per_target_update=None,
     patience=np.inf,
     update_batch_size=32,  # Number of sample rollouts to use for each parameter update
     batch_size=1,  # Number of sample experiences per update
 
+    replay_max_size=20000,
     alpha=0.7,
     beta_schedule="0.5",
-    # alpha=0.0,
-    # beta_schedule=0.0,
 
     max_grad_norm=0.0,
+)
+
+
+TRQL_CONFIG = QLEARNING_CONFIG.copy(
+    name="TrustRegionQLearning",
+    alg=TrustRegionQLearning,
+    delta_schedule=0.01,
+    max_cg_steps=10,
+    max_line_search_steps=20,
+)
+
+
+PQL_CONFIG = QLEARNING_CONFIG.copy(
+    name="ProximalQLearning",
+    alg=ProximalQLearning,
+    opt_steps_per_batch=10,
+    S=1,
+    epsilon=0.2,
 )
 
 
@@ -258,7 +293,8 @@ DQN_CONFIG = QLEARNING_CONFIG.copy(
     # Rewards are clipped: all negative rewards set to -1, all positive set to 1, 0 unchanged.
     batch_size=32,
 
-    lr_schedule="0.00025",
+    lr_schedule="0.01",
+    # lr_schedule="0.00025",
 
     # annealed linearly from 1 to 0.1 over first million frames,
     # fixed at 0.1 thereafter "
@@ -372,7 +408,6 @@ GRID_CONFIG = Config(
     build_env=grid.build_env,
     curriculum=[dict()],
     n_controller_units=32,
-    action_selection=lambda env: Softmax(env.n_actions),
     log_name='grid',
     eval_step=10,
     batch_size=10,
@@ -388,7 +423,6 @@ L2L_CONFIG = Config(
     build_env=l2l.build_env,
     curriculum=[dict()],
     n_controller_units=32,
-    action_selection=lambda env: Softmax(env.n_actions),
     log_name='l2l',
     eval_step=10,
     batch_size=32,
@@ -796,7 +830,10 @@ actor_configs = dict(
     trpo=TRPO_CONFIG,
     ppo=PPO_CONFIG,
     robust=ROBUST_CONFIG,
-    qlearning=QLEARNING_CONFIG)
+    qlearning=QLEARNING_CONFIG,
+    trql=TRQL_CONFIG,
+    pql=PQL_CONFIG
+)
 
 
 tasks = dict(
@@ -810,7 +847,8 @@ tasks = dict(
     translated_mnist=TRANSLATED_MNIST_CONFIG,
     mnist_arithmetic=MNIST_ARITHMETIC_CONFIG,
     simple_arithmetic=SIMPLE_ARITHMETIC_CONFIG,
-    alt_arithmetic=ALT_ARITHMETIC_CONFIG)
+    alt_arithmetic=ALT_ARITHMETIC_CONFIG
+)
 
 
 test_configs = dict(
@@ -823,7 +861,8 @@ test_configs = dict(
     translated_mnist=TRANSLATED_MNIST_TEST,
     mnist_arithmetic=MNIST_ARITHMETIC_TEST,
     simple_arithmetic=SIMPLE_ARITHMETIC_TEST,
-    alt_arithmetic=ALT_ARITHMETIC_TEST)
+    alt_arithmetic=ALT_ARITHMETIC_TEST
+)
 
 
 def parse_task_actor_critic(task, actor, critic):

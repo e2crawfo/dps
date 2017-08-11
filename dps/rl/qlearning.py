@@ -35,18 +35,17 @@ def clipped_error(x):
 
 class QLearning(PolicyOptimization):
     double = Param()
-    replay_max_size = Param()
-    replay_threshold = Param()
-    replay_proportion = Param()
     target_update_rate = Param()
     steps_per_target_update = Param()
     update_batch_size = Param()
-    optimizer_spec = Param()
-    lr_schedule = Param()
     gamma = Param()
     opt_steps_per_batch = Param()
     init_steps = Param(0)
 
+    optimizer_spec = Param()
+    lr_schedule = Param()
+
+    replay_max_size = Param()
     alpha = Param()
     beta_schedule = Param()
 
@@ -62,12 +61,20 @@ class QLearning(PolicyOptimization):
         self.weights = tf.placeholder(tf.float32, shape=(cfg.T, None, 1), name="_weights")
         super(QLearning, self).build_placeholders()
 
+    def build_update_ops(self):
+        tvars = self.q_network.trainable_variables()
+
+        self.train_op, train_summaries = build_gradient_train_op(
+            self.q_loss, tvars, self.optimizer_spec, self.lr_schedule)
+        self.train_summary_op = tf.summary.merge(train_summaries)
+
+        self.init_train_op, train_summaries = build_gradient_train_op(
+            self.init_q_loss, tvars, self.optimizer_spec, self.lr_schedule)
+        self.init_train_summary_op = tf.summary.merge(train_summaries)
+
     def _build_graph(self, is_training, exploration):
         self.beta = build_scheduled_value(self.beta_schedule, 'beta')
-
-        self.replay_buffer = HeuristicReplayBuffer(
-            self.replay_max_size, threshold=self.replay_threshold, ro=self.replay_proportion)
-        # self.replay_buffer = PrioritizedReplayBuffer(self.replay_max_size, 100, self.alpha, self.beta)
+        self.replay_buffer = PrioritizedReplayBuffer(self.replay_max_size, 100, self.alpha, self.beta)
 
         self.build_placeholders()
 
@@ -80,8 +87,8 @@ class QLearning(PolicyOptimization):
         (_, q_values), _ = dynamic_rnn(
             self.q_network, self.obs, initial_state=self.q_network.zero_state(batch_size, tf.float32),
             parallel_iterations=1, swap_memory=False, time_major=True)
-        q_values_selected_actions = tf.reduce_sum(q_values * self.actions, axis=-1, keep_dims=True)
-        mean_q_value = masked_mean(q_values_selected_actions, self.mask)
+        self.q_values_selected_actions = tf.reduce_sum(q_values * self.actions, axis=-1, keep_dims=True)
+        mean_q_value = masked_mean(self.q_values_selected_actions, self.mask)
 
         # Bootstrap values
         (_, bootstrap_values), _ = dynamic_rnn(
@@ -107,28 +114,26 @@ class QLearning(PolicyOptimization):
 
         mean_bootstrap_value = masked_mean(bootstrap_values, self.mask)
 
-        self.td_error = (self.rewards + self.gamma * bootstrap_values - q_values_selected_actions) * self.mask
+        self.targets = self.rewards + self.gamma * bootstrap_values
+
+        self.td_error = (self.targets - self.q_values_selected_actions) * self.mask
         self.weighted_td_error = self.td_error * self.weights
         self.q_loss = masked_mean(clipped_error(self.weighted_td_error), self.mask)
         self.unweighted_q_loss = masked_mean(clipped_error(self.td_error), self.mask)
 
-        tvars = self.q_network.trainable_variables()
-
-        self.train_op, train_summaries = build_gradient_train_op(
-            self.q_loss, tvars, self.optimizer_spec, self.lr_schedule)
-
-        self.train_summary_op = tf.summary.merge(train_summaries)
-
         masked_rewards = self.rewards * self.mask
-        init_error = q_values_selected_actions - tf.cumsum(masked_rewards, axis=0, reverse=True)
-        self.init_q_loss = masked_mean(clipped_error(init_error), self.mask)
+        self.init_error = (self.q_values_selected_actions - tf.cumsum(masked_rewards, axis=0, reverse=True)) * self.mask
+        self.weighted_init_error = self.init_error * self.weights
+        self.init_q_loss = masked_mean(clipped_error(self.weighted_init_error), self.mask)
+        self.unweighted_init_q_loss = masked_mean(clipped_error(self.init_error), self.mask)
 
-        self.init_train_op, train_summaries = build_gradient_train_op(
-            self.init_q_loss, tvars, self.optimizer_spec, self.lr_schedule)
+        self.build_update_ops()
 
         self.eval_summary_op = tf.summary.merge([
             tf.summary.scalar("q_loss", self.q_loss),
             tf.summary.scalar("unweighted_q_loss", self.unweighted_q_loss),
+            tf.summary.scalar("init_q_loss", self.init_q_loss),
+            tf.summary.scalar("unweighted_init_q_loss", self.unweighted_init_q_loss),
             tf.summary.scalar("reward_per_ep", self.reward_per_ep),
             tf.summary.scalar("mean_q_value", mean_q_value),
             tf.summary.scalar("mean_q_value_target_network", mean_q_value_target_network),
@@ -159,54 +164,65 @@ class QLearning(PolicyOptimization):
 
             self.target_network_update = tf.group(*target_network_update)
 
+    def update_params(self, rollouts, collect_summaries, feed_dict, init):
+        if init:
+            train_op, train_summary_op = self.init_train_op, self.init_train_summary_op
+        else:
+            train_op, train_summary_op = self.train_op, self.train_summary_op
+
+        sess = tf.get_default_session()
+        if collect_summaries:
+            train_summaries, _ = sess.run([train_summary_op, train_op], feed_dict=feed_dict)
+            summaries = train_summaries
+        else:
+            sess.run(train_op, feed_dict=feed_dict)
+            summaries = b''
+        return summaries
+
     def update(self, rollouts, collect_summaries):
         # Store sampled rollouts
         self.replay_buffer.add(rollouts)
-
-        # Sample rollouts from replay buffer
-        rollouts, weights = self.replay_buffer.get_batch(self.update_batch_size)
-
-        weights = np.tile(weights.reshape(1, -1, 1), (rollouts.T, 1, 1))
-
-        # Perform the update
-        feed_dict = {
-            self.obs: rollouts.o,
-            self.actions: rollouts.a,
-            self.rewards: rollouts.r,
-            self.mask: rollouts.mask,
-            self.weights: weights
-        }
 
         sess = tf.get_default_session()
 
         global_step = sess.run(tf.contrib.framework.get_or_create_global_step())
 
-        if global_step > self.init_steps:
-            train_op = self.train_op
+        init = global_step < self.init_steps
+
+        for i in range(self.opt_steps_per_batch):
+            # Sample rollouts from replay buffer
+            rollouts, weights = self.replay_buffer.get_batch(self.update_batch_size)
+
+            weights = np.tile(weights.reshape(1, -1, 1), (rollouts.T, 1, 1))
+
+            # Perform the update
+            feed_dict = {
+                self.obs: rollouts.o,
+                self.actions: rollouts.a,
+                self.rewards: rollouts.r,
+                self.mask: rollouts.mask,
+                self.weights: weights
+            }
+            _collect_summaries = collect_summaries and i == self.opt_steps_per_batch-1
+            summaries = self.update_params(rollouts, _collect_summaries, feed_dict, init)
+
+            # Update rollout priorities in replay buffer.
+            if init:
+                td_error = sess.run(self.init_error, feed_dict=feed_dict)
+            else:
+                td_error = sess.run(self.td_error, feed_dict=feed_dict)
+            priority = np.abs(td_error).sum(axis=0).reshape(-1)
+            self.replay_buffer.update_priority(priority)
+
+        if init:
+            self.target_network.set_params_flat(self.q_network.get_params_flat())
         else:
-            train_op = self.init_train_op
-
-        for i in range(self.opt_steps_per_batch-1):
-            sess.run(train_op, feed_dict=feed_dict)
-
-        if collect_summaries:
-            train_summaries, _ = sess.run([self.train_summary_op, train_op], feed_dict=feed_dict)
-            summaries = train_summaries
-        else:
-            sess.run(train_op, feed_dict=feed_dict)
-            summaries = b''
-
-        # Update rollout priorities in replay buffer.
-        td_error = sess.run(self.td_error, feed_dict=feed_dict)
-        priority = np.abs(td_error).sum(axis=0).reshape(-1)
-        self.replay_buffer.update_priority(priority)
-
-        # Update target network if applicable
-        if (self.steps_per_target_update is None) or (self.n_steps_since_target_update > self.steps_per_target_update):
-            sess.run(self.target_network_update)
-            self.n_steps_since_target_update = 0
-        else:
-            self.n_steps_since_target_update += 1
+            # Update target network if applicable
+            if (self.steps_per_target_update is None) or (self.n_steps_since_target_update > self.steps_per_target_update):
+                sess.run(self.target_network_update)
+                self.n_steps_since_target_update = 0
+            else:
+                self.n_steps_since_target_update += 1
 
         return summaries
 
@@ -231,7 +247,7 @@ class QLearning(PolicyOptimization):
 
 
 class HeuristicReplayBuffer(object):
-    def __init__(self, max_size, ro=None, threshold=0.0):
+    def __init__(self, max_size, ro=0.0, threshold=0.0):
         """
         A heuristic from:
         Language Understanding for Text-based Games using Deep Reinforcement Learning.
@@ -294,7 +310,7 @@ class PrioritizedReplayBuffer(object):
         Degree of prioritization (similar to a softmax temperature); 0 corresponds to no prioritization
         (uniform distribution), inf corresponds to degenerate distribution which always picks element
         with highest priority.
-    beta: 1> float > 0
+    beta: 1 > float > 0
         Degree of importance sampling correction, 0 corresponds to no correction, 1 corresponds to
         full correction. Usually anneal linearly from an initial value beta_0 to a value of 1 by the
         end of learning.

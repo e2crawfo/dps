@@ -2,6 +2,7 @@ import tensorflow as tf
 from tensorflow.python.ops.rnn import dynamic_rnn
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 
+from dps import cfg
 from dps.updater import Param
 from dps.utils import build_scheduled_value
 from dps.rl import (
@@ -33,19 +34,11 @@ class LogProbCell(RNNCell):
         return self.policy.zero_state(batch_size, dtype)
 
 
-def cpi_surrogate_objective(prev_policy, policy, obs, actions, advantage, mask, epsilon=None):
+def cpi_surrogate_objective(prev_log_probs, policy, obs, actions, advantage, mask, epsilon=None):
     """ If `epsilon` is not None, compute PPO objective instead of CPI. """
     batch_size = tf.shape(obs)[1]
 
     inp = obs, actions
-
-    prev_lp_cell = LogProbCell(prev_policy)
-    initial_state = prev_lp_cell.zero_state(batch_size, tf.float32)
-
-    (prev_log_probs, _), _ = dynamic_rnn(
-        prev_lp_cell, inp, initial_state=initial_state, parallel_iterations=1,
-        swap_memory=False, time_major=True)
-
     lp_cell = LogProbCell(policy)
     initial_state = lp_cell.zero_state(batch_size, tf.float32)
 
@@ -64,7 +57,7 @@ def cpi_surrogate_objective(prev_policy, policy, obs, actions, advantage, mask, 
     surrogate_objective = tf.reduce_sum(tf.reduce_mean(ratio_times_adv*mask, axis=0))
     mean_entropy = masked_mean(entropy, mask)
 
-    return surrogate_objective, mean_entropy
+    return surrogate_objective, log_probs, mean_entropy
 
 
 class PPO(PolicyOptimization):
@@ -72,7 +65,7 @@ class PPO(PolicyOptimization):
     optimizer_spec = Param()
     lr_schedule = Param()
     epsilon = Param()
-    K = Param()  # number of optimization steps per batch
+    opt_steps_per_batch = Param()  # number of optimization steps per batch
 
     def __init__(self, policy, advantage_estimator=None, **kwargs):
         if not advantage_estimator:
@@ -80,18 +73,18 @@ class PPO(PolicyOptimization):
         self.advantage_estimator = advantage_estimator
 
         self.policy = policy
-        self.prev_policy = policy.deepcopy("prev_policy")
 
         super(PPO, self).__init__(**kwargs)
 
     def _build_graph(self, is_training, exploration):
         self.build_placeholders()
 
-        self.prev_policy.set_exploration(exploration)
+        self.prev_log_probs = tf.placeholder(tf.float32, (cfg.T, None, 1), name='prev_log_probs')
+
         self.policy.set_exploration(exploration)
 
-        self.cpi_objective, self.mean_entropy = cpi_surrogate_objective(
-            self.prev_policy, self.policy, self.obs, self.actions,
+        self.cpi_objective, self.log_probs, self.mean_entropy = cpi_surrogate_objective(
+            self.prev_log_probs, self.policy, self.obs, self.actions,
             self.advantage, self.mask, self.epsilon)
 
         self.loss = -self.cpi_objective
@@ -119,8 +112,6 @@ class PPO(PolicyOptimization):
         ]
 
     def update(self, rollouts, collect_summaries):
-        self.prev_policy.set_params_flat(self.policy.get_params_flat())
-
         advantage = self.compute_advantage(rollouts)
 
         feed_dict = {
@@ -132,6 +123,34 @@ class PPO(PolicyOptimization):
         }
 
         sess = tf.get_default_session()
-        for k in range(self.K):
+
+        prev_log_probs = sess.run(self.log_probs, feed_dict=feed_dict)
+        feed_dict[self.prev_log_probs] = prev_log_probs
+
+        for k in range(self.opt_steps_per_batch):
             sess.run(self.train_op, feed_dict=feed_dict)
         return b''
+
+    def evaluate(self, rollouts):
+        advantage = self.compute_advantage(rollouts)
+
+        feed_dict = {
+            self.obs: rollouts.o,
+            self.actions: rollouts.a,
+            self.rewards: rollouts.r,
+            self.advantage: advantage,
+            self.mask: rollouts.mask
+        }
+
+        sess = tf.get_default_session()
+
+        prev_log_probs = sess.run(self.log_probs, feed_dict=feed_dict)
+        feed_dict[self.prev_log_probs] = prev_log_probs
+
+        eval_summaries, *values = (
+            sess.run(
+                [self.eval_summary_op] + [v for _, v in self.recorded_values],
+                feed_dict=feed_dict))
+
+        record = {k: v for v, (k, _) in zip(values, self.recorded_values)}
+        return eval_summaries, record

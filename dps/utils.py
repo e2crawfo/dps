@@ -759,6 +759,13 @@ def build_scheduled_value(schedule, name=None, global_step=None, dtype=None):
 
         scheduled_value = adj_inverse_time_decay(
             initial, global_step, decay_steps, decay_rate, gamma, staircase, name=op_name)
+    elif kind == "piecewise_constant" or kind == "pwc":
+        args = list(args)
+        assert len(args) % 2 == 1
+        boundaries = [np.array(i, dtype='int64') for i in args[1::2]]
+        values = [np.array(f, dtype='float32') for f in args[::2]]
+
+        scheduled_value = tf.train.piecewise_constant(global_step, boundaries, values)
     else:
         raise Exception(
             "No known schedule with kind `{}` and args `{}`.".format(kind, args))

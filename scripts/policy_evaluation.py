@@ -2,6 +2,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.contrib.slim import fully_connected
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
+import sys
 
 import clify
 
@@ -75,7 +76,10 @@ config = DEFAULT_CONFIG.copy(
     verbose=False,
 )
 
-if 0:
+x = int(sys.argv[1])
+
+if x == 0:
+    print("TRPE")
     config.update(
         name="TRPE",
         delta_schedule='0.01',
@@ -83,22 +87,24 @@ if 0:
         max_line_search_steps=10,
         alg_class=TrustRegionPolicyEvaluation
     )
-elif 1:
+elif x == 1:
+    print("PPE")
     config.update(
         name="PPE",
         optimizer_spec="rmsprop",
         lr_schedule="1e-2",
         epsilon=0.2,
-        K=100,
+        opt_steps_per_batch=100,
         S=1,
         alg_class=ProximalPolicyEvaluation
     )
 else:
+    print("PE")
     config.update(
         name="PolicyEvaluation",
         optimizer_spec='rmsprop',
         lr_schedule='1e-5',
-        K=100,
+        opt_steps_per_batch=100,
         alg_class=PolicyEvaluation
     )
 
