@@ -307,6 +307,8 @@ class AltArithmetic(InternalEnv):
             inc * (_acc + 1) + \
             store * _digit
 
+        acc = tf.clip_by_value(acc, -1000.0, 1000.0)
+
         glimpse = self.build_update_glimpse(self.input_ph, _fovea_y, _fovea_x)
 
         digit, op = self.build_update_storage(
