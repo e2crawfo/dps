@@ -7,41 +7,52 @@ from dps import cfg
 from dps.config import DEFAULT_CONFIG
 from dps.experiments import alt_arithmetic
 from dps.utils import Config, pdb_postmortem
-from dps.rl import PPO, rl_render_hook
-from dps.rl.value import TrustRegionPolicyEvaluation
+from dps.rl import QLearning, rl_render_hook
 from dps.train import training_loop
-from dps.config import LstmController, softmax
+from dps.config import LstmController, epsilon_greedy, DuelingLstmController
 
 max_steps = 100000
 
 config = DEFAULT_CONFIG.copy(
     n_val=500,
     controller=LstmController(),
-    action_selection=softmax,
     exploration_schedule='poly 1.0 100000 1.0',
     get_experiment_name=lambda: "name={}_seed={}".format(cfg.actor_config.name, cfg.seed),
     batch_size=128,
     max_steps=max_steps,
 
     actor_config=Config(
-        name="PPO",
-        alg=PPO,
-        optimizer_spec='adam',
-        entropy_schedule="poly 0.125 100000 1e-6 1",
-        epsilon=0.2,
-        opt_steps_per_batch=10,
-        lr_schedule="1e-3",
-        gamma=0.911,
-        lmbda=0.955,
-        n_controller_units=128,
-    ),
+        name="QLearning",
+        alg=QLearning,
 
-    critic_config=Config(
-        name="TRPE",
-        alg=TrustRegionPolicyEvaluation,
-        delta_schedule='1e-3',
-        max_cg_steps=10,
-        max_line_search_steps=10,
+        action_selection=epsilon_greedy,
+        n_controller_units=128,
+        controller=DuelingLstmController(),
+        double=True,
+
+        lr_schedule="0.00025",
+        exploration_schedule="poly 1.0 50000 0.1",
+        test_time_explore="0.01",
+
+        optimizer_spec="adam",
+
+        gamma=1.0,
+
+        init_steps=5000,
+
+        opt_steps_per_batch=10,
+        target_update_rate=0.01,
+        steps_per_target_update=None,
+        patience=np.inf,
+        update_batch_size=32,  # Number of sample rollouts to use for each parameter update
+        batch_size=1,  # Number of sample experiences per update
+
+        replay_max_size=1000,
+        alpha=0.7,
+        beta_schedule="0.5",
+        n_partitions=25,
+
+        max_grad_norm=0.0,
     ),
 
     build_env=alt_arithmetic.build_env,

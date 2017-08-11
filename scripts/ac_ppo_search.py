@@ -1,12 +1,9 @@
 import numpy as np
-import tensorflow as tf
 
-from dps import cfg
-from dps.utils import Config, CompositeCell, MLP
+from dps.utils import Config
 from dps.rl import PPO
-from dps.rl.policy import Softmax
-from dps.rl.value import TrustRegionPolicyEvaluation, ProximalPolicyEvaluation
-from dps.config import get_updater, tasks
+from dps.rl.value import TrustRegionPolicyEvaluation
+from dps.config import get_updater, tasks, LstmController, softmax
 
 
 config = tasks['alt_arithmetic']
@@ -24,13 +21,8 @@ config.update(Config(
     n_val=500,
 
     get_updater=get_updater,
-    action_selection=lambda env: Softmax(env.n_actions),
-    controller=lambda n_params, name: CompositeCell(
-        tf.contrib.rnn.LSTMCell(num_units=cfg.n_controller_units),
-        MLP(),
-        n_params,
-        name=name
-    ),
+    action_selection=softmax,
+    controller=LstmController(),
 
     display_step=1000,
     eval_step=10,
@@ -75,7 +67,12 @@ config.update(Config(
         alg=PPO,
         opt_steps_per_batch=10,
         optimizer_spec="adam"
-    )
+    ),
+    symbols=[
+        # ('A', lambda x: sum(x)),
+        ('M', lambda x: np.product(x)),
+        # ('C', lambda x: len(x))
+    ],
 ))
 
 
@@ -100,13 +97,13 @@ distributions = dict(
     actor_config=dict(
         lmbda=list(np.linspace(0.8, 1.0, 10)),
         gamma=list(np.linspace(0.9, 1.0, 10)),
-        entropy_schedule=[0.0] + list(0.5**np.arange(2, 5)) +
-                         ['poly {} 100000 1e-6 1'.format(n) for n in 0.5**np.arange(2, 5)],
+        entropy_schedule=[0.0] + list(0.5**np.arange(1, 5)) +
+                         ['poly {} 100000 1e-6 1'.format(n) for n in 0.5**np.arange(1, 5)],
         lr_schedule=['1e-5', '1e-4', '1e-3'],
         epsilon=[0.1, 0.2, 0.3]
     ),
 )
 
 from ac_search import search
-hosts = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i+1) for i in range(10)]
+hosts = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in [16, 18, 20, 21, 22, 24, 26, 27, 28, 29, 30, 32]]
 search(config, distributions, hosts=hosts)

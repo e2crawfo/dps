@@ -126,6 +126,9 @@ DEFAULT_CONFIG = DpsConfig(
     exploration_schedule=10.,
     lr_schedule='0.001',
 
+    lmbda=1.0,
+    gamma=1.0,
+
     standardize_advantage=True,
     reset_env=True,
 
@@ -425,7 +428,8 @@ L2L_CONFIG = Config(
     batch_size=32,
     shape=(2, 2),
     T=5,
-    n_arms=10
+    n_arms=10,
+    threshold=-5,
 )
 
 
@@ -585,10 +589,7 @@ def alt_arithmetic_action_selection(env):
 
 ALT_ARITHMETIC_CONFIG = Config(
     build_env=alt_arithmetic.build_env,
-    symbols=[('M', lambda x: np.product(x))],
-    # symbols=[('A', lambda x: sum(x))],
-        # ('M', lambda x: np.product(x)),
-        # ('C', lambda x: len(x))],
+    symbols=[('A', lambda x: sum(x)), ('M', lambda x: np.product(x)), ('C', lambda x: len(x))],
 
     curriculum=[
         dict(T=20, min_digits=2, max_digits=3, shape=(2, 2)),

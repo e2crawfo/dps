@@ -48,6 +48,7 @@ class QLearning(PolicyOptimization):
     replay_max_size = Param()
     alpha = Param()
     beta_schedule = Param()
+    n_partitions = Param(100)
 
     def __init__(self, q_network, **kwargs):
         self.policy = self.q_network = q_network
@@ -74,7 +75,7 @@ class QLearning(PolicyOptimization):
 
     def _build_graph(self, is_training, exploration):
         self.beta = build_scheduled_value(self.beta_schedule, 'beta')
-        self.replay_buffer = PrioritizedReplayBuffer(self.replay_max_size, 100, self.alpha, self.beta)
+        self.replay_buffer = PrioritizedReplayBuffer(self.replay_max_size, self.n_partitions, self.alpha, self.beta)
 
         self.build_placeholders()
 

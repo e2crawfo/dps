@@ -54,11 +54,11 @@ class LearningToLearn(TensorFlowEnv):
         x, y, vision, action = self.rb.as_tuple(r)
         up, right, down, left, look, *arms = tf.split(actions, 5+self.n_arms, axis=1)
 
-        new_x = (1 - right - left) * x + right * (x+1) + left * (x-1)
         new_y = (1 - down - up) * y + down * (y+1) + up * (y-1)
+        new_x = (1 - right - left) * x + right * (x+1) + left * (x-1)
 
-        new_x = tf.clip_by_value(new_x, 0.0, self.shape[0]-1)
-        new_y = tf.clip_by_value(new_y, 0.0, self.shape[1]-1)
+        new_y = tf.clip_by_value(new_y, 0.0, self.shape[0]-1)
+        new_x = tf.clip_by_value(new_x, 0.0, self.shape[1]-1)
 
         idx = tf.cast(y * self.shape[1] + x, tf.int32)
         new_vision = tf.reduce_sum(
@@ -77,7 +77,9 @@ class LearningToLearn(TensorFlowEnv):
             arm_chosen,
             tf.equal(chosen_arm, tf.cast(self.input_ph[:, 2:3], tf.int64)))
 
-        reward = tf.cast(correct_arm, tf.float32) - 1
+        wrong_arm = tf.logical_and(arm_chosen, tf.logical_not(correct_arm))
+
+        reward = tf.cast(correct_arm, tf.float32) * 1 + tf.cast(wrong_arm, tf.float32) * -1
 
         return tf.fill((tf.shape(r)[0], 1), 0.0), reward, new_registers
 
