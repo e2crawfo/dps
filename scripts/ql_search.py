@@ -61,7 +61,8 @@ config.update(Config(
         patience=np.inf,
         batch_size=1,  # Number of sample experiences per update
 
-        replay_max_size=5000,
+        n_partitions=25,
+        replay_max_size=1000,
 
         max_grad_norm=0.0,
     ),

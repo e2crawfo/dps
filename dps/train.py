@@ -15,7 +15,7 @@ import socket
 from spectral_dagger.utils.experiment import ExperimentStore
 from dps import cfg
 from dps.utils import (
-    restart_tensorboard, gen_seed, time_limit,
+    restart_tensorboard, gen_seed, time_limit, memory_usage,
     uninitialized_variables_initializer, du, Config, parse_date)
 
 
@@ -232,12 +232,23 @@ class TrainingLoop(object):
         print("{} seconds left "
               "at the beginning of stage {}.".format(time_remaining, stage))
 
+        memory_before = memory_usage()
+
         with time_limit(self.time_remaining, verbose=True) as limiter:
             try:
                 threshold_reached, reason = self._run_stage(stage, updater, early_stop)
             except KeyboardInterrupt:
                 threshold_reached = False
                 reason = "User interrupt"
+
+        memory_after = memory_usage()
+
+        self.record(
+            stage_duration=limiter.elapsed_time,
+            memory_before_mb=memory_before,
+            memory_after_mb=memory_after,
+            memory_delta_mb=memory_after - memory_before
+        )
 
         if limiter.ran_out:
             reason = "Time limit reached"
