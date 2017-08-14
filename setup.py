@@ -21,7 +21,9 @@ setup(
         "six",
         "tensorflow",
         "gym",
-        "tabulate"
+        "tabulate",
+        "psutil",
+        "pyskiplist",
     ],
     entry_points={
         'console_scripts': ['dps-hyper=dps.parallel:hyper_search_cl',
