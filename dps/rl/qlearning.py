@@ -344,16 +344,25 @@ class PrioritizedReplayBuffer(object):
 
         cdf = np.cumsum(pdf)
 
-        strata_ends = []
-        i = 0
+        # Whenever the CDF crosses one of the discretization bucket boundaries,
+        # we assign the index where the crossing occurred to the next bucket rather
+        # than the current one.
+        strata_starts, strata_ends = [], []
+        start_idx, end_idx = 0, 0
         for s in range(self.n_partitions):
+            strata_starts.append(start_idx)
             if s == self.n_partitions-1:
                 strata_ends.append(len(cdf))
             else:
-                while cdf[i] < (s+1) / self.n_partitions:
-                    i += 1
-                strata_ends.append(i+1)
+                while cdf[end_idx] < (s+1) / self.n_partitions:
+                    end_idx += 1
+                if start_idx == end_idx:
+                    strata_ends.append(end_idx + 1)
+                else:
+                    strata_ends.append(end_idx)
+            start_idx = end_idx
 
+        self.strata_starts = strata_starts
         self.strata_ends = strata_ends
         self.pdf = pdf
 
@@ -387,11 +396,11 @@ class PrioritizedReplayBuffer(object):
         priority_indices = []
         start = 0
         permutation = np.random.permutation(self.n_partitions)
+
+        # batch_size = min(batch_size, self.n_experiences)
+
         for i in islice(cycle(permutation), batch_size):
-            if i == 0:
-                start, end = 0, self.strata_ends[0]
-            else:
-                start, end = self.strata_ends[i-1], self.strata_ends[i]
+            start, end = self.strata_starts[i], self.strata_ends[i]
             priority_indices.append(np.random.randint(start, end))
 
         p_x = [self.pdf[idx] for idx in priority_indices]

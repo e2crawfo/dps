@@ -212,7 +212,7 @@ class TrainingLoop(object):
                           "of the curriculum, terminating.".format(stage))
                     break
 
-            self.record(stage_duration=time.time()-stage_start)
+                self.record(stage_duration=time.time()-stage_start)
 
         print(self.summarize())
         result = dict(
@@ -272,7 +272,7 @@ class TrainingLoop(object):
 
             evaluate = self.global_step % cfg.eval_step == 0
             display = self.global_step % cfg.display_step == 0
-            render = self.global_step % cfg.render_step == 0
+            render = (self.global_step % cfg.render_step == 0) and self.global_step > 0
 
             start_time = time.time()
             update_summaries = updater.update(
@@ -296,7 +296,7 @@ class TrainingLoop(object):
                 if display:
                     s = "~" * 40
                     s += "\nStep(g: {}, l: {}): ".format(self.global_step, local_step)
-                    for k, v in record.items():
+                    for k, v in self.latest.items():
                         s += '\n{}: {}'.format(k, v)
                     s += "\n" + "~" * 40
                     print(s)

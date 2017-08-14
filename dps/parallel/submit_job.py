@@ -118,7 +118,7 @@ class ParallelSession(object):
             scratch,
             '{}_{}'.format(name, clean_pattern),
             add_date=add_date)
-        os.makedirs(job_directory + "/results")
+        os.makedirs(os.path.realpath(job_directory + "/results"))
 
         # storage local to each node, from the perspective of that node
         local_scratch = str(Path(local_scratch_prefix) / Path(job_directory).name)
@@ -373,7 +373,7 @@ def submit_job_pbs(
         scratch,
         '{}_{}'.format(name, clean_pattern),
         add_date=add_date)
-    os.makedirs(job_directory)
+    os.makedirs(os.path.realpath(job_directory))
 
     # storage local to each node, from the perspective of that node
     local_scratch = '\\$RAMDISK'
