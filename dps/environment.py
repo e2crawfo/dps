@@ -336,6 +336,7 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
         self._samplers = {}
         self._assert_defined('action_names')
         self._assert_defined('rb')
+        self.mode = 'train'
         super(TensorFlowEnv, self).__init__(**kwargs)
 
     @property
@@ -522,10 +523,11 @@ class InternalEnv(TensorFlowEnv):
     def start_episode(self, external_obs, external):
         return (
             external_obs.shape[0],
-            {self.input_ph: external_obs, self.target_ph: external.y}
+            {self.input_ph: external_obs, self.target_ph: external.y, self.is_training_ph: self.mode == 'train'}
         )
 
     def build_placeholders(self, r):
+        self.is_training_ph = tf.placeholder(tf.bool, ())
         self.input_ph = tf.placeholder(tf.float32, (None,) + self.input_shape)
         self.target_ph = tf.placeholder(tf.float32, (None,) + self.target_shape)
 

@@ -141,6 +141,7 @@ class AltArithmetic(InternalEnv):
     base = Param()
     start_loc = Param()
     force_2d = Param()
+    classification_bonus = Param(0.0)
 
     def __init__(self, **kwargs):
         self.init_classifiers()
@@ -238,8 +239,7 @@ class AltArithmetic(InternalEnv):
 
         fovea_y, fovea_x = self.build_init_fovea(batch_size, fovea_y, fovea_x)
 
-        _, _, ret = self.build_return(
-            digit, op, acc, fovea_x, fovea_y, prev_action, glimpse)
+        _, _, ret = self.build_return(digit, op, acc, fovea_x, fovea_y, prev_action, glimpse)
         return ret
 
     def build_update_glimpse(self, inp, fovea_y, fovea_x):
@@ -288,7 +288,24 @@ class AltArithmetic(InternalEnv):
                 prev_action=tf.identity(prev_action, "prev_action"),
                 glimpse=glimpse)
 
-        rewards = self.build_rewards(new_registers)
+        if self.dense_reward:
+            output = self.rb.get_output(new_registers)
+            abs_error = tf.reduce_sum(
+                tf.abs(output - self.target_ph),
+                axis=-1, keep_dims=True)
+            rewards = -tf.cast(abs_error > cfg.reward_window, tf.float32)
+        else:
+            rewards = tf.fill((tf.shape(new_registers)[0], 1), 0.0),
+
+        if actions is not None:
+            _, _, _, _, classify_digit, classify_op, _, _, _, _, _ = tf.split(actions, self.n_actions, axis=1)
+
+            classification_bonus = tf.cond(
+                self.is_training_ph,
+                lambda: tf.constant(self.classification_bonus),
+                lambda: tf.constant(0.0))
+
+            rewards = rewards + classification_bonus * (classify_digit + classify_op)
 
         return (
             tf.fill((tf.shape(digit)[0], 1), 0.0),
@@ -348,7 +365,7 @@ class AltArithmeticBadWiring(AltArithmetic):
         fovea_y, fovea_x = self.build_update_fovea(
             right, left, down, up, _fovea_y, _fovea_x)
 
-        return self.build_return(digit, op, acc, fovea_x, fovea_y, glimpse)
+        return self.build_return(digit, op, acc, fovea_x, fovea_y, glimpse, a)
 
 
 class AltArithmeticNoClassifiers(AltArithmetic):
@@ -374,7 +391,7 @@ class AltArithmeticNoClassifiers(AltArithmetic):
         fovea_y, fovea_x = self.build_update_fovea(
             right, left, down, up, _fovea_y, _fovea_x)
 
-        return self.build_return(_digit, _op, acc, fovea_x, fovea_y, glimpse)
+        return self.build_return(_digit, _op, acc, fovea_x, fovea_y, glimpse, a)
 
 
 class AltArithmeticNoOps(AltArithmetic):
@@ -396,7 +413,7 @@ class AltArithmeticNoOps(AltArithmetic):
         fovea_y, fovea_x = self.build_update_fovea(
             right, left, down, up, _fovea_y, _fovea_x)
 
-        return self.build_return(digit, op, acc, fovea_x, fovea_y, glimpse)
+        return self.build_return(digit, op, acc, fovea_x, fovea_y, glimpse, a)
 
 
 class AltArithmeticNoModules(AltArithmetic):
@@ -416,7 +433,7 @@ class AltArithmeticNoModules(AltArithmetic):
         fovea_y, fovea_x = self.build_update_fovea(
             right, left, down, up, _fovea_y, _fovea_x)
 
-        return self.build_return(_digit, _op, acc, fovea_x, fovea_y, glimpse)
+        return self.build_return(_digit, _op, acc, fovea_x, fovea_y, glimpse, a)
 
 
 def build_env():

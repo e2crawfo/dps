@@ -18,7 +18,7 @@ config = DEFAULT_CONFIG.copy(
     controller=LstmController(),
     exploration_schedule='poly 1.0 100000 1.0',
     get_experiment_name=lambda: "name={}_seed={}".format(cfg.actor_config.name, cfg.seed),
-    batch_size=32,  # Number of sample experiences per update
+    batch_size=1,  # Number of sample experiences per update
     max_steps=max_steps,
 
     actor_config=Config(
@@ -42,7 +42,7 @@ config = DEFAULT_CONFIG.copy(
 
         opt_steps_per_batch=10,
         target_update_rate=0.01,
-        steps_per_target_update=None,
+        steps_per_target_update=1000,
         patience=np.inf,
         update_batch_size=32,  # Number of sample rollouts to use for each parameter update
 

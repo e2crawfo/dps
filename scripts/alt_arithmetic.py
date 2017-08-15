@@ -55,6 +55,7 @@ config = DEFAULT_CONFIG.copy(
     op_loc=(0, 0),
     start_loc=(0, 0),
     force_2d=False,
+    classification_bonus=0.01,
     symbols=[('M', lambda r: np.product(r))],
     base=10,
     threshold=0.01,
