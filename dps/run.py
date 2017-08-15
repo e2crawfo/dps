@@ -62,7 +62,7 @@ def build_and_visualize():
 
 
 def run():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument('task')
     parser.add_argument('actor')
     parser.add_argument('--critic', type=str, default="baseline")

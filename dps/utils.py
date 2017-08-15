@@ -12,6 +12,7 @@ import os
 import traceback
 import pdb
 from collections import deque
+from collections.abc import MutableMapping
 import subprocess
 import copy
 import datetime
@@ -848,7 +849,7 @@ def nested_update(d, other):
             d[k] = v
 
 
-class Config(dict):
+class Config(dict, MutableMapping):
     _reserved_keys = None
 
     def __init__(self, _d=None, **kwargs):
@@ -856,10 +857,9 @@ class Config(dict):
             self.update(_d)
         self.update(kwargs)
 
-    def leaf_keys(self, sep=":"):
-        stack = [iter(self.items())]
+    def _keys(self, sep=":"):
+        stack = [iter(dict.items(self))]
         key_prefix = ''
-        keys = []
 
         while stack:
             new = next(stack[-1], None)
@@ -875,13 +875,23 @@ class Config(dict):
                 stack.append(iter(value.items()))
                 key_prefix = nested_key
             else:
-                keys.append(nested_key[1:])
+                yield nested_key[1:]
 
-        return sorted(keys)
+    def __iter__(self):
+        return self._keys()
+
+    def keys(self):
+        return MutableMapping.keys(self)
+
+    def values(self):
+        return MutableMapping.values(self)
+
+    def items(self):
+        return MutableMapping.items(self)
 
     def __str__(self):
-        items = {k: v for k, v in self.items()}
-        s = "<{} -\n{}\n>".format(self.__class__.__name__, pformat(items))
+        items = {k: v for k, v in dict.items(self)}
+        s = "{}(\n{}\n)".format(self.__class__.__name__, pformat(items))
         return s
 
     def __repr__(self):
@@ -890,11 +900,13 @@ class Config(dict):
     def __contains__(self, key):
         try:
             self[key]
-            return True
         except KeyError:
             return False
+        else:
+            return True
 
     def __getitem__(self, key):
+        assert isinstance(key, str), "`Config` keys must be strings."
         if ':' in key:
             keys = key.split(':')
             value = self
@@ -908,6 +920,7 @@ class Config(dict):
             return super(Config, self).__getitem__(key)
 
     def __setitem__(self, key, value):
+        assert isinstance(key, str), "`Config` keys must be strings."
         if ':' in key:
             keys = key.split(':')
             to_set = self
@@ -915,12 +928,29 @@ class Config(dict):
                 try:
                     to_set = to_set[k]
                 except KeyError:
-                    to_set[k] = Config()
+                    to_set[k] = self.__class__()
                     to_set = to_set[k]
             to_set[keys[-1]] = value
         else:
             self._validate_key(key)
-            super(Config, self).__setitem__(key, value)
+            return super(Config, self).__setitem__(key, value)
+
+    def __delitem__(self, key):
+        assert isinstance(key, str), "`Config` keys must be strings."
+        if ':' in key:
+            keys = key.split(':')
+            to_del = self
+            for k in keys[:-1]:
+                try:
+                    to_del = to_del[k]
+                except KeyError:
+                    raise KeyError("Calling __getitem__ with key {} failed at component {}.".format(key, k))
+            try:
+                del to_del[keys[-1]]
+            except KeyError:
+                raise KeyError("Calling __getitem__ with key {} failed at component {}.".format(key, keys[-1]))
+        else:
+            return super(Config, self).__delitem__(key)
 
     def __getattr__(self, key):
         try:
@@ -1040,12 +1070,31 @@ class ConfigStack(dict, metaclass=Singleton):
         except KeyError:
             return default
 
+    def __iter__(self):
+        return iter(self._keys())
+
+    def _keys(self):
+        keys = set()
+        for config in ConfigStack._stack[::-1]:
+            keys |= config.keys()
+        return list(keys)
+
+    def keys(self):
+        return MutableMapping.keys(self)
+
+    def values(self):
+        return MutableMapping.values(self)
+
+    def items(self):
+        return MutableMapping.items(self)
+
     def __contains__(self, key):
         try:
             self[key]
-            return True
         except KeyError:
             return False
+        else:
+            return True
 
     def __getitem__(self, key):
         for config in reversed(ConfigStack._stack):
@@ -1067,18 +1116,6 @@ class ConfigStack(dict, metaclass=Singleton):
 
     def update(self, *args, **kwargs):
         self._stack[-1].update(*args, **kwargs)
-
-    def keys(self):
-        keys = set()
-        for config in ConfigStack._stack:
-            keys |= config.keys()
-        return keys
-
-    def values(self):
-        return [self[key] for key in self.keys()]
-
-    def items(self):
-        return [(key, self[key]) for key in self.keys()]
 
     def freeze(self):
         cfg = Config()

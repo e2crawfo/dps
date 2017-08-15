@@ -1,6 +1,6 @@
 import pytest
 
-from dps.config import algorithms, tasks, test_configs
+from dps.config import actor_configs, critic_configs, tasks, test_configs
 from dps.train import training_loop
 from dps.run import build_and_visualize
 
@@ -12,12 +12,14 @@ slow = pytest.mark.skipif(
 
 
 @pytest.mark.parametrize('task', sorted(tasks.keys()))
-@pytest.mark.parametrize('alg', sorted(algorithms.keys()))
+@pytest.mark.parametrize('actor', sorted(actor_configs.keys()))
+@pytest.mark.parametrize('critic', sorted(critic_configs.keys()))
 @slow
-def test_train(task, alg, max_steps, verbose, display):
-
+def test_train(task, actor, critic, max_steps, verbose, display):
     config = tasks[task]
-    config.update(algorithms[alg], verbose=verbose, display=display, seed=100)
+    config.update(actor_configs[actor])
+    config.update(critic_configs[critic])
+    config.update(verbose=verbose, display=display, seed=100)
 
     if max_steps is not None:
         config.max_steps = int(max_steps)

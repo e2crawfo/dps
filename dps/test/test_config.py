@@ -42,7 +42,7 @@ def test_config_stack():
         with pytest.raises(AttributeError):
             cfg.a
 
-        with Config(a=1, b=2, c=lambda x: x + 1):
+        with Config(a=1, b=2, c=lambda x: x + 1, x=Config(x=1), y=Config(y=2)):
             assert cfg['a'] == 1
             assert cfg.a == 1
 
@@ -52,7 +52,15 @@ def test_config_stack():
             assert cfg['c'](2) == 3
             assert cfg.c(2) == 3
 
-            with Config(a=10, c=100, d='a', e=100):
+            assert cfg.x.x == 1
+            assert cfg['x']['x'] == 1
+
+            assert cfg.y.y == 2
+            assert cfg['y']['y'] == 2
+
+            assert set(cfg.keys()) == set('a b c x:x y:y'.split())
+
+            with Config(a=10, c=100, d='a', e=100, y=Config(y=3), z=Config(z='a')):
                 assert cfg['a'] == 10
                 assert cfg.a == 10
 
@@ -68,7 +76,16 @@ def test_config_stack():
                 assert cfg['e'] == 100
                 assert cfg.e == 100
 
-                assert set(cfg.keys()) == set('a b c d e'.split())
+                assert cfg.x.x == 1
+                assert cfg['x']['x'] == 1
+
+                assert cfg.y.y == 3
+                assert cfg['y']['y'] == 3
+
+                assert cfg.z.z == 'a'
+                assert cfg['z']['z'] == 'a'
+
+                assert set(cfg.keys()) == set('a b c d e x:x y:y z:z'.split())
 
             assert cfg['a'] == 1
             assert cfg.a == 1
@@ -79,7 +96,7 @@ def test_config_stack():
             assert cfg['c'](2) == 3
             assert cfg.c(2) == 3
 
-            assert set(cfg.keys()) == set('a b c'.split())
+            assert set(cfg.keys()) == set('a b c x:x y:y'.split())
 
             with pytest.raises(KeyError):
                 cfg['d']
@@ -197,6 +214,8 @@ def test_get_set_item():
 
     with pytest.raises(KeyError):
         config["z"]
+    with pytest.raises(AttributeError):
+        config.z
 
     config.z = 10
     assert config.z == 10
