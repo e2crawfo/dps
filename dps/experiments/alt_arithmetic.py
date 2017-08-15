@@ -302,8 +302,8 @@ class AltArithmetic(InternalEnv):
 
             classification_bonus = tf.cond(
                 self.is_training_ph,
-                lambda: tf.constant(self.classification_bonus),
-                lambda: tf.constant(0.0))
+                lambda: tf.constant(self.classification_bonus, tf.float32),
+                lambda: tf.constant(0.0, tf.float32))
 
             rewards = rewards + classification_bonus * (classify_digit + classify_op)
 
