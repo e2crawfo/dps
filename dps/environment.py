@@ -567,6 +567,7 @@ class CompositeEnv(Env):
          initial_registers, output) = self.internal.get_sampler(policy)
 
         self.external.set_mode(mode, n_rollouts)
+        self.internal.set_mode(mode, n_rollouts)
         external_obs = self.external.reset()
         n_rollouts = external_obs.shape[0]
 

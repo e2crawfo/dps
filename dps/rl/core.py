@@ -80,8 +80,6 @@ class RLUpdater(Updater):
 
         self.policy.set_exploration(self.exploration)
 
-        # self.policy.build_update()
-
         for learner in self.learners:
             learner.build_graph(self.is_training, self.exploration)
 

@@ -69,15 +69,16 @@ config.update(Config(
         optimizer_spec="adam"
     ),
     symbols=[
-        # ('A', lambda x: sum(x)),
+        ('A', lambda x: sum(x)),
         ('M', lambda x: np.product(x)),
-        # ('C', lambda x: len(x))
+        ('C', lambda x: len(x))
     ],
 ))
 
 
 distributions = dict(
     n_controller_units=[32, 64, 128],
+    classification_bonus=list(np.linspace(0.0, 0.5, 10)),
     batch_size=[16, 32, 64, 128],
     exploration_schedule=[
         'poly 1.0 100000 0.01',

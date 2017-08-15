@@ -44,7 +44,7 @@ config = DEFAULT_CONFIG.copy(
         target_update_rate=0.01,
         steps_per_target_update=1000,
         patience=np.inf,
-        update_batch_size=32,  # Number of sample rollouts to use for each parameter update
+        update_batch_size=16,  # Number of sample rollouts to use for each parameter update
 
         replay_max_size=5000,
         alpha=0.7,
