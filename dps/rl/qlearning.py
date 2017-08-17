@@ -113,8 +113,6 @@ class QLearning(PolicyOptimization):
             axis=0)
         bootstrap_values = tf.stop_gradient(bootstrap_values)
 
-        mean_bootstrap_value = masked_mean(bootstrap_values, self.mask)
-
         self.targets = self.rewards + self.gamma * bootstrap_values
 
         self.td_error = (self.targets - self.q_values_selected_actions) * self.mask
@@ -123,7 +121,7 @@ class QLearning(PolicyOptimization):
         self.unweighted_q_loss = masked_mean(clipped_error(self.td_error), self.mask)
 
         masked_rewards = self.rewards * self.mask
-        self.init_error = (self.q_values_selected_actions - tf.cumsum(masked_rewards, axis=0, reverse=True)) * self.mask
+        self.init_error = (tf.cumsum(masked_rewards, axis=0, reverse=True) - self.q_values_selected_actions) * self.mask
         self.weighted_init_error = self.init_error * self.weights
         self.init_q_loss = masked_mean(clipped_error(self.weighted_init_error), self.mask)
         self.unweighted_init_q_loss = masked_mean(clipped_error(self.init_error), self.mask)
@@ -132,13 +130,12 @@ class QLearning(PolicyOptimization):
 
         self.eval_summary_op = tf.summary.merge([
             tf.summary.scalar("q_loss", self.q_loss),
-            tf.summary.scalar("unweighted_q_loss", self.unweighted_q_loss),
+            tf.summary.scalar("q_loss_unweighted", self.unweighted_q_loss),
             tf.summary.scalar("init_q_loss", self.init_q_loss),
-            tf.summary.scalar("unweighted_init_q_loss", self.unweighted_init_q_loss),
+            tf.summary.scalar("init_q_loss_unweighted", self.unweighted_init_q_loss),
             tf.summary.scalar("reward_per_ep", self.reward_per_ep),
             tf.summary.scalar("mean_q_value", mean_q_value),
             tf.summary.scalar("mean_q_value_target_network", mean_q_value_target_network),
-            tf.summary.scalar("bootstrap_value", mean_bootstrap_value),
         ])
 
         self.recorded_values = [

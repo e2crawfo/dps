@@ -6,7 +6,8 @@ from dps.utils import (
     CompositeCell, FeedforwardCell, MLP, FixedDiscreteController,
     FixedController, DpsConfig, Config)
 from dps.rl import (
-    RLUpdater, rl_render_hook, REINFORCE, PPO, TRPO, RobustREINFORCE, QLearning, TrustRegionQLearning, ProximalQLearning)
+    RLUpdater, rl_render_hook, REINFORCE, PPO, TRPO, RobustREINFORCE,
+    QLearning, Retrace, TrustRegionQLearning, ProximalQLearning)
 from dps.rl.qlearning import DuelingHead
 from dps.rl.policy import (
     Policy, Softmax, EpsilonSoftmax, EpsilonGreedy, Deterministic,
@@ -266,6 +267,15 @@ QLEARNING_CONFIG = Config(
     beta_schedule="0.5",
 
     max_grad_norm=0.0,
+)
+
+
+RETRACE_CONFIG = QLEARNING_CONFIG.copy(
+    name="Retrace",
+    alg=Retrace,
+
+    lmbda=1.0,
+    exploration_schedule="poly 1.0 40000 0.1",
 )
 
 
@@ -846,6 +856,7 @@ actor_configs = dict(
     ppo=PPO_CONFIG,
     robust=ROBUST_CONFIG,
     qlearning=QLEARNING_CONFIG,
+    retrace=RETRACE_CONFIG,
     trql=TRQL_CONFIG,
     pql=PQL_CONFIG
 )

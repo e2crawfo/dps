@@ -7,4 +7,5 @@ from .trpo import TRPO
 from .ppo import PPO
 from .robust import RobustREINFORCE
 from .qlearning import QLearning
+from .retrace import Retrace
 from .trql import TrustRegionQLearning, ProximalQLearning

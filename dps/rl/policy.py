@@ -348,6 +348,20 @@ class Categorical(TensorFlowSelection):
             actions = tf.cast(actions, tf.int32)
         return super(Categorical, self).log_prob(utils, actions, exploration)
 
+    def log_prob_all(self, utils, exploration):
+        batch_rank = len(utils.shape)-1
+
+        if not self.one_hot:
+            sample_shape = (self.n_actions,) + (1,) * batch_rank
+            sample = tf.reshape(tf.range(self.n_actions), sample_shape)
+        else:
+            sample_shape = (self.n_actions,) + (1,) * batch_rank + (self.n_actions,)
+            sample = tf.reshape(tf.eye(self.n_actions), sample_shape)
+        dist = self._dist(utils, exploration)
+        log_probs = dist.log_prob(sample)
+        axis_perm = tuple(range(1, batch_rank+1)) + (0,)
+        return tf.transpose(log_probs, perm=axis_perm)
+
 
 class Softmax(Categorical):
     def _dist(self, utils, exploration):

@@ -127,9 +127,6 @@ class ProximalQLearning(QLearning):
     epsilon = Param()
     S = Param()  # number of samples from normal distribution
 
-    def __init__(self, q_network, **kwargs):
-        super(ProximalQLearning, self).__init__(q_network, **kwargs)
-
     def build_cpi_objective(self, targets):
         batch_size = tf.shape(self.obs)[1]
         alpha = (self.prev_q_values_selected_actions - self.q_values_selected_actions) / self.std_dev
