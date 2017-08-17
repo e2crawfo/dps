@@ -1,7 +1,6 @@
 import tensorflow as tf
 import numpy as np
 
-from dps import cfg
 from dps.register import RegisterBank
 from dps.environment import TensorFlowEnv
 from dps.utils import Param

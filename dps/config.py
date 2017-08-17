@@ -13,7 +13,7 @@ from dps.rl.policy import (
     Normal, Gamma, ProductDist)
 from dps.vision import LeNet, MNIST_CONFIG
 from dps.experiments import (
-    hello_world, room, grid, l2l, simple_addition, pointer_following,
+    hello_world, room, grid, grid_bandit, path_discovery, simple_addition, pointer_following,
     hard_addition, translated_mnist, mnist_arithmetic, simple_arithmetic,
     alt_arithmetic)
 from dps.rl.value import actor_critic, TrustRegionPolicyEvaluation, ProximalPolicyEvaluation, PolicyEvaluation
@@ -141,7 +141,7 @@ DEFAULT_CONFIG = DpsConfig(
     action_selection=softmax,
 
     deadline='',
-    render_hook=None,
+    render_hook=rl_render_hook,
 
     get_experiment_name=get_experiment_name,
 )
@@ -419,17 +419,34 @@ GRID_CONFIG = Config(
 )
 
 
-L2L_CONFIG = Config(
-    build_env=l2l.build_env,
+GRID_BANDIT_CONFIG = Config(
+    build_env=grid_bandit.build_env,
     curriculum=[dict()],
     n_controller_units=32,
-    log_name='l2l',
+    log_name='grid_bandit',
     eval_step=10,
     batch_size=32,
     shape=(2, 2),
     T=5,
     n_arms=10,
     threshold=-5,
+)
+
+
+PATH_DISCOVERY_CONFIG = Config(
+    build_env=path_discovery.build_env,
+    curriculum=[
+        dict(shape=(2, 2), threshold=-6),
+        dict(shape=(3, 3), threshold=-4),
+        dict(shape=(4, 4), threshold=-2)
+    ],
+    n_controller_units=32,
+    log_name='path_discovery',
+    eval_step=10,
+    batch_size=32,
+    shape=(3, 3),
+    T=10,
+    threshold=-10,
 )
 
 
@@ -669,14 +686,14 @@ ROOM_CONFIG_TEST = ROOM_CONFIG.copy(
 )
 
 
-L2L_CONFIG_TEST = Config(
+GRID_BANDIT_CONFIG_TEST = Config(
     shape=(2, 2),
     T=10,
     action_seq=[4, 1, 4, 2, 4, 3, 4, 5, 6],
-    build_env=l2l.build_env,
+    build_env=grid_bandit.build_env,
     n_arms=3
 )
-adjust_for_test(L2L_CONFIG_TEST)
+adjust_for_test(GRID_BANDIT_CONFIG_TEST)
 
 
 SIMPLE_ADDITION_TEST = SIMPLE_ADDITION_CONFIG.copy(
@@ -838,7 +855,8 @@ tasks = dict(
     hello_world=HELLO_WORLD_CONFIG,
     room=ROOM_CONFIG,
     grid=GRID_CONFIG,
-    l2l=L2L_CONFIG,
+    grid_bandit=GRID_BANDIT_CONFIG,
+    path_discovery=PATH_DISCOVERY_CONFIG,
     simple_addition=SIMPLE_ADDITION_CONFIG,
     pointer=POINTER_CONFIG,
     hard_addition=HARD_ADDITION_CONFIG,
@@ -852,7 +870,7 @@ tasks = dict(
 test_configs = dict(
     hello_world=HELLO_WORLD_TEST,
     room=ROOM_CONFIG_TEST,
-    l2l=L2L_CONFIG_TEST,
+    grid_bandit=GRID_BANDIT_CONFIG_TEST,
     simple_addition=SIMPLE_ADDITION_TEST,
     pointer=POINTER_TEST,
     hard_addition=HARD_ADDITION_TEST,
