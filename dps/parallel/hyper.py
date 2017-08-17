@@ -151,7 +151,7 @@ def sample_configs(n, repeats, base_config, distributions):
 def reduce_hyper_results(store, *results):
     distributions = store.load_object('metadata', 'distributions')
     distributions = Config(distributions)
-    keys = list(distributions.leaf_keys())
+    keys = list(distributions.keys())
 
     # Create a pandas dataframe storing the results
     records = []

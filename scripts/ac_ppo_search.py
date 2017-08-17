@@ -69,8 +69,8 @@ config.update(Config(
         optimizer_spec="adam"
     ),
     symbols=[
-        ('A', lambda x: sum(x)),
-        ('M', lambda x: np.product(x)),
+        # ('A', lambda x: sum(x)),
+        # ('M', lambda x: np.product(x)),
         ('C', lambda x: len(x))
     ],
 ))
@@ -106,5 +106,6 @@ distributions = dict(
 )
 
 from ac_search import search
-hosts = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in [16, 18, 20, 21, 22, 24, 26, 27, 28, 29, 30, 32]]
+hosts = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 17)]
+# hosts = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in [16, 18, 20, 21, 22, 24, 26, 27, 28, 29, 30, 32]]
 search(config, distributions, hosts=hosts)
