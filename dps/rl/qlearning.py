@@ -70,8 +70,27 @@ class QLearning(PolicyOptimization):
         self.train_summary_op = tf.summary.merge(train_summaries)
 
         self.init_train_op, train_summaries = build_gradient_train_op(
-            self.init_q_loss, tvars, self.optimizer_spec, self.lr_schedule)
+            self.monte_carlo_loss, tvars, self.optimizer_spec, self.lr_schedule)
         self.init_train_summary_op = tf.summary.merge(train_summaries)
+
+    def build_target_network_update(self):
+        q_network_variables = self.q_network.trainable_variables()
+        target_network_variables = self.target_network.trainable_variables()
+
+        with tf.name_scope("update_target_network"):
+            target_network_update = []
+
+            if self.steps_per_target_update is not None:
+                for v_source, v_target in zip(q_network_variables, target_network_variables):
+                    update_op = v_target.assign(v_source)
+                    target_network_update.append(update_op)
+            else:
+                assert self.target_update_rate is not None
+                for v_source, v_target in zip(q_network_variables, target_network_variables):
+                    update_op = v_target.assign_sub(self.target_update_rate * (v_target - v_source))
+                    target_network_update.append(update_op)
+
+            self.target_network_update = tf.group(*target_network_update)
 
     def _build_graph(self, is_training, exploration):
         self.beta = build_scheduled_value(self.beta_schedule, 'beta')
@@ -109,7 +128,7 @@ class QLearning(PolicyOptimization):
             bootstrap_values = tf.reduce_max(bootstrap_values, axis=-1, keep_dims=True)
 
         bootstrap_values = tf.concat(
-            [bootstrap_values[1:, :, :], tf.zeros_like(bootstrap_values[0:1, :, :])],
+            [bootstrap_values[1:, :, :], tf.zeros_like(bootstrap_values[:1, :, :])],
             axis=0)
         bootstrap_values = tf.stop_gradient(bootstrap_values)
 
@@ -121,18 +140,19 @@ class QLearning(PolicyOptimization):
         self.unweighted_q_loss = masked_mean(clipped_error(self.td_error), self.mask)
 
         masked_rewards = self.rewards * self.mask
-        self.init_error = (tf.cumsum(masked_rewards, axis=0, reverse=True) - self.q_values_selected_actions) * self.mask
-        self.weighted_init_error = self.init_error * self.weights
-        self.init_q_loss = masked_mean(clipped_error(self.weighted_init_error), self.mask)
-        self.unweighted_init_q_loss = masked_mean(clipped_error(self.init_error), self.mask)
+        self.monte_carlo_error_unweighted = (
+            tf.cumsum(masked_rewards, axis=0, reverse=True) - self.q_values_selected_actions) * self.mask
+        self.monte_carlo_error = self.monte_carlo_error_unweighted * self.weights
+        self.monte_carlo_loss_unweighted = masked_mean(clipped_error(self.monte_carlo_error_unweighted), self.mask)
+        self.monte_carlo_loss = masked_mean(clipped_error(self.monte_carlo_error), self.mask)
 
         self.build_update_ops()
 
         self.eval_summary_op = tf.summary.merge([
-            tf.summary.scalar("q_loss", self.q_loss),
-            tf.summary.scalar("q_loss_unweighted", self.unweighted_q_loss),
-            tf.summary.scalar("init_q_loss", self.init_q_loss),
-            tf.summary.scalar("init_q_loss_unweighted", self.unweighted_init_q_loss),
+            tf.summary.scalar("1_step_td_loss", self.q_loss),
+            tf.summary.scalar("1_step_td_loss_unweighted", self.unweighted_q_loss),
+            tf.summary.scalar("monte_carlo_td_loss", self.monte_carlo_loss),
+            tf.summary.scalar("monte_carlo_td_loss_unweighted", self.monte_carlo_loss_unweighted),
             tf.summary.scalar("reward_per_ep", self.reward_per_ep),
             tf.summary.scalar("mean_q_value", mean_q_value),
             tf.summary.scalar("mean_q_value_target_network", mean_q_value_target_network),
@@ -144,23 +164,7 @@ class QLearning(PolicyOptimization):
             ('q_loss', self.q_loss),
         ]
 
-        q_network_variables = self.q_network.trainable_variables()
-        target_network_variables = self.target_network.trainable_variables()
-
-        with tf.name_scope("update_target_network"):
-            target_network_update = []
-
-            if self.steps_per_target_update is not None:
-                for v_source, v_target in zip(q_network_variables, target_network_variables):
-                    update_op = v_target.assign(v_source)
-                    target_network_update.append(update_op)
-            else:
-                assert self.target_update_rate is not None
-                for v_source, v_target in zip(q_network_variables, target_network_variables):
-                    update_op = v_target.assign_sub(self.target_update_rate * (v_target - v_source))
-                    target_network_update.append(update_op)
-
-            self.target_network_update = tf.group(*target_network_update)
+        self.build_target_network_update()
 
     def update_params(self, rollouts, collect_summaries, feed_dict, init):
         if init:
@@ -206,7 +210,8 @@ class QLearning(PolicyOptimization):
 
             # Update rollout priorities in replay buffer.
             if init:
-                td_error = sess.run(self.init_error, feed_dict=feed_dict)
+                td_error = sess.run(
+                    self.monte_carlo_error_unweighted, feed_dict=feed_dict)
             else:
                 td_error = sess.run(self.td_error, feed_dict=feed_dict)
             priority = np.abs(td_error).sum(axis=0).reshape(-1)

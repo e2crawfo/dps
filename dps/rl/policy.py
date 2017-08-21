@@ -217,31 +217,31 @@ class ProductDist(ActionSelection):
         self.n_actions = sum(self.n_actions_vector)
 
     def sample(self, utils, exploration):
-        _utils = tf.split(utils, self.n_params_vector, axis=1)
+        _utils = tf.split(utils, self.n_params_vector, axis=-1)
         _samples = [c.sample(u, exploration) for u, c in zip(_utils, self.components)]
-        return tf.concat(_samples, axis=1)
+        return tf.concat(_samples, axis=-1)
 
     def log_prob(self, utils, actions, exploration):
-        _utils = tf.split(utils, self.n_params_vector, axis=1)
-        _actions = tf.split(actions, self.n_actions_vector, axis=1)
+        _utils = tf.split(utils, self.n_params_vector, axis=-1)
+        _actions = tf.split(actions, self.n_actions_vector, axis=-1)
         _log_probs = [c.log_prob(u, a, exploration) for u, a, c in zip(_utils, _actions, self.components)]
-        return tf.reduce_sum(tf.concat(_log_probs, axis=1), axis=1, keep_dims=True)
+        return tf.reduce_sum(tf.concat(_log_probs, axis=-1), axis=-1, keep_dims=True)
 
     def entropy(self, utils, exploration):
-        _utils = tf.split(utils, self.n_params_vector, axis=1)
+        _utils = tf.split(utils, self.n_params_vector, axis=-1)
         _entropies = [c.entropy(u, exploration) for u, c in zip(_utils, self.components)]
-        return tf.reduce_sum(tf.concat(_entropies, axis=1), axis=1, keep_dims=True)
+        return tf.reduce_sum(tf.concat(_entropies, axis=-1), axis=-1, keep_dims=True)
 
     def kl(self, utils1, utils2, e1, e2=None):
-        _utils1 = tf.split(utils1, self.n_params_vector, axis=1)
-        _utils2 = tf.split(utils2, self.n_params_vector, axis=1)
+        _utils1 = tf.split(utils1, self.n_params_vector, axis=-1)
+        _utils2 = tf.split(utils2, self.n_params_vector, axis=-1)
 
         _splitwise_kl = tf.concat(
             [c.kl(u1, u2, e1, e2)
              for u1, u2, c in zip(_utils1, _utils2, self.components)],
-            axis=1)
+            axis=-1)
 
-        return tf.reduce_sum(_splitwise_kl, axis=1, keep_dims=True)
+        return tf.reduce_sum(_splitwise_kl, axis=-1, keep_dims=True)
 
 
 class TensorFlowSelection(ActionSelection):
@@ -376,10 +376,10 @@ class Softmax(Categorical):
 class EpsilonGreedy(Categorical):
     def _probs(self, q_values, exploration):
         epsilon = exploration
-        mx = tf.reduce_max(q_values, axis=1, keep_dims=True)
+        mx = tf.reduce_max(q_values, axis=-1, keep_dims=True)
         bool_is_max = tf.equal(q_values, mx)
         float_is_max = tf.cast(bool_is_max, tf.float32)
-        max_count = tf.reduce_sum(float_is_max, axis=1, keep_dims=True)
+        max_count = tf.reduce_sum(float_is_max, axis=-1, keep_dims=True)
         _probs = (float_is_max / max_count) * (1 - epsilon)
         return _probs + epsilon / tf.cast(self.n_params, tf.float32)
 

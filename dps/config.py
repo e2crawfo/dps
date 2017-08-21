@@ -16,7 +16,7 @@ from dps.vision import LeNet, MNIST_CONFIG
 from dps.experiments import (
     hello_world, room, grid, grid_bandit, path_discovery, simple_addition, pointer_following,
     hard_addition, translated_mnist, mnist_arithmetic, simple_arithmetic,
-    alt_arithmetic)
+    alt_arithmetic, off_policy_test)
 from dps.rl.value import actor_critic, TrustRegionPolicyEvaluation, ProximalPolicyEvaluation, PolicyEvaluation
 
 
@@ -49,7 +49,7 @@ class FeedforwardController(object):
         self.args, self.kwargs = args, kwargs
 
     def __call__(self, n_params, name=None):
-        return FeedforwardCell(MLP(*self.args, **self.kwargs), n_paramsname=name)
+        return FeedforwardCell(MLP(*self.args, **self.kwargs), n_params, name=name)
 
 
 def get_updater(env):
@@ -245,26 +245,26 @@ QLEARNING_CONFIG = Config(
     controller=DuelingLstmController(),
     double=True,
 
-    lr_schedule="0.00025",
-    exploration_schedule="pwc 1.0 40000 0.1",
+    lr_schedule="0.01",
+    exploration_schedule=1.0,
     test_time_explore="0.01",
 
     optimizer_spec="adam",
 
     gamma=1.0,
 
-    init_steps=5000,
+    init_steps=1000,
 
     opt_steps_per_batch=10,
     target_update_rate=0.01,
-    steps_per_target_update=None,
+    steps_per_target_update=1000,
     patience=np.inf,
     update_batch_size=32,  # Number of sample rollouts to use for each parameter update
     batch_size=1,  # Number of sample experiences per update
 
     replay_max_size=20000,
-    alpha=0.7,
-    beta_schedule="0.5",
+    alpha=0.0,
+    beta_schedule=0.0,
 
     max_grad_norm=0.0,
 )
@@ -274,8 +274,18 @@ RETRACE_CONFIG = QLEARNING_CONFIG.copy(
     name="Retrace",
     alg=Retrace,
 
+    controller=FeedforwardController(),
+
+    lr_schedule="0.001",
+    steps_per_target_update=1000,
+    init_steps=1000,
     lmbda=1.0,
-    exploration_schedule="poly 1.0 40000 0.1",
+    exploration_schedule="poly 1.0 10000 0.1",
+    greedy_factor=10.0,
+    beta_schedule=0.0,
+    alpha=0.0,
+    test_time_explore=0.10,
+    normalize_imp_weights=False
 )
 
 
@@ -426,6 +436,18 @@ GRID_CONFIG = Config(
     l2l=False,
     shape=(5, 5),
     T=20
+)
+
+
+OFF_POLICY_CONFIG = Config(
+    build_env=off_policy_test.build_env,
+    curriculum=[dict()],
+    n_controller_units=32,
+    log_name='off_policy',
+    eval_step=10,
+    batch_size=10,
+    shape=(3, 3),
+    T=10
 )
 
 
@@ -866,6 +888,7 @@ tasks = dict(
     hello_world=HELLO_WORLD_CONFIG,
     room=ROOM_CONFIG,
     grid=GRID_CONFIG,
+    off_policy=OFF_POLICY_CONFIG,
     grid_bandit=GRID_BANDIT_CONFIG,
     path_discovery=PATH_DISCOVERY_CONFIG,
     simple_addition=SIMPLE_ADDITION_CONFIG,
@@ -893,17 +916,20 @@ test_configs = dict(
 
 
 def parse_task_actor_critic(task, actor, critic):
-    task = [t for t in tasks if t.startswith(task)]
-    assert len(task) == 1, "Ambiguity in task selection, possibilities are: {}.".format(task)
-    task = task[0]
+    if task not in tasks:
+        task = [t for t in tasks if t.startswith(task)]
+        assert len(task) == 1, "Ambiguity in task selection, possibilities are: {}.".format(task)
+        task = task[0]
 
-    _actors = list(actor_configs) + ['visualize']
-    actor = [a for a in _actors if a.startswith(actor)]
-    assert len(actor) == 1, "Ambiguity in actor selection, possibilities are: {}.".format(actor)
-    actor = actor[0]
+    if actor not in actor_configs:
+        _actors = list(actor_configs) + ['visualize']
+        actor = [a for a in _actors if a.startswith(actor)]
+        assert len(actor) == 1, "Ambiguity in actor selection, possibilities are: {}.".format(actor)
+        actor = actor[0]
 
-    critic = [c for c in list(critic_configs) if c.startswith(critic)]
-    assert len(critic) == 1, "Ambiguity in critic selection, possibilities are: {}.".format(critic)
-    critic = critic[0]
+    if critic not in critic_configs:
+        critic = [c for c in list(critic_configs) if c.startswith(critic)]
+        assert len(critic) == 1, "Ambiguity in critic selection, possibilities are: {}.".format(critic)
+        critic = critic[0]
 
     return task, actor, critic

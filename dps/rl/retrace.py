@@ -39,7 +39,7 @@ class Retrace(QLearning):
     """ Off-policy learning of action-value function from returns. """
 
     lmbda = Param(1.0)
-    greedy_factor = Param(2.0) # Ratio between greediness of policy we learn about and exploration policy.
+    greedy_factor = Param(2.0)  # Ratio between greediness of policy we learn about and that of the exploration policy.
 
     def build_placeholders(self):
         self.mu_log_probs = tf.placeholder(tf.float32, shape=(cfg.T, None, 1), name="_mu_log_probs")
@@ -70,25 +70,36 @@ class Retrace(QLearning):
         bootstrap_values_selected_actions = tf.reduce_sum(bootstrap_values * self.actions, axis=-1, keep_dims=True)
         mean_q_value_target_network = masked_mean(bootstrap_values_selected_actions, self.mask)
 
-        # Compute retrace target - assume target policy is epsilon greedy.
+        # Compute retrace target - policy we are learning about is the one that is epsilon-greedy wrt to the target network
         epsilon_greedy = EpsilonGreedy(self.q_network.n_actions)
-        pi_log_probs = epsilon_greedy.log_prob_all(bootstrap_values, exploration/self.greedy_factor)
-        values = tf.reduce_sum(tf.exp(pi_log_probs) * bootstrap_values, axis=-1, keep_dims=True)
+
+        if self.double:
+            pi_log_probs = epsilon_greedy.log_prob_all(
+                q_values, exploration/self.greedy_factor)
+        else:
+            pi_log_probs = epsilon_greedy.log_prob_all(
+                bootstrap_values, exploration/self.greedy_factor)
+
+        self.pi_probs = pi_probs = tf.exp(pi_log_probs)
+        prob_sums = tf.reduce_sum(pi_probs, axis=-1, keep_dims=True)
+        check = masked_mean(tf.abs(prob_sums - tf.ones_like(prob_sums)), self.mask)
+        values = tf.reduce_sum(pi_probs * bootstrap_values, axis=-1, keep_dims=True)
 
         retrace_cell = RetraceCell(self.gamma)
 
         pi_log_probs_selected_actions = tf.reduce_sum(pi_log_probs * self.actions, axis=-1, keep_dims=True)
 
-        rho = tf.minimum(tf.exp(pi_log_probs_selected_actions - self.mu_log_probs), 1)
-        rho = tf.concat([rho[1:, :, :], tf.zeros_like(rho[0:1, :, :])], axis=0)
+        importance_ratio = tf.exp(pi_log_probs_selected_actions - self.mu_log_probs)
+        rho = self.lmbda * tf.minimum(importance_ratio, 1)
+        rho = tf.concat([rho[1:, :, :], tf.ones_like(rho[:1, :, :])], axis=0)
 
         retrace_q = tf.concat(
             [bootstrap_values_selected_actions[1:, :, :],
-             tf.zeros_like(bootstrap_values_selected_actions[0:1, :, :])],
+             tf.zeros_like(bootstrap_values_selected_actions[:1, :, :])],
             axis=0)
 
         retrace_v = tf.concat(
-            [values[1:, :, :], tf.zeros_like(values[0:1, :, :])],
+            [values[1:, :, :], tf.zeros_like(values[:1, :, :])],
             axis=0)
 
         retrace_input = (
@@ -103,7 +114,16 @@ class Retrace(QLearning):
             initial_state=retrace_cell.zero_state(batch_size, tf.float32),
             parallel_iterations=1, swap_memory=False, time_major=True)
 
-        self.targets = tf.reverse(retrace, axis=[0])
+        one_step_estimate = tf.reverse(one_step_estimate, axis=[0])
+        one_step_loss = masked_mean(
+            (self.rewards + self.gamma * retrace_v - one_step_estimate)**2,
+            self.mask
+        )
+
+        adjustment = tf.reverse(adjustment, axis=[0])
+
+        retrace = tf.reverse(retrace, axis=[0])
+        self.targets = tf.stop_gradient(retrace)
 
         self.td_error = (self.targets - self.q_values_selected_actions) * self.mask
         self.weighted_td_error = self.td_error * self.weights
@@ -111,48 +131,36 @@ class Retrace(QLearning):
         self.unweighted_q_loss = masked_mean(clipped_error(self.td_error), self.mask)
 
         masked_rewards = self.rewards * self.mask
-        self.init_error = (
+        self.monte_carlo_error_unweighted = (
             tf.cumsum(masked_rewards, axis=0, reverse=True) - self.q_values_selected_actions) * self.mask
-        self.weighted_init_error = self.init_error * self.weights
-        self.init_q_loss = masked_mean(clipped_error(self.weighted_init_error), self.mask)
-        self.unweighted_init_q_loss = masked_mean(clipped_error(self.init_error), self.mask)
+        self.monte_carlo_error = self.monte_carlo_error_unweighted * self.weights
+        self.monte_carlo_loss_unweighted = masked_mean(clipped_error(self.monte_carlo_error_unweighted), self.mask)
+        self.monte_carlo_loss = masked_mean(clipped_error(self.monte_carlo_error), self.mask)
 
         self.build_update_ops()
 
         self.eval_summary_op = tf.summary.merge([
-            tf.summary.scalar("q_loss", self.q_loss),
-            tf.summary.scalar("q_loss_unweighted", self.unweighted_q_loss),
-            tf.summary.scalar("init_q_loss", self.init_q_loss),
-            tf.summary.scalar("init_q_loss_unweighted", self.unweighted_init_q_loss),
+            tf.summary.scalar("1_step_td_loss", self.q_loss),
+            tf.summary.scalar("1_step_td_loss_unweighted", self.unweighted_q_loss),
+            tf.summary.scalar("monte_carlo_td_loss", self.monte_carlo_loss),
+            tf.summary.scalar("monte_carlo_td_loss_unweighted", self.monte_carlo_loss_unweighted),
             tf.summary.scalar("reward_per_ep", self.reward_per_ep),
             tf.summary.scalar("mean_q_value", mean_q_value),
             tf.summary.scalar("mean_q_value_target_network", mean_q_value_target_network),
             tf.summary.scalar("abs_adjustment", masked_mean(tf.abs(adjustment), self.mask)),
+            tf.summary.scalar("importance_ratio", masked_mean(importance_ratio, self.mask)),
+            tf.summary.scalar("rho", masked_mean(rho, self.mask)),
+            tf.summary.scalar("prob_check", check)
         ])
 
         self.recorded_values = [
             ('loss', -self.reward_per_ep),
             ('reward_per_ep', self.reward_per_ep),
             ('q_loss', self.q_loss),
+            ('one_step_loss', one_step_loss),
         ]
 
-        q_network_variables = self.q_network.trainable_variables()
-        target_network_variables = self.target_network.trainable_variables()
-
-        with tf.name_scope("update_target_network"):
-            target_network_update = []
-
-            if self.steps_per_target_update is not None:
-                for v_source, v_target in zip(q_network_variables, target_network_variables):
-                    update_op = v_target.assign(v_source)
-                    target_network_update.append(update_op)
-            else:
-                assert self.target_update_rate is not None
-                for v_source, v_target in zip(q_network_variables, target_network_variables):
-                    update_op = v_target.assign_sub(self.target_update_rate * (v_target - v_source))
-                    target_network_update.append(update_op)
-
-            self.target_network_update = tf.group(*target_network_update)
+        self.build_target_network_update()
 
     def update_params(self, rollouts, collect_summaries, feed_dict, init):
         feed_dict[self.mu_log_probs] = rollouts.log_probs
@@ -177,4 +185,3 @@ class Retrace(QLearning):
 
         record = {k: v for v, (k, _) in zip(values, self.recorded_values)}
         return eval_summaries, record
-

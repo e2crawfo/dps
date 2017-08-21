@@ -299,8 +299,7 @@ class SamplerCell(RNNCell):
                 done, reward, new_registers = self.env.build_step(t, registers, action)
 
             return (
-                (obs, hidden, done, utils, entropy, action,
-                    log_prob, reward, policy_state),
+                (obs, hidden, done, utils, entropy, action, log_prob, reward, policy_state),
                 (new_registers, new_policy_state))
 
     @property
