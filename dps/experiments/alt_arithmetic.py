@@ -122,7 +122,7 @@ class AltArithmeticDataset(RegressionDataset):
 class AltArithmetic(InternalEnv):
     action_names = [
         '>', '<', 'v', '^', 'classify_digit', 'classify_op',
-        '+', '+1', '*', '=', 'noop']
+        '+', '+1', '*', '=']
 
     @property
     def element_shape(self):
@@ -142,6 +142,7 @@ class AltArithmetic(InternalEnv):
     start_loc = Param()
     force_2d = Param()
     classification_bonus = Param(0.0)
+    order_bonus = Param(0.0)
 
     def __init__(self, **kwargs):
         self.init_classifiers()
@@ -298,7 +299,7 @@ class AltArithmetic(InternalEnv):
             rewards = tf.fill((tf.shape(new_registers)[0], 1), 0.0),
 
         if actions is not None:
-            _, _, _, _, classify_digit, classify_op, _, _, _, _, _ = tf.split(actions, self.n_actions, axis=1)
+            _, _, _, _, classify_digit, classify_op, _, _, _, _ = tf.split(actions, self.n_actions, axis=1)
 
             classification_bonus = tf.cond(
                 self.is_training_ph,
@@ -316,7 +317,7 @@ class AltArithmetic(InternalEnv):
         _digit, _op, _acc, _fovea_x, _fovea_y, _, _ = self.rb.as_tuple(r)
 
         (right, left, down, up, classify_digit, classify_op,
-         add, inc, multiply, store, no_op) = tf.split(a, self.n_actions, axis=1)
+         add, inc, multiply, store) = tf.split(a, self.n_actions, axis=1)
 
         acc = (1 - add - inc - multiply - store) * _acc + \
             add * (_digit + _acc) + \
@@ -342,13 +343,13 @@ class AltArithmetic(InternalEnv):
 class AltArithmeticBadWiring(AltArithmetic):
     action_names = [
         '>', '<', 'v', '^', 'classify_digit', 'classify_op',
-        '+', '+1', '*', '=', 'noop', '+ arg', '* arg', '= arg']
+        '+', '+1', '*', '=', '+ arg', '* arg', '= arg']
 
     def build_step(self, t, r, a):
         _digit, _op, _acc, _fovea_x, _fovea_y, _glimpse = self.rb.as_tuple(r)
 
         (right, left, down, up, classify_digit, classify_op,
-         add, inc, multiply, store, no_op, add_arg, mult_arg, store_arg) = (
+         add, inc, multiply, store, add_arg, mult_arg, store_arg) = (
             tf.split(a, self.n_actions, axis=1))
 
         acc = (1 - add - inc - multiply - store) * _acc + \
@@ -369,7 +370,7 @@ class AltArithmeticBadWiring(AltArithmetic):
 
 
 class AltArithmeticNoClassifiers(AltArithmetic):
-    action_names = ['>', '<', 'v', '^', '+', '+1', '*', '=', 'noop', '+ arg', '* arg', '= arg']
+    action_names = ['>', '<', 'v', '^', '+', '+1', '*', '=', '+ arg', '* arg', '= arg']
 
     def init_classifiers(self):
         return
@@ -378,7 +379,7 @@ class AltArithmeticNoClassifiers(AltArithmetic):
         _digit, _op, _acc, _fovea_x, _fovea_y, _glimpse = self.rb.as_tuple(r)
 
         (right, left, down, up, add, inc, multiply, store,
-         no_op, add_arg, mult_arg, store_arg) = tf.split(a, self.n_actions, axis=1)
+         add_arg, mult_arg, store_arg) = tf.split(a, self.n_actions, axis=1)
 
         acc = (1 - add - inc - multiply - store) * _acc + \
             add * (add_arg + _acc) + \
@@ -395,13 +396,13 @@ class AltArithmeticNoClassifiers(AltArithmetic):
 
 
 class AltArithmeticNoOps(AltArithmetic):
-    action_names = ['>', '<', 'v', '^', 'classify_digit', 'classify_op', '=', 'noop', '= arg']
+    action_names = ['>', '<', 'v', '^', 'classify_digit', 'classify_op', '=', '= arg']
 
     def build_step(self, t, r, a):
         _digit, _op, _acc, _fovea_x, _fovea_y, _glimpse = self.rb.as_tuple(r)
 
         (right, left, down, up, classify_digit, classify_op,
-         store, no_op, store_arg) = tf.split(a, self.n_actions, axis=1)
+         store, store_arg) = tf.split(a, self.n_actions, axis=1)
 
         acc = (1 - store) * _acc + store * store_arg
 
@@ -417,14 +418,14 @@ class AltArithmeticNoOps(AltArithmetic):
 
 
 class AltArithmeticNoModules(AltArithmetic):
-    action_names = ['>', '<', 'v', '^', '=', 'noop', '= arg']
+    action_names = ['>', '<', 'v', '^', '=', '= arg']
 
     def init_classifiers(self):
         return
 
     def build_step(self, t, r, a):
         _digit, _op, _acc, _fovea_x, _fovea_y, _glimpse = self.rb.as_tuple(r)
-        right, left, down, up, store, no_op, store_arg = tf.split(a, self.n_actions, axis=1)
+        right, left, down, up, store, store_arg = tf.split(a, self.n_actions, axis=1)
 
         acc = (1 - store) * _acc + store * store_arg
 
