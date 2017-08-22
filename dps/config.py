@@ -276,7 +276,9 @@ RETRACE_CONFIG = QLEARNING_CONFIG.copy(
 
     controller=FeedforwardController(),
 
+    update_batch_size=16,
     lr_schedule="0.001",
+    opt_steps_per_batch=10,
     steps_per_target_update=1000,
     init_steps=1000,
     lmbda=1.0,

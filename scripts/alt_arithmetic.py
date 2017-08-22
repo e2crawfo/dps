@@ -18,9 +18,9 @@ config = DEFAULT_CONFIG.copy(
     n_val=500,
     controller=LstmController(),
     action_selection=softmax,
-    exploration_schedule='poly 1.0 100000 0.1',
+    exploration_schedule='poly 10.0 100000 0.1',
     get_experiment_name=lambda: "name={}_seed={}".format(cfg.actor_config.name, cfg.seed),
-    batch_size=64,
+    batch_size=16,
     max_steps=max_steps,
 
     actor_config=Config(
@@ -32,7 +32,7 @@ config = DEFAULT_CONFIG.copy(
         epsilon=0.2,
         opt_steps_per_batch=10,
         lr_schedule="1e-3",
-        gamma=0.9666,
+        gamma=0.9,
         lmbda=1.0,
         n_controller_units=128,
     ),
@@ -58,8 +58,8 @@ config = DEFAULT_CONFIG.copy(
     force_2d=False,
     classification_bonus=0.0,
     symbols=[
-        ('A', lambda r: sum(r)),
-        # ('M', lambda r: np.product(r)),
+        # ('A', lambda r: sum(r)),
+        ('M', lambda r: np.product(r)),
         # ('C', lambda r: len(r)),
     ],
     base=10,

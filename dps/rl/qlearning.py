@@ -41,6 +41,7 @@ class QLearning(PolicyOptimization):
     gamma = Param()
     opt_steps_per_batch = Param()
     init_steps = Param(0)
+    pure_exploration_steps = Param(1000)
 
     optimizer_spec = Param()
     lr_schedule = Param()
@@ -189,7 +190,11 @@ class QLearning(PolicyOptimization):
 
         global_step = sess.run(tf.contrib.framework.get_or_create_global_step())
 
+        pure_exploration = global_step < self.pure_exploration_steps
         init = global_step < self.init_steps
+
+        if pure_exploration:
+            return b''
 
         for i in range(self.opt_steps_per_batch):
             # Sample rollouts from replay buffer
