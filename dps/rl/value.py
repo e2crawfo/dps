@@ -383,6 +383,13 @@ class GeneralizedAdvantageEstimator(object):
         return advantage_estimates
 
 
+CRITIC_ALGS = dict(
+    TRPE=TrustRegionPolicyEvaluation,
+    PPE=ProximalPolicyEvaluation,
+    PE=PolicyEvaluation,
+)
+
+
 def actor_critic(
         env, policy_controller, action_selection, critic_controller,
         actor_config=None, critic_config=None):
@@ -394,7 +401,12 @@ def actor_critic(
 
     with critic_config:
         value_estimator = NeuralValueEstimator(critic_controller, env.obs_shape)
-        critic = cfg.alg(value_estimator, name="critic")
+
+        if isinstance(cfg.alg, str):
+            alg = CRITIC_ALGS[cfg.alg]
+        else:
+            alg = cfg.alg
+        critic = alg(value_estimator, name="critic")
 
     if actor_config is None:
         actor_config = Config()

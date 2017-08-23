@@ -138,13 +138,6 @@ class ParallelSession(object):
         walltime_seconds = int(walltime.total_seconds())
         cleanup_time_seconds = int(cleanup_time.total_seconds())
 
-        if not hosts:
-            hosts = [":"]  # Only localhost
-        with (Path(job_directory) / 'nodefile.txt').open('w') as f:
-            f.write('\n'.join(hosts))
-        node_file = " --sshloginfile nodefile.txt "
-        n_nodes = len(hosts)
-
         redirect = "--redirect" if redirect else ""
 
         env = os.environ.copy()
@@ -163,8 +156,19 @@ class ParallelSession(object):
             print("All jobs are finished! Exiting.")
             return
 
-        n_procs = min(ppn * n_nodes, n_jobs_to_run)
-        n_steps = int(np.ceil(n_jobs_to_run / n_procs))
+        if not hosts:
+            hosts = [":"]  # Only localhost
+
+        n_nodes = len(hosts)
+        n_procs = ppn * n_nodes
+
+        if n_jobs_to_run < n_procs:
+            n_steps = 1
+            n_nodes = int(np.ceil(n_jobs_to_run / ppn))
+            n_procs = n_nodes * ppn
+            hosts = hosts[:n_nodes]
+        else:
+            n_steps = int(np.ceil(n_jobs_to_run / n_procs))
 
         execution_time = int((walltime - cleanup_time).total_seconds())
         abs_seconds_per_step = int(np.floor(execution_time / n_steps))
@@ -173,6 +177,10 @@ class ParallelSession(object):
         assert execution_time > 0
         assert abs_seconds_per_step > 0
         assert seconds_per_step > 0
+
+        with (Path(job_directory) / 'nodefile.txt').open('w') as f:
+            f.write('\n'.join(hosts))
+        node_file = " --sshloginfile nodefile.txt "
 
         self.__dict__.update(locals())
 

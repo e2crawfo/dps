@@ -6,55 +6,12 @@ import pandas as pd
 from pprint import pprint
 import time
 import datetime
-from collections import Sequence
 
 from dps import cfg
 from dps.train import training_loop
 from dps.utils import gen_seed, Config
-from dps.config import parse_task_actor_critic, tasks, actor_configs, critic_configs
 from dps.parallel.base import Job, ReadOnlyJob
 from spectral_dagger.utils.experiment import ExperimentStore
-
-
-class ChoiceDist(object):
-    def __init__(self, choices, p=None, dtype=None):
-        self.choices = choices
-        self.p = p
-        if p is not None:
-            assert len(p) == len(choices)
-        self.dtype = dtype
-
-    def rvs(self, shape=None):
-        if shape is None:
-            choice_idx = np.random.choice(len(self.choices), p=self.p)
-            choice = self.choices[choice_idx]
-            if hasattr(choice, 'rvs'):
-                return choice.rvs()
-            else:
-                return choice
-
-        indices = np.random.choice(len(self.choices), size=shape, p=self.p)
-        results = np.zeros(shape, dtype=np.object)
-        for i in range(len(self.choices)):
-            equals_i = indices == i
-            if hasattr(self.choices[i], 'rvs'):
-                samples = self.choices[i].rvs(equals_i.sum())
-                results[np.nonzero(equals_i)] = samples
-            else:
-                results[np.nonzero(equals_i)] = self.choices[i]
-
-        if self.dtype:
-            results = results.astype(self.dtype)
-        elif hasattr(self.choices, 'dtype'):
-            results = results.astype(self.choices.dtype)
-        return results
-
-    def __repr__(self):
-        return str(self)
-
-    def __str__(self):
-        return "ChoiceDist(\n    choices={},\n    p={},\n    dtype={})".format(
-            self.choices, self.p, self.dtype)
 
 
 class LogUniform(object):
@@ -75,9 +32,9 @@ class LogUniform(object):
 
 def nested_sample(d):
     if isinstance(d, dict):
-        _d = d.copy()
-        _d.update({k: nested_sample(v) for k, v in d.items()})
-        return _d
+        return type(d)({k: nested_sample(v) for k, v in d.items()})
+    elif isinstance(d, list):
+        return nested_sample(d[np.random.randint(len(d))])
     elif hasattr(d, 'rvs'):
         return d.rvs()
     else:
@@ -109,10 +66,6 @@ def sample_configs(n, repeats, base_config, distributions):
         an array of samples with that shape).
 
     """
-    distributions = nested_map(
-        distributions,
-        lambda e: ChoiceDist(list(e)) if isinstance(e, Sequence) else e)
-
     max_tries = 1000
 
     sample_traces = set()
@@ -122,6 +75,7 @@ def sample_configs(n, repeats, base_config, distributions):
         n_tries = 0
         while True:
             sample = nested_sample(distributions)
+
             trace = str(sample)
 
             if trace not in sample_traces:
@@ -154,6 +108,7 @@ def reduce_hyper_results(store, *results):
     keys = list(distributions.keys())
 
     # Create a pandas dataframe storing the results
+
     records = []
     for r in results:
         record = dict(
@@ -165,10 +120,13 @@ def reduce_hyper_results(store, *results):
             reason=r['history'][-1]['reason'],
             host=r['host'])
 
+        config = Config(r['config'])
         for k in keys:
-            record[k] = r['config'][k]
+            record[k] = config[k]
+
         record['seed'] = r['config']['seed']
         records.append(record)
+
     df = pd.DataFrame.from_records(records)
 
     groups = df.groupby(keys)
@@ -283,6 +241,8 @@ def build_search(path, name, n, repeats, distributions, _zip, config=None, use_t
     job = Job(exp_dir.path)
 
     new_configs = sample_configs(n, repeats, config, distributions)
+    new_configs = [Config(c).flatten() for c in new_configs]
+
     job.map(RunTrainingLoop(config), new_configs)
 
     job.save_object('metadata', 'distributions', distributions)
@@ -301,7 +261,7 @@ def _build_search(args):
 
 
 def _summarize_search(args):
-    # Get all completed jobs, get their outputs. Plot em.
+    # Get all completed jobs, get their outputs. Summarize em.
     job = ReadOnlyJob(args.path)
     results = [op.get_outputs(job.objects)[0] for op in job.completed_ops() if 'map' in op.name]
     reduce_hyper_results(job.objects, *results)

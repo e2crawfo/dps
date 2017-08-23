@@ -857,6 +857,9 @@ class Config(dict, MutableMapping):
             self.update(_d)
         self.update(kwargs)
 
+    def flatten(self):
+        return {k: self[k] for k in self._keys()}
+
     def _keys(self, sep=":"):
         stack = [iter(dict.items(self))]
         key_prefix = ''
