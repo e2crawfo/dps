@@ -20,13 +20,16 @@ class RolloutBatch(dict):
         Per-time-step information.
     metadata: dictionary
         Information about the batch.
+    static: dictionary
+        Mapping from names to lists (each list with length equal to number of
+        rollouts) giving time-independent, batch-dependent values.
     kwargs:
         Other columns to include.
 
     """
     def __init__(
             self, obs=None, actions=None, rewards=None,
-            info=None, metadata=None, **kwargs):
+            info=None, metadata=None, static=None, **kwargs):
 
         kwargs['obs'] = list([] if obs is None else obs)
         kwargs['actions'] = list([] if actions is None else actions)
@@ -37,6 +40,11 @@ class RolloutBatch(dict):
 
         self._info = list(info or [])
         self._metadata = metadata or {}
+
+        static = static or {}
+        self._static = {}
+        for k, v in static.items():
+            self.set_static(k, v)
 
     def _get(self, key):
         """ Internal counterpart to `__getitem__` which returns list, not array. """
@@ -108,6 +116,23 @@ class RolloutBatch(dict):
     def __len__(self):
         return self.T
 
+    def set_static(self, key, v):
+        """ Store values that are independent of time. """
+        try:
+            float(v)
+        except:
+            pass
+        else:
+            v = [v] * self.batch_size
+
+        v = list(v)
+        assert len(v) == self.batch_size
+        self._static[key] = v
+
+    def get_static(self, key):
+        """ Retrive values that are independent of time. """
+        return self._static[key]
+
     def clear(self):
         self._o = []
         self._a = []
@@ -169,8 +194,9 @@ class RolloutBatch(dict):
         """ Return a list of RolloutBatches, each containing a single rollout from the current batch. """
         rollouts = []
         for b in range(self.batch_size):
-            rollouts.append(
-                RolloutBatch(**{k: self[k][:, b:b+1, :] for k in self.keys()}))
+            new_static = {k: [v[b]] for k, v in self._static.items()}
+            batch = RolloutBatch(**{k: self[k][:, b:b+1, :] for k in self.keys()}, static=new_static)
+            rollouts.append(batch)
         return rollouts
 
     @staticmethod
@@ -180,8 +206,13 @@ class RolloutBatch(dict):
         for r in rollouts[1:]:
             assert set(r.keys()) == keys, "Cannot join rollouts, they do not have the same set of keys."
 
+        static_keys = set(rollouts[0]._static.keys())
+        for r in rollouts[1:]:
+            assert set(r._static.keys()) == static_keys, "Cannot join rollouts, they do not have the same set of keys for static values."
+
+        new_static = {k: list_concat([r.get_static(k) for r in rollouts]) for k in static_keys}
         return RolloutBatch(
-            **{k: np.concatenate([r[k] for r in rollouts], axis=1) for k in keys})
+            **{k: np.concatenate([r[k] for r in rollouts], axis=1) for k in keys}, static=new_static)
 
 
 def list_concat(lsts):

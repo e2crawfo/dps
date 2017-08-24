@@ -74,6 +74,7 @@ class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
     def do_rollouts(
             self, policy, n_rollouts=None, T=None, exploration=None,
             mode='train', render_mode=None):
+
         T = T or cfg.T
 
         self.set_mode(mode, n_rollouts)
@@ -99,6 +100,9 @@ class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
 
             if render_mode is not None:
                 self.render(mode=render_mode)
+
+        exploration = exploration or tf.get_default_session().run(policy.exploration)
+        rollouts.set_static('exploration', exploration)
 
         return rollouts
 
@@ -392,7 +396,9 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
                     rewards=rewards,
                     policy_states=policy_states,
                     final_registers=final_registers,
-                    final_policy_state=final_policy_state)
+                    final_policy_state=final_policy_state,
+                    exploration=policy.exploration
+                )
 
             self._samplers[id(policy)] = (
                 n_rollouts_ph, T_ph, initial_policy_state,
@@ -420,7 +426,7 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
         sess = tf.get_default_session()
 
         # sample rollouts
-        obs, hidden, final_registers, utils, entropy, actions, log_probs, rewards, done = sess.run(
+        obs, hidden, final_registers, utils, entropy, actions, log_probs, rewards, done, exploration = sess.run(
             [output['obs'],
              output['hidden'],
              output['final_registers'],
@@ -429,11 +435,13 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
              output['actions'],
              output['log_probs'],
              output['rewards'],
-             output['done']],
+             output['done'],
+             output['exploration']],
             feed_dict=feed_dict)
 
         rollouts = RolloutBatch(
-            obs, actions, rewards, log_probs=log_probs, utils=utils, entropy=entropy, hidden=hidden, done=done,
+            obs, actions, rewards, log_probs=log_probs, utils=utils, entropy=entropy,
+            hidden=hidden, done=done, static=dict(exploration=exploration),
             metadata={'final_registers': final_registers})
         return rollouts
 
@@ -605,7 +613,7 @@ class CompositeEnv(Env):
             sess = tf.get_default_session()
 
             (obs, hidden, done, final_registers, final_policy_state, utils, entropy,
-             actions, log_probs, rewards) = sess.run(
+             actions, log_probs, rewards, exploration) = sess.run(
                 [output['obs'],
                  output['hidden'],
                  output['done'],
@@ -615,7 +623,8 @@ class CompositeEnv(Env):
                  output['entropy'],
                  output['actions'],
                  output['log_probs'],
-                 output['rewards']],
+                 output['rewards'],
+                 output['exploration']],
                 feed_dict=feed_dict)
 
             external_action = self.rb.get_output(final_registers)
@@ -639,6 +648,7 @@ class CompositeEnv(Env):
 
             e += 1
 
+        rollouts.set_static('exploration', exploration)
         rollouts._metadata['final_registers'] = final_registers
         rollouts._metadata['external_rollouts'] = external_rollouts
 
