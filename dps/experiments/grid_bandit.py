@@ -8,7 +8,18 @@ from dps.utils import Param
 
 
 class GridBandit(TensorFlowEnv):
+    """
+    Agent starts off in random location. Agent can move around the grid, and can perform a `look`
+    action to reveal an integer stored at its current location in the grid. It can also pull a number
+    of arms determined by `n_arms` (these arms can be pulled anywhere, they have no spatial location).
+    Also, one arm is pulled at all times; taking an action to pull one of the arms persistently
+    changes the arm the agent is taken to be pulling. The integer stored in the top left location gives
+    the identity of the correct arm. The optimal strategy for an episode is to move to the top-left corner,
+    perform the `look` action, and then pull the correct arm thereafter.
 
+    The agent receives a reward of 1 for every step that it pulls the correct arm, and 0 otherwise.
+
+    """
     T = Param()
     shape = Param()
     n_val = Param()

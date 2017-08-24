@@ -40,8 +40,8 @@ class RLUpdater(Updater):
     ----------
     env: gym Env
         The environment we're trying to learn about.
-    policy: callable object
-        Needs to provide member functions ``build_feeddict`` and ``get_output``.
+    policy: instance of Policy
+        The behaviour policy.
     learners: Learner instance or list thereof
         Objects that learn from the trajectories sampled from interaction
         between `env` and `policy`.
@@ -170,16 +170,18 @@ class PolicyOptimization(ReinforcementLearner):
             tf.float32, shape=(cfg.T, None, 1), name="_mask")
         self.reward_per_ep = episodic_mean(self.rewards, name="_reward_per_ep")
 
-    def update(self, rollouts, collect_summaries):
+    def build_feed_dict(self, rollouts):
         advantage = self.compute_advantage(rollouts)
-
-        feed_dict = {
+        return {
             self.obs: rollouts.o,
             self.actions: rollouts.a,
             self.rewards: rollouts.r,
             self.advantage: advantage,
             self.mask: rollouts.mask
         }
+
+    def update(self, rollouts, collect_summaries):
+        feed_dict = self.build_feed_dict(rollouts)
 
         sess = tf.get_default_session()
         if collect_summaries:
@@ -191,15 +193,7 @@ class PolicyOptimization(ReinforcementLearner):
             return b''
 
     def evaluate(self, rollouts):
-        advantage = self.compute_advantage(rollouts)
-
-        feed_dict = {
-            self.obs: rollouts.o,
-            self.actions: rollouts.a,
-            self.rewards: rollouts.r,
-            self.advantage: advantage,
-            self.mask: rollouts.mask
-        }
+        feed_dict = self.build_feed_dict(rollouts)
 
         sess = tf.get_default_session()
 

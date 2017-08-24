@@ -63,6 +63,18 @@ class QLearning(PolicyOptimization):
         self.weights = tf.placeholder(tf.float32, shape=(cfg.T, None, 1), name="_weights")
         super(QLearning, self).build_placeholders()
 
+    def build_feed_dict(self, rollouts, weights=None):
+        if weights is None:
+            weights = np.ones_like(rollouts.mask)
+
+        return {
+            self.obs: rollouts.o,
+            self.actions: rollouts.a,
+            self.rewards: rollouts.r,
+            self.mask: rollouts.mask,
+            self.weights: weights
+        }
+
     def build_update_ops(self):
         tvars = self.q_network.trainable_variables()
 
@@ -202,14 +214,9 @@ class QLearning(PolicyOptimization):
 
             weights = np.tile(weights.reshape(1, -1, 1), (rollouts.T, 1, 1))
 
+            feed_dict = self.build_feed_dict(rollouts, weights=weights)
+
             # Perform the update
-            feed_dict = {
-                self.obs: rollouts.o,
-                self.actions: rollouts.a,
-                self.rewards: rollouts.r,
-                self.mask: rollouts.mask,
-                self.weights: weights
-            }
             _collect_summaries = collect_summaries and i == self.opt_steps_per_batch-1
             summaries = self.update_params(rollouts, _collect_summaries, feed_dict, init)
 
@@ -235,13 +242,7 @@ class QLearning(PolicyOptimization):
         return summaries
 
     def evaluate(self, rollouts):
-        feed_dict = {
-            self.obs: rollouts.o,
-            self.actions: rollouts.a,
-            self.rewards: rollouts.r,
-            self.mask: rollouts.mask,
-            self.weights: np.ones_like(rollouts.mask)
-        }
+        feed_dict = self.build_feed_dict(rollouts)
 
         sess = tf.get_default_session()
 
@@ -306,7 +307,7 @@ class HeuristicReplayBuffer(object):
 
 class PrioritizedReplayBuffer(object):
     """
-    Implements Prioritized Experience Replay.
+    Implements rank-based version of Prioritized Experience Replay.
 
     Parameters
     ----------

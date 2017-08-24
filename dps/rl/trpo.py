@@ -77,15 +77,7 @@ class TRPO(PolicyOptimization):
     def update(self, rollouts, collect_summaries):
         # Compute standard policy gradient
         # --------------------------------
-        advantage = self.compute_advantage(rollouts)
-
-        feed_dict = {
-            self.obs: rollouts.o,
-            self.actions: rollouts.a,
-            self.rewards: rollouts.r,
-            self.advantage: advantage,
-            self.mask: rollouts.mask
-        }
+        feed_dict = self.build_feed_dict(rollouts)
 
         sess = tf.get_default_session()
         policy_gradient = sess.run(self.policy_gradient, feed_dict=feed_dict)

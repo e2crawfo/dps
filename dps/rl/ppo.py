@@ -76,6 +76,24 @@ class PPO(PolicyOptimization):
 
         super(PPO, self).__init__(**kwargs)
 
+    def build_feed_dict(self, rollouts):
+        advantage = self.compute_advantage(rollouts)
+        feed_dict = {
+            self.obs: rollouts.o,
+            self.actions: rollouts.a,
+            self.rewards: rollouts.r,
+            self.advantage: advantage,
+            self.mask: rollouts.mask
+        }
+
+        feed_dict = super(PPO, self).build_feed_dict(rollouts)
+
+        sess = tf.get_default_session()
+        prev_log_probs = sess.run(self.log_probs, feed_dict=feed_dict)
+        feed_dict[self.prev_log_probs] = prev_log_probs
+
+        return feed_dict
+
     def _build_graph(self, is_training, exploration):
         self.build_placeholders()
 
@@ -112,45 +130,9 @@ class PPO(PolicyOptimization):
         ]
 
     def update(self, rollouts, collect_summaries):
-        advantage = self.compute_advantage(rollouts)
-
-        feed_dict = {
-            self.obs: rollouts.o,
-            self.actions: rollouts.a,
-            self.rewards: rollouts.r,
-            self.advantage: advantage,
-            self.mask: rollouts.mask
-        }
+        feed_dict = self.build_feed_dict(rollouts)
 
         sess = tf.get_default_session()
-
-        prev_log_probs = sess.run(self.log_probs, feed_dict=feed_dict)
-        feed_dict[self.prev_log_probs] = prev_log_probs
-
         for k in range(self.opt_steps_per_batch):
             sess.run(self.train_op, feed_dict=feed_dict)
         return b''
-
-    def evaluate(self, rollouts):
-        advantage = self.compute_advantage(rollouts)
-
-        feed_dict = {
-            self.obs: rollouts.o,
-            self.actions: rollouts.a,
-            self.rewards: rollouts.r,
-            self.advantage: advantage,
-            self.mask: rollouts.mask
-        }
-
-        sess = tf.get_default_session()
-
-        prev_log_probs = sess.run(self.log_probs, feed_dict=feed_dict)
-        feed_dict[self.prev_log_probs] = prev_log_probs
-
-        eval_summaries, *values = (
-            sess.run(
-                [self.eval_summary_op] + [v for _, v in self.recorded_values],
-                feed_dict=feed_dict))
-
-        record = {k: v for v, (k, _) in zip(values, self.recorded_values)}
-        return eval_summaries, record

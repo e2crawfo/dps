@@ -88,6 +88,9 @@ class Policy(RNNCell):
     def build_log_prob(self, utils, actions):
         return self.action_selection.log_prob(utils, actions, self.exploration)
 
+    def build_log_prob_all(self, utils):
+        return self.action_selection.log_prob_all(utils, self.exploration)
+
     def build_entropy(self, utils):
         return self.action_selection.entropy(utils, self.exploration)
 
