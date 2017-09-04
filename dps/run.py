@@ -34,7 +34,7 @@ def build_and_visualize():
         exploration = tf.constant(cfg.test_time_explore or 0.0)
 
         action_selection = cfg.action_selection(env)
-        controller = cfg.controller(action_selection.n_params, name="visualize")
+        controller = cfg.controller(action_selection.params_dim, name="visualize")
         policy = Policy(controller, action_selection, env.obs_shape)
         policy.set_exploration(exploration)
 

@@ -14,8 +14,8 @@ def build_env():
     return GymEnvWrapper(MountainCarEnv())
 
 
-controller = lambda n_params, name: FeedforwardCell(
-    lambda inp, output_size: MLP([128, 128])(inp, output_size), n_params, name=name)
+controller = lambda params_dim, name: FeedforwardCell(
+    lambda inp, output_size: MLP([128, 128])(inp, output_size), params_dim, name=name)
 
 
 config = DEFAULT_CONFIG.copy(

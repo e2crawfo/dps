@@ -18,6 +18,8 @@ import copy
 import datetime
 import psutil
 
+import clify
+
 import tensorflow as tf
 from tensorflow.python.ops import random_ops, math_ops
 from tensorflow.python.framework import ops, constant_op
@@ -25,6 +27,47 @@ from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from tensorflow.contrib.slim import fully_connected
 
 import dps
+
+
+def shift_fill(a, n, axis=0, fill=0.0, reverse=False):
+    """ shift n spaces backward along axis, filling rest in with 0's. if n is negative, shifts forward. """
+    shifted = np.roll(a, n, axis=axis)
+    shifted[:n, ...] = 0.0
+    return shifted
+
+
+def tf_roll(a, n, axis=0, fill=None, reverse=False):
+    if reverse:
+        a = tf.reverse(a, axis=[axis])
+    assert n > 0
+
+    pre_slices = [slice(None) for i in a.shape]
+    pre_slices[axis] = slice(None, -n)
+
+    pre = a[pre_slices]
+
+    post_slices = [slice(None) for i in a.shape]
+    post_slices[axis] = slice(-n, None)
+
+    post = a[post_slices]
+
+    if fill is not None:
+        post = fill * tf.ones_like(post, dtype=a.dtype)
+
+    r = tf.concat([post, pre], axis=axis)
+
+    if reverse:
+        r = tf.reverse(r, axis=[axis])
+    return r
+
+
+def tf_discount_matrix(base, T, n=None):
+    x = tf.cast(tf.range(T), tf.float32)
+    r = (x - x[:, None])
+    if n is not None:
+        r = tf.where(r >= n, np.inf * tf.ones_like(r), r)
+    r = base ** r
+    return tf.matrix_band_part(r, 0, -1)
 
 
 def memory_usage(physical=False):
@@ -66,8 +109,13 @@ def numbers_to_digits(numbers, n_digits, base=10):
     return np.stack(digits, -1)
 
 
-def masked_mean(array, mask):
-    return tf.reduce_mean(tf.boolean_mask(array, tf.cast(mask, tf.bool)))
+def masked_mean(array, mask, axis=None, keep_dims=True):
+    if axis is None:
+        return tf.reduce_mean(tf.boolean_mask(array, tf.cast(mask, tf.bool)))
+    else:
+        denom = tf.reduce_sum(mask, axis=axis, keep_dims=keep_dims)
+        denom = tf.where(tf.abs(denom) < 1e-6, np.inf * tf.ones_like(denom), denom)
+        return tf.reduce_sum(array, axis=axis, keep_dims=keep_dims) / denom
 
 
 def build_gradient_train_op(
@@ -424,7 +472,7 @@ class FixedController(ScopedCell):
 
     Parameters
     ----------
-    action_sequence: ndarray (n_timesteps, action_dim)
+    action_sequence: ndarray (n_timesteps, actions_dim)
         t-th row gives the action this controller will select at time t.
 
     """
@@ -461,20 +509,20 @@ class FixedDiscreteController(ScopedCell):
     ----------
     action_sequence: list of int
         t-th entry gives the idx of the action this controller will select at time t.
-    n_actions: int
+    actions_dim: int
         Number of actions.
 
     """
-    def __init__(self, action_sequence, n_actions, name="fixed_discrete_controller"):
+    def __init__(self, action_sequence, actions_dim, name="fixed_discrete_controller"):
         self.action_sequence = np.array(action_sequence)
-        self.n_actions = n_actions
+        self.actions_dim = actions_dim
         super(FixedDiscreteController, self).__init__(name)
 
     def _call(self, inp, state):
         action_seq = tf.constant(self.action_sequence, tf.int32)
         int_state = tf.cast(state, tf.int32)
         action_idx = tf.gather(action_seq, int_state)
-        actions = tf.one_hot(tf.reshape(action_idx, (-1,)), self.n_actions)
+        actions = tf.one_hot(tf.reshape(action_idx, (-1,)), self.actions_dim)
         return actions, state + 1
 
     def __len__(self):
@@ -486,7 +534,7 @@ class FixedDiscreteController(ScopedCell):
 
     @property
     def output_size(self):
-        return self.n_actions
+        return self.actions_dim
 
     def zero_state(self, batch_size, dtype):
         return tf.cast(tf.fill((batch_size, 1), 0), dtype)
@@ -1129,6 +1177,10 @@ class ConfigStack(dict, metaclass=Singleton):
     @property
     def log_dir(self):
         return str(Path(self.log_root) / self.log_name)
+
+    def update_from_command_line(self):
+        cl_args = clify.wrap_object(self).parse()
+        self.update(cl_args)
 
 
 def lst_to_vec(lst):

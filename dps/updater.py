@@ -112,7 +112,7 @@ class DifferentiableUpdater(Updater):
             "loss function.")
         self.f = f
         self.obs_shape = env.obs_shape
-        self.n_actions = env.n_actions
+        self.actions_dim = env.actions_dim
 
         super(DifferentiableUpdater, self).__init__()
 

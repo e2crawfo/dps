@@ -1,11 +1,21 @@
-from .core import RLUpdater, ReinforcementLearner, PolicyOptimization, rl_render_hook, episodic_mean
+from .base import (
+    RLUpdater, RLObject, RLContext, rl_render_hook, get_active_context, ObjectiveFunctionTerm,
+)
+from .terms import (
+    PolicyGradient, PolicyEntropyBonus, PolicyEvaluation_State, PolicyEvaluation_StateAction
+)
 from .rollout import RolloutBatch
-from .value import GeneralizedAdvantageEstimator, NeuralValueEstimator, BasicValueEstimator, PolicyEvaluation
-from .reinforce import policy_gradient_objective, REINFORCE
-from .trust_region import mean_kl, cg, line_search, HessianVectorProduct
-from .trpo import TRPO
-from .ppo import PPO
-from .robust import RobustREINFORCE
-from .qlearning import QLearning
-from .retrace import Retrace
-from .trql import TrustRegionQLearning, ProximalQLearning
+from .replay import PrioritizedReplayBuffer
+from .agent import AgentHead, Agent
+from .optimizer import Optimizer, StochasticGradientDescent
+from .trust_region import TrustRegionOptimizer
+from .policy import (
+    BuildLstmController, BuildFeedforwardController, BuildLinearController,
+    BuildSoftmaxPolicy, BuildEpsilonGreedyPolicy,
+    Policy, DiscretePolicy, Softmax, EpsilonGreedy, EpsilonSoftmax, Deterministic,
+    ProductDist, Normal, NormalWithFixedScale, NormalWithExploration, Gamma,
+)
+from .value import (
+    ValueFunction, ActionValueFunction, AverageValueEstimator, MonteCarloValueEstimator,
+    AdvantageEstimator, BasicAdvantageEstimator, Retrace, GeneralizedAdvantageEstimator
+)

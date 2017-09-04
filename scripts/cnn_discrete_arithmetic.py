@@ -8,7 +8,7 @@ from dps import cfg
 from dps.config import DEFAULT_CONFIG
 from dps.train import training_loop
 from dps.updater import DifferentiableUpdater
-from dps.experiments.alt_arithmetic import build_env
+from dps.envs.alt_arithmetic import build_env
 # from dps.utils import MLP
 from dps.vision import LeNet
 

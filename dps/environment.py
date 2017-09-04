@@ -73,7 +73,7 @@ class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
 
     def do_rollouts(
             self, policy, n_rollouts=None, T=None, exploration=None,
-            mode='train', render_mode=None):
+            mode='train', render_mode=None, save_utils=False):
 
         T = T or cfg.T
 
@@ -92,10 +92,20 @@ class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
         while not done:
             if T is not None and t >= T:
                 break
-            action, policy_state = policy.act(obs, policy_state, exploration)
+
+            log_prob, action, entropy, util, policy_state = policy.act(obs, policy_state, exploration)
+
             new_obs, reward, done, info = self.step(action)
             obs = new_obs
-            rollouts.append(obs, action, reward, done=float(done))
+            if save_utils:
+                rollouts.append(
+                    obs, action, reward, done=float(done),
+                    entropy=entropy, log_probs=log_prob, utils=util)
+            else:
+                rollouts.append(
+                    obs, action, reward, done=float(done),
+                    entropy=entropy, log_probs=log_prob)
+
             t += 1
 
             if render_mode is not None:
@@ -211,7 +221,7 @@ class RegressionEnv(Env):
             'val': self.val,
         }
 
-        self.n_actions = self.train.y.shape[1]
+        self.actions_dim = self.train.y.shape[1]
         self.obs_shape = self.train.x.shape[1:]
 
         self.reward_range = (-np.inf, 0)
@@ -249,8 +259,8 @@ class RegressionEnv(Env):
         obs = np.zeros(self.x.shape)
 
         if self.action_ph is None:
-            self.target_ph = tf.placeholder(tf.float32, (None, self.n_actions))
-            self.action_ph = tf.placeholder(tf.float32, (None, self.n_actions))
+            self.target_ph = tf.placeholder(tf.float32, (None, self.actions_dim))
+            self.action_ph = tf.placeholder(tf.float32, (None, self.actions_dim))
             self.reward = self.build_reward(self.action_ph, self.target_ph)
 
         sess = tf.get_default_session()
@@ -285,7 +295,7 @@ class SamplerCell(RNNCell):
 
         self._output_size = (
             self.env.rb.visible_width, self.env.rb.hidden_width, 1,
-            self.policy.n_params, 1, self.env.n_actions, 1, 1, self.policy.state_size)
+            self.policy.params_dim, 1, self.env.actions_dim, 1, 1, self.policy.state_size)
 
     def __call__(self, t, state, scope=None):
         with tf.name_scope(scope or 'sampler_cell'):
@@ -294,16 +304,13 @@ class SamplerCell(RNNCell):
             with tf.name_scope('policy'):
                 obs = self.env.rb.visible(registers)
                 hidden = self.env.rb.hidden(registers)
-                utils, new_policy_state = self.policy.build_update(obs, policy_state)
-                action = self.policy.build_sample(utils)
-                log_prob = self.policy.build_log_prob(utils, action)
-                entropy = self.policy.build_entropy(utils)
+                (log_prob, action, entropy, util), new_policy_state = self.policy(obs, policy_state)
 
             with tf.name_scope('env_step'):
                 done, reward, new_registers = self.env.build_step(t, registers, action)
 
             return (
-                (obs, hidden, done, utils, entropy, action, log_prob, reward, policy_state),
+                (obs, hidden, done, util, entropy, action, log_prob, reward, policy_state),
                 (new_registers, new_policy_state))
 
     @property
@@ -328,7 +335,7 @@ class TensorFlowEnvMeta(abc.ABCMeta):
     def __init__(cls, *args, **kwargs):
         super(TensorFlowEnvMeta, cls).__init__(*args, **kwargs)
         if hasattr(cls.action_names, '__len__'):
-            cls.n_actions = len(cls.action_names)
+            cls.actions_dim = len(cls.action_names)
 
 
 class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
@@ -345,6 +352,11 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
     @property
     def obs_shape(self):
         return (self.rb.visible_width,)
+
+    def unpack_actions(self, actions):
+        actions = tf.unstack(actions, axis=-1)
+        actions = [a[..., None] for a in actions]
+        return actions
 
     def _assert_defined(self, attr):
         assert getattr(self, attr) is not None, (
@@ -408,7 +420,7 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
 
         return sampler
 
-    def do_rollouts(self, policy, n_rollouts=None, T=None, exploration=None, mode='train'):
+    def do_rollouts(self, policy, n_rollouts=None, T=None, exploration=None, mode='train', save_utils=False):
         self.set_mode(mode, n_rollouts)
         T = T or cfg.T
 
@@ -439,10 +451,16 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
              output['exploration']],
             feed_dict=feed_dict)
 
-        rollouts = RolloutBatch(
-            obs, actions, rewards, log_probs=log_probs, utils=utils, entropy=entropy,
-            hidden=hidden, done=done, static=dict(exploration=exploration),
-            metadata={'final_registers': final_registers})
+        if save_utils:
+            rollouts = RolloutBatch(
+                obs, actions, rewards, log_probs=log_probs, utils=utils, entropy=entropy,
+                hidden=hidden, done=done, static=dict(exploration=exploration),
+                metadata={'final_registers': final_registers})
+        else:
+            rollouts = RolloutBatch(
+                obs, actions, rewards, log_probs=log_probs, entropy=entropy,
+                hidden=hidden, done=done, static=dict(exploration=exploration),
+                metadata={'final_registers': final_registers})
         return rollouts
 
     def _pprint_rollouts(self, rollouts):
@@ -484,7 +502,7 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
             end = len(row_names)
             other_ranges[k] = (start, end)
 
-        n_timesteps, batch_size, n_actions = actions.shape
+        n_timesteps, batch_size, actions_dim = actions.shape
 
         registers = self.rb.as_tuple(registers)
 
@@ -495,8 +513,8 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
             for t in range(T):
                 values[t, 0] = t
                 offset = 2
-                values[t, offset:offset+n_actions] = actions[t, b, :]
-                offset += n_actions + 1
+                values[t, offset:offset+actions_dim] = actions[t, b, :]
+                offset += actions_dim + 1
 
                 for n, v in zip(self.rb.names, registers):
                     if n in omit:
@@ -530,7 +548,9 @@ class InternalEnv(TensorFlowEnv):
     def start_episode(self, external_obs, external):
         return (
             external_obs.shape[0],
-            {self.input_ph: external_obs, self.target_ph: external.y, self.is_training_ph: self.mode == 'train'}
+            {self.input_ph: external_obs,
+             self.target_ph: external.y,
+             self.is_training_ph: self.mode == 'train'}
         )
 
     def build_placeholders(self, r):
@@ -557,7 +577,7 @@ class CompositeEnv(Env):
         self.rb = internal.rb
 
         self.obs_shape = (self.rb.visible_width,)
-        self.n_actions = self.internal.n_actions
+        self.actions_dim = self.internal.actions_dim
 
         self.reward_range = external.reward_range
         self.sampler = None
@@ -568,7 +588,7 @@ class CompositeEnv(Env):
     def completion(self):
         return self.external.completion
 
-    def do_rollouts(self, policy, n_rollouts=None, T=None, exploration=None, mode='train'):
+    def do_rollouts(self, policy, n_rollouts=None, T=None, exploration=None, mode='train', save_utils=False):
         T = T or cfg.T
         (n_rollouts_ph, T_ph, initial_policy_state,
          initial_registers, output) = self.internal.get_sampler(policy)
@@ -634,11 +654,16 @@ class CompositeEnv(Env):
             if not hasattr(self.internal, 'dense_reward') or not self.internal.dense_reward:
                 rewards[-1, :, :] += external_reward
 
-            rollouts.extend(
-                RolloutBatch(
+            if save_utils:
+                rb = RolloutBatch(
                     obs, actions, rewards,
                     log_probs=log_probs, utils=utils,
-                    entropy=entropy, hidden=hidden, done=done))
+                    entropy=entropy, hidden=hidden, done=done)
+            else:
+                rb = RolloutBatch(
+                    obs, actions, rewards, log_probs=log_probs,
+                    entropy=entropy, hidden=hidden, done=done)
+            rollouts.extend(rb)
 
             external_rollouts.append(
                 external_obs, external_action, external_reward, done=external_done,
@@ -696,7 +721,7 @@ class CompositeEnv(Env):
             end = len(row_names)
             other_ranges[k] = (start, end)
 
-        n_timesteps, batch_size, n_actions = actions.shape
+        n_timesteps, batch_size, actions_dim = actions.shape
 
         registers = self.rb.as_tuple(registers)
 
@@ -714,7 +739,7 @@ class CompositeEnv(Env):
             for i in range(total_internal_steps):
                 values[i, 0] = external_t
                 values[i, 1] = internal_t
-                values[i, 3:3+n_actions] = actions[i, b, :]
+                values[i, 3:3+actions_dim] = actions[i, b, :]
 
                 for name, v in zip(self.rb.names, registers):
                     if name in omit:

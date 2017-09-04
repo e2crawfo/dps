@@ -7,7 +7,7 @@ from dps import cfg
 from dps.train import training_loop
 from dps.rl import QLearning, Retrace
 from dps.config import DuelingLstmController, DEFAULT_CONFIG, epsilon_greedy
-from dps.experiments import simple_addition
+from dps.envs import simple_addition
 from dps.utils import pdb_postmortem, Config
 
 

@@ -1,38 +1,103 @@
 import tensorflow as tf
-from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from tensorflow.python.ops.gradients_impl import _hessian_vector_product
 import numpy as np
 
-from dps.utils import lst_to_vec, vec_to_lst, masked_mean
+from dps import cfg
+from dps.rl.optimizer import Optimizer
+from dps.utils import lst_to_vec, vec_to_lst, masked_mean, build_scheduled_value
 
 
-class KLCell(RNNCell):
-    def __init__(self, policy, prev_policy):
-        self.policy, self.prev_policy = policy, prev_policy
+class TrustRegionOptimizer(Optimizer):
+    def __init__(self, agents, policy, delta_schedule, max_cg_steps, max_line_search_steps):
+        super(TrustRegionOptimizer, self).__init__(agents)
+        self.policy = policy
+        self.delta_schedule = delta_schedule
+        self.max_cg_steps = max_cg_steps
+        self.max_line_search_steps = max_line_search_steps
 
-    def __call__(self, obs, state, scope=None):
-        with tf.name_scope(scope or 'trpo_cell'):
-            policy_state, prev_policy_state = state
+    def build_update(self, context):
+        self.delta = build_scheduled_value(self.delta_schedule, "delta")
 
-            utils, new_policy_state = self.policy.build_update(obs, policy_state)
-            prev_utils, new_prev_policy_state = self.prev_policy.build_update(obs, prev_policy_state)
-            kl = self.policy.build_kl(prev_utils, utils)
+        tvars = self.trainable_variables()
+        self.gradient = tf.gradients(context.objective, tvars)
 
-            return kl, (new_policy_state, new_prev_policy_state)
+        mask = context.get_signal('mask')
+        kl = context.get_signal('kl', self.policy)
 
-    @property
-    def state_size(self):
-        return (self.policy.state_size, self.prev_policy.state_size)
+        mean_kl = masked_mean(kl, mask)
+        self.fv_product = HessianVectorProduct(mean_kl, tvars)
 
-    @property
-    def output_size(self):
-        return 1
+        self.grad_norm_pure = tf.placeholder(tf.float32, shape=(), name="_grad_norm_pure")
+        self.grad_norm_natural = tf.placeholder(tf.float32, shape=(), name="_grad_norm_natural")
+        self.step_norm = tf.placeholder(tf.float32, shape=(), name="_step_norm")
 
-    def zero_state(self, batch_size, dtype):
-        initial_state = (
-            self.policy.zero_state(batch_size, dtype),
-            self.prev_policy.zero_state(batch_size, dtype))
-        return initial_state
+        for s in [
+                tf.summary.scalar("grad_norm_pure", self.grad_norm_pure),
+                tf.summary.scalar("grad_norm_natural", self.grad_norm_natural),
+                tf.summary.scalar("step_norm", self.step_norm)]:
+            context.add_train_summary(s)
+
+    def update(self, feed_dict):
+        # Compute gradient of objective
+        # -----------------------------
+        sess = tf.get_default_session()
+        gradient = sess.run(self.gradient, feed_dict=feed_dict)
+        gradient = lst_to_vec(gradient)
+
+        grad_norm_pure = np.linalg.norm(gradient)
+        grad_norm_natural = 0.0
+        step_norm = 0.0
+
+        if np.isclose(0, grad_norm_pure):
+            print("Got zero policy gradient, not updating.")
+        else:
+            # Compute natural gradient direction
+            # ----------------------------------
+            self.prev_policy.set_params_flat(self.policy.get_params_flat())
+
+            self.fv_product.update_feed_dict(feed_dict)
+            step_dir = cg(self.fv_product, gradient, max_steps=self.max_cg_steps)
+
+            grad_norm_natural = np.linalg.norm(step_dir)
+
+            if grad_norm_natural < 1e-6:
+                print("Step dir has norm 0, not updating.")
+            else:
+                # Perform line search in natural gradient direction
+                # -------------------------------------------------
+                delta = sess.run(self.delta)
+                denom = step_dir.dot(self.fv_product(step_dir))
+                beta = np.sqrt(2 * delta / denom)
+                full_step = beta * step_dir
+
+                def objective(_params):
+                    self.policy.set_params_flat(_params)
+                    sess = tf.get_default_session()
+                    return sess.run(self.objective, feed_dict=feed_dict)
+
+                grad_dot_step_dir = gradient.dot(step_dir)
+
+                params = self.policy.get_params_flat()
+
+                expected_imp = beta * grad_dot_step_dir
+                success, new_params = line_search(
+                    objective, params, full_step, expected_imp,
+                    max_backtracks=self.max_line_search_steps, verbose=cfg.verbose)
+
+                self.policy.set_params_flat(new_params)
+
+                step_norm = np.linalg.norm(new_params - params)
+
+        if cfg.verbose:
+            print("Gradient norm: ", grad_norm_pure)
+            print("Natural Gradient norm: ", grad_norm_natural)
+            print("Step norm: ", step_norm)
+
+        feed_dict.update({
+            self.grad_norm_pure: grad_norm_pure,
+            self.grad_norm_natural: grad_norm_natural,
+            self.step_norm: step_norm,
+        })
 
 
 def mean_kl(p, q, obs, mask):

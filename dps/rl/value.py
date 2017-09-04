@@ -1,425 +1,382 @@
-import numpy as np
 import tensorflow as tf
 from tensorflow.python.ops.rnn import dynamic_rnn
+from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 
-from dps import cfg
-from dps.utils import (
-    build_gradient_train_op, Param, lst_to_vec, masked_mean,
-    build_scheduled_value, trainable_variables, Config)
-from dps.rl import ReinforcementLearner, RLUpdater
-from dps.rl.policy import Policy, NormalWithExploration
-from dps.rl.trust_region import mean_kl, HessianVectorProduct, cg, line_search
-
-
-def compute_td_error(value_estimates, gamma, reward):
-    if isinstance(value_estimates, np.ndarray):
-        shifted_value_estimates = np.concatenate(
-            [value_estimates[1:, :, :], np.zeros_like(value_estimates[0:1, :, :])],
-            axis=0)
-        return reward + gamma * shifted_value_estimates - value_estimates
-    elif isinstance(value_estimates, tf.Tensor):
-        shifted_value_estimates = tf.concat(
-            [value_estimates[1:, :, :], tf.zeros_like(value_estimates[0:1, :, :])],
-            axis=0)
-        return reward + gamma * shifted_value_estimates - value_estimates
-    else:
-        raise Exception("Not implemented.")
-
-
-def symmetricize(a):
-    """ Turn a 1D array `a` into a matrix where the entries on the i-th diagonals are equal to `a[i]`. """
-    ID = np.arange(a.size)
-    return a[np.abs(ID - ID[:, None])]
-
-
-class AbstractPolicyEvaluation(ReinforcementLearner):
-    opt_steps_per_batch = Param(1)
-
-    def __init__(self, estimator, gamma=1.0, **kwargs):
-        self.estimator = estimator
-        self.gamma = gamma
-
-        super(AbstractPolicyEvaluation, self).__init__(**kwargs)
-
-    def build_placeholders(self):
-        self.obs = tf.placeholder(
-            tf.float32, shape=(cfg.T, None) + self.estimator.obs_shape, name="_obs")
-        self.rewards = tf.placeholder(
-            tf.float32, shape=(cfg.T, None, 1), name="_rewards")
-        self.targets = tf.placeholder(
-            tf.float32, shape=(cfg.T, None, 1), name="_targets")
-        self.mask = tf.placeholder(tf.float32, shape=(cfg.T, None, 1), name="_mask")
-
-    def _build_graph(self, is_training, exploration):
-        self.build_placeholders()
-
-        batch_size = tf.shape(self.obs)[1]
-        initial_state = self.estimator.controller.zero_state(batch_size, tf.float32)
-        self.value_estimates, _ = dynamic_rnn(
-            self.estimator.controller, self.obs, initial_state=initial_state,
-            parallel_iterations=1, swap_memory=False, time_major=True)
-
-        self.squared_error = (self.value_estimates - self.targets)**2
-        self.mean_squared_error = masked_mean(self.squared_error, self.mask)
-        self.mean_estimated_value = masked_mean(self.value_estimates, self.mask)
-
-        self.td_error = compute_td_error(self.value_estimates, self.gamma, self.rewards)
-        self.approx_bellman_error = masked_mean(self.td_error, self.mask)
-        self.eval_summary_op = tf.summary.merge([
-            tf.summary.scalar("mean_squared_error", self.mean_squared_error),
-            tf.summary.scalar("approx_bellman_error", self.approx_bellman_error),
-            tf.summary.scalar("mean_estimated_value", self.mean_estimated_value)
-        ])
-
-    def build_feed_dict(self, rollouts):
-        masked_rewards = rollouts.r * rollouts.mask
-        cumsum_rewards = np.flipud(np.cumsum(np.flipud(masked_rewards), axis=0))
-        feed_dict = {
-            self.obs: rollouts.o,
-            self.targets: cumsum_rewards,
-            self.rewards: rollouts.r,
-            self.mask: rollouts.mask
-        }
-        return feed_dict
-
-    def update(self, rollouts, collect_summaries):
-        feed_dict = self.build_feed_dict(rollouts)
-
-        sess = tf.get_default_session()
-        for k in range(self.opt_steps_per_batch):
-            if collect_summaries:
-                train_summaries, _ = sess.run(
-                    [self.train_summary_op, self.train_op], feed_dict=feed_dict)
-            else:
-                sess.run(self.train_op, feed_dict=feed_dict)
-                train_summaries = b''
+from dps.rl import DiscretePolicy, AgentHead, RLObject
+from dps.utils import masked_mean, tf_roll
 
-        return train_summaries
-
-    def evaluate(self, rollouts):
-        feed_dict = self.build_feed_dict(rollouts)
 
-        sess = tf.get_default_session()
-        eval_summaries, mean_squared_error, approx_bellman_error, mean_estimated_value = (
-            sess.run(
-                [self.eval_summary_op,
-                 self.mean_squared_error,
-                 self.approx_bellman_error,
-                 self.mean_estimated_value],
-                feed_dict=feed_dict))
+class ValueFunction(AgentHead):
+    def __init__(self, size, policy, name):
+        self.policy = policy
+        self._size = size
+        super(ValueFunction, self).__init__(name)
 
-        record = {
-            'mean_estimated_value': mean_estimated_value,
-            'mean_squared_error': mean_squared_error,
-            'loss': mean_squared_error,
-            'approx_bellman_error': approx_bellman_error}
+    @property
+    def size(self):
+        return self._size
 
-        return eval_summaries, record
+    def generate_signal(self, key, context):
+        if key == 'values':
+            utils = self.agent.get_utils(self, context)
+            values = tf.identity(utils, name="{}_{}_values".format(self.agent.name, self.name))
 
+            mask = context.get_signal('mask')
+            label = "{}-estimated_value".format(self.display_name)
+            context.add_summary(tf.summary.scalar(label, masked_mean(values, mask)))
 
-class PolicyEvaluation(AbstractPolicyEvaluation):
-    """ Evaluate a policy by performing batch regression. """
-    optimizer_spec = Param()
-    lr_schedule = Param()
+            return values
 
-    def _build_graph(self, is_training, exploration):
-        super(PolicyEvaluation, self)._build_graph(is_training, exploration)
+        elif key == 'one_step_td_errors':
+            rewards = context.get_signal('rewards')
+            gamma = context.get_signal('gamma')
+            rho = context.get_signal('rho', self.policy)
+            values = context.get_signal('values', self, gradient=True)
 
-        tvars = self.estimator.trainable_variables()
-        self.train_op, train_summaries = build_gradient_train_op(
-            self.mean_squared_error, tvars, self.optimizer_spec, self.lr_schedule)
+            shifted_values = tf_roll(values, 1, fill=0.0, reverse=True, axis=0)
 
-        self.train_summary_op = tf.summary.merge(train_summaries)
+            one_step_estimate = rho * (rewards + gamma * shifted_values)
+            td_errors = one_step_estimate - values
 
+            # if context.truncated_rollouts is True, this is slightly problematic
+            # as the td error at the last timestep is not correct as the one-step-estimate
+            # includes only the final reward, no value function (since we don't know what state
+            # comes next). So just zero-out the corresponding td error.
+            if context.truncated_rollouts:
+                td_errors = tf.concat([td_errors[:-1, ...], tf.zeros_like(td_errors[-1:, ...])], axis=0)
 
-class ProximalPolicyEvaluation(AbstractPolicyEvaluation):
-    """ Evaluate a policy by performing batch regression, but stick close to previous value function.
+            mask = context.get_signal('mask')
+            label = "{}-one_step_td_error".format(self.display_name)
+            context.add_summary(tf.summary.scalar(label, masked_mean(td_errors, mask)))
 
-    Allows us to take big steps, but not so big that catastrophic steps are likely.
+            return td_errors
 
-    To implement this, we basically treat the value function as parameterizing a gaussian policy with
-    standard deviation given by self.std_dev. The goal of said policy is to accurately predict the
-    return given that we are currently in state s, and following policy pi. The reward received by
-    such a return-prediction policy is thus the negative squared error between the estimated return
-    and the observed return. Then we basically perform straightforward PPO on this surrogate policy/MDP
-    combination.
+        elif key == 'monte_carlo_td_errors':
+            if context.truncated_rollouts:
+                raise NotImplemented()
 
-    """
-    optimizer_spec = Param()
-    lr_schedule = Param()
-    epsilon = Param()
-    S = Param()  # number of samples from normal distribution
+            discounted_returns = context.get_signal('discounted_returns', self.policy)
+            values = context.get_signal('values', self, gradient=True)
 
-    def __init__(self, estimator, gamma=1.0, **kwargs):
-        super(ProximalPolicyEvaluation, self).__init__(estimator, gamma, **kwargs)
+            return discounted_returns[:-1, ...] - values[:-1, ...]
 
-    def build_feed_dict(self, rollouts):
-        feed_dict = super(ProximalPolicyEvaluation, self).build_feed_dict(rollouts)
-
-        sess = tf.get_default_session()
-
-        prev_value_estimates, mean_squared_error = sess.run(
-            [self.value_estimates, self.mean_squared_error], feed_dict=feed_dict)
-
-        feed_dict[self.prev_value_estimates] = prev_value_estimates
-        feed_dict[self.std_dev] = np.sqrt(mean_squared_error)
-
-        return feed_dict
-
-    def _build_graph(self, is_training, exploration):
-        super(ProximalPolicyEvaluation, self)._build_graph(is_training, exploration)
-
-        self.prev_value_estimates = tf.placeholder(tf.float32, (cfg.T, None, 1), name='prev_value_estimates')
-        self.std_dev = tf.placeholder(tf.float32, ())
-
-        alpha = (self.prev_value_estimates - self.value_estimates) / self.std_dev
-
-        obs_shape = tf.shape(self.obs)
-        samples_shape = (obs_shape[0], obs_shape[1], self.S)
-        samples = tf.random_normal(samples_shape)
-
-        ratio = tf.exp(-alpha * (samples + 0.5 * alpha))
-
-        noisy_value_estimates = tf.stop_gradient(self.value_estimates + samples * self.std_dev)
-
-        # MSE = Variance + Bias^2
-        mse = self.std_dev**2 + self.squared_error
-        baseline = -mse
-        baseline = tf.stop_gradient(baseline)
-
-        reward = -(noisy_value_estimates - self.targets)**2
-
-        advantage = reward - baseline
-
-        ratio_times_adv = tf.minimum(
-            advantage * ratio,
-            advantage * tf.clip_by_value(ratio, 1 - self.epsilon, 1 + self.epsilon)
-        )
-
-        ratio_times_adv = tf.reduce_mean(ratio_times_adv, axis=2, keep_dims=True)
-
-        self.cpi_objective = masked_mean(ratio_times_adv, self.mask)
-
-        tvars = self.estimator.trainable_variables()
-        self.train_op, train_summaries = build_gradient_train_op(
-            -self.cpi_objective, tvars, self.optimizer_spec, self.lr_schedule)
-
-        self.train_summary_op = tf.summary.merge(train_summaries)
-
-
-class TrustRegionPolicyEvaluation(AbstractPolicyEvaluation):
-    delta_schedule = Param()
-    max_cg_steps = Param()
-    max_line_search_steps = Param()
-
-    def __init__(self, estimator, gamma=1.0, **kwargs):
-        super(TrustRegionPolicyEvaluation, self).__init__(estimator, gamma, **kwargs)
-
-        self.policy = Policy(
-            estimator.controller, NormalWithExploration(),
-            estimator.obs_shape, name="policy_eval")
-        self.prev_policy = self.policy.deepcopy("prev_policy")
-
-    def _build_graph(self, is_training, exploration):
-        super(TrustRegionPolicyEvaluation, self)._build_graph(is_training, exploration)
-
-        self.delta = build_scheduled_value(self.delta_schedule, 'delta')
-
-        self.std_dev = tf.placeholder(tf.float32, ())
-        self.policy.set_exploration(self.std_dev)
-        self.prev_policy.set_exploration(self.std_dev)
-
-        tvars = self.policy.trainable_variables()
-        self.gradient = tf.gradients(self.mean_squared_error, tvars)
-
-        self.mean_kl = mean_kl(self.prev_policy, self.policy, self.obs, self.mask)
-        self.fv_product = HessianVectorProduct(self.mean_kl, tvars)
-
-        self.grad_norm_pure = tf.placeholder(tf.float32, shape=(), name="_grad_norm_pure")
-        self.grad_norm_natural = tf.placeholder(tf.float32, shape=(), name="_grad_norm_natural")
-        self.step_norm = tf.placeholder(tf.float32, shape=(), name="_step_norm")
-
-        self.train_summary_op = tf.summary.merge([
-            tf.summary.scalar("grad_norm_pure", self.grad_norm_pure),
-            tf.summary.scalar("grad_norm_natural", self.grad_norm_natural),
-            tf.summary.scalar("step_norm", self.step_norm),
-        ])
-
-    def update(self, rollouts, collect_summaries):
-        feed_dict = self.build_feed_dict(rollouts)
-
-        sess = tf.get_default_session()
-        gradient, mean_squared_error = sess.run([self.gradient, self.mean_squared_error], feed_dict=feed_dict)
-        gradient = lst_to_vec(gradient)
-
-        grad_norm_pure = np.linalg.norm(gradient)
-        grad_norm_natural = 0.0
-        step_norm = 0.0
-
-        if np.isclose(0, grad_norm_pure):
-            print("Got zero policy gradient, not updating.")
         else:
-            # Compute natural gradient direction
-            # ----------------------------------
-            self.prev_policy.set_params_flat(self.policy.get_params_flat())
+            raise Exception()
 
-            feed_dict[self.std_dev] = np.sqrt(mean_squared_error)
-            self.fv_product.update_feed_dict(feed_dict)
-            step_dir = -cg(self.fv_product, gradient, max_steps=self.max_cg_steps)
 
-            grad_norm_natural = np.linalg.norm(step_dir)
+class ActionValueFunction(AgentHead):
+    def __init__(self, size, policy, name):
+        self.policy = policy
+        self._size = size
+        super(ActionValueFunction, self).__init__(name)
 
-            if grad_norm_natural < 1e-6:
-                print("Step dir has norm 0, not updating.")
-            else:
-                # Perform line search in natural gradient direction
-                # -------------------------------------------------
-                delta = sess.run(self.delta)
-                denom = step_dir.dot(self.fv_product(step_dir))
-                beta = np.sqrt(2 * delta / denom)
-                full_step = beta * step_dir
+    @property
+    def size(self):
+        return self._size
 
-                def objective(_params):
-                    self.policy.set_params_flat(_params)
-                    sess = tf.get_default_session()
-                    return sess.run(self.mean_squared_error, feed_dict=feed_dict)
+    def generate_signal(self, key, context):
+        if key == 'action_values_all':
+            utils = self.agent.get_utils(self, context)
+            values = tf.identity(utils, name="{}_{}_values".format(self.agent.name, self.name))
+            return values
 
-                grad_dot_step_dir = gradient.dot(step_dir)
+        elif key == 'action_values':
+            action_values = context.get_signal('action_values_all', self, gradient=True)
+            actions = context.get_signal('actions')
+            action_values = tf.reduce_sum(actions * action_values, axis=-1, keep_dims=True)
 
-                params = self.policy.get_params_flat()
+            mask = context.get_signal('mask')
+            label = "{}-estimated_action_value".format(self.display_name)
+            context.add_summary(tf.summary.scalar(label, masked_mean(action_values, mask)))
 
-                expected_imp = beta * grad_dot_step_dir
-                success, new_params = line_search(
-                    objective, params, full_step, expected_imp,
-                    max_backtracks=self.max_line_search_steps, verbose=cfg.verbose)
+            return action_values
+        elif key == 'one_step_td_errors':
+            rewards = context.get_signal('rewards')
+            gamma = context.get_signal('gamma')
+            action_values = context.get_signal('action_values', self, gradient=True)
 
-                self.policy.set_params_flat(new_params)
+            shifted_values = tf_roll(action_values, 1, fill=0.0, reverse=True, axis=0)
 
-                step_norm = np.linalg.norm(new_params - params)
+            one_step_estimate = rewards + gamma * shifted_values
+            td_errors = one_step_estimate - action_values
 
-        if cfg.verbose:
-            print("Gradient norm: ", grad_norm_pure)
-            print("Natural Gradient norm: ", grad_norm_natural)
-            print("Step norm: ", step_norm)
+            # if context.truncated_rollouts is True, this is slightly problematic
+            # as the td error at the last timestep is not correct as the one-step-estimate
+            # includes only the final reward, no value function (since we don't know what state
+            # comes next). So just zero out the corresponding td error.
+            if context.truncated_rollouts:
+                td_errors = tf.concat([td_errors[:-1, ...], tf.zeros_like(td_errors[-1:, ...])], axis=0)
 
-        if collect_summaries:
-            feed_dict = {
-                self.grad_norm_pure: grad_norm_pure,
-                self.grad_norm_natural: grad_norm_natural,
-                self.step_norm: step_norm,
-            }
-            sess = tf.get_default_session()
-            train_summaries = sess.run(self.train_summary_op, feed_dict=feed_dict)
-            return train_summaries
+            mask = context.get_signal('mask')
+            label = "{}-one_step_td_error".format(self.display_name)
+            context.add_summary(tf.summary.scalar(label, masked_mean(td_errors, mask)))
+
+            return td_errors
         else:
-            return b''
+            raise Exception()
 
 
-class BasicValueEstimator(object):
-    def __init__(self, gamma=1.0):
-        self.gamma = gamma
+class AverageValueEstimator(RLObject):
+    """ Value estimation without a value function. """
 
-    def build_graph(self):
-        pass
+    def __init__(self, policy):
+        self.policy = policy
 
-    def estimate(self, rollouts):
-        obs, rewards = rollouts.o, rollouts.r * rollouts.mask
-        T = len(obs)
-        discounts = np.logspace(0, T-1, T, base=self.gamma).reshape(-1, 1, 1)
-        discounted_rewards = rewards * discounts
-        sum_discounted_rewards = np.flipud(
-            np.cumsum(np.flipud(discounted_rewards), axis=0))
-        value_t = sum_discounted_rewards.mean(axis=1, keepdims=True)
-        value_t = np.tile(value_t, (1, obs.shape[1], 1))
-        return value_t
-
-    def trainable_variables(self):
-        return []
+    def generate_signal(self, signal_key, context):
+        if signal_key == "values":
+            if self.policy is not None:
+                return context.get_signal('average_monte_carlo_values', self.policy)
+            else:
+                return context.get_signal('average_discounted_returns')
+        else:
+            raise Exception("NotImplemented")
 
 
-class NeuralValueEstimator(object):
-    def __init__(self, controller, obs_shape, **kwargs):
-        self.controller = controller
-        self.obs_shape = obs_shape
-        self.estimate_is_built = False
-        super(NeuralValueEstimator, self).__init__(**kwargs)
+class MonteCarloValueEstimator(RLObject):
+    """ Off-policy monte-carlo value estimation. """
 
-    def build_estimate(self):
-        if not self.estimate_is_built:
-            self.obs = tf.placeholder(
-                tf.float32, shape=(None, None) + self.obs_shape, name="obs")
-            batch_size = tf.shape(self.obs)[1]
-            initial_state = self.controller.zero_state(batch_size, tf.float32)
-            self.value_estimates, _ = dynamic_rnn(
-                self.controller, self.obs, initial_state=initial_state,
-                parallel_iterations=1, swap_memory=False, time_major=True)
-            self.estimate_is_built = True
+    def __init__(self, policy=None):
+        self.policy = policy
 
-    def estimate(self, rollouts):
-        self.build_estimate()
-
-        sess = tf.get_default_session()
-        value_estimates = sess.run(
-            self.value_estimates, feed_dict={self.obs: rollouts.o})
-        return value_estimates
-
-    def trainable_variables(self):
-        return trainable_variables(self.controller.scope.name)
+    def generate_signal(self, signal_key, context):
+        if signal_key == "values":
+            if self.policy is not None:
+                return context.get_signal('monte_carlo_values', self.policy)
+            else:
+                return context.get_signal('discounted_returns')
+        elif signal_key == "action_values":
+            if self.policy is not None:
+                return context.get_signal('monte_carlo_action_values', self.policy)
+            else:
+                return context.get_signal('discounted_returns')
+        else:
+            raise Exception("NotImplemented")
 
 
-class GeneralizedAdvantageEstimator(object):
-    def __init__(self, value_estimator, gamma=1.0, lmbda=1.0):
-        self.value_estimator = value_estimator
+class AdvantageEstimator(RLObject):
+    """ Create an advantage estimator from a state value estimator paired with a state-action value estimator. """
+
+    def __init__(self, q_estimator, v_estimator, standardize=True):
+        self.q_estimator = q_estimator
+        self.v_estimator = v_estimator
+        self.standardize = standardize
+
+    def post_process(self, advantage, context):
+        if self.standardize:
+            mask = context.get_signal('mask')
+            mean = masked_mean(advantage, mask)
+            _advantage = advantage - mean
+            variance = masked_mean(_advantage**2, mask)
+            std = tf.sqrt(variance)
+            _advantage = tf.cond(std < 1e-6, lambda: _advantage, lambda: _advantage/std)
+            advantage = mask * _advantage + (1-mask) * advantage
+        return advantage
+
+    def generate_signal(self, signal_key, context):
+        if signal_key == "advantage":
+            q = context.get_signal('action_values', self.q_estimator)
+            v = context.get_signal('values', self.v_estimator)
+            advantage = q - v
+            advantage = self.post_process(advantage, context)
+
+            mask = context.get_signal("mask")
+            mean_advantage = masked_mean(advantage, mask)
+
+            context.add_summary(tf.summary.scalar("advantage", mean_advantage))
+
+            return advantage
+        elif signal_key == "advantage_all":
+            q = context.get_signal('action_values_all', self.q_estimator)
+            v = context.get_signal('values', self.v_estimator)
+            v = v[..., None]
+            advantage = q - v
+            advantage = self.post_process(advantage, context)
+            return advantage
+        else:
+            raise Exception("NotImplemented")
+
+
+class BasicAdvantageEstimator(AdvantageEstimator):
+    """ Advantage estimation without a value function. """
+
+    def __init__(self, policy=None, standardize=True):
+        q_estimator = MonteCarloValueEstimator(policy)
+        v_estimator = AverageValueEstimator(policy)
+        super(BasicAdvantageEstimator, self).__init__(q_estimator, v_estimator, standardize)
+
+
+# class NStepValueEstimator(RLObject):
+#     def __init__(self, value_function, n=1, standardize=True):
+#         self.value_function = value_function
+#         self.n = n
+#         assert n > 0
+#         super(NStepValueEstimator, self).__init__(standardize)
+#
+#     def generate_signal(self, signal_key, context):
+#         if signal_key == "values":
+#             values = context.get_signal("values", self.value_function)
+#
+#             rewards = context.get_signal("rewards")
+#             T = tf.shape(rewards)[0]
+#             discount_matrix = tf_discount_matrix(gamma * self.lmbda, T, self.n)
+#             n_step_rewards = tf.tensordot(discount_matrix, rewards, axes=1)
+#
+#             shifted_values = tf_roll(values, self.n, fill=0.0, reverse=True)
+#             values = n_step_rewards + (gamma**self.n) * shifted_values
+#             return values
+#         else:
+#             raise Exception("NotImplemented")
+
+
+class RetraceCell(RNNCell):
+    def __init__(self, dim, gamma, lmbda, to_action_value):
+        self.dim = dim
         self.gamma = gamma
         self.lmbda = lmbda
+        self.to_action_value = to_action_value
 
-    def estimate(self, rollouts):
-        value_estimates = self.value_estimator.estimate(rollouts)
-        T = len(value_estimates)
-        discounts = np.logspace(0, T-1, T, base=self.gamma*self.lmbda)
-        discount_matrix = np.triu(symmetricize(discounts))
-        td_error = compute_td_error(value_estimates, self.gamma, rollouts.r) * rollouts.mask
-        advantage_estimates = np.tensordot(discount_matrix, td_error, axes=1)
-        return advantage_estimates
+    def __call__(self, inp, state, scope=None):
+        rho, r, v = inp
+        prev_retrace = state
 
-
-CRITIC_ALGS = dict(
-    TRPE=TrustRegionPolicyEvaluation,
-    PPE=ProximalPolicyEvaluation,
-    PE=PolicyEvaluation,
-)
-
-
-def actor_critic(
-        env, policy_controller, action_selection, critic_controller,
-        actor_config=None, critic_config=None):
-
-    policy = Policy(policy_controller, action_selection, env.obs_shape)
-
-    if critic_config is None:
-        critic_config = Config()
-
-    with critic_config:
-        value_estimator = NeuralValueEstimator(critic_controller, env.obs_shape)
-
-        if isinstance(cfg.alg, str):
-            alg = CRITIC_ALGS[cfg.alg]
+        if self.to_action_value:
+            one_step_estimate = r + self.gamma * v
+            adjustment = self.gamma * self.lmbda * (rho * prev_retrace - v)
         else:
-            alg = cfg.alg
-        critic = alg(value_estimator, name="critic")
+            one_step_estimate = rho * (r + self.gamma * v)
+            adjustment = rho * self.gamma * self.lmbda * (prev_retrace - v)
 
-    if actor_config is None:
-        actor_config = Config()
+        new_retrace = one_step_estimate + adjustment
 
-    with actor_config:
-        advantage_estimator = GeneralizedAdvantageEstimator(
-            value_estimator, lmbda=cfg.lmbda, gamma=cfg.gamma)
-        actor = cfg.alg(policy, advantage_estimator, name="actor")
+        return (new_retrace, one_step_estimate, adjustment), new_retrace
 
-    # Make sure we update critic before actor, so that the critic
-    # is really giving us a more accurate view of the performance
-    # of the current actor
-    learners = [critic, actor]
-    loss_func = lambda records: records[1]['loss']
+    @property
+    def state_size(self):
+        return self.dim
 
-    return RLUpdater(env, policy, learners=learners, loss_func=loss_func)
+    @property
+    def output_size(self):
+        return (self.dim,) * 3
+
+    def zero_state(self, batch_size, dtype):
+        return tf.fill((batch_size, 1), 0.0)
+
+
+class Retrace(RLObject):
+    """ An off-policy (though also works on-policy) returned-based estimate of the value of
+        a policy as a function of either a state or a state-action pair. The estimate
+        is based on an existing value function or action-value function.
+
+        Parameters
+        ----------
+
+    """
+    def __init__(
+            self, policy, value_function, lmbda=1.0,
+            to_action_value=False, from_action_value=False,
+            name=None):
+
+        self.policy = policy
+        self.value_function = value_function
+        self.lmbda = lmbda
+        self.to_action_value = to_action_value
+        self.from_action_value = from_action_value
+        self.name = name or self.__class__.__name__
+
+    def generate_signal(self, signal_key, context):
+        if signal_key == "action_values" and self.to_action_value:
+            pass
+        elif signal_key == "values" and not self.to_action_value:
+            pass
+        else:
+            raise Exception("NotImplemented")
+
+        rewards = context.get_signal("rewards")
+        rho = context.get_signal("rho", self.policy)
+
+        if self.from_action_value:
+            if isinstance(self.policy, DiscretePolicy):
+                pi_log_probs_all = context.get_signal("log_probs_all", self.policy)
+                pi_probs = tf.exp(pi_log_probs_all)
+                action_values = context.get_signal("action_values", self.value_function)
+                values = tf.reduce_sum(pi_probs * action_values, axis=-1, keep_dims=True)
+            else:
+                action_values = context.get_signal("action_values", self.value_function)
+                values = action_values * rho
+        else:
+            values = context.get_signal("values", self.value_function)
+
+        R = rewards
+        V = tf_roll(values, 1, fill=0.0, reverse=True)
+        RHO = rho
+
+        if context.truncated_rollouts:
+            R = R[:-1, ...]
+            V = V[:-1, ...]
+            RHO = RHO[:-1, ...]
+
+        if self.to_action_value:
+            RHO = tf_roll(RHO, 1, fill=1.0, reverse=True)
+
+        gamma = context.get_signal("gamma")
+        retrace_cell = RetraceCell(
+            rewards.shape[-1], gamma, self.lmbda, self.to_action_value)
+
+        retrace_input = (
+            tf.reverse(RHO, axis=[0]),
+            tf.reverse(R, axis=[0]),
+            tf.reverse(V, axis=[0]),
+        )
+
+        (retrace, one_step_estimate, adjustment), _ = dynamic_rnn(
+            retrace_cell, retrace_input,
+            initial_state=V[-1, ...],
+            parallel_iterations=1, swap_memory=False, time_major=True)
+
+        one_step_estimate = tf.reverse(one_step_estimate, axis=[0])
+        adjustment = tf.reverse(adjustment, axis=[0])
+        retrace = tf.reverse(retrace, axis=[0])
+
+        if context.truncated_rollouts:
+            retrace = tf.concat([retrace, V[-1, ...]], axis=0)
+
+        mask = context.get_signal("mask")
+        label = "{}-one_step_estimate".format(self.name)
+        context.add_summary(tf.summary.scalar(label, masked_mean(one_step_estimate, mask)))
+        label = "{}-adjustment".format(self.name)
+        context.add_summary(tf.summary.scalar(label, masked_mean(adjustment, mask)))
+        label = "{}-retrace".format(self.name)
+        context.add_summary(tf.summary.scalar(label, masked_mean(retrace, mask)))
+
+        return retrace
+
+
+class GeneralizedAdvantageEstimator(AdvantageEstimator):
+    """
+    Parameters
+    ----------
+
+    """
+    def __init__(
+            self, policy, value_function, action_value_function=None,
+            lmbda=1.0, standardize=True):
+
+        self.policy = policy
+        self.value_function = value_function
+        self.action_value_function = action_value_function
+        self.lmbda = lmbda
+
+        if action_value_function is not None:
+            q_estimator = Retrace(
+                policy, lmbda, value_function,
+                from_action_value=False, to_action_value=True
+            )
+        else:
+            q_estimator = Retrace(
+                policy, lmbda, action_value_function,
+                from_action_value=True, to_action_value=True
+            )
+
+        super(GeneralizedAdvantageEstimator, self).__init__(
+            q_estimator=q_estimator, v_estimator=self.value_function,
+            standardize=standardize)
