@@ -85,7 +85,7 @@ distributions = dict(
     ],
     actor_config=dict(
         gamma=list(np.linspace(0.9, 1.0, 10)),
-        opt_steps_per_batch=[1, 5, 10],
+        opt_steps_per_update=[1, 5, 10],
         update_batch_size=[4, 8, 16, 32, 64],
         lr_schedule=['1e-5', '1e-4', '1e-3'],
         alpha=list(np.linspace(0.5, 1.0, 10)),

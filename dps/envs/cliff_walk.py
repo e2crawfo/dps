@@ -13,7 +13,6 @@ def build_cliff_walk():
 config = Config(
     build_env=build_cliff_walk,
     curriculum=[dict()],
-    n_controller_units=32,
     log_name='cliff_walk',
     T=20,
     width=10,

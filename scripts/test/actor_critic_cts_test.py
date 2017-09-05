@@ -13,7 +13,7 @@ config.update(
     policy_weight=1.0,
     value_weight=1.0,
     lmbda=1.0,
-    opt_steps_per_batch=1,
+    opt_steps_per_update=1,
     exploration_schedule=1.0,
 )
 

@@ -38,7 +38,7 @@ config = DEFAULT_CONFIG.copy(
 
     gamma=1.0,
 
-    opt_steps_per_batch=10,
+    opt_steps_per_update=10,
     steps_per_target_update=1000,
     target_update_rate=0.001,
     patience=np.inf,

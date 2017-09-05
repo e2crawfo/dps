@@ -27,7 +27,7 @@ def PPO(env):
         optimizer = StochasticGradientDescent(
             agents=[agent], alg=cfg.optimizer_spec,
             lr_schedule=cfg.lr_schedule,
-            opt_steps_per_batch=cfg.opt_steps_per_batch)
+            opt_steps_per_update=cfg.opt_steps_per_update)
         context.set_optimizer(optimizer)
 
     return RLUpdater(env, context)
@@ -40,7 +40,7 @@ config = Config(
     build_controller=BuildLstmController(),
     batch_size=16,
     optimizer_spec="adam",
-    opt_steps_per_batch=10,
+    opt_steps_per_update=10,
     lr_schedule="1e-4",
     n_controller_units=64,
     exploration_schedule='poly 10.0 10000 1e-6 1.0',
@@ -51,6 +51,6 @@ config = Config(
 
 reinforce_config = config.copy(
     epsilon=0.0,
-    opt_steps_per_batch=1,
+    opt_steps_per_update=1,
     name="REINFORCE",
 )

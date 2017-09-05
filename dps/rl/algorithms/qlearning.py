@@ -96,19 +96,19 @@ class MaxPriorityFunc(PriorityFunc):
 
 def QLearning(env):
     with RLContext(cfg.gamma) as context:
-        policy = cfg.build_policy(env, name="policy")
+        policy = cfg.build_policy(env, name="actor")
         assert isinstance(policy, DiscretePolicy), "QLearning currently only works with discrete policies."
 
         context.set_behaviour_policy(policy)
 
         agent = Agent("agent", cfg.build_controller, [policy])
 
-        start, end = agent._head_offsets["policy"]
+        start, end = agent._head_offsets["actor"]
         action_value_function = ActionValueFunction(env.n_actions, policy, "q")
         agent.add_head(action_value_function, start, end)
 
         target_agent = agent.deepcopy("target_agent")
-        target_agent['policy'].exploration_schedule = cfg.target_exploration_schedule
+        target_agent['actor'].exploration_schedule = cfg.target_exploration_schedule
 
         assert not (cfg.double and cfg.reverse_double)
 
@@ -116,10 +116,10 @@ def QLearning(env):
             learn_about_policy = policy
             backup_values = target_agent['q']
         elif cfg.reverse_double:
-            learn_about_policy = target_agent['policy']
+            learn_about_policy = target_agent['actor']
             backup_values = agent['q']
         else:
-            learn_about_policy = target_agent['policy']
+            learn_about_policy = target_agent['actor']
             backup_values = target_agent['q']
 
         action_values_from_returns = Retrace(
@@ -131,7 +131,7 @@ def QLearning(env):
         priority_func = MaxPriorityFunc(action_value_function)
         replay_buffer = PrioritizedReplayBuffer(
             cfg.replay_size, cfg.replay_n_partitions,
-            priority_func, cfg.alpha, cfg.beta_schedule)
+            priority_func, cfg.alpha, cfg.beta_schedule, cfg.min_experiences)
         context.set_replay_buffer(cfg.update_batch_size, replay_buffer)
 
         AgentUpdater(cfg.steps_per_target_update, agent, target_agent)
@@ -140,7 +140,7 @@ def QLearning(env):
         optimizer = StochasticGradientDescent(
             agents=[agent], alg=cfg.optimizer_spec,
             lr_schedule=cfg.lr_schedule,
-            opt_steps_per_batch=cfg.opt_steps_per_batch)
+            opt_steps_per_update=cfg.opt_steps_per_update)
 
         context.set_optimizer(optimizer)
 
@@ -155,7 +155,7 @@ config = Config(
     build_controller=BuildDuelingLstmController(),
     update_batch_size=32,
     optimizer_spec="adam",
-    opt_steps_per_batch=1,
+    opt_steps_per_update=1,
 
     double=False,
     reverse_double=False,
@@ -170,6 +170,8 @@ config = Config(
     target_exploration_schedule=0.1,  # Epsilon for the target policy (the policy we are learning about).
 
     steps_per_target_update=1000,
+
+    min_experiences=1000,
 
     replay_size=20000,
     replay_n_partitions=100,
@@ -186,7 +188,7 @@ config = Config(
 #
 #     update_batch_size=16,
 #     lr_schedule="0.001",
-#     opt_steps_per_batch=10,
+#     opt_steps_per_update=10,
 #     steps_per_target_update=1000,
 #     init_steps=1000,
 #     lmbda=1.0,
@@ -211,7 +213,7 @@ config = Config(
 # PQL_CONFIG = QLEARNING_CONFIG.copy(
 #     name="ProximalQLearning",
 #     alg=ProximalQLearning,
-#     opt_steps_per_batch=10,
+#     opt_steps_per_update=10,
 #     S=1,
 #     epsilon=0.2,
 # )

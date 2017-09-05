@@ -44,7 +44,7 @@ def A2C(env):
         optimizer = StochasticGradientDescent(
             agents=[agent], alg=cfg.optimizer_spec,
             lr_schedule=cfg.lr_schedule,
-            opt_steps_per_batch=cfg.opt_steps_per_batch)
+            opt_steps_per_update=cfg.opt_steps_per_update)
 
         context.set_optimizer(optimizer)
 
@@ -59,7 +59,7 @@ config = Config(
     build_controller=BuildLstmController(),
     batch_size=16,
     optimizer_spec="adam",
-    opt_steps_per_batch=10,
+    opt_steps_per_update=10,
     lr_schedule="1e-4",
     exploration_schedule='poly 10.0 10000 1e-6 1.0',
     test_time_explore=0.1,
@@ -108,7 +108,7 @@ def ActorCritic(env):
         optimizer = StochasticGradientDescent(
             agents=[actor_agent, critic_agent], alg=cfg.optimizer_spec,
             lr_schedule=cfg.lr_schedule,
-            opt_steps_per_batch=cfg.opt_steps_per_batch)
+            opt_steps_per_update=cfg.opt_steps_per_update)
 
         context.set_optimizer(optimizer)
 

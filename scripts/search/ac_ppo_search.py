@@ -52,7 +52,7 @@ config.update(Config(
     #     name="PPE",
     #     alg=ProximalPolicyEvaluation,
     #     optimizer_spec='adam',
-    #     opt_steps_per_batch=10,
+    #     opt_steps_per_update=10,
     # ),
 
     critic_config=Config(
@@ -65,7 +65,7 @@ config.update(Config(
     actor_config=Config(
         name="PPO",
         alg=PPO,
-        opt_steps_per_batch=10,
+        opt_steps_per_update=10,
         optimizer_spec="adam"
     ),
     symbols=[

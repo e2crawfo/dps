@@ -12,11 +12,11 @@ class Optimizer(object):
 
 
 class StochasticGradientDescent(Optimizer):
-    def __init__(self, agents, alg, lr_schedule, opt_steps_per_batch):
+    def __init__(self, agents, alg, lr_schedule, opt_steps_per_update):
         super(StochasticGradientDescent, self).__init__(agents)
         self.alg = alg
         self.lr_schedule = lr_schedule
-        self.opt_steps_per_batch = opt_steps_per_batch
+        self.opt_steps_per_update = opt_steps_per_update
 
     def build_update(self, context):
         tvars = self.trainable_variables()
@@ -28,5 +28,5 @@ class StochasticGradientDescent(Optimizer):
 
     def update(self, feed_dict):
         sess = tf.get_default_session()
-        for k in range(self.opt_steps_per_batch):
+        for k in range(self.opt_steps_per_update):
             sess.run(self.train_op, feed_dict=feed_dict)

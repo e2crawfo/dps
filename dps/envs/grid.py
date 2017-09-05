@@ -13,10 +13,7 @@ def build_grid():
 config = Config(
     build_env=build_grid,
     curriculum=[dict()],
-    n_controller_units=32,
     log_name='grid',
-    eval_step=10,
-    batch_size=10,
     dense_reward=True,
     restart_prob=0.0,
     l2l=False,

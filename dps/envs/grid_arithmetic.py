@@ -55,18 +55,14 @@ GRID_ARITHMETIC_CONFIG = Config(
         dict(T=20, min_digits=2, max_digits=3, shape=(2, 2)),
     ],
     force_2d=False,
-    display=False,
     mnist=False,
     op_loc=(0, 0),
     start_loc=(0, 0),
     base=10,
-    batch_size=64,
     threshold=0.04,
 
     dense_reward=True,
     reward_window=0.4,
-
-    n_controller_units=64,
 
     ablation='',  # anything other than "bad_wiring", "no_classifiers", "no_ops", "no_modules" will use the default.
 

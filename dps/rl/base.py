@@ -92,6 +92,7 @@ class RLContext(Parameterized):
 
     exploration_schedule = Param()
     test_time_explore = Param()
+    updates_per_sample = Param(1)
 
     def __init__(self, gamma, truncated_rollouts=False, name=None):
         self.mu = None
@@ -302,23 +303,34 @@ class RLContext(Parameterized):
             rollouts = self.env.do_rollouts(self.mu, batch_size, mode='train')
 
             weights = None
+            n_updates = 1
             if self.replay_buffer is not None:
                 self.replay_buffer.add_rollouts(rollouts)
-                rollouts, weights = self.replay_buffer.get_batch(self.update_batch_size)
 
-            feed_dict = self.make_feed_dict(rollouts, weights)
-
-            for obj in self.rl_objects:
-                obj.pre_update(feed_dict, self)
-
-            self.optimizer.update(feed_dict)
-
-            for obj in self.rl_objects:
-                obj.post_update(feed_dict, self)
+                # If we have a replay buffer, we can potentially do multiple updates,
+                # each with a different batch, per environment sample
+                n_updates = self.updates_per_sample
 
             train_summaries = b""
-            if collect_summaries:
-                train_summaries = tf.get_default_session().run(self.train_summary_op, feed_dict=feed_dict)
+            for i in range(n_updates):
+                if self.replay_buffer is not None:
+                    rollouts, weights = self.replay_buffer.get_batch(self.update_batch_size)
+
+                if rollouts is None:
+                    break
+
+                feed_dict = self.make_feed_dict(rollouts, weights)
+
+                for obj in self.rl_objects:
+                    obj.pre_update(feed_dict, self)
+
+                self.optimizer.update(feed_dict)
+
+                for obj in self.rl_objects:
+                    obj.post_update(feed_dict, self)
+
+                if collect_summaries and i == n_updates-1:
+                    train_summaries = tf.get_default_session().run(self.train_summary_op, feed_dict=feed_dict)
 
             return train_summaries
 

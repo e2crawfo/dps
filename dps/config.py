@@ -36,7 +36,7 @@ DEFAULT_CONFIG = DpsConfig(
     eval_step=10,
 
     batch_size=16,
-    opt_steps_per_batch=1,
+    opt_steps_per_update=1,
 
     gamma=1.0,
 

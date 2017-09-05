@@ -160,11 +160,18 @@ class Policy(AgentHead):
             context.add_summary(tf.summary.scalar(label, masked_mean(importance_weights, mask)))
 
             return importance_weights
-        elif key == 'rho':
-            importance_weights = context.get_signal("importance_weights", self)
-            rho = tf.minimum(importance_weights, 1)
+        elif key.startswith('rho'):
+            splits = key.split('_')
+            if len(splits) == 1:
+                c = 1.0
+            else:
+                assert len(splits) == 2
+                c = float(splits[-1])
 
-            label = "{}-mean_rho".format(self.display_name)
+            importance_weights = context.get_signal("importance_weights", self)
+            rho = tf.minimum(importance_weights, c)
+
+            label = "{}-mean_rho_c={}".format(self.display_name, c)
             mask = context.get_signal("mask")
             context.add_summary(tf.summary.scalar(label, masked_mean(rho, mask)))
 

@@ -5,34 +5,48 @@ from dps.utils import masked_mean
 
 
 class PolicyGradient(ObjectiveFunctionTerm):
-    def __init__(self, policy, advantage_estimator, epsilon=None, **kwargs):
+    def __init__(self, policy, advantage_estimator, epsilon=None, importance_c=None, **kwargs):
         self.policy = policy
         self.advantage_estimator = advantage_estimator
         self.epsilon = epsilon
+        self.importance_c = importance_c
         super(PolicyGradient, self).__init__(**kwargs)
 
     def generate_signal(self, signal_key, context):
         if signal_key == "prev_log_probs":
-            log_probs = context.get_signal('log_probs', self.policy)
-            prev_log_probs = tf.placeholder(tf.float32, shape=log_probs.shape, name="_prev_log_probs")
-            return prev_log_probs
+            self.log_probs = context.get_signal('log_probs', self.policy)
+            self.prev_log_probs = tf.placeholder(tf.float32, shape=self.log_probs.shape, name="_prev_log_probs")
+            return self.prev_log_probs
+        elif signal_key == "prev_advantage":
+            self.advantage = context.get_signal('advantage', self.advantage_estimator)
+            self.prev_advantage = tf.placeholder(tf.float32, shape=self.advantage.shape, name="_prev_advantage")
+            return self.prev_advantage
         elif signal_key == "adv_times_ratio":
-            advantage = context.get_signal('advantage', self.advantage_estimator)
-            self.log_probs = context.get_signal('log_probs', self.policy, gradient=True)
-            self.prev_log_probs = context.get_signal('prev_log_probs', self)
+            log_probs = context.get_signal('log_probs', self.policy, gradient=True)
+            prev_log_probs = context.get_signal('prev_log_probs', self)
 
-            ratio = tf.exp(self.log_probs - self.prev_log_probs)
+            ratio = tf.exp(log_probs - prev_log_probs)
+
+            prev_advantage = context.get_signal('prev_advantage', self)
 
             if self.epsilon is None:
-                adv_times_ratio = ratio * advantage
+                adv_times_ratio = ratio * prev_advantage
             else:
                 adv_times_ratio = tf.minimum(
-                    advantage * ratio,
-                    advantage * tf.clip_by_value(ratio, 1-self.epsilon, 1+self.epsilon))
+                    prev_advantage * ratio,
+                    prev_advantage * tf.clip_by_value(ratio, 1-self.epsilon, 1+self.epsilon))
 
             if self.use_weights:
                 weights = context.get_signal('weights')
                 adv_times_ratio *= weights
+
+            if self.importance_c is not None:
+                if self.importance_c <= 0:
+                    weights = context.get_signal('importance_weights', self.policy)
+                else:
+                    weights = context.get_signal('rho_{}'.format(self.importance_c), self.policy)
+                adv_times_ratio *= weights
+
             return adv_times_ratio
         else:
             raise Exception("NotImplemented")
@@ -48,8 +62,11 @@ class PolicyGradient(ObjectiveFunctionTerm):
 
     def pre_update(self, feed_dict, context):
         sess = tf.get_default_session()
-        prev_log_probs = sess.run(self.log_probs, feed_dict=feed_dict)
-        feed_dict[self.prev_log_probs] = prev_log_probs
+        prev_log_probs, prev_advantage = sess.run([self.log_probs, self.advantage], feed_dict=feed_dict)
+        feed_dict.update({
+            self.prev_log_probs: prev_log_probs,
+            self.prev_advantage: prev_advantage,
+        })
 
     def pre_eval(self, feed_dict, context):
         self.pre_update(feed_dict, context)

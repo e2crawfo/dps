@@ -26,15 +26,12 @@ MNIST_ARITHMETIC_CONFIG = Config(
     curriculum=[
         dict(W=100, N=16, T=20, min_digits=2, max_digits=3, base=10),
     ],
-    simple=False,
     threshold=0.15,
-    verbose=4,
 
     classifier_str="MLP_30_30",
     build_classifier=lambda inp, outp_size, is_training=False: tf.nn.softmax(
         MLP([30, 30], activation_fn=tf.nn.sigmoid)(inp, outp_size)),
 
-    n_controller_units=256,
     reward_window=0.5,
 
     log_name='mnist_arithmetic',

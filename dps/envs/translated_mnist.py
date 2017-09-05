@@ -45,13 +45,11 @@ TRANSLATED_MNIST_CONFIG = Config(
         dict(W=95, N=8, T=20)
     ],
     threshold=0.10,
-    verbose=4,
 
     classifier_str="MLP_50_50",
     build_classifier=lambda inp, outp_size, is_training=False: tf.nn.softmax(
         MLP([50, 50], activation_fn=tf.nn.sigmoid)(inp, outp_size)),
 
-    n_controller_units=64,
     reward_window=0.5,
 
     log_name='translated_mnist',

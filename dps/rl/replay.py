@@ -27,14 +27,19 @@ class PrioritizedReplayBuffer(RLObject):
         Degree of importance sampling correction, 0 corresponds to no correction, 1 corresponds to
         full correction. Usually anneal linearly from an initial value beta_0 to a value of 1 by the
         end of learning.
+    min_experiences: int > 0
+        Minimum number of experiences that must be stored in the replay buffer before it will return
+        a valid batch when `get_batch` is called. Before this point, it returns None, indicating that
+        whatever is making use of this replay memory should not make an update.
 
     """
-    def __init__(self, size, n_partitions, priority_func, alpha, beta_schedule, name=None):
+    def __init__(self, size, n_partitions, priority_func, alpha, beta_schedule, min_experiences=None, name=None):
         self.size = size
         self.n_partitions = n_partitions
         self.priority_func = priority_func
         self.alpha = alpha
         self.beta_schedule = beta_schedule
+        self.min_experiences = min_experiences
 
         self.index = 0
 
@@ -124,6 +129,13 @@ class PrioritizedReplayBuffer(RLObject):
                 self.skip_list.insert(-new_priority, e_idx)
 
     def get_batch(self, batch_size):
+        no_sample = (
+            (self.min_experiences is not None and
+             self.n_experiences < self.min_experiences) or
+            self.n_experiences < batch_size)
+        if no_sample:
+            return None, None
+
         priority_indices = []
         start = 0
         permutation = np.random.permutation(self.n_partitions)

@@ -18,7 +18,6 @@ config = Config(
         dict(shape=(3, 3), threshold=-4),
         dict(shape=(4, 4), threshold=-2)
     ],
-    n_controller_units=32,
     log_name='path_discovery',
     shape=(3, 3),
     T=10,

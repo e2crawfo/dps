@@ -13,13 +13,11 @@ def build_env():
 config = Config(
     build_env=build_env,
     curriculum=[dict()],
-    n_controller_units=32,
     log_name='grid_bandit',
-    batch_size=32,
-    shape=(2, 2),
-    T=5,
-    n_arms=10,
     threshold=-5,
+    T=5,
+    shape=(2, 2),
+    n_arms=10,
 )
 
 

@@ -290,8 +290,8 @@ class TrainingLoop(object):
 
                 if evaluate and cfg.save_summaries:
                     self.train_writer.add_summary(
-                        update_summaries + train_summaries, self.global_step)
-                    self.val_writer.add_summary(val_summaries, self.global_step)
+                        update_summaries + train_summaries, updater.n_experiences)
+                    self.val_writer.add_summary(val_summaries, updater.n_experiences)
 
                 if display:
                     s = "~" * 40
@@ -304,9 +304,10 @@ class TrainingLoop(object):
                 new_best, stop = early_stop.check(val_loss, local_step, **record)
 
                 if new_best:
-                    print("Storing new best on local step {} (global step {}) "
+                    print("Storing new best on (local, global) step ({}, {}), "
+                          "constituting {} local experiences, "
                           "with validation loss of {}.".format(
-                              local_step, self.global_step, val_loss))
+                              local_step, self.global_step, updater.n_experiences, val_loss))
 
                     filename = self.exp_dir.path_for('best_of_stage_{}'.format(stage))
                     best_path = updater.save(tf.get_default_session(), filename)

@@ -94,7 +94,7 @@ elif x == 1:
         optimizer_spec="rmsprop",
         lr_schedule="1e-2",
         epsilon=0.2,
-        opt_steps_per_batch=100,
+        opt_steps_per_update=100,
         S=1,
         alg_class=ProximalPolicyEvaluation
     )
@@ -104,7 +104,7 @@ else:
         name="PolicyEvaluation",
         optimizer_spec='rmsprop',
         lr_schedule='1e-5',
-        opt_steps_per_batch=100,
+        opt_steps_per_update=100,
         alg_class=PolicyEvaluation
     )
 

@@ -56,7 +56,7 @@ config.update(Config(
     actor_config=Config(
         name="PPO",
         alg=PPO,
-        opt_steps_per_batch=10,
+        opt_steps_per_update=10,
         optimizer_spec="adam",
         gamma=0.9,
         lmbda=0.9,
@@ -67,7 +67,7 @@ config.update(Config(
         optimizer_spec='adam',
         max_line_search_steps=10,
         S=1,
-        opt_steps_per_batch=10,
+        opt_steps_per_update=10,
         max_cg_steps=10,
     ),
 
