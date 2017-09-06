@@ -17,7 +17,7 @@ def build_env():
     return CompositeEnv(external, internal)
 
 
-SIMPLE_ADDITION_CONFIG = Config(
+config = Config(
     dense_reward=False,
     build_env=build_env,
     T=30,

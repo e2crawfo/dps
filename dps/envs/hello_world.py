@@ -17,7 +17,7 @@ def build_env():
 
 
 order = [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1]
-HELLO_WORLD_CONFIG = Config(
+config = Config(
     build_env=build_env,
     curriculum=[
         dict(order=order[:2], T=2),

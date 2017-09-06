@@ -17,7 +17,7 @@ def build_env():
     return CompositeEnv(external, internal)
 
 
-POINTER_CONFIG = Config(
+config = Config(
     build_env=build_env,
     T=30,
     dense_reward=True,

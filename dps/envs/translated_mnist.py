@@ -25,7 +25,7 @@ def build_env():
     return CompositeEnv(external, internal)
 
 
-TRANSLATED_MNIST_CONFIG = Config(
+config = Config(
     build_env=build_env,
 
     T=10,

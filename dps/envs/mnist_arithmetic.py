@@ -20,7 +20,7 @@ def build_env():
     return CompositeEnv(external, internal)
 
 
-MNIST_ARITHMETIC_CONFIG = Config(
+config = Config(
     build_env=build_env,
 
     curriculum=[

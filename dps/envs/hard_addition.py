@@ -18,7 +18,7 @@ def build_env():
     return CompositeEnv(external, internal)
 
 
-HARD_ADDITION_CONFIG = Config(
+config = Config(
     build_env=build_env,
     T=40,
     curriculum=[

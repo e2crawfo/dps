@@ -17,7 +17,13 @@ def ACER(env):
 
         value_function = ValueFunction(1, actor, "critic")
 
-        agent = Agent("agent", cfg.build_controller, [actor, value_function])
+        if cfg.split:
+            actor_agent = Agent("actor_agent", cfg.build_controller, [actor])
+            critic_agent = Agent("critic_agent", cfg.build_controller, [value_function])
+            agents = [actor_agent, critic_agent]
+        else:
+            agent = Agent("agent", cfg.build_controller, [actor, value_function])
+            agents = [agent]
 
         action_values_from_returns = Retrace(
             actor, value_function, lmbda=cfg.lmbda,
@@ -53,7 +59,7 @@ def ACER(env):
         # Optimize the objective function using stochastic gradient descent with respect
         # to the variables stored inside `agent`.
         optimizer = StochasticGradientDescent(
-            agents=[agent], alg=cfg.optimizer_spec,
+            agents=agents, alg=cfg.optimizer_spec,
             lr_schedule=cfg.lr_schedule,
             opt_steps_per_update=cfg.opt_steps_per_update)
         context.set_optimizer(optimizer)
@@ -69,6 +75,8 @@ config = Config(
     optimizer_spec="adam",
     lr_schedule="1e-4",
     n_controller_units=64,
+
+    split=False,
 
     exploration_schedule="Poly(10.0, 10000, 0.1)",
     test_time_explore=0.1,
