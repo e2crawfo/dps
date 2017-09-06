@@ -1,12 +1,15 @@
 import time
 
+from dps.rl.algorithms.ppo import reinforce_config
 from dps.train import training_loop
-from dps.config import actor_configs, tasks
+from dps.envs import simple_addition
+from dps.config import DEFAULT_CONFIG
 
 
 def test_time_limit():
-    config = tasks['simple_addition']
-    config.update(actor_configs['reinforce'])
+    config = DEFAULT_CONFIG.copy()
+    config.update(simple_addition.config)
+    config.update(reinforce_config)
     config.update(max_time=2, max_steps=10000, seed=100)
 
     start = time.time()

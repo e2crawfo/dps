@@ -17,6 +17,7 @@ import subprocess
 import copy
 import datetime
 import psutil
+from itertools import repeat, cycle, islice
 
 import clify
 
@@ -734,6 +735,159 @@ def scheduled_value_summaries():
     return tf.get_collection('scheduled_value_summaries')
 
 
+class Schedule(object):
+    pass
+
+
+class MixtureSchedule(Schedule):
+    def __init__(self, components, reset_n_steps, shared_clock=False, p=None, name=None):
+        self.components = components
+        self.n_components = len(components)
+        self.reset_n_steps = reset_n_steps
+        self.shared_clock = shared_clock
+        self.p = p
+
+    def build(self, t):
+        t = t.copy()
+        n_periods = int(np.ceil(len(t) / self.reset_n_steps))
+        offsets = [0] * self.n_components
+        signal = []
+        for i in range(n_periods):
+            if len(signal) >= len(t):
+                break
+            selected = np.random.choice(range(self.n_components), p=self.p)
+            if self.shared_clock:
+                start = offsets[0]
+            else:
+                start = offsets[selected]
+
+            t_ = t[start:start+self.reset_n_steps]
+            _signal = self.components[selected].build(t_)
+            signal.extend(_signal)
+
+            if self.shared_clock:
+                offsets[0] += self.reset_n_steps
+            else:
+                offsets[selected] += self.reset_n_steps
+        signal = np.array(signal).reshape(-1)[:len(t)]
+        return signal
+
+
+class ChainSchedule(Schedule):
+    def __init__(self, components, component_n_steps, shared_clock=False):
+        self.components = components
+        self.n_components = len(components)
+        self.component_n_steps = component_n_steps
+        self.shared_clock = shared_clock
+
+    def build(self, t):
+        t = t.copy()
+        try:
+            int(self.component_n_steps)
+            n_steps = [self.component_n_steps] * self.n_components
+        except:
+            n_steps = self.component_n_steps
+
+        signal = []
+        offsets = [0] * self.n_components
+        for i in cycle(range(self.n_components)):
+            if len(signal) >= len(t):
+                break
+            if self.shared_clock:
+                start = offsets[0]
+            else:
+                start = offsets[i]
+
+            t_ = t[start: start+n_steps[i]]
+            _signal = self.components[i].build(t_).astype('f')
+            signal.extend(list(_signal))
+
+            if self.shared_clock:
+                offsets[0] += n_steps[i]
+            else:
+                offsets[i] += n_steps[i]
+
+        return np.array(signal).reshape(-1)[:len(t)]
+
+
+class RepeatSchedule(Schedule):
+    def __init__(self, schedule, period):
+        self.schedule = schedule
+        self.period = period
+
+    def build(self, t):
+        t = t.copy()
+        t_ = t[:self.period]
+        signal = cycle(self.schedule.build(t_))
+        signal = islice(signal, len(t))
+        signal = np.array(list(signal)).reshape(-1)
+        return signal
+
+
+class Exponential(Schedule):
+    def __init__(self, initial, decay_rate, decay_steps, end=0.0, staircase=False):
+        self.initial = initial
+        self.decay_steps = decay_steps
+        self.decay_rate = decay_rate
+        self.end = end
+        self.staircase = staircase
+
+    def build(self, t):
+        t = t.copy()
+        if self.staircase:
+            t //= self.decay_steps
+        else:
+            t /= self.decay_steps
+        return (self.initial - self.end) * (self.decay_rate ** t) + self.end
+
+
+class Exp(Exponential):
+    pass
+
+
+class Polynomial(Schedule):
+    def __init__(self, initial, decay_steps, power=1.0, end=0.0):
+        self.initial = initial
+        self.decay_steps = decay_steps
+        self.power = power
+        self.end = end
+
+    def build(self, t):
+        t = t.copy()
+        t = np.minimum(self.decay_steps, t)
+        return (self.initial - self.end) * ((1 - t / self.decay_steps) ** self.power) + self.end
+
+
+class Poly(Polynomial):
+    pass
+
+
+class Reciprocal(Schedule):
+    def __init__(self, initial, decay_steps, gamma=1.0, end=0.0, staircase=False, name=None):
+        self.initial = initial
+        self.decay_steps = decay_steps
+        self.gamma = gamma
+        self.end = end
+        self.staircase = staircase
+
+    def build(self, t):
+        t = t.copy()
+        if self.staircase:
+            t //= self.decay_steps
+        else:
+            t /= self.decay_steps
+        return ((self.initial - self.end) / (1 + t))**self.gamma + self.end
+
+
+class Constant(Schedule):
+    def __init__(self, value):
+        self.value = value
+
+    def build(self, t):
+        t = t.copy()
+        return np.array([self.value] * len(t))
+
+
 def build_scheduled_value(schedule, name=None, global_step=None, dtype=None):
     """
     Parameters
@@ -747,90 +901,21 @@ def build_scheduled_value(schedule, name=None, global_step=None, dtype=None):
     dtype: object convertible to tf.DType
         Will cast output value to this dtype.
 
-    Valid values for `kind`
-    -----------------------
-    constant value
-        schedule_value = value
-
-    exponential initial decay_steps decay_rate staircase(optional)
-        t = floor(global_step / decay_rate) if staircase else (global_step / decay_rate)
-        scheduled_value = learning_rate *
-                                decay_rate ^ (global_step / decay_steps)
-
-    polynomial initial decay_steps end power cycle(optional)
-        if cycle:
-            decay_steps = decay_steps * ceil(global_step / decay_steps)
-        else:
-            global_step = min(global_step, decay_steps)
-
-        scheduled_value = (learning_rate - end_learning_rate) *
-                                (1 - global_step / decay_steps) ^ (power) +
-                                end_learning_rate
-    inverse_time initial decay_steps decay_rate staircase(optional)
-        t = floor(global_step / decay_rate) if staircase else (global_step / decay_rate)
-        scheduled_value = learning_rate / (1 + decay_rate * t)
-
     """
     op_name = name + "_schedule" if name else None
     try:
-        schedule = "constant {}".format(float(schedule))
+        schedule = "Constant({})".format(float(schedule))
     except (TypeError, ValueError):
         pass
 
-    assert isinstance(schedule, str)
-    kind, *args = schedule.split()
-    kind = kind.lower()
-    args = deque(args)
+    if isinstance(schedule, str):
+        schedule = eval(schedule)
+    assert isinstance(schedule, Schedule)
+
+    signal = schedule.build(np.arange(dps.cfg.max_steps).astype('f'))
     global_step = tf.contrib.framework.get_or_create_global_step() if global_step is None else global_step
 
-    if kind == "constant":
-        scheduled_value = tf.constant(float(args[0]), dtype=dtype)
-    elif kind == "exponential" or kind == "exp":
-        initial = float(popleft(args))
-        decay_steps = int(popleft(args))
-        decay_rate = float(popleft(args))
-        staircase = _bool(popleft(args, False))
-
-        scheduled_value = tf.train.exponential_decay(
-            initial, global_step, decay_steps, decay_rate, staircase, name=op_name)
-
-    elif kind == "polynomial" or kind == "poly":
-        initial = float(popleft(args))
-        decay_steps = int(popleft(args))
-        end = float(popleft(args))
-        power = float(popleft(args, 1))
-        cycle = _bool(popleft(args, False))
-
-        scheduled_value = tf.train.polynomial_decay(
-            initial, global_step, decay_steps, end, power, cycle, name=op_name)
-    elif kind == "inverse_time":
-        initial = float(popleft(args))
-        decay_steps = int(popleft(args))
-        decay_rate = float(popleft(args))
-        staircase = _bool(popleft(args, False))
-
-        scheduled_value = tf.train.inverse_time_decay(
-            initial, global_step, decay_steps, decay_rate, staircase, name=op_name)
-
-    elif kind == "adj_inverse_time":
-        initial = float(popleft(args))
-        decay_steps = int(popleft(args))
-        decay_rate = float(popleft(args))
-        gamma = float(popleft(args))
-        staircase = _bool(popleft(args, False))
-
-        scheduled_value = adj_inverse_time_decay(
-            initial, global_step, decay_steps, decay_rate, gamma, staircase, name=op_name)
-    elif kind == "piecewise_constant" or kind == "pwc":
-        args = list(args)
-        assert len(args) % 2 == 1
-        boundaries = [np.array(i, dtype='int64') for i in args[1::2]]
-        values = [np.array(f, dtype='float32') for f in args[::2]]
-
-        scheduled_value = tf.train.piecewise_constant(global_step, boundaries, values)
-    else:
-        raise Exception(
-            "No known schedule with kind `{}` and args `{}`.".format(kind, args))
+    scheduled_value = tf.cast(tf.gather(signal, global_step), tf.float32)
 
     if dtype is not None:
         dtype = tf.as_dtype(np.dtype(dtype))

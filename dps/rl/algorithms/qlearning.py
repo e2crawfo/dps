@@ -78,18 +78,18 @@ class SmoothAgentUpdater(AgentUpdater):
 
 
 class PriorityFunc(object):
-    def __init__(self, value_function):
-        self.value_function = value_function
+    def __init__(self, policy_eval):
+        self.policy_eval = policy_eval
 
     def __call__(self, context):
-        priority_signal = context.get_signal('one_step_td_errors', self.value_function)
+        priority_signal = context.get_signal('td_error', self.policy_eval)
         priority_signal = tf.reduce_sum(tf.abs(priority_signal), axis=[0, -1])
         return priority_signal
 
 
 class MaxPriorityFunc(PriorityFunc):
     def __call__(self, context):
-        priority_signal = context.get_signal('one_step_td_errors', self.value_function)
+        priority_signal = context.get_signal('td_error', self.policy_eval)
         priority_signal = tf.reduce_max(tf.abs(priority_signal), axis=[0, -1])
         return priority_signal
 
@@ -104,7 +104,7 @@ def QLearning(env):
         agent = Agent("agent", cfg.build_controller, [policy])
 
         start, end = agent._head_offsets["actor"]
-        action_value_function = ActionValueFunction(env.n_actions, policy, "q")
+        action_value_function = ActionValueFunction(env.actions_dim, policy, "q")
         agent.add_head(action_value_function, start, end)
 
         target_agent = agent.deepcopy("target_agent")
@@ -128,14 +128,14 @@ def QLearning(env):
             name="RetraceQ"
         )
 
-        priority_func = MaxPriorityFunc(action_value_function)
+        AgentUpdater(cfg.steps_per_target_update, agent, target_agent)
+        policy_eval = PolicyEvaluation_StateAction(action_value_function, action_values_from_returns, weight=1.0)
+
+        priority_func = MaxPriorityFunc(policy_eval)
         replay_buffer = PrioritizedReplayBuffer(
             cfg.replay_size, cfg.replay_n_partitions,
             priority_func, cfg.alpha, cfg.beta_schedule, cfg.min_experiences)
         context.set_replay_buffer(cfg.update_batch_size, replay_buffer)
-
-        AgentUpdater(cfg.steps_per_target_update, agent, target_agent)
-        PolicyEvaluation_StateAction(action_value_function, action_values_from_returns, weight=1.0)
 
         optimizer = StochasticGradientDescent(
             agents=[agent], alg=cfg.optimizer_spec,
@@ -153,30 +153,34 @@ config = Config(
 
     build_policy=BuildEpsilonGreedyPolicy(),
     build_controller=BuildDuelingLstmController(),
-    update_batch_size=32,
     optimizer_spec="adam",
+
+    batch_size=1,
+    update_batch_size=32,
     opt_steps_per_update=1,
+    updates_per_sample=10,
 
     double=False,
     reverse_double=False,
 
     lr_schedule=1e-4,
-    exploration_schedule="poly 1 10000 0.2",
+    exploration_schedule="Poly(1.0, 5000, end=0.1)",
     test_time_explore=0.01,
 
     gamma=1.0,
-    lmbda=1.0,
+    lmbda=0.8,
 
     target_exploration_schedule=0.1,  # Epsilon for the target policy (the policy we are learning about).
 
-    steps_per_target_update=1000,
+    steps_per_target_update=100,
 
     min_experiences=1000,
-
     replay_size=20000,
     replay_n_partitions=100,
-    alpha=0.7,
-    beta_schedule=1.0,
+    alpha=1.0,
+    beta_schedule=0.0,
+    # alpha=0.7,
+    # beta_schedule=1.0,
 )
 
 
@@ -192,7 +196,7 @@ config = Config(
 #     steps_per_target_update=1000,
 #     init_steps=1000,
 #     lmbda=1.0,
-#     exploration_schedule="poly 1.0 10000 0.1",
+#     exploration_schedule="Poly(1.0, 10000, 0.1)",
 #     greedy_factor=10.0,
 #     beta_schedule=0.0,
 #     alpha=0.0,
@@ -230,7 +234,7 @@ config = Config(
 #
 #     # annealed linearly from 1 to 0.1 over first million frames,
 #     # fixed at 0.1 thereafter "
-#     exploration_schedule="polynomial 1.0 10000 0.1 1",
+#     exploration_schedule="Poly(1.0, 10000, 0.1)",
 #
 #     replay_max_size=1e6,
 #

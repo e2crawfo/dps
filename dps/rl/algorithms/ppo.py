@@ -43,7 +43,7 @@ config = Config(
     opt_steps_per_update=10,
     lr_schedule="1e-4",
     n_controller_units=64,
-    exploration_schedule='poly 10.0 10000 1e-6 1.0',
+    exploration_schedule='Poly(10.0, 10000, 1e-6)',
     test_time_explore=0.1,
     epsilon=0.2
 )

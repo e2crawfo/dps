@@ -1,5 +1,3 @@
-import tensorflow as tf
-
 from dps import cfg
 from dps.utils import Config
 from dps.rl import (
@@ -9,23 +7,7 @@ from dps.rl import (
     BuildSoftmaxPolicy, BuildEpsilonGreedyPolicy,
     BuildLstmController, PrioritizedReplayBuffer
 )
-
-
-class PriorityFunc(object):
-    def __init__(self, policy_eval):
-        self.policy_eval = policy_eval
-
-    def __call__(self, context):
-        priority_signal = context.get_signal('td_error', self.policy_eval)
-        priority_signal = tf.reduce_sum(tf.abs(priority_signal), axis=[0, -1])
-        return priority_signal
-
-
-class MaxPriorityFunc(PriorityFunc):
-    def __call__(self, context):
-        priority_signal = context.get_signal('td_error', self.policy_eval)
-        priority_signal = tf.reduce_max(tf.abs(priority_signal), axis=[0, -1])
-        return priority_signal
+from dps.rl.algorithms.qlearning import MaxPriorityFunc
 
 
 def ACER(env):
@@ -87,7 +69,8 @@ config = Config(
     optimizer_spec="adam",
     lr_schedule="1e-4",
     n_controller_units=64,
-    exploration_schedule="poly 10.0 10000 0.1",
+
+    exploration_schedule="Poly(10.0, 10000, 0.1)",
     test_time_explore=0.1,
 
     batch_size=1,

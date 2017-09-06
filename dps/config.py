@@ -43,6 +43,8 @@ DEFAULT_CONFIG = DpsConfig(
     standardize_advantage=True,
     reset_env=True,
 
+    n_controller_units=64,
+
     max_time=0,
 
     deadline='',

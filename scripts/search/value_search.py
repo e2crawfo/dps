@@ -47,7 +47,7 @@ config.update(Config(
     threshold=0.05,
 
     noise_schedule=None,
-    exploration_schedule='poly 10.0 100000 0.1',
+    exploration_schedule='Poly(10.0, 100000, 0.1)',
     batch_size=16,
     test_time_explore=1.0,
 
