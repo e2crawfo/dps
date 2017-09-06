@@ -72,9 +72,9 @@ config.update(Config(
     ),
 
     symbols=[
-        # ('A', lambda x: sum(x)),
+        ('A', lambda x: sum(x)),
         ('M', lambda x: np.product(x)),
-        # ('C', lambda x: len(x))
+        ('C', lambda x: len(x))
     ],
 ))
 
@@ -100,7 +100,6 @@ distributions = dict(
 )
 
 from ac_search import search
-hosts = [':']
-# hosts = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 17)]
+host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
 # hosts = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in [16, 18, 20, 21, 22, 24, 26, 27, 28, 29, 30, 32]]
-search(config, distributions, hosts=hosts)
+search(config, distributions, host_pool=host_pool)

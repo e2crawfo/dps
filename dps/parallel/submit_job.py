@@ -55,6 +55,9 @@ def submit_job(*args, **kwargs):
     session.run()
 
 
+HOST_POOL = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 32)]
+
+
 class ParallelSession(object):
     """ Run a Job in parallel using gnu-parallel.
 
@@ -89,8 +92,10 @@ class ParallelSession(object):
         If True, control script will be generated but not executed/submitted.
     parallel_exe: str
         Path to the `gnu-parallel` executable to use.
-    hosts: list of str
-        List of names of hosts to use to execute the job.
+    host_pool: list of str
+        A list of names of hosts to use to execute the job.
+    max_hosts: int
+        Maximum number of hosts to use.
     env_vars: dict (str -> str)
         Dictionary mapping environment variable names to values. These will be accessible
         by the submit script, and will also be sent to the worker nodes.
@@ -104,7 +109,7 @@ class ParallelSession(object):
             self, name, input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', ppn=12,
             walltime="1:00:00", cleanup_time="00:15:00", time_slack=0,
             add_date=True, dry_run=0, parallel_exe="$HOME/.local/bin/parallel",
-            hosts=None, env_vars=None, redirect=False, n_retries=10):
+            host_pool=None, max_hosts=1, env_vars=None, redirect=False, n_retries=10):
         input_zip = Path(input_zip)
         input_zip_abs = input_zip.resolve()
         input_zip_base = input_zip.name
@@ -156,8 +161,23 @@ class ParallelSession(object):
             print("All jobs are finished! Exiting.")
             return
 
-        if not hosts:
-            hosts = [":"]  # Only localhost
+        # Try hosts, weed out the ones that we can't connect to, trying to get a total of `max_hosts` working nodes.
+        host_pool = host_pool or HOST_POOL
+        hosts = []
+        for host in host_pool:
+            print("Testing connection to host {}...".format(host))
+            try:
+                self.execute_command("ssh -oPasswordAuthentication=no -T {} echo Connected to \$HOSTNAME".format(host))
+            except subprocess.CalledProcessError:
+                pass
+            else:
+                hosts.append(host)
+            if len(hosts) >= max_hosts:
+                break
+        del host
+        if len(hosts) < max_hosts:
+            print("{} hosts were requested, "
+                  "but only {} usable hosts could be found.".format(max_hosts, len(hosts)))
 
         n_nodes = len(hosts)
         n_procs = ppn * n_nodes
@@ -170,6 +190,10 @@ class ParallelSession(object):
         else:
             n_steps = int(np.ceil(n_jobs_to_run / n_procs))
 
+        with (Path(job_directory) / 'nodefile.txt').open('w') as f:
+            f.write('\n'.join(hosts))
+        node_file = " --sshloginfile nodefile.txt "
+
         execution_time = int((walltime - cleanup_time).total_seconds())
         abs_seconds_per_step = int(np.floor(execution_time / n_steps))
         seconds_per_step = abs_seconds_per_step - time_slack
@@ -178,18 +202,19 @@ class ParallelSession(object):
         assert abs_seconds_per_step > 0
         assert seconds_per_step > 0
 
-        with (Path(job_directory) / 'nodefile.txt').open('w') as f:
-            f.write('\n'.join(hosts))
-        node_file = " --sshloginfile nodefile.txt "
-
         self.__dict__.update(locals())
 
         # Create convenience `latest` symlinks
         make_symlink(job_directory, os.path.join(scratch, 'latest'))
 
-    def on_all_execute(self, parallel_command, arguments=False):
+    def on_all_execute(self, parallel_command, timeout=10, retries=5):
         """ Execute a command once on each host. """
-        command = '{parallel_exe} --no-notice {node_file} --nonall {env_vars} -k "' + parallel_command + '"'
+        timeout = "--timeout {}".format(timeout) if timeout is not None else ""
+        retries = "--retries {}".format(retries) if retries is not None else ""
+        command = (
+            '{parallel_exe} ' + timeout + ' ' + retries +
+            ' --no-notice {node_file} --nonall {env_vars} -k "' + parallel_command + '"'
+        )
         self.execute_command(command)
 
     def stage(self):
@@ -241,7 +266,7 @@ class ParallelSession(object):
         print(datetime.datetime.now())
 
         command = "cd {local_scratch} && echo Zipping results on node \\$(hostname). && zip -rq results {archive_root}"
-        self.on_all_execute(command, arguments=False)
+        self.on_all_execute(command)
 
         self.fetch()
 
@@ -290,21 +315,21 @@ class ParallelSession(object):
             print("Starting job at {}".format(datetime.datetime.now()))
             print("Creating local scratch directories...")
 
-            self.on_all_execute("mkdir -p {local_scratch}", arguments=False)
+            self.on_all_execute("mkdir -p {local_scratch}")
 
             print("Printing local scratch directories...")
 
             command = (
                 "cd {local_scratch} && "
                 "echo Local scratch on host \\$(hostname) is {local_scratch}, working directory is \\$(pwd).")
-            self.on_all_execute(command, arguments=False)
+            self.on_all_execute(command)
 
             print("Staging input archive...")
             self.stage()
 
             print("Unzipping...")
             command = "cd {local_scratch} && unzip -ouq {input_zip_base} && echo \\$(hostname)"
-            self.on_all_execute(command, arguments=False)
+            self.on_all_execute(command)
 
             print("We have {walltime_seconds} seconds to complete {n_jobs_to_run} "
                   "sub-jobs (grouped into {n_steps} steps) using {n_procs} processors.".format(**self.__dict__))
