@@ -31,6 +31,9 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
             self.scheduled_value_summaries_op = tf.summary.merge(scheduled_value_summaries())
             global_step = tf.contrib.framework.get_or_create_global_step()
             self.inc_global_step_op = tf.assign_add(global_step, 1)
+            global_step_input = tf.placeholder(tf.int64, ())
+            assign_global_step = tf.assign(global_step, global_step_input)
+            tf.get_default_session().run(assign_global_step, feed_dict={global_step_input: 0})
 
     @abc.abstractmethod
     def _build_graph(self):

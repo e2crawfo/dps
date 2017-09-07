@@ -293,14 +293,6 @@ class TrainingLoop(object):
                         update_summaries + train_summaries, updater.n_experiences)
                     self.val_writer.add_summary(val_summaries, updater.n_experiences)
 
-                if display:
-                    s = "~" * 40
-                    s += "\nStep(g: {}, l: {}): ".format(self.global_step, local_step)
-                    for k, v in self.latest.items():
-                        s += '\n{}: {}'.format(k, v)
-                    s += "\n" + "~" * 40
-                    print(s)
-
                 new_best, stop = early_stop.check(val_loss, local_step, **record)
 
                 if new_best:
@@ -331,6 +323,14 @@ class TrainingLoop(object):
                     n_steps=local_step,
                     epoch=updater.env.completion
                 )
+
+                if display:
+                    s = "~" * 40
+                    s += "\nStep(g: {}, l: {}): ".format(self.global_step, local_step)
+                    for k, v in self.latest.items():
+                        s += '\n{}: {}'.format(k, v)
+                    s += "\n" + "~" * 40
+                    print(s)
 
             if render and cfg.render_hook is not None:
                 cfg.render_hook(updater)

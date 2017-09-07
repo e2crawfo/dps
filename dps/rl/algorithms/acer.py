@@ -78,7 +78,7 @@ config = Config(
 
     split=False,
 
-    exploration_schedule="Poly(10.0, 10000, 0.1)",
+    exploration_schedule="Poly(10.0, 10000, end=0.1)",
     test_time_explore=0.1,
 
     batch_size=1,

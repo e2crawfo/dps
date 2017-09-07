@@ -4,15 +4,16 @@ from dps.utils import Config
 from dps.envs import grid_arithmetic
 from dps.rl.algorithms import acer
 from dps.rl.policy import BuildSoftmaxPolicy, BuildLstmController
+from dps.config import DEFAULT_CONFIG
 
 
-config = Config(
+config = DEFAULT_CONFIG.copy(
     name="AcerSearch",
 
     n_train=10000,
     n_val=500,
     max_steps=10000,
-    display_step=1000,
+    display_step=100,
     eval_step=10,
     patience=np.inf,
     power_through=False,
@@ -36,7 +37,11 @@ alg_config = Config(
     build_controller=BuildLstmController(),
     optimizer_spec="adam",
 
-    exploration_schedule="Poly(10.0, 10000, 0.1)",
+    exploration_schedule=(
+        "MixtureSchedule("
+        "    [Poly(10, 10000, end=5.0), Poly(10, 10000, end=1.0), Poly(10, 10000, end=0.1)],"
+        "    100, shared_clock=False)"
+    ),
     test_time_explore=0.1,
 
     batch_size=1,
@@ -44,7 +49,7 @@ alg_config = Config(
 
     policy_weight=1.0,
 
-    min_experiences=1000,
+    min_experiences=500,
     replay_size=10000,
     replay_n_partitions=100,
     alpha=0.0,
@@ -91,15 +96,14 @@ distributions = dict(
     update_batch_size=[1, 8, 32],
     updates_per_sample=[1, 8, 32],
     epsilon=[0.1, 0.2, 0.3],
-    value_weight=2**np.arange(4),
+    value_weight=list(2**np.arange(4)),
     entropy_weight=[0.0] + ['Poly({}, 10000, end=0.0)'.format(i) for i in 0.5**np.arange(1, 5)],
-    lmbda=list(np.linspace(0.8, 1.0, 10)),
-    gamma=list(np.linspace(0.9, 1.0, 10)),
+    lmbda=list(np.linspace(0.0, 1.0, 11).astype('f')),
+    gamma=list(np.linspace(0.9, 1.0, 11).astype('f')),
     c=[1, 2, 4, 8],
 )
 
 
 from dps.parallel.hyper import build_and_submit_search
-hosts = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 17)]
-# hosts = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in [16, 18, 20, 21, 22, 24, 26, 27, 28, 29, 30, 32]]
-build_and_submit_search(config, distributions, hosts=hosts)
+host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
+build_and_submit_search(config, distributions, host_pool=host_pool)

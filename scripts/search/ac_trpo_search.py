@@ -76,10 +76,10 @@ distributions = dict(
     n_controller_units=[32, 64, 128],
     batch_size=[16, 32, 64, 128],
     exploration_schedule=[
-        'Poly(1.0, 100000, 0.01)',
-        'Poly(1.0, 100000, 0.1)',
-        'Poly(10.0, 100000, 0.01)',
-        'Poly(10.0, 100000, 0.1)',
+        'Poly(1.0, 100000, end=0.01)',
+        'Poly(1.0, 100000, end=0.1)',
+        'Poly(10.0, 100000, end=0.01)',
+        'Poly(10.0, 100000, end=0.1)',
     ],
     test_time_explore=[1.0, 0.1, -1],
     critic_config=dict(

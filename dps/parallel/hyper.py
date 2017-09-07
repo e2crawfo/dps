@@ -199,7 +199,7 @@ class RunTrainingLoop(object):
         return val
 
 
-def build_search(path, name, n, repeats, distributions, _zip, config=None, use_time=0):
+def build_search(path, name, n, repeats, distributions, _zip, config=None, use_time=0, do_local_test=True):
     """ Create a Job representing a hyper-parameter search.
 
     Parameters
@@ -220,6 +220,9 @@ def build_search(path, name, n, repeats, distributions, _zip, config=None, use_t
         The base configuration.
     use_time: bool
         Whether to add time to name of experiment directory.
+    do_local_test: bool
+        If True, run a short test using one of the sampled
+        configs on the local machine.
 
     """
     with config:
@@ -245,6 +248,11 @@ def build_search(path, name, n, repeats, distributions, _zip, config=None, use_t
 
     new_configs = sample_configs(n, repeats, config, distributions)
     new_configs = [Config(c).flatten() for c in new_configs]
+
+    if do_local_test:
+        test_config = new_configs[0].copy()
+        test_config['max_steps'] = 100
+        RunTrainingLoop(config)(test_config)
 
     job.map(RunTrainingLoop(config), new_configs)
 
@@ -303,6 +311,7 @@ def build_and_submit_search(config, distributions, host_pool=None):
         parser.add_argument('walltime')
         parser.add_argument('--max-hosts', type=int, default=1)
         parser.add_argument('--ppn', type=int, default=2)
+        parser.add_argument('--do-local-test', action="store_true")
         args = parser.parse_args()
         walltime = args.walltime
         size = args.size
@@ -335,7 +344,7 @@ def build_and_submit_search(config, distributions, host_pool=None):
 
         job, archive_path = build_search(
             '/tmp/dps/search', config.name, n_param_settings, n_repeats,
-            distributions, True, config, use_time=1)
+            distributions, True, config, use_time=1, do_local_test=args.do_local_test)
 
         submit_job(
             config.name, archive_path, 'map', '/tmp/dps/search/execution/',

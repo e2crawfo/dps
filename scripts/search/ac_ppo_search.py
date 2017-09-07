@@ -81,10 +81,10 @@ distributions = dict(
     classification_bonus=list(np.linspace(0.0, 0.1, 10)),
     batch_size=[16, 32, 64, 128],
     exploration_schedule=[
-        'Poly(1.0, 100000, 0.01)',
-        'Poly(1.0, 100000, 0.1)',
-        'Poly(10.0, 100000, 0.01)',
-        'Poly(10.0, 100000, 0.1)',
+        'Poly(1.0, 100000, end=0.01)',
+        'Poly(1.0, 100000, end=0.1)',
+        'Poly(10.0, 100000, end=0.01)',
+        'Poly(10.0, 100000, end=0.1)',
     ],
     test_time_explore=[1.0, 0.1, -1],
     critic_config=dict(
@@ -99,7 +99,7 @@ distributions = dict(
         lmbda=list(np.linspace(0.8, 1.0, 10)),
         gamma=list(np.linspace(0.9, 1.0, 10)),
         entropy_schedule=[0.0] + list(0.5**np.arange(1, 5)) +
-                         ['Poly({}, 100000, 1e-6)'.format(n) for n in 0.5**np.arange(1, 5)],
+                         ['Poly({}, 100000, end=1e-6)'.format(n) for n in 0.5**np.arange(1, 5)],
         lr_schedule=['1e-5', '1e-4', '1e-3'],
         epsilon=[0.1, 0.2, 0.3]
     ),

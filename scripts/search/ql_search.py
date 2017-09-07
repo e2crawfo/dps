@@ -78,10 +78,10 @@ config.update(Config(
 distributions = dict(
     n_controller_units=[32, 64, 128],
     exploration_schedule=[
-        'Poly(1.0, 100000, 0.01)',
-        'Poly(1.0, 100000, 0.1)',
-        'Poly(10.0, 100000, 0.01)',
-        'Poly(10.0, 100000, 0.1)',
+        'Poly(1.0, 100000, end=0.01)',
+        'Poly(1.0, 100000, end=0.1)',
+        'Poly(10.0, 100000, end=0.01)',
+        'Poly(10.0, 100000, end=0.1)',
     ],
     actor_config=dict(
         gamma=list(np.linspace(0.9, 1.0, 10)),
@@ -89,7 +89,7 @@ distributions = dict(
         update_batch_size=[4, 8, 16, 32, 64],
         lr_schedule=['1e-5', '1e-4', '1e-3'],
         alpha=list(np.linspace(0.5, 1.0, 10)),
-        beta_schedule=["Poly({}, 100000, 1.0)".format(i) for i in [0.3, 0.5, 0.7, 0.9, 0.1]],
+        beta_schedule=["Poly({}, 100000, end=1.0)".format(i) for i in [0.3, 0.5, 0.7, 0.9, 0.1]],
     ),
 )
 

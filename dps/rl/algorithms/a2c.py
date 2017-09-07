@@ -63,7 +63,7 @@ config = Config(
     optimizer_spec="adam",
     opt_steps_per_update=10,
     lr_schedule="1e-4",
-    exploration_schedule='Poly(10.0, 10000, 1e-6)',
+    exploration_schedule='Poly(10.0, 10000, end=0.1)',
     test_time_explore=0.1,
     policy_weight=1.0,
     value_weight=10.0,
