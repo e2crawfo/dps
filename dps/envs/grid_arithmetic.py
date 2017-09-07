@@ -8,6 +8,7 @@ from dps.environment import (
 from dps.vision import MnistPretrained, ClassifierFunc, LeNet, MNIST_CONFIG
 from dps.vision.dataset import char_to_idx, load_emnist
 from dps.utils import DataContainer, Param, Config
+from dps.rl.policy import Softmax, Normal, ProductDist, Policy, DiscretePolicy
 
 
 def build_env():
@@ -30,25 +31,30 @@ def build_env():
     return CompositeEnv(external, internal)
 
 
-def grid_arithmetic_action_selection(env):
+def build_policy(env, **kwargs):
     if cfg.ablation == 'bad_wiring':
-        return ProductDist(Softmax(11), Normal(), Normal(), Normal())
+        action_selection = ProductDist(Softmax(11), Normal(), Normal(), Normal())
     elif cfg.ablation == 'no_classifiers':
-        return ProductDist(Softmax(9), Softmax(10, one_hot=0), Softmax(10, one_hot=0), Softmax(10, one_hot=0))
+        action_selection = ProductDist(Softmax(9), Softmax(10, one_hot=0), Softmax(10, one_hot=0), Softmax(10, one_hot=0))
     elif cfg.ablation == 'no_ops':
-        return ProductDist(Softmax(11), Normal(), Normal(), Normal())
+        action_selection = ProductDist(Softmax(11), Normal(), Normal(), Normal())
     elif cfg.ablation == 'no_modules':
-        return ProductDist(Softmax(11), Normal(), Normal(), Normal())
+        action_selection = ProductDist(Softmax(11), Normal(), Normal(), Normal())
     else:
-        return Softmax(env.actions_dim)
+        action_selection = Softmax(env.actions_dim)
+        return DiscretePolicy(action_selection, env.obs_shape, **kwargs)
+    return Policy(action_selection, env.obs_shape, **kwargs)
 
 
 GRID_ARITHMETIC_CONFIG = Config(
     build_env=build_env,
+    build_policy=build_policy,
     symbols=[
         ('A', lambda x: sum(x)),
         ('M', lambda x: np.product(x)),
-        ('C', lambda x: len(x))
+        ('C', lambda x: len(x)),
+        ('X', lambda x: max(x)),
+        ('N', lambda x: min(x))
     ],
 
     curriculum=[
@@ -62,7 +68,7 @@ GRID_ARITHMETIC_CONFIG = Config(
     threshold=0.04,
 
     dense_reward=True,
-    reward_window=0.4,
+    reward_window=0.5,
 
     ablation='',  # anything other than "bad_wiring", "no_classifiers", "no_ops", "no_modules" will use the default.
 
@@ -92,18 +98,23 @@ class GridArithmeticDataset(RegressionDataset):
     n_examples = Param()
     op_loc = Param()
     force_2d = Param()
+    loss_type = Param("2-norm")
+    largest_digit = Param(10)
+    downsample_factor = Param(1)
 
     def __init__(self, **kwargs):
         assert 1 <= self.base <= 10
         assert self.min_digits <= self.max_digits
         assert np.product(self.shape) >= self.max_digits + 1
 
+        self.s = s = int(28 / self.downsample_factor)
+
         if self.mnist:
             functions = {char_to_idx(s): f for s, f in self.symbols}
 
             emnist_x, emnist_y, symbol_map = load_emnist(
-                list(functions.keys()), balance=True)
-            emnist_x = emnist_x.reshape(-1, 28, 28)
+                list(functions.keys()), balance=True, downsample_factor=self.downsample_factor)
+            emnist_x = emnist_x.reshape(-1, s, s)
             emnist_x = np.uint8(255*np.minimum(emnist_x, 1))
             emnist_y = np.squeeze(emnist_y, 1)
 
@@ -111,13 +122,14 @@ class GridArithmeticDataset(RegressionDataset):
 
             symbol_reps = DataContainer(emnist_x, emnist_y)
 
-            mnist_x, mnist_y, symbol_map = load_emnist(list(range(self.base)), balance=True)
-            mnist_x = mnist_x.reshape(-1, 28, 28)
+            mnist_x, mnist_y, symbol_map = load_emnist(
+                list(range(self.base)), balance=True, downsample_factor=self.downsample_factor)
+            mnist_x = mnist_x.reshape(-1, s, s)
             mnist_x = np.uint8(255*np.minimum(mnist_x, 1))
             mnist_y = np.squeeze(mnist_y, 1)
 
             digit_reps = DataContainer(mnist_x, mnist_y)
-            blank_element = np.zeros((28, 28))
+            blank_element = np.zeros((s, s))
         else:
             sorted_symbols = sorted(self.symbols, key=lambda x: x[0])
             functions = {i: f for i, (_, f) in enumerate(sorted_symbols)}
@@ -131,14 +143,16 @@ class GridArithmeticDataset(RegressionDataset):
         x, y = self.make_dataset(
             self.shape, self.min_digits, self.max_digits, self.base,
             blank_element, symbol_reps, digit_reps,
-            functions, self.n_examples, self.op_loc, force_2d=self.force_2d)
+            functions, self.n_examples, self.op_loc, force_2d=self.force_2d,
+            one_hot_output=self.loss_type == "xent", largest_digit=self.largest_digit)
 
         super(GridArithmeticDataset, self).__init__(x, y)
 
     @staticmethod
     def make_dataset(
             shape, min_digits, max_digits, base, blank_element,
-            symbol_reps, digit_reps, functions, n_examples, op_loc, force_2d):
+            symbol_reps, digit_reps, functions, n_examples, op_loc, force_2d,
+            one_hot_output, largest_digit):
 
         if n_examples == 0:
             return (
@@ -172,9 +186,9 @@ class GridArithmeticDataset(RegressionDataset):
                 env = np.tile(reshaped_blank_element, shape+(1,)*len(element_shape))
                 locs = list(zip(*np.unravel_index(indices, shape)))
 
-            x, y = symbol_reps.get_random()
-            func = functions[int(y)]
-            env[locs[0]] = x
+            symbol_x, symbol_y = symbol_reps.get_random()
+            func = functions[int(symbol_y)]
+            env[locs[0]] = symbol_x
 
             ys = []
 
@@ -184,10 +198,30 @@ class GridArithmeticDataset(RegressionDataset):
                 env[loc] = x
 
             new_X.append(env)
-            new_Y.append(func(ys))
+            y = func(ys)
+
+            if one_hot_output:
+                _y = np.zeros(largest_digit+2)
+                if y > largest_digit:
+                    _y[-1] = 1.0
+                else:
+                    _y[int(y)] = 1.0
+                y = _y
+
+            new_Y.append(y)
 
         new_X = np.array(new_X).astype('f')
-        new_Y = np.array(new_Y).astype('i').reshape(-1, 1)
+
+        if one_hot_output:
+            new_Y = np.array(new_Y).astype('f')
+        else:
+            new_Y = np.array(new_Y).astype('i').reshape(-1, 1)
+
+        from dps.vision.dataset import image_to_string
+        for i in range(10):
+            print(image_to_string(new_X[i]))
+            print(new_Y[i])
+
         return new_X, new_Y
 
 
@@ -198,7 +232,7 @@ class GridArithmetic(InternalEnv):
 
     @property
     def element_shape(self):
-        return (28, 28) if self.mnist else (1, 1)
+        return (self.s, self.s) if self.mnist else (1, 1)
 
     @property
     def input_shape(self):
@@ -215,6 +249,7 @@ class GridArithmetic(InternalEnv):
     force_2d = Param()
     classification_bonus = Param(0.0)
     order_bonus = Param(0.0)
+    downsample_factor = Param(1)
 
     def __init__(self, **kwargs):
         self.init_classifiers()
@@ -236,28 +271,28 @@ class GridArithmetic(InternalEnv):
             build_classifier = cfg.build_classifier
             classifier_str = cfg.classifier_str
 
-            digit_config = cfg.mnist_config.copy(symbol=list(range(self.base)))
+            digit_config = cfg.mnist_config.copy(symbol=list(range(self.base)), downsample_factor=self.downsample_factor)
 
-            name = '{}_symbols={}.chk'.format(
-                classifier_str, '_'.join(str(s) for s in digit_config.symbols))
+            name = '{}_symbols={}_df={}.chk'.format(
+                classifier_str, '_'.join(str(s) for s in digit_config.symbols), self.downsample_factor)
             digit_pretrained = MnistPretrained(
                 None, build_classifier, name=name,
                 model_dir='/tmp/dps/mnist_pretrained/',
-                var_scope_name='digit_classifier', mnist_config=digit_config)
-            self.build_digit_classifier = ClassifierFunc(
-                digit_pretrained, self.base + 1)
+                var_scope_name='digit_classifier', mnist_config=digit_config,
+                downsample_factor=self.downsample_factor)
+            self.build_digit_classifier = ClassifierFunc(digit_pretrained, self.base + 1)
 
-            op_config = cfg.mnist_config.copy(symbols=[10, 12, 22])
+            op_config = cfg.mnist_config.copy(symbols=[10, 12, 22], downsample_factor=self.downsample_factor)
 
-            name = '{}_symbols={}.chk'.format(
-                classifier_str, '_'.join(str(s) for s in op_config.symbols))
+            name = '{}_symbols={}_df={}.chk'.format(
+                classifier_str, '_'.join(str(s) for s in op_config.symbols), self.downsample_factor)
 
             op_pretrained = MnistPretrained(
                 None, build_classifier, name=name,
                 model_dir='/tmp/dps/mnist_pretrained/',
-                var_scope_name='op_classifier', mnist_config=op_config)
-            self.build_op_classifier = ClassifierFunc(
-                op_pretrained, len(op_config.symbols) + 1)
+                var_scope_name='op_classifier', mnist_config=op_config,
+                downsample_factor=self.downsample_factor)
+            self.build_op_classifier = ClassifierFunc(op_pretrained, len(op_config.symbols) + 1)
 
         else:
 

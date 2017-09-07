@@ -38,7 +38,8 @@ class RLObject(object, metaclass=abc.ABCMeta):
         # We can think of them as "leaves" in a tree where the nodes are signals,
         # edges are ops. They must not depend on signals built by other RLObject
         # instances. Not all leaves have to be created in "build_core_signals",
-        # but doing so can can ensure the signal is not built in a weird context.
+        # but doing so can can ensure the signal is not built in a weird context
+        # (e.g. tf.while or tf.cond) which can cause problems.
         pass
 
     def generate_signal(self, signal_key, context):
@@ -317,6 +318,7 @@ class RLContext(Parameterized):
                     rollouts, weights = self.replay_buffer.get_batch(self.update_batch_size)
 
                 if rollouts is None:
+                    # Most common reason for `rollouts` being None is there not being enough experiences in replay memory.
                     break
 
                 feed_dict = self.make_feed_dict(rollouts, weights)

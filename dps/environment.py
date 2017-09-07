@@ -213,7 +213,9 @@ class RegressionDataset(Parameterized):
 class RegressionEnv(Env):
     metadata = {"render.modes": ["human", "ansi"]}
 
-    def __init__(self, train, val):
+    loss_type = Param("2-norm")
+
+    def __init__(self, train, val, **kwargs):
         self.train, self.val = train, val
         self.datasets = {
             'train': self.train,
@@ -241,12 +243,22 @@ class RegressionEnv(Env):
         return self.datasets[mode].next_batch(batch_size=batch_size, advance=advance)
 
     def build_loss(self, actions, targets):
-        return tf.reduce_mean(tf.abs(actions - targets), axis=-1, keep_dims=True)
-        # return tf.reduce_mean((actions - targets)**2, axis=-1, keep_dims=True)
+        if self.loss_type == "2-norm":
+            return tf.reduce_mean((actions - targets)**2, axis=-1, keep_dims=True)
+        elif self.loss_type == "1-norm":
+            return tf.reduce_mean(tf.abs(actions - targets), axis=-1, keep_dims=True)
+        elif self.loss_type == "xent":
+            return tf.nn.softmax_cross_entropy_with_logits(labels=targets, logits=actions)
 
     def build_reward(self, actions, targets):
-        abs_error = tf.reduce_sum(tf.abs(actions - targets), axis=-1, keep_dims=True)
-        return -tf.cast(abs_error > cfg.reward_window, tf.float32)
+        if self.loss_type == "xent":
+            action_argmax = tf.argmax(actions, axis=-1)
+            targets_argmax = tf.argmax(targets, axis=-1)
+            reward = tf.cast(tf.equal(action_argmax, targets_argmax), tf.float32) - 1
+            return tf.reshape(reward, (-1, 1))
+        else:
+            abs_error = tf.reduce_sum(tf.abs(actions - targets), axis=-1, keep_dims=True)
+            return -tf.cast(abs_error > cfg.reward_window, tf.float32)
 
     @property
     def completion(self):
@@ -373,7 +385,6 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
 
     @abc.abstractmethod
     def build_step(self, t, registers, action):
-        # return reward, new_registers
         raise Exception("NotImplemented")
 
     def get_sampler(self, policy):

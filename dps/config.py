@@ -45,6 +45,8 @@ DEFAULT_CONFIG = DpsConfig(
 
     n_controller_units=64,
 
+    stopping_function=None,
+
     max_time=0,
 
     deadline='',

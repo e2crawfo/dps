@@ -2,13 +2,13 @@ import numpy as np
 
 from dps.utils import Config
 from dps.envs import grid_arithmetic
-from dps.rl.algorithms import acer
+from dps.rl.algorithms import a2c
 from dps.rl.policy import BuildSoftmaxPolicy, BuildLstmController
 from dps.config import DEFAULT_CONFIG
 
 
 config = DEFAULT_CONFIG.copy(
-    name="AcerSearch",
+    name="A2CSearch",
 
     n_train=10000,
     n_val=500,
@@ -32,7 +32,7 @@ config = DEFAULT_CONFIG.copy(
 
 
 alg_config = Config(
-    get_updater=acer.ACER,
+    get_updater=a2c.A2C,
     build_policy=BuildSoftmaxPolicy(),
     build_controller=BuildLstmController(),
     optimizer_spec="adam",
@@ -44,15 +44,7 @@ alg_config = Config(
     ).format(config.max_steps),
     test_time_explore=0.1,
 
-    batch_size=1,
-
     policy_weight=1.0,
-
-    min_experiences=500,
-    replay_size=10000,
-    replay_n_partitions=100,
-    alpha=0.0,
-    beta_schedule=0.0,
 )
 
 
@@ -75,6 +67,8 @@ env_config = Config(
     threshold=0.04,
     classification_bonus=0.0,
 
+    updates_per_sample=1,
+
     dense_reward=True,
     reward_window=0.4,
 
@@ -92,18 +86,16 @@ distributions = dict(
     lr_schedule=['Poly({}, {}, end=1e-6)'.format(i, config.max_steps) for i in [1e-3, 1e-4, 1e-5]],
     n_controller_units=[32, 64, 128],
     split=[True, False],
-    update_batch_size=[1, 8, 32],
-    updates_per_sample=[1, 8, 32],
-    opt_steps_per_update=[1, 2, 4, 8],
+    batch_size=[8, 16, 32, 64],
+    opt_steps_per_update=[1, 2, 4, 8, 16],
     epsilon=[0.0, 0.1, 0.2, 0.3],
     value_weight=[1.0, 2.0, 4.0, 8.0],
     entropy_weight=[0.0] + ['Poly({}, {}, end=0.0)'.format(i, config.max_steps) for i in 0.5**np.arange(1, 5)],
     lmbda=list(np.linspace(0.0, 1.0, 11).astype('f')),
     gamma=list(np.linspace(0.9, 1.0, 11).astype('f')),
-    c=[1, 2, 4, 8],
 )
 
 
 from dps.parallel.hyper import build_and_submit_search
-host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 17)]
+host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(17, 33)]
 build_and_submit_search(config, distributions, host_pool=host_pool)

@@ -29,6 +29,9 @@ MNIST_CONFIG = DpsConfig(
     symbols=list(range(10)),
     include_blank=True,
     log_name='mnist_pretrained',
+    downsample_factor=1,
+    min_digits=1,
+    max_digits=1,
 )
 
 
@@ -42,10 +45,9 @@ def train_mnist(build_model, var_scope, path=None):
     with open(exp_dir.path_for('cfg'), 'w') as f:
         f.write(str(cfg))
 
-    train_dataset = TranslatedMnistDataset(
-        n_examples=cfg.n_train, symbols=cfg.symbols, include_blank=cfg.include_blank)
-    val_dataset = TranslatedMnistDataset(
-        n_examples=cfg.n_val, symbols=cfg.symbols, include_blank=cfg.include_blank)
+    W = int(28 / cfg.downsample_factor)
+    train_dataset = TranslatedMnistDataset(n_examples=cfg.n_train, W=W)
+    val_dataset = TranslatedMnistDataset(n_examples=cfg.n_val, W=W)
     obs_shape = train_dataset.obs_shape
 
     output_size = len(cfg.symbols) + int(cfg.include_blank)

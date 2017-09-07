@@ -293,7 +293,11 @@ class TrainingLoop(object):
                         update_summaries + train_summaries, updater.n_experiences)
                     self.val_writer.add_summary(val_summaries, updater.n_experiences)
 
-                new_best, stop = early_stop.check(val_loss, local_step, **record)
+                if cfg.stopping_function is not None:
+                    stopping_criteria = cfg.stopping_function(val_record)
+                else:
+                    stopping_criteria = val_loss
+                new_best, stop = early_stop.check(stopping_criteria, local_step, **record)
 
                 if new_best:
                     print("Storing new best on (local, global) step ({}, {}), "

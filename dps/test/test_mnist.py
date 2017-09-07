@@ -11,7 +11,7 @@ from dps.vision import (
 from dps.vision.attention import DRAW_attention_2D
 
 
-N = 14
+N = 7
 
 
 def _eval_model(sess, inference, x_ph, symbols):
@@ -43,7 +43,8 @@ def build_model(inp, output_size, is_training):
             fovea_y=tf.zeros((batch_size, 1)),
             delta=tf.ones((batch_size, 1)),
             std=tf.ones((batch_size, 1)),
-            N=N)
+            N=N
+        )
     glimpse = tf.reshape(glimpse, (-1, N**2))
     logits = MLP([100, 100], activation_fn=tf.nn.sigmoid)(glimpse, output_size)
     return tf.nn.softmax(logits)
@@ -70,7 +71,10 @@ def test_mnist_load_or_train():
             max_steps=10000000,
             symbols=symbols,
             eval_step=100,
-            include_blank=True)
+            include_blank=True,
+            W=14,
+            downsample_factor=2,
+        )
 
         checkpoint_dir = make_checkpoint_dir(config)
         output_size = n_symbols + 1
@@ -80,7 +84,7 @@ def test_mnist_load_or_train():
             with g.as_default():
 
                 with tf.variable_scope('mnist') as var_scope:
-                    x_ph = tf.placeholder(tf.float32, (None, 28, 28))
+                    x_ph = tf.placeholder(tf.float32, (None, config.W, config.W))
                     inference = build_model(x_ph, output_size, is_training=False)
 
                 sess = tf.Session()
@@ -89,14 +93,15 @@ def test_mnist_load_or_train():
                     str(checkpoint_dir / 'model.chk'), train_config=config)
                 assert not loaded
 
-                _eval_model(sess, inference, x_ph, symbols)
+                with config:
+                    _eval_model(sess, inference, x_ph, symbols)
 
         g = tf.Graph()
         with g.device("/cpu:0"):
             with g.as_default():
 
                 with tf.variable_scope('mnist') as var_scope:
-                    x_ph = tf.placeholder(tf.float32, (None, 28, 28))
+                    x_ph = tf.placeholder(tf.float32, (None, config.W, config.W))
                     inference = build_model(x_ph, output_size, is_training=False)
 
                 sess = tf.Session()
@@ -105,7 +110,8 @@ def test_mnist_load_or_train():
                     str(checkpoint_dir / 'model.chk'), train_config=config)
                 assert loaded
 
-                _eval_model(sess, inference, x_ph, symbols)
+                with config:
+                    _eval_model(sess, inference, x_ph, symbols)
 
 
 def mlp(inp, outp_size, is_training):
@@ -141,7 +147,10 @@ def test_mnist_pretrained(preprocess, classifier):
             max_steps=10000,
             symbols=list(symbols),
             include_blank=True,
-            threshold=0.2)
+            threshold=0.2,
+            W=14,
+            downsample_factor=2
+        )
 
         checkpoint_dir = make_checkpoint_dir(config)
 
@@ -153,11 +162,12 @@ def test_mnist_pretrained(preprocess, classifier):
             with sess.as_default():
                 build_model = MnistPretrained(
                     prepper, build_classifier, model_dir=str(checkpoint_dir), mnist_config=config)
-                x_ph = tf.placeholder(tf.float32, (None, 28, 28))
+                x_ph = tf.placeholder(tf.float32, (None, config.W, config.W))
                 inference = build_model(x_ph, output_size, is_training=False, preprocess=True)
                 assert not build_model.was_loaded
 
-                _eval_model(sess, inference, x_ph, symbols)
+                with config:
+                    _eval_model(sess, inference, x_ph, symbols)
 
         g = tf.Graph()
         with g.as_default():
@@ -166,8 +176,9 @@ def test_mnist_pretrained(preprocess, classifier):
             with sess.as_default():
                 build_model = MnistPretrained(
                     prepper, build_classifier, model_dir=str(checkpoint_dir), mnist_config=config)
-                x_ph = tf.placeholder(tf.float32, (None, 28, 28))
+                x_ph = tf.placeholder(tf.float32, (None, config.W, config.W))
                 inference = build_model(x_ph, output_size, is_training=False, preprocess=True)
                 assert build_model.was_loaded
 
-                _eval_model(sess, inference, x_ph, symbols)
+                with config:
+                    _eval_model(sess, inference, x_ph, symbols)

@@ -1,6 +1,7 @@
 from pathlib import Path
 import dill
 import gzip
+from scipy.misc import imresize
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -28,6 +29,7 @@ def image_to_string(array):
     """ Convert an image stored as an array to an ascii art string """
     if array.ndim == 1:
         array = array.reshape(-1, int(np.sqrt(array.shape[0])))
+    array = array / array.max()
     image = [char_map(value) for value in array.flatten()]
     image = np.reshape(image, array.shape)
     return '\n'.join(''.join(c for c in row) for row in image)
@@ -36,12 +38,13 @@ def image_to_string(array):
 def view_emnist(x, y, n):
     m = int(np.ceil(np.sqrt(n)))
     fig, subplots = plt.subplots(m, m)
+    s = int(np.sqrt(x.shape[1]))
     for i, s in enumerate(subplots.flatten()):
-        s.imshow(x[i, :].reshape(28, 28).transpose())
+        s.imshow(x[i, :].reshape(s, s).transpose())
         s.set_title(str(y[i, 0]))
 
 
-def load_emnist(classes, balance=False, include_blank=False):
+def load_emnist(classes, balance=False, include_blank=False, downsample_factor=None):
     """ Load emnist data from disk by class.
 
     Elements of `classes` pick out which emnist classes to load, but different labels
@@ -58,7 +61,14 @@ def load_emnist(classes, balance=False, include_blank=False):
     class_map = {}
     for i, cls in enumerate(sorted(list(classes))):
         with gzip.open(str(emnist_dir / (str(cls) + '.pklz')), 'rb') as f:
-            x.append(dill.load(f))
+            _x = dill.load(f)
+            n_examples = _x.shape[0]
+            if downsample_factor is not None and downsample_factor > 1:
+                s = int(np.sqrt(_x.shape[-1]))
+                _x = _x.reshape((-1, s, s))
+                _x = _x[:, ::downsample_factor, ::downsample_factor]
+                _x = _x.reshape((n_examples, -1))
+            x.append(_x)
             y.extend([i] * x[-1].shape[0])
         class_map[cls] = i
     x = np.concatenate(x, axis=0)
@@ -111,8 +121,8 @@ class Rect(object):
 
 
 class PatchesDataset(RegressionDataset):
-    W = Param()
-    max_overlap = Param()
+    W = Param(28)
+    max_overlap = Param(100)
 
     def __init__(self, **kwargs):
         x, y = self._make_dataset(self.n_examples)
@@ -209,22 +219,25 @@ def char_to_idx(c):
 
 
 class MnistArithmeticDataset(PatchesDataset):
-    min_digits = Param()
-    max_digits = Param()
+    min_digits = Param(1)
+    max_digits = Param(1)
     reductions = Param()
-    base = Param()
+    base = Param(10)
+    downsample_factor = Param(1)
 
     def __init__(self, **kwargs):
-        self.X, self.Y, self.class_map = load_emnist(list(range(self.base)))
-        self.X = self.X.reshape(-1, 28, 28)
+        self.X, self.Y, self.class_map = load_emnist(list(range(self.base)), downsample_factor=self.downsample_factor)
+        s = int(np.sqrt(self.X.shape[1]))
+        self.X = self.X.reshape(-1, s, s)
 
         # reductions is a list of pairs of the form (character, reduction function)
 
         # map each character to its index according to the emnist dataset
         reductions = {char_to_idx(s): f for s, f in self.reductions}
 
-        self.eX, self.eY, _class_map = load_emnist(list(reductions.keys()))
-        self.eX = self.eX.reshape(-1, 28, 28)
+        self.eX, self.eY, _class_map = load_emnist(list(reductions.keys()), downsample_factor=self.downsample_factor)
+        s = int(np.sqrt(self.X.shape[1]))
+        self.eX = self.eX.reshape(-1, s, s)
         self.class_map.update(_class_map)
 
         self.reductions = {self.class_map[k]: v for k, v in reductions.items()}
@@ -248,12 +261,13 @@ class MnistArithmeticDataset(PatchesDataset):
 
 
 class TranslatedMnistDataset(PatchesDataset):
-    min_digits = Param()
-    max_digits = Param()
-    reduction = Param()
-    base = Param
+    min_digits = Param(1)
+    max_digits = Param(1)
+    reduction = Param(None)
+    base = Param(10)
     symbols = Param()
     include_blank = Param()
+    downsample_factor = Param(1)
 
     def __init__(self, **kwargs):
         if self.reduction is None:
@@ -261,8 +275,9 @@ class TranslatedMnistDataset(PatchesDataset):
         self.symbols = self.symbols or list(range(10))
 
         self.X, self.Y, self.symbol_map = load_emnist(
-            self.symbols, include_blank=self.include_blank)
-        self.X = self.X.reshape(-1, 28, 28)
+            self.symbols, include_blank=self.include_blank, downsample_factor=self.downsample_factor)
+        s = int(np.sqrt(self.X.shape[1]))
+        self.X = self.X.reshape(-1, s, s)
 
         super(TranslatedMnistDataset, self).__init__()
 
