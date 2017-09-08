@@ -59,7 +59,7 @@ class GridBandit(TensorFlowEnv):
         return np.concatenate([start_x, start_y, grid], axis=1).astype('f')
 
     def start_episode(self, batch_size):
-        if self.mode in 'train train_eval'.split():
+        if self.mode == 'train':
             self.input = self._make_input(batch_size)
         elif self.mode == 'val':
             self.input = self.val

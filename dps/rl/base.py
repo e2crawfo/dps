@@ -105,7 +105,7 @@ class RLContext(Parameterized):
         self.truncated_rollouts = truncated_rollouts
         self.optimizer = None
         self.train_summaries = []
-        self.eval_summaries = []
+        self.summaries = []
         self.recorded_values = []
         self.update_batch_size = None
         self.replay_buffer = None
@@ -141,14 +141,11 @@ class RLContext(Parameterized):
         self.agents.append(agent)
 
     def add_train_summary(self, summary):
+        """ Add a summary that should only be evaluated during training. """
         self.train_summaries.append(summary)
 
-    def add_eval_summary(self, summary):
-        self.eval_summaries.append(summary)
-
     def add_summary(self, summary):
-        self.add_train_summary(summary)
-        self.add_eval_summary(summary)
+        self.summaries.append(summary)
 
     def add_recorded_value(self, name, tensor):
         self.recorded_values.append((name, tensor))
@@ -176,8 +173,8 @@ class RLContext(Parameterized):
 
                 self.optimizer.build_update(self)
 
-                self.train_summary_op = tf.summary.merge(self.train_summaries)
-                self.eval_summary_op = tf.summary.merge(self.eval_summaries)
+                self.train_summary_op = tf.summary.merge(self.train_summaries + self.summaries)
+                self.summary_op = tf.summary.merge(self.summaries)
 
     def build_core_signals(self):
         training_exploration = build_scheduled_value(self.exploration_schedule)
@@ -349,7 +346,7 @@ class RLContext(Parameterized):
             sess = tf.get_default_session()
             eval_summaries, *values = (
                 sess.run(
-                    [self.eval_summary_op] + [v for _, v in self.recorded_values],
+                    [self.summary_op] + [v for _, v in self.recorded_values],
                     feed_dict=feed_dict))
 
             for obj in self.rl_objects:

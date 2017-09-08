@@ -276,21 +276,17 @@ class TrainingLoop(object):
 
             start_time = time.time()
             update_summaries = updater.update(
-                cfg.batch_size, collect_summaries=evaluate)
+                cfg.batch_size, collect_summaries=evaluate and cfg.save_summaries)
             update_duration = time.time() - start_time
 
             if evaluate or display:
-                _, _, train_record = \
-                    updater.evaluate(cfg.batch_size, mode='train_eval')
                 val_loss, val_summaries, val_record = \
                     updater.evaluate(cfg.batch_size, mode='val')
 
-                record = {k + '(train)': v for k, v in train_record.items()}
-                record.update({k + '(val)': v for k, v in val_record.items()})
+                record = {k + ' (val)': v for k, v in val_record.items()}
 
                 if evaluate and cfg.save_summaries:
-                    self.train_writer.add_summary(
-                        update_summaries, updater.n_experiences)
+                    self.train_writer.add_summary(update_summaries, updater.n_experiences)
                     self.val_writer.add_summary(val_summaries, updater.n_experiences)
 
                 if cfg.stopping_function is not None:

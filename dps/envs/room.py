@@ -77,7 +77,7 @@ class Room(TensorFlowEnv):
                 axis=1)
 
     def start_episode(self, n_rollouts):
-        if self.mode in 'train train_eval'.split():
+        if self.mode == 'train':
             self.input = self._make_input(n_rollouts)
         elif self.mode == 'val':
             self.input = self.val_input

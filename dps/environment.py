@@ -67,7 +67,7 @@ class BatchBox(gym.Space):
 
 class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
     def set_mode(self, mode, batch_size):
-        assert mode in 'train train_eval val'.split(), "Unknown mode: {}.".format(mode)
+        assert mode in 'train val'.split(), "Unknown mode: {}.".format(mode)
         self.mode = mode
         self.batch_size = batch_size
 

@@ -120,27 +120,25 @@ class DifferentiableUpdater(Updater):
         super(DifferentiableUpdater, self).__init__(env)
 
     def _build_graph(self):
-        with tf.name_scope("update"):
-            self.x_ph = tf.placeholder(tf.float32, (None,) + self.obs_shape)
-            self.target_ph = tf.placeholder(tf.float32, (None, self.actions_dim))
-            self.output = self.f(self.x_ph)
-            self.loss = tf.reduce_mean(self.env.build_loss(self.output, self.target_ph))
-            self.reward = tf.reduce_mean(self.env.build_reward(self.output, self.target_ph))
-            self.mean_value = tf.reduce_mean(self.output)
+        self.x_ph = tf.placeholder(tf.float32, (None,) + self.obs_shape)
+        self.target_ph = tf.placeholder(tf.float32, (None, self.actions_dim))
+        self.output = self.f(self.x_ph)
+        self.loss = tf.reduce_mean(self.env.build_loss(self.output, self.target_ph))
+        self.reward = tf.reduce_mean(self.env.build_reward(self.output, self.target_ph))
+        self.mean_value = tf.reduce_mean(self.output)
 
-            tvars = trainable_variables()
-            self.train_op, train_summaries = build_gradient_train_op(
-                self.loss, tvars, self.optimizer_spec, self.lr_schedule,
-                self.max_grad_norm, self.noise_schedule)
+        tvars = trainable_variables()
+        self.train_op, train_summaries = build_gradient_train_op(
+            self.loss, tvars, self.optimizer_spec, self.lr_schedule,
+            self.max_grad_norm, self.noise_schedule)
 
-            self.train_summary_op = tf.summary.merge(train_summaries)
+        self.train_summary_op = tf.summary.merge(train_summaries)
 
-        with tf.name_scope("eval"):
-            self.eval_summary_op = tf.summary.merge([
-                tf.summary.scalar("loss_per_ep", self.loss),
-                tf.summary.scalar("reward_per_ep", self.reward),
-                tf.summary.scalar("mean_value", self.mean_value)
-            ])
+        self.summary_op = tf.summary.merge([
+            tf.summary.scalar("loss_per_ep", self.loss),
+            tf.summary.scalar("reward_per_ep", self.reward),
+            tf.summary.scalar("mean_value", self.mean_value)
+        ] + train_summaries)
 
     def _update(self, batch_size, collect_summaries):
         sess = tf.get_default_session()
@@ -169,5 +167,5 @@ class DifferentiableUpdater(Updater):
 
         sess = tf.get_default_session()
         summaries, loss, reward, mean_value = sess.run(
-            [self.eval_summary_op, self.loss, self.reward, self.mean_value], feed_dict=feed_dict)
+            [self.summary_op, self.loss, self.reward, self.mean_value], feed_dict=feed_dict)
         return loss, summaries, {"reward": reward, "mean_value": mean_value}
