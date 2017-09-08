@@ -219,7 +219,6 @@ class RegressionEnv(Env):
         self.train, self.val = train, val
         self.datasets = {
             'train': self.train,
-            'train_eval': self.train,
             'val': self.val,
         }
 

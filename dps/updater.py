@@ -42,19 +42,22 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
     def update(self, batch_size, collect_summaries):
         self._n_experiences += batch_size
         self.set_is_training(True)
-        update = self._update(batch_size, collect_summaries)
+
+        scheduled_value_summaries = \
+            tf.get_default_session().run(self.scheduled_value_summaries_op)
+
+        train, replay = self._update(batch_size, collect_summaries)
         tf.get_default_session().run(self.inc_global_step_op)
-        return update
+        return train + scheduled_value_summaries, replay
 
     @abc.abstractmethod
     def _update(self, batch_size, collect_summaries=None):
         raise Exception("NotImplemented")
 
-    def evaluate(self, batch_size, mode):
-        assert mode in 'train_eval val'.split()
-        self.set_is_training(mode == 'train_eval')
+    def evaluate(self, batch_size):
+        self.set_is_training(False)
 
-        loss, summaries, record = self._evaluate(batch_size, mode)
+        loss, summaries, record = self._evaluate(batch_size)
 
         scheduled_value_summaries = \
             tf.get_default_session().run(self.scheduled_value_summaries_op)
@@ -152,10 +155,10 @@ class DifferentiableUpdater(Updater):
         sess = tf.get_default_session()
         if collect_summaries:
             train_summaries, _ = sess.run([self.train_summary_op, self.train_op], feed_dict=feed_dict)
-            return train_summaries
+            return train_summaries, b''
         else:
             sess.run(self.train_op, feed_dict=feed_dict)
-            return b''
+            return b'', b''
 
     def _evaluate(self, batch_size, mode):
         x, y = self.env.next_batch(None, mode=mode)

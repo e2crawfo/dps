@@ -112,6 +112,13 @@ class RLContext(Parameterized):
         self.objective_fn_terms = []
         self.rl_objects = []
 
+        self.n_train_experiences = 0
+        self.n_replay_experiences = 0
+        self.n_val_experiences = 0
+        self.train_cumulative_reward = 0.0
+        self.replay_cumulative_reward = 0.0
+        self.val_cumulative_reward = 0.0
+
     def __enter__(self):
         if RLContext.active_context is not None:
             raise Exception("May not have multiple instances of RLContext active at once.")
@@ -201,6 +208,15 @@ class RLContext(Parameterized):
             self._signals['rewards'], axis=0, reverse=True, name="_returns")
         self._signals['reward_per_ep'] = tf.reduce_mean(
             tf.reduce_sum(self._signals['rewards'], axis=0), name="_reward_per_ep")
+        self._signals['total_reward'] = tf.reduce_sum(self._signals['rewards'], name="_total_reward")
+
+        self.add_summary(tf.summary.scalar("reward_per_ep", self._signals['reward_per_ep']))
+
+        self._signals['average_cumulative_reward'] = tf.placeholder(tf.float64, ())
+        self.add_summary(tf.summary.scalar(
+            "average_cumulative_reward",
+            self._signals['average_cumulative_reward']
+        ))
 
         self.add_recorded_value("loss", -self._signals['reward_per_ep'])
 
@@ -217,8 +233,6 @@ class RLContext(Parameterized):
         mean_returns = masked_mean(discounted_returns, mask, axis=1, keep_dims=True)
         mean_returns += tf.zeros_like(discounted_returns)
         self._signals['average_discounted_returns'] = mean_returns
-
-        self.add_summary(tf.summary.scalar("reward_per_ep", self._signals['reward_per_ep']))
 
         self._signals['gamma'] = tf.constant(self.gamma)
         self._signals['batch_size'] = tf.shape(self._signals['obs'])[1]
@@ -297,8 +311,26 @@ class RLContext(Parameterized):
         assert self.mu is not None, "A behaviour policy must be set using `set_behaviour_policy` before calling `update`."
         assert self.optimizer is not None, "An optimizer must be set using `set_optimizer` before calling `update`."
 
+        sess = tf.get_default_session()
+
         with self:
             rollouts = self.env.do_rollouts(self.mu, batch_size, mode='train')
+
+            feed_dict = self.make_feed_dict(rollouts)
+            self.n_train_experiences += rollouts.batch_size
+            self.train_cumulative_reward += sess.run(self._signals['total_reward'], feed_dict=feed_dict)
+
+            train_summaries = b""
+            if collect_summaries and self.replay_buffer is not None:
+                for obj in self.rl_objects:
+                    obj.pre_eval(feed_dict, self)
+
+                feed_dict[self._signals['average_cumulative_reward']] = (
+                    self.train_cumulative_reward / self.n_train_experiences)
+                train_summaries = sess.run(self.summary_op, feed_dict=feed_dict)
+
+                for obj in self.rl_objects:
+                    obj.post_eval(feed_dict, self)
 
             weights = None
             n_updates = 1
@@ -309,7 +341,7 @@ class RLContext(Parameterized):
                 # each with a different batch, per environment sample
                 n_updates = self.updates_per_sample
 
-            train_summaries = b""
+            replay_summaries = b""
             for i in range(n_updates):
                 if self.replay_buffer is not None:
                     rollouts, weights = self.replay_buffer.get_batch(self.update_batch_size)
@@ -320,6 +352,9 @@ class RLContext(Parameterized):
 
                 feed_dict = self.make_feed_dict(rollouts, weights)
 
+                self.n_replay_experiences += rollouts.batch_size
+                self.replay_cumulative_reward += sess.run(self._signals['total_reward'], feed_dict=feed_dict)
+
                 for obj in self.rl_objects:
                     obj.pre_update(feed_dict, self)
 
@@ -329,21 +364,31 @@ class RLContext(Parameterized):
                     obj.post_update(feed_dict, self)
 
                 if collect_summaries and i == n_updates-1:
-                    train_summaries = tf.get_default_session().run(self.train_summary_op, feed_dict=feed_dict)
+                    feed_dict[self._signals['average_cumulative_reward']] = (
+                        self.replay_cumulative_reward / self.n_replay_experiences)
+                    replay_summaries = sess.run(self.train_summary_op, feed_dict=feed_dict)
 
-            return train_summaries
+            return train_summaries, replay_summaries
 
-    def evaluate(self, batch_size, mode):
+    def evaluate(self, batch_size):
         assert self.mu is not None, "A behaviour policy must be set using `set_behaviour_policy` before calling `evaluate`."
 
+        sess = tf.get_default_session()
+
         with self:
-            rollouts = self.env.do_rollouts(self.mu, batch_size, mode=mode)
+            rollouts = self.env.do_rollouts(self.mu, batch_size, mode='val')
+
             feed_dict = self.make_feed_dict(rollouts)
+
+            self.n_val_experiences += rollouts.batch_size
+            self.val_cumulative_reward += sess.run(self._signals['total_reward'], feed_dict=feed_dict)
 
             for obj in self.rl_objects:
                 obj.pre_eval(feed_dict, self)
 
-            sess = tf.get_default_session()
+            feed_dict[self._signals['average_cumulative_reward']] = (
+                self.val_cumulative_reward / self.n_val_experiences)
+
             eval_summaries, *values = (
                 sess.run(
                     [self.summary_op] + [v for _, v in self.recorded_values],
@@ -391,19 +436,22 @@ class RLUpdater(Updater):
             learner.build_graph(self.env, self.is_training)
 
     def _update(self, batch_size, collect_summaries):
-        summaries = (b'').join(
-            learner.update(batch_size, collect_summaries)
-            for learner in self.learners)
-        return summaries
+        summaries = [learner.update(batch_size, collect_summaries) for learner in self.learners]
+        train_summaries, replay_summaries = zip(*summaries)
 
-    def _evaluate(self, batch_size, mode):
+        train_summaries = (b'').join(train_summaries)
+        replay_summaries = (b'').join(replay_summaries)
+
+        return train_summaries, replay_summaries
+
+    def _evaluate(self, batch_size):
         """ Return list of tf summaries and a dictionary of values to be displayed. """
 
         summaries = b''
         records = []
         record = {}
         for learner in self.learners:
-            s, r = learner.evaluate(batch_size, mode)
+            s, r = learner.evaluate(batch_size)
             summaries += s
 
             for k, v in r.items():

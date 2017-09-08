@@ -147,6 +147,9 @@ class TrainingLoop(object):
                     self.train_writer = tf.summary.FileWriter(
                         exp_dir.path_for('train'), graph,
                         flush_secs=cfg.reload_interval)
+                    self.replay_writer = tf.summary.FileWriter(
+                        exp_dir.path_for('replay'), graph,
+                        flush_secs=cfg.reload_interval)
                     self.val_writer = tf.summary.FileWriter(
                         exp_dir.path_for('val'), flush_secs=cfg.reload_interval)
 
@@ -275,18 +278,18 @@ class TrainingLoop(object):
             render = (self.global_step % cfg.render_step == 0) and self.global_step > 0
 
             start_time = time.time()
-            update_summaries = updater.update(
+            update_summaries, replay_summaries = updater.update(
                 cfg.batch_size, collect_summaries=evaluate and cfg.save_summaries)
             update_duration = time.time() - start_time
 
             if evaluate or display:
-                val_loss, val_summaries, val_record = \
-                    updater.evaluate(cfg.batch_size, mode='val')
+                val_loss, val_summaries, val_record = updater.evaluate(cfg.batch_size)
 
                 record = {k + ' (val)': v for k, v in val_record.items()}
 
                 if evaluate and cfg.save_summaries:
                     self.train_writer.add_summary(update_summaries, updater.n_experiences)
+                    self.replay_writer.add_summary(replay_summaries, updater.n_experiences)
                     self.val_writer.add_summary(val_summaries, updater.n_experiences)
 
                 if cfg.stopping_function is not None:
