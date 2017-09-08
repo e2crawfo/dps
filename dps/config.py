@@ -39,6 +39,8 @@ DEFAULT_CONFIG = DpsConfig(
     opt_steps_per_update=1,
 
     gamma=1.0,
+    noise_schedule=None,
+    max_grad_norm=None,
 
     standardize_advantage=True,
     reset_env=True,

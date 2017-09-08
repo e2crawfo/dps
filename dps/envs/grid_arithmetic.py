@@ -46,7 +46,7 @@ def build_policy(env, **kwargs):
     return Policy(action_selection, env.obs_shape, **kwargs)
 
 
-GRID_ARITHMETIC_CONFIG = Config(
+config = Config(
     build_env=build_env,
     build_policy=build_policy,
     symbols=[
@@ -81,7 +81,8 @@ GRID_ARITHMETIC_CONFIG = Config(
         max_steps=100000,
         patience=np.inf,
         threshold=0.05,
-        include_blank=True),
+        include_blank=True
+    ),
 
     log_name='grid_arithmetic',
     render_rollouts=None
@@ -216,11 +217,6 @@ class GridArithmeticDataset(RegressionDataset):
             new_Y = np.array(new_Y).astype('f')
         else:
             new_Y = np.array(new_Y).astype('i').reshape(-1, 1)
-
-        from dps.vision.dataset import image_to_string
-        for i in range(10):
-            print(image_to_string(new_X[i]))
-            print(new_Y[i])
 
         return new_X, new_Y
 
