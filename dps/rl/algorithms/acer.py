@@ -4,8 +4,8 @@ from dps.rl import (
     RLUpdater, RLContext, Agent, StochasticGradientDescent,
     PolicyGradient, PolicyEvaluation_State, PolicyEntropyBonus,
     AdvantageEstimator, ValueFunction, Retrace,
-    BuildSoftmaxPolicy, BuildEpsilonGreedyPolicy,
-    BuildLstmController, PrioritizedReplayBuffer
+    BuildSoftmaxPolicy, BuildLstmController, PrioritizedReplayBuffer,
+    ValueFunctionRegularization
 )
 from dps.rl.algorithms.qlearning import MaxPriorityFunc
 
@@ -38,6 +38,9 @@ def ACER(env):
             actor, advantage_estimator, epsilon=cfg.epsilon,
             importance_c=cfg.c, weight=cfg.policy_weight)
 
+        # Entropy bonus
+        PolicyEntropyBonus(actor, weight=cfg.entropy_weight)
+
         values_from_returns = Retrace(
             actor, value_function, lmbda=cfg.lmbda,
             to_action_value=False, from_action_value=False,
@@ -46,9 +49,7 @@ def ACER(env):
 
         # Policy evaluation
         policy_eval = PolicyEvaluation_State(value_function, values_from_returns, weight=cfg.value_weight)
-
-        # Entropy bonus
-        PolicyEntropyBonus(actor, weight=cfg.entropy_weight)
+        ValueFunctionRegularization(policy_eval, weight=cfg.value_reg_weight)
 
         priority_func = MaxPriorityFunc(policy_eval)
         replay_buffer = PrioritizedReplayBuffer(
@@ -92,6 +93,7 @@ config = Config(
 
     policy_weight=1.0,
     value_weight=10.0,
+    value_reg_weight=0.0,
     entropy_weight=0.0,
     lmbda=1,
 

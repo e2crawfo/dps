@@ -167,3 +167,51 @@ class PolicyEvaluation_StateAction(PolicyEvaluation_State):
             return squared_td_error
         else:
             raise Exception("NotImplemented")
+
+
+class ValueFunctionRegularization(ObjectiveFunctionTerm):
+    """ Penalize the KL divergence between the new value function and
+        the value function as it was at the start of the current update step. """
+
+    def __init__(self, policy_evaluation, **kwargs):
+        self.policy_evaluation = policy_evaluation
+        self.value_function = self.policy_evaluation.value_function
+        super(ValueFunctionRegularization, self).__init__(**kwargs)
+
+    def generate_signal(self, signal_key, context):
+        if signal_key == "variance":
+            self.variance = tf.placeholder(tf.float32, ())
+
+            squared_error = context.get_signal('squared_td_error', self.policy_evaluation)
+            self.variance_computation = tf.reduce_mean(squared_error)
+
+            return self.variance
+        elif signal_key == "prev_values":
+            self.values = context.get_signal('values', self.value_function)
+            self.prev_values = tf.placeholder(tf.float32, shape=self.values.shape, name="_prev_values")
+            return self.prev_values
+        else:
+            raise Exception("NotImplemented")
+
+    def build_graph(self, context):
+        prev_values = context.get_signal('prev_values', self)
+        values = context.get_signal('values', self.value_function, gradient=True)
+        variance = context.get_signal('variance', self)
+
+        mean_kl_divergence = tf.reduce_mean((prev_values - values)**2 / (2 * variance))
+
+        label = "{}-mean_kl_divergence".format(self.value_function.display_name)
+        context.add_summary(tf.summary.scalar(label, mean_kl_divergence))
+
+        return -mean_kl_divergence
+
+    def pre_update(self, feed_dict, context):
+        sess = tf.get_default_session()
+        variance, prev_values = sess.run([self.variance_computation, self.values], feed_dict=feed_dict)
+        feed_dict.update({
+            self.prev_values: prev_values,
+            self.variance: variance,
+        })
+
+    def pre_eval(self, feed_dict, context):
+        self.pre_update(feed_dict, context)

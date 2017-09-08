@@ -2,7 +2,8 @@ from .base import (
     RLUpdater, RLObject, RLContext, rl_render_hook, get_active_context, ObjectiveFunctionTerm,
 )
 from .terms import (
-    PolicyGradient, PolicyEntropyBonus, PolicyEvaluation_State, PolicyEvaluation_StateAction
+    PolicyGradient, PolicyEntropyBonus, PolicyEvaluation_State, PolicyEvaluation_StateAction,
+    ValueFunctionRegularization
 )
 from .rollout import RolloutBatch
 from .replay import PrioritizedReplayBuffer

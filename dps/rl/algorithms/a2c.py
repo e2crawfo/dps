@@ -4,7 +4,8 @@ from dps.rl import (
     RLContext, Agent, StochasticGradientDescent,
     BuildSoftmaxPolicy, BuildLstmController,
     PolicyGradient, RLUpdater, AdvantageEstimator,
-    PolicyEntropyBonus, ValueFunction, PolicyEvaluation_State, Retrace
+    PolicyEntropyBonus, ValueFunction, PolicyEvaluation_State, Retrace,
+    ValueFunctionRegularization
 )
 
 
@@ -40,8 +41,10 @@ def A2C(env):
             name="RetraceV"
         )
 
-        PolicyEvaluation_State(value_function, values_from_returns, weight=cfg.value_weight)
         PolicyEntropyBonus(actor, weight=cfg.entropy_weight)
+
+        policy_eval = PolicyEvaluation_State(value_function, values_from_returns, weight=cfg.value_weight)
+        ValueFunctionRegularization(policy_eval, weight=cfg.value_reg_weight)
 
         optimizer = StochasticGradientDescent(
             agents=agents, alg=cfg.optimizer_spec,
@@ -64,12 +67,13 @@ config = Config(
     build_controller=BuildLstmController(),
     batch_size=16,
     optimizer_spec="adam",
-    opt_steps_per_update=10,
+    opt_steps_per_update=100,
     lr_schedule="1e-4",
     exploration_schedule='Poly(10.0, 10000, end=0.1)',
     test_time_explore=0.1,
     policy_weight=1.0,
     value_weight=10.0,
+    value_reg_weight=0.0,
     entropy_weight=0.0,
     lmbda=0.9,
     epsilon=0.2,
