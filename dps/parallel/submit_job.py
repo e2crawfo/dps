@@ -165,15 +165,18 @@ class ParallelSession(object):
         host_pool = host_pool or HOST_POOL
         hosts = []
         for host in host_pool:
-            print("Testing connection to host {}...".format(host))
-            try:
-                self.execute_command("ssh -oPasswordAuthentication=no -T {} echo Connected to \$HOSTNAME".format(host))
-            except subprocess.CalledProcessError:
-                pass
-            else:
+            if host is ':':
                 hosts.append(host)
-            if len(hosts) >= max_hosts:
-                break
+            else:
+                print("Testing connection to host {}...".format(host))
+                try:
+                    self.execute_command("ssh -oPasswordAuthentication=no -T {} echo Connected to \$HOSTNAME".format(host))
+                except subprocess.CalledProcessError:
+                    pass
+                else:
+                    hosts.append(host)
+                if len(hosts) >= max_hosts:
+                    break
         del host
         if len(hosts) < max_hosts:
             print("{} hosts were requested, "

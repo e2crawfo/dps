@@ -9,6 +9,7 @@ from collections import OrderedDict
 from itertools import product
 from copy import deepcopy
 import warnings
+import os
 
 import clify
 
@@ -148,21 +149,26 @@ def reduce_hyper_results(store, *results):
         record = r['history'][-1].copy()
         record['host'] = r['host']
         del record['best_path']
-        del record['memory_before_mb']
+
+        for k, v in record['train_data'][-1].items():
+            record[k + '_train'] = v
+        for k, v in record['update_data'][-1].items():
+            record[k + '_update'] = v
+        for k, v in record['val_data'][-1].items():
+            record[k + '_val'] = v
+
         del record['train_data']
         del record['update_data']
         del record['val_data']
 
-        for k, v in r['train_data'][-1].items():
-            record[k + '_train'] = v
-        for k, v in r['update_data'][-1].items():
-            record[k + '_update'] = v
-        for k, v in r['val_data'][-1].items():
-            record[k + '_val'] = v
-
         config = Config(r['config'])
         for k in keys:
             record[k] = config[k]
+
+        record.update(
+            latest_stage=r['history'][-1]['stage'],
+            total_steps=sum(s['n_steps'] for s in r['history']),
+        )
 
         record['seed'] = r['config']['seed']
         records.append(record)
@@ -175,28 +181,30 @@ def reduce_hyper_results(store, *results):
 
     data = []
     for k, _df in groups:
-        _df = _df.sort_values(['latest_stage', 'final_stage_loss'])
+        _df = _df.sort_values(['latest_stage', 'best_loss'])
         data.append(dict(
             data=_df,
             keys=k,
             latest_stage=_df.latest_stage.max(),
             stage_sum=_df.latest_stage.sum(),
-            final_stage_loss=_df.final_stage_loss.mean()))
+            best_loss=_df.best_loss.mean()))
 
-    data = sorted(data, reverse=False, key=lambda x: (x['latest_stage'], -x['final_stage_loss'], x['stage_sum']))
+    data = sorted(data, reverse=False, key=lambda x: (x['latest_stage'], -x['best_loss'], x['stage_sum']))
 
     column_order = [
-        'latest_stage', 'final_stage_loss', 'seed', 'reason', 'total_steps',
-        'final_stage_steps', 'final_stage_last_imp_step', 'host']
+        'latest_stage', 'best_loss', 'seed', 'reason', 'total_steps', 'n_steps', 'host']
+    remaining = [k for k in data[0]['data'].keys() if k not in column_order and k not in keys]
+    column_order = column_order + sorted(remaining)
 
-    print('\n' + '*' * 100)
-    print("RESULTS GROUPED BY PARAM VALUES, WORST COMES FIRST: ")
-    for i, d in enumerate(data):
-        print('\n {} '.format(len(data)-i) + '*' * 40)
-        pprint({n: v for n, v in zip(keys, d['keys'])})
-        _data = d['data'].drop(keys, axis=1)
-        _data = _data[column_order]
-        print(_data)
+    with pd.option_context('display.max_rows', None, 'display.max_columns', None):
+        print('\n' + '*' * 100)
+        print("RESULTS GROUPED BY PARAM VALUES, WORST COMES FIRST: ")
+        for i, d in enumerate(data):
+            print('\n {} '.format(len(data)-i) + '*' * 40)
+            pprint({n: v for n, v in zip(keys, d['keys'])})
+            _data = d['data'].drop(keys, axis=1)
+            _data = _data[column_order]
+            print(_data)
 
     print('\n' + '*' * 100)
     print("BASE CONFIG")
@@ -212,6 +220,8 @@ class RunTrainingLoop(object):
         self.base_config = base_config
 
     def __call__(self, new):
+        os.nice(10)
+
         start_time = time.time()
         print("Starting new training run at: ")
         print(datetime.datetime.now())
