@@ -170,7 +170,7 @@ class ParallelSession(object):
             else:
                 print("Testing connection to host {}...".format(host))
                 try:
-                    self.execute_command("ssh -oPasswordAuthentication=no -T {} echo Connected to \$HOSTNAME".format(host))
+                    self.execute_command("ssh -oPasswordAuthentication=no -oStrictHostKeyChecking=no -oConnectTimeout=5 -T {} echo Connected to \$HOSTNAME".format(host))
                 except subprocess.CalledProcessError:
                     pass
                 else:
