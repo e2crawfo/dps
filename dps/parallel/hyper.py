@@ -5,7 +5,10 @@ import pandas as pd
 from pprint import pprint
 import time
 import datetime
-import argparse
+from collections import OrderedDict
+from itertools import product
+from copy import deepcopy
+import warnings
 
 import clify
 
@@ -53,50 +56,80 @@ def nested_map(d, f):
         return f(d)
 
 
-def sample_configs(n, repeats, base_config, distributions):
+def generate_all(distributions):
+    assert isinstance(distributions, dict)
+    config = Config(distributions)
+    flat = config.flatten()
+    lists = OrderedDict()
+    other = {}
+
+    for k, v in flat.items():
+        try:
+            v = list(v)
+            lists[k] = v
+        except (TypeError, ValueError):
+            if hasattr(v, 'rvs'):
+                raise Exception(
+                    "Attempting to generate all samples, but element {} "
+                    "with key {} is a continuous distribution.".format(v, k))
+            other[k] = v
+
+    cartesian_product = product(*lists.values())
+    samples = []
+    for p in cartesian_product:
+        new = Config(deepcopy(other.copy()))
+        for k, item in zip(flat, p):
+            new[k] = item
+        samples.append(type(distributions)(new))
+    return samples
+
+
+def sample_configs(distributions, base_config, n_repeats, n_samples=None):
     """
     Parameters
     ----------
-    n: int > 0
-        Number of configs to sample.
-    repeats: int > 0
-        Number of different seeds to use for each sampled configuration.
-    base_config: Config instance
-        The base config, supplies any parameters not covered in ``distribution``.
     distributions: dict
         Mapping from parameter names to distributions (objects with
         member function ``rvs`` which accepts a shape and produces
         an array of samples with that shape).
+    base_config: Config instance
+        The base config, supplies any parameters not covered in ``distribution``.
+    n_repeats: int > 0
+        Number of different seeds to use for each sampled configuration.
+    n_samples: int > 0
+        Number of configs to sample.
 
     """
-    max_tries = 1000
-
-    sample_traces = set()
     samples = []
 
-    for i in range(n):
-        n_tries = 0
-        while True:
-            sample = nested_sample(distributions)
+    if n_samples is None:
+        samples = generate_all(distributions)
+    else:
+        max_tries = 1000
+        sample_traces = set()
+        for i in range(n_samples):
+            n_tries = 0
+            while True:
+                sample = nested_sample(distributions)
 
-            trace = str(sample)
+                trace = str(sample)
 
-            if trace not in sample_traces:
-                break
+                if trace not in sample_traces:
+                    break
 
-            n_tries += 1
+                n_tries += 1
 
-            if n_tries >= max_tries:
-                raise Exception("Tried {} times, could not generate "
-                                "a new unique configuration.".format(n_tries))
+                if n_tries >= max_tries:
+                    raise Exception("Tried {} times, could not generate "
+                                    "a new unique configuration.".format(n_tries))
 
-        sample_traces.add(trace)
-        samples.append(sample)
+            sample_traces.add(trace)
+            samples.append(sample)
 
     configs = []
-    for s in samples:
+    for i, s in enumerate(samples):
         s['idx'] = i
-        for r in range(repeats):
+        for r in range(n_repeats):
             _new = copy.deepcopy(s)
             _new['repeat'] = r
             _new['seed'] = gen_seed()
@@ -110,18 +143,22 @@ def reduce_hyper_results(store, *results):
     distributions = Config(distributions)
     keys = list(distributions.keys())
 
-    # Create a pandas dataframe storing the results
-
     records = []
     for r in results:
-        record = dict(
-            latest_stage=r['history'][-1]['stage'],
-            total_steps=sum(s['n_steps'] for s in r['history']),
-            final_stage_steps=r['history'][-1]['n_steps'],
-            final_stage_loss=r['history'][-1]['best_loss'],
-            final_stage_last_imp_step=r['history'][-1]['best_local_step'],
-            reason=r['history'][-1]['reason'],
-            host=r['host'])
+        record = r['history'][-1].copy()
+        record['host'] = r['host']
+        del record['best_path']
+        del record['memory_before_mb']
+        del record['train_data']
+        del record['update_data']
+        del record['val_data']
+
+        for k, v in r['train_data'][-1].items():
+            record[k + '_train'] = v
+        for k, v in r['update_data'][-1].items():
+            record[k + '_update'] = v
+        for k, v in r['val_data'][-1].items():
+            record[k + '_val'] = v
 
         config = Config(r['config'])
         for k in keys:
@@ -131,6 +168,8 @@ def reduce_hyper_results(store, *results):
         records.append(record)
 
     df = pd.DataFrame.from_records(records)
+    for key in keys:
+        df[key] = df[key].fillna(-np.inf)
 
     groups = df.groupby(keys)
 
@@ -199,8 +238,10 @@ class RunTrainingLoop(object):
         return val
 
 
-def build_search(path, name, n, repeats, distributions, _zip, config=None, use_time=0, do_local_test=True):
-    """ Create a Job representing a hyper-parameter search.
+def build_search(
+        path, name, distributions, config, n_repeats, n_samples=None,
+        _zip=True, use_time=0, do_local_test=True):
+    """ Create a Job implementing a hyper-parameter search.
 
     Parameters
     ----------
@@ -208,21 +249,22 @@ def build_search(path, name, n, repeats, distributions, _zip, config=None, use_t
         Path to the directory where the archive that is built for the search will be saved.
     name: str
         Name for the search.
-    n: int
-        Number of parameter settings to sample.
-    repeats: int
-        Number of different random seeds to run each sample with.
     distributions: dict (str -> distribution)
         Distributions to sample from.
-    _zip: bool
-        Whether to zip the created search directory.
     config: Config instance
         The base configuration.
+    n_repeats: int
+        Number of different random seeds to run each sample with.
+    n_samples: int
+        Number of parameter settings to sample. If not supplied, all possibilities are generated.
+    _zip: bool
+        Whether to zip the created search directory.
     use_time: bool
         Whether to add time to name of experiment directory.
     do_local_test: bool
         If True, run a short test using one of the sampled
-        configs on the local machine.
+        aonfigs on the local machine to catch any dumb errors
+        before starting the real experiment.
 
     """
     with config:
@@ -246,7 +288,10 @@ def build_search(path, name, n, repeats, distributions, _zip, config=None, use_t
 
     job = Job(exp_dir.path)
 
-    new_configs = sample_configs(n, repeats, config, distributions)
+    new_configs = sample_configs(distributions, config, n_repeats, n_samples)
+
+    print("{} configs were sampled for parameter search.".format(len(new_configs)))
+
     new_configs = [Config(c).flatten() for c in new_configs]
 
     if do_local_test:
@@ -265,10 +310,6 @@ def build_search(path, name, n, repeats, distributions, _zip, config=None, use_t
         path = exp_dir.path
 
     return job, path
-
-
-def _build_search(args):
-    return build_search(args.path, args.name, args.n, args.repeats, args.alg, args.task, not args.no_zip)
 
 
 def _summarize_search(args):
@@ -301,50 +342,46 @@ def hyper_search_cl():
     parallel_cl('Build, run and view hyper-parameter searches.', [summary_cmd, zip_cmd])
 
 
-def build_and_submit_search(config, distributions, host_pool=None):
+def build_and_submit(
+        config, distributions, max_hosts=1, ppn=1, walltime="00:15:00", cleanup_time="00:01:00",
+        n_param_settings=0, n_repeats=0, size=None, do_local_test=True, host_pool=None):
+
+    if host_pool is not None:
+        time_slack = 60
+    else:
+        host_pool = [':']
+        time_slack = 30
+
+    if size == 'big':
+        n_param_settings = 50
+        n_repeats = 5
+        cleanup_time = "00:30:00"
+    elif size == 'medium':
+        n_param_settings = 8
+        n_repeats = 4
+        cleanup_time = "00:02:15"
+    elif size == 'small':
+        n_param_settings = 2
+        n_repeats = 2
+        cleanup_time = "00:00:45"
+    elif size is None:
+        pass
+    else:
+        raise Exception("Unknown size: `{}`.".format(size))
+
+    if not n_param_settings:
+        n_param_settings = None
+    assert n_repeats
+    assert cleanup_time
+
+    if n_param_settings is None:
+        warnings.warn("`n_param_settings` is None, a grid search will be performed.")
+
     with config:
-        cl_args = clify.wrap_object(cfg).parse()
-        cfg.update(cl_args)
-
-        parser = argparse.ArgumentParser()
-        parser.add_argument('size')
-        parser.add_argument('walltime')
-        parser.add_argument('--max-hosts', type=int, default=1)
-        parser.add_argument('--ppn', type=int, default=2)
-        parser.add_argument('--do-local-test', action="store_true")
-        args = parser.parse_args()
-        walltime = args.walltime
-        size = args.size
-        max_hosts = args.max_hosts
-        ppn = args.ppn
-
-        if host_pool is not None:
-            time_slack = 60
-        else:
-            host_pool = [':']
-            time_slack = 30
-
-        if size == 'big':
-            # Big
-            n_param_settings = 50
-            n_repeats = 5
-            cleanup_time = "00:30:00"
-        elif size == 'medium':
-            # Medium
-            n_param_settings = 8
-            n_repeats = 4
-            cleanup_time = "00:02:15"
-        elif size == 'small':
-            # Small
-            n_param_settings = 2
-            n_repeats = 2
-            cleanup_time = "00:00:45"
-        else:
-            raise Exception("Unknown size: `{}`.".format(size))
-
         job, archive_path = build_search(
-            '/tmp/dps/search', config.name, n_param_settings, n_repeats,
-            distributions, True, config, use_time=1, do_local_test=args.do_local_test)
+            '/tmp/dps/search', config.name, distributions, config,
+            n_repeats, n_param_settings, use_time=1, _zip=True,
+            do_local_test=do_local_test)
 
         submit_job(
             config.name, archive_path, 'map', '/tmp/dps/search/execution/',

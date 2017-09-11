@@ -16,6 +16,7 @@ setup(
     setup_requires=['numpy>=1.7'],
     install_requires=[
         "numpy",
+        "scipy",
         "pytest",
         "future",
         "six",
@@ -24,6 +25,7 @@ setup(
         "tabulate",
         "psutil",
         "pyskiplist",
+        "Pillow",
     ],
     entry_points={
         'console_scripts': ['dps-hyper=dps.parallel:hyper_search_cl',

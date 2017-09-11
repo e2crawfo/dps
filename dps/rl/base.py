@@ -112,13 +112,6 @@ class RLContext(Parameterized):
         self.objective_fn_terms = []
         self.rl_objects = []
 
-        self.n_train_experiences = 0
-        self.n_replay_experiences = 0
-        self.n_val_experiences = 0
-        self.train_cumulative_reward = 0.0
-        self.replay_cumulative_reward = 0.0
-        self.val_cumulative_reward = 0.0
-
     def __enter__(self):
         if RLContext.active_context is not None:
             raise Exception("May not have multiple instances of RLContext active at once.")
@@ -202,23 +195,68 @@ class RLContext(Parameterized):
         self._signals['actions'] = tf.placeholder(
             tf.float32, shape=(cfg.T, None, self.actions_dim), name="_actions")
 
+        self._signals['gamma'] = tf.constant(self.gamma)
+        self._signals['batch_size'] = tf.shape(self._signals['obs'])[1]
+        self._signals['batch_size_float'] = tf.cast(self._signals['batch_size'], tf.float32)
+
         self._signals['rewards'] = tf.placeholder(
             tf.float32, shape=(cfg.T, None, 1), name="_rewards")
         self._signals['returns'] = tf.cumsum(
             self._signals['rewards'], axis=0, reverse=True, name="_returns")
         self._signals['reward_per_ep'] = tf.reduce_mean(
             tf.reduce_sum(self._signals['rewards'], axis=0), name="_reward_per_ep")
-        self._signals['total_reward'] = tf.reduce_sum(self._signals['rewards'], name="_total_reward")
 
         self.add_summary(tf.summary.scalar("reward_per_ep", self._signals['reward_per_ep']))
-
-        self._signals['average_cumulative_reward'] = tf.placeholder(tf.float64, ())
-        self.add_summary(tf.summary.scalar(
-            "average_cumulative_reward",
-            self._signals['average_cumulative_reward']
-        ))
-
         self.add_recorded_value("loss", -self._signals['reward_per_ep'])
+
+        self._signals['train_n_experiences'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
+        self._signals['train_cumulative_reward'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
+        self._signals['train_avg_cumulative_reward'] = self._signals['train_cumulative_reward'] / self._signals['train_n_experiences']
+
+        self._signals['update_n_experiences'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
+        self._signals['update_cumulative_reward'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
+        self._signals['update_avg_cumulative_reward'] = self._signals['update_cumulative_reward'] / self._signals['update_n_experiences']
+
+        self._signals['val_n_experiences'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
+        self._signals['val_cumulative_reward'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
+        self._signals['val_avg_cumulative_reward'] = self._signals['val_cumulative_reward'] / self._signals['val_n_experiences']
+
+        run_mode = self._signals['run_mode'] = tf.placeholder(tf.string, ())
+
+        self.update_stats_op = tf.case(
+            [
+                (tf.equal(run_mode, 'train'), lambda: tf.group(
+                    tf.assign_add(self._signals['train_n_experiences'], self._signals['batch_size_float']),
+                    tf.assign_add(self._signals['train_cumulative_reward'], tf.reduce_sum(self._signals['rewards']))
+                )),
+                (tf.equal(run_mode, 'update'), lambda: tf.group(
+                    tf.assign_add(self._signals['update_n_experiences'], self._signals['batch_size_float']),
+                    tf.assign_add(self._signals['update_cumulative_reward'], tf.reduce_sum(self._signals['rewards']))
+                )),
+                (tf.equal(run_mode, 'val'), lambda: tf.group(
+                    tf.assign_add(self._signals['val_n_experiences'], self._signals['batch_size_float']),
+                    tf.assign_add(self._signals['val_cumulative_reward'], tf.reduce_sum(self._signals['rewards']))
+                )),
+            ],
+            default=lambda: tf.group(tf.ones((), dtype=tf.float32), tf.ones((), dtype=tf.float32)),
+            exclusive=True
+        )
+
+        self._signals['avg_cumulative_reward'] = tf.case(
+            [
+                (tf.equal(run_mode, 'train'), lambda: self._signals['train_avg_cumulative_reward']),
+                (tf.equal(run_mode, 'update'), lambda: self._signals['update_avg_cumulative_reward']),
+                (tf.equal(run_mode, 'val'), lambda: self._signals['val_avg_cumulative_reward']),
+            ],
+            default=lambda: tf.zeros_like(self._signals['train_avg_cumulative_reward']),
+            exclusive=True
+        )
+
+        self.add_summary(tf.summary.scalar("avg_cumulative_reward", self._signals['avg_cumulative_reward']))
+
+        self.add_recorded_value(
+            "avg_cumulative_reward",
+            self._signals['avg_cumulative_reward'])
 
         self._signals['weights'] = tf.placeholder(
             tf.float32, shape=(cfg.T, None, 1), name="_weights")
@@ -234,9 +272,6 @@ class RLContext(Parameterized):
         mean_returns += tf.zeros_like(discounted_returns)
         self._signals['average_discounted_returns'] = mean_returns
 
-        self._signals['gamma'] = tf.constant(self.gamma)
-        self._signals['batch_size'] = tf.shape(self._signals['obs'])[1]
-
         # off-policy
         self._signals['mu_utils'] = tf.placeholder(
             tf.float32, shape=(cfg.T, None, self.mu.params_dim), name="_mu_log_probs")
@@ -248,7 +283,7 @@ class RLContext(Parameterized):
         for obj in self.rl_objects:
             obj.build_core_signals(self)
 
-    def make_feed_dict(self, rollouts, weights=None):
+    def make_feed_dict(self, rollouts, run_mode, weights=None):
         if weights is None:
             weights = np.ones((rollouts.T, rollouts.batch_size, 1))
         elif weights.ndim == 1:
@@ -265,6 +300,8 @@ class RLContext(Parameterized):
             self._signals['weights']: weights,
 
             self._signals['mu_log_probs']: rollouts.log_probs,
+
+            self._signals['run_mode']: run_mode,
         }
 
         if hasattr(rollouts, 'utils'):
@@ -307,30 +344,55 @@ class RLContext(Parameterized):
 
         return signal
 
+    def _run_and_record(self, rollouts, run_mode, weights, do_update, summary_op, collect_summaries):
+        assert do_update or collect_summaries, "Both `do_update` and `collect_summaries` are False, no point in calling `_run_and_record`."
+
+        sess = tf.get_default_session()
+        feed_dict = self.make_feed_dict(rollouts, run_mode, weights)
+        sess.run(self.update_stats_op, feed_dict=feed_dict)
+
+        for obj in self.rl_objects:
+            if do_update:
+                obj.pre_update(feed_dict, self)
+            else:
+                obj.pre_eval(feed_dict, self)
+
+        if do_update:
+            self.optimizer.update(feed_dict)
+
+        summaries = b""
+        if collect_summaries:
+            summaries, *values = (
+                sess.run(
+                    [summary_op] + [v for _, v in self.recorded_values],
+                    feed_dict=feed_dict))
+        else:
+            values = sess.run(
+                [v for _, v in self.recorded_values],
+                feed_dict=feed_dict)
+
+        for obj in self.rl_objects:
+            if do_update:
+                obj.post_update(feed_dict, self)
+            else:
+                obj.post_eval(feed_dict, self)
+
+        record = {k: v for v, (k, _) in zip(values, self.recorded_values)}
+        return summaries, record
+
     def update(self, batch_size, collect_summaries):
         assert self.mu is not None, "A behaviour policy must be set using `set_behaviour_policy` before calling `update`."
         assert self.optimizer is not None, "An optimizer must be set using `set_optimizer` before calling `update`."
 
-        sess = tf.get_default_session()
-
         with self:
             rollouts = self.env.do_rollouts(self.mu, batch_size, mode='train')
 
-            feed_dict = self.make_feed_dict(rollouts)
-            self.n_train_experiences += rollouts.batch_size
-            self.train_cumulative_reward += sess.run(self._signals['total_reward'], feed_dict=feed_dict)
-
             train_summaries = b""
+            train_record = {}
             if collect_summaries and self.replay_buffer is not None:
-                for obj in self.rl_objects:
-                    obj.pre_eval(feed_dict, self)
-
-                feed_dict[self._signals['average_cumulative_reward']] = (
-                    self.train_cumulative_reward / self.n_train_experiences)
-                train_summaries = sess.run(self.summary_op, feed_dict=feed_dict)
-
-                for obj in self.rl_objects:
-                    obj.post_eval(feed_dict, self)
+                train_summaries, train_record = self._run_and_record(
+                    rollouts, run_mode='train', weights=None, do_update=False,
+                    summary_op=self.summary_op, collect_summaries=collect_summaries)
 
             weights = None
             n_updates = 1
@@ -341,7 +403,6 @@ class RLContext(Parameterized):
                 # each with a different batch, per environment sample
                 n_updates = self.updates_per_sample
 
-            replay_summaries = b""
             for i in range(n_updates):
                 if self.replay_buffer is not None:
                     rollouts, weights = self.replay_buffer.get_batch(self.update_batch_size)
@@ -350,55 +411,25 @@ class RLContext(Parameterized):
                     # Most common reason for `rollouts` being None is there not being enough experiences in replay memory.
                     break
 
-                feed_dict = self.make_feed_dict(rollouts, weights)
+                update_summaries, update_record = self._run_and_record(
+                    rollouts, run_mode='update', weights=weights, do_update=True,
+                    summary_op=self.train_summary_op,
+                    collect_summaries=collect_summaries and i == n_updates-1)
 
-                self.n_replay_experiences += rollouts.batch_size
-                self.replay_cumulative_reward += sess.run(self._signals['total_reward'], feed_dict=feed_dict)
-
-                for obj in self.rl_objects:
-                    obj.pre_update(feed_dict, self)
-
-                self.optimizer.update(feed_dict)
-
-                for obj in self.rl_objects:
-                    obj.post_update(feed_dict, self)
-
-                if collect_summaries and i == n_updates-1:
-                    feed_dict[self._signals['average_cumulative_reward']] = (
-                        self.replay_cumulative_reward / self.n_replay_experiences)
-                    replay_summaries = sess.run(self.train_summary_op, feed_dict=feed_dict)
-
-            return train_summaries, replay_summaries
+            return train_summaries, update_summaries, train_record, update_record
 
     def evaluate(self, batch_size):
         assert self.mu is not None, "A behaviour policy must be set using `set_behaviour_policy` before calling `evaluate`."
 
-        sess = tf.get_default_session()
-
         with self:
             rollouts = self.env.do_rollouts(self.mu, batch_size, mode='val')
 
-            feed_dict = self.make_feed_dict(rollouts)
+            eval_summaries, eval_record = self._run_and_record(
+                rollouts, run_mode='val', weights=None, do_update=False,
+                summary_op=self.summary_op,
+                collect_summaries=True)
 
-            self.n_val_experiences += rollouts.batch_size
-            self.val_cumulative_reward += sess.run(self._signals['total_reward'], feed_dict=feed_dict)
-
-            for obj in self.rl_objects:
-                obj.pre_eval(feed_dict, self)
-
-            feed_dict[self._signals['average_cumulative_reward']] = (
-                self.val_cumulative_reward / self.n_val_experiences)
-
-            eval_summaries, *values = (
-                sess.run(
-                    [self.summary_op] + [v for _, v in self.recorded_values],
-                    feed_dict=feed_dict))
-
-            for obj in self.rl_objects:
-                obj.post_eval(feed_dict, self)
-
-            record = {k: v for v, (k, _) in zip(values, self.recorded_values)}
-            return eval_summaries, record
+        return eval_summaries, eval_record
 
 
 class RLUpdater(Updater):
@@ -436,26 +467,40 @@ class RLUpdater(Updater):
             learner.build_graph(self.env, self.is_training)
 
     def _update(self, batch_size, collect_summaries):
-        summaries = [learner.update(batch_size, collect_summaries) for learner in self.learners]
-        train_summaries, replay_summaries = zip(*summaries)
+        train_summaries, update_summaries = [], []
+        train_record, update_record = {}, {}
+
+        for learner in self.learners:
+            ts, us, tr, ur = learner.update(batch_size, collect_summaries)
+            train_summaries.append(ts)
+            update_summaries.append(us)
+
+            for k, v in tr.items():
+                train_record[learner.name + ":" + k] = v
+
+            for k, v in ur.items():
+                update_record[learner.name + ":" + k] = v
 
         train_summaries = (b'').join(train_summaries)
-        replay_summaries = (b'').join(replay_summaries)
+        update_summaries = (b'').join(update_summaries)
 
-        return train_summaries, replay_summaries
+        return train_summaries, update_summaries, train_record, update_record
 
     def _evaluate(self, batch_size):
         """ Return list of tf summaries and a dictionary of values to be displayed. """
-
-        summaries = b''
+        summaries = []
         records = []
         record = {}
+
         for learner in self.learners:
             s, r = learner.evaluate(batch_size)
-            summaries += s
+            summaries.append(s)
 
             for k, v in r.items():
                 record[learner.name + ":" + k] = v
             records.append(r)
+
         loss = self.loss_func(records)
+
+        summaries = (b'').join(summaries)
         return loss, summaries, record

@@ -660,60 +660,6 @@ def add_scaled_noise_to_gradients(grads_and_vars, gradient_noise_scale):
     return noisy_gradients
 
 
-def adj_inverse_time_decay(initial, global_step, decay_steps, decay_rate, gamma,
-                           staircase=False, name=None):
-    """Applies inverse time decay to the initial learning rate.
-
-    Adapted from tf.train.inverse_time_decay (added `gamma` arg.)
-
-    The function returns the decayed learning rate.  It is computed as:
-
-    ```python
-    decayed_value = initial / (1 + decay_rate * t/decay_steps)
-    ```
-
-    Args:
-      initial: A scalar `float32` or `float64` `Tensor` or a
-        Python number.  The initial learning rate.
-      global_step: A Python number.
-        Global step to use for the decay computation.  Must not be negative.
-      decay_steps: How often to apply decay.
-      decay_rate: A Python number.  The decay rate.
-      staircase: Whether to apply decay in a discrete staircase, as opposed to
-        continuous, fashion.
-      gamma: A scalar `float32` or `float64` `Tensor` or a
-        Python number.  The power to raise output to.
-      name: String.  Optional name of the operation.  Defaults to
-        'InverseTimeDecay'.
-
-    Returns:
-      A scalar `Tensor` of the same type as `initial`.  The decayed
-      learning rate.
-
-    Raises:
-      ValueError: if `global_step` is not supplied.
-
-    """
-    if global_step is None:
-        raise ValueError("global_step is required for adj_inverse_time_decay.")
-
-    with ops.name_scope(name, "AdjInverseTimeDecay",
-                        [initial, global_step, decay_rate]) as name:
-        initial = ops.convert_to_tensor(initial, name="initial")
-        dtype = initial.dtype
-        global_step = math_ops.cast(global_step, dtype)
-        decay_steps = math_ops.cast(decay_steps, dtype)
-        decay_rate = math_ops.cast(decay_rate, dtype)
-        p = global_step / decay_steps
-        if staircase:
-            p = math_ops.floor(p)
-        const = math_ops.cast(constant_op.constant(1), initial.dtype)
-        denom = math_ops.add(const, math_ops.multiply(decay_rate, p))
-        quotient = math_ops.div(initial, denom)
-        gamma = math_ops.cast(gamma, dtype)
-        return math_ops.pow(quotient, gamma, name=name)
-
-
 class _bool(object):
     def __new__(cls, val):
         if val in ("0", "False", "F", "false", "f"):

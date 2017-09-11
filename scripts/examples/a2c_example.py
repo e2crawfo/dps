@@ -10,6 +10,7 @@ config.update(grid.config)
 config.update(
     max_steps=100000,
     threshold=-1,
+    display_step=10,
 )
 
 with config:

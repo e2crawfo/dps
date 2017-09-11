@@ -48,14 +48,29 @@ class TrainingLoop(object):
     def latest(self):
         return self.history[-1]
 
-    def summarize(self):
+    def summarize(self, latest=False):
         s = "\n"
-        for stage, d in enumerate(self.history):
-            s += "Stage {} ".format(stage) + "*" * 30 + '\n'
+        if latest:
+            history = [self.latest]
+        else:
+            history = self.history
+
+        for stage, d in enumerate(history):
+            if latest:
+                s += "Step(g: {}, l: {}): ".format(self.global_step, self.local_step)
+            else:
+                s += "Stage {} ".format(stage)
+
+            s += "*" * 30 + '\n'
+
             items = sorted(d.items(), key=lambda x: x[0])
             for k, v in items:
-                s += "* {}: {}\n".format(k, v)
-            s += "* new config values: {}\n\n".format(pformat(self.curriculum[stage]))
+                if k in 'train_data update_data val_data'.split() and v:
+                    s += "* {} (final_step): {}\n".format(k, v[-1])
+                else:
+                    s += "* {}: {}\n".format(k, v)
+            if not latest:
+                s += "* new config values: {}\n\n".format(pformat(self.curriculum[stage]))
         return s
 
     @property
@@ -128,7 +143,7 @@ class TrainingLoop(object):
 
             stage_start = time.time()
 
-            self.history.append(dict(stage=stage))
+            self.history.append(dict(stage=stage, train_data=[], val_data=[], update_data=[]))
 
             with ExitStack() as stack:
                 graph = tf.Graph()
@@ -147,8 +162,8 @@ class TrainingLoop(object):
                     self.train_writer = tf.summary.FileWriter(
                         exp_dir.path_for('train'), graph,
                         flush_secs=cfg.reload_interval)
-                    self.replay_writer = tf.summary.FileWriter(
-                        exp_dir.path_for('replay'), graph,
+                    self.update_writer = tf.summary.FileWriter(
+                        exp_dir.path_for('update'), graph,
                         flush_secs=cfg.reload_interval)
                     self.val_writer = tf.summary.FileWriter(
                         exp_dir.path_for('val'), flush_secs=cfg.reload_interval)
@@ -192,11 +207,7 @@ class TrainingLoop(object):
                       "step (g: {best_global_step}, l: {best_local_step}) "
                       "with validation loss = {best_loss}.".format(**self.latest))
 
-                s = "~" * 40
-                for k, v in self.latest.items():
-                    s += '\n{}: {}'.format(k, v)
-                s += "\n" + "~" * 40
-                print(s)
+                print(self.summarize(latest=True))
 
                 best_path = self.latest['best_path']
                 print("Loading best hypothesis for this stage "
@@ -217,7 +228,7 @@ class TrainingLoop(object):
 
                 self.record(stage_duration=time.time()-stage_start)
 
-        print(self.summarize())
+        print(self.summarize(latest=False))
         result = dict(
             config=cfg.freeze(),
             history=self.history,
@@ -260,7 +271,7 @@ class TrainingLoop(object):
     def _run_stage(self, stage, updater, early_stop):
         """ Run a stage of a curriculum. """
 
-        local_step = 0
+        self.local_step = 0
         threshold_reached = False
         val_loss = np.inf
         reason = None
@@ -269,7 +280,7 @@ class TrainingLoop(object):
         time_per_batch = 0.0
 
         while True:
-            if local_step >= cfg.max_steps:
+            if self.local_step >= cfg.max_steps:
                 reason = "Maximum number of steps reached"
                 break
 
@@ -278,31 +289,34 @@ class TrainingLoop(object):
             render = (self.global_step % cfg.render_step == 0) and self.global_step > 0
 
             start_time = time.time()
-            update_summaries, replay_summaries = updater.update(
+            update_summaries, update_summaries, train_record, update_record = updater.update(
                 cfg.batch_size, collect_summaries=evaluate and cfg.save_summaries)
             update_duration = time.time() - start_time
+
+            self.latest['train_data'].append(train_record)
+            self.latest['update_data'].append(update_record)
 
             if evaluate or display:
                 val_loss, val_summaries, val_record = updater.evaluate(cfg.batch_size)
 
-                record = {k + ' (val)': v for k, v in val_record.items()}
+                self.latest['val_data'].append(val_record)
 
                 if evaluate and cfg.save_summaries:
                     self.train_writer.add_summary(update_summaries, updater.n_experiences)
-                    self.replay_writer.add_summary(replay_summaries, updater.n_experiences)
+                    self.update_writer.add_summary(update_summaries, updater.n_experiences)
                     self.val_writer.add_summary(val_summaries, updater.n_experiences)
 
                 if cfg.stopping_function is not None:
                     stopping_criteria = cfg.stopping_function(val_record)
                 else:
                     stopping_criteria = val_loss
-                new_best, stop = early_stop.check(stopping_criteria, local_step, **record)
+                new_best, stop = early_stop.check(stopping_criteria, self.local_step, **val_record)
 
                 if new_best:
                     print("Storing new best on (local, global) step ({}, {}), "
                           "constituting {} local experiences, "
                           "with validation loss of {}.".format(
-                              local_step, self.global_step, updater.n_experiences, val_loss))
+                              self.local_step, self.global_step, updater.n_experiences, val_loss))
 
                     filename = self.exp_dir.path_for('best_of_stage_{}'.format(stage))
                     best_path = updater.save(tf.get_default_session(), filename)
@@ -323,26 +337,21 @@ class TrainingLoop(object):
                 self.record(
                     time_per_example=time_per_example,
                     time_per_batch=time_per_batch,
-                    n_steps=local_step,
+                    n_steps=self.local_step,
                     epoch=updater.env.completion
                 )
 
                 if display:
-                    s = "~" * 40
-                    s += "\nStep(g: {}, l: {}): ".format(self.global_step, local_step)
-                    for k, v in self.latest.items():
-                        s += '\n{}: {}'.format(k, v)
-                    s += "\n" + "~" * 40
-                    print(s)
+                    print(self.summarize(latest=True))
 
             if render and cfg.render_hook is not None:
                 cfg.render_hook(updater)
 
             total_train_time += update_duration
-            time_per_example = total_train_time / ((local_step+1) * cfg.batch_size)
-            time_per_batch = total_train_time / (local_step+1)
+            time_per_example = total_train_time / ((self.local_step+1) * cfg.batch_size)
+            time_per_batch = total_train_time / (self.local_step+1)
 
-            local_step += 1
+            self.local_step += 1
             self.global_step += 1
 
         return threshold_reached, reason

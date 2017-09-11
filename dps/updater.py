@@ -46,9 +46,9 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
         scheduled_value_summaries = \
             tf.get_default_session().run(self.scheduled_value_summaries_op)
 
-        train, replay = self._update(batch_size, collect_summaries)
+        train, update, train_record, update_record = self._update(batch_size, collect_summaries)
         tf.get_default_session().run(self.inc_global_step_op)
-        return train + scheduled_value_summaries, replay
+        return train + scheduled_value_summaries, update + scheduled_value_summaries, train_record, update_record
 
     @abc.abstractmethod
     def _update(self, batch_size, collect_summaries=None):
@@ -155,10 +155,10 @@ class DifferentiableUpdater(Updater):
         sess = tf.get_default_session()
         if collect_summaries:
             train_summaries, _ = sess.run([self.train_summary_op, self.train_op], feed_dict=feed_dict)
-            return train_summaries, b''
+            return b'', train_summaries, {}, {}
         else:
             sess.run(self.train_op, feed_dict=feed_dict)
-            return b'', b''
+            return b'', b'', {}, {}
 
     def _evaluate(self, batch_size, mode):
         x, y = self.env.next_batch(None, mode=mode)

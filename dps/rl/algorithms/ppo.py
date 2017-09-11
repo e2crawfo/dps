@@ -3,24 +3,25 @@ from dps.utils import Config
 from dps.rl import (
     RLContext, Agent, StochasticGradientDescent,
     PolicyGradient, BasicAdvantageEstimator, RLUpdater,
-    BuildSoftmaxPolicy, BuildLstmController
+    BuildSoftmaxPolicy, BuildLstmController, PolicyEntropyBonus,
 )
 
 
 def PPO(env):
-    with RLContext(cfg.gamma) as context:
+    with RLContext(cfg.gamma, name="PPO") as context:
         policy = cfg.build_policy(env, name="actor")
         context.set_behaviour_policy(policy)
 
         # Build an agent with `policy` as one of its heads.
         agent = Agent("agent", cfg.build_controller, [policy])
 
-        # Build an advantage estimator that estimates advantage from rollouts.
+        # Build an advantage estimator that estimates advantage from current set of rollouts.
         advantage_estimator = BasicAdvantageEstimator(policy)
 
         # Add a term to the objective function encapsulated by `context`.
         # The surrogate objective function, when differentiated, yields the policy gradient.
         PolicyGradient(policy, advantage_estimator, epsilon=cfg.epsilon)
+        PolicyEntropyBonus(policy, weight=cfg.entropy_weight)
 
         # Optimize the objective function using stochastic gradient descent with respect
         # to the variables stored inside `agent`.
@@ -48,7 +49,8 @@ config = Config(
     n_controller_units=64,
     exploration_schedule='Poly(10.0, 10000, end=0.1)',
     test_time_explore=0.1,
-    epsilon=0.2
+    epsilon=0.2,
+    entropy_weight=0.0,
 )
 
 
