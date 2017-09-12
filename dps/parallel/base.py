@@ -349,7 +349,7 @@ class Job(ReadOnlyJob):
 
         return op_result
 
-    def run(self, pattern, indices, force, output_to_files, verbose, relative_idx):
+    def run(self, pattern, indices, force, output_to_files, verbose):
         operators = self.get_ops(pattern)
 
         if not operators:
