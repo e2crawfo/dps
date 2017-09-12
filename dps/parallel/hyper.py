@@ -10,8 +10,7 @@ from itertools import product
 from copy import deepcopy
 import warnings
 import os
-import io
-import prettytable
+from tabulate import tabulate
 
 import clify
 
@@ -211,7 +210,7 @@ def reduce_hyper_results(store, *results):
             pprint({n: v for n, v in zip(keys, d['keys'])})
             _data = d['data'].drop(keys, axis=1)
             _data = _data[column_order]
-            print(df_to_prettytable(_data.transpose()))
+            print(tabulate(_data.transpose(), headers='keys', tablefmt='fancy_grid'))
 
     print('\n' + '*' * 100)
     print("BASE CONFIG")
@@ -220,17 +219,6 @@ def reduce_hyper_results(store, *results):
     print('\n' + '*' * 100)
     print("DISTRIBUTIONS")
     pprint(distributions)
-
-
-def df_to_prettytable(df):
-    """ Given a pandas dataframe, returns a string giving the dataframe in
-        nice-looking table format.
-    """
-    output = io.StringIO()
-    df.to_csv(output)
-    output.seek(0)
-    pt = prettytable.from_csv(output)
-    return pt
 
 
 class RunTrainingLoop(object):

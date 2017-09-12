@@ -155,8 +155,7 @@ class ParallelSession(object):
         env_vars = ' '.join('--env ' + k for k in env_vars)
 
         ro_job = ReadOnlyJob(input_zip)
-        completion = ro_job.completion(pattern)
-        indices_to_run = [i for i, op in completion['ready_incomplete_ops']]
+        indices_to_run = sorted([op.idx for op in ro_job.ready_incomplete_ops(sort=False)])
         n_jobs_to_run = len(indices_to_run)
         if n_jobs_to_run == 0:
             print("All jobs are finished! Exiting.")
@@ -411,14 +410,13 @@ class ParallelSession(object):
                   "{seconds_per_step} seconds of which is pure computation time.\n".format(**self.__dict__))
 
             job = ReadOnlyJob(self.input_zip)
-            completion = job.completion(self.pattern)
-            jobs_remaining = [op.idx for op in completion['ready_incomplete_ops']]
+            subjobs_remaining = sorted([op.idx for op in job.ready_incomplete_ops(sort=False)])
 
             i = 0
-            while jobs_remaining:
+            while subjobs_remaining:
                 self.filter_hosts(check_current=True, add_new=True)
 
-                indices_for_step = jobs_remaining[:self.n_procs]
+                indices_for_step = subjobs_remaining[:self.n_procs]
                 self.step(i, indices_for_step)
                 self.checkpoint(i)
 
@@ -426,10 +424,11 @@ class ParallelSession(object):
                     self.n_attempts[j] += 1
 
                 job = ReadOnlyJob('results.zip')
-                completion = job.completion(self.pattern)
-                jobs_remaining = [
-                    op.idx for op in completion['ready_incomplete_ops']
-                    if self.n_attempts[j] <= self.n_retries]
+                subjobs_remaining = [op.idx for op in job.ready_incomplete_ops(sort=False)]
+                subjobs_remaining = [
+                    idx for idx in subjobs_remaining
+                    if self.n_attempts[idx] <= self.n_retries]
+                subjobs_remaining = sorted(subjobs_remaining)
 
                 i += 1
 

@@ -39,6 +39,7 @@ class Operator(object):
 
     Parameters
     ----------
+    idx: int
     name: str
     func_key: key
     inp_keys: list of key
@@ -110,7 +111,8 @@ Operator(
             if self.is_complete(store):
                 if force:
                     force_unique = False
-                    vprint("Op {} is already complete, but ``force`` is True, so we're running it anyway.".format(self.name), verbose)
+                    vprint("Op {} is already complete, but ``force`` is True, "
+                           "so we're running it anyway.".format(self.name), verbose)
                 else:
                     vprint("Skipping op {}, already complete.".format(self.name), verbose)
                     return False
@@ -196,13 +198,26 @@ class ReadOnlyJob(object):
         else:
             self.objects = FileSystemObjectStore(path)
 
-    def get_ops(self, pattern=None, sort=True):
+    def get_ops(self, pattern=None, sort=True, ready=None, complete=None):
         operators = list(self.objects.load_objects('operator').values())
         if pattern is not None:
             selected = KeywordMapping.batch([op.name for op in operators], pattern)
             operators = (op for i, op in enumerate(operators) if selected[i])
+
+        if ready is not None:
+            if ready:
+                operators = [op for op in operators if op.is_ready(self.objects)]
+            else:
+                operators = [op for op in operators if not op.is_ready(self.objects)]
+
+        if complete is not None:
+            if complete:
+                operators = [op for op in operators if op.is_complete(self.objects)]
+            else:
+                operators = [op for op in operators if not op.is_complete(self.objects)]
+
         if sort:
-            operators = sorted(operators, key=lambda op: op.name)
+            operators = sorted(operators, key=lambda op: op.idx)
         return operators
 
     def _print_ops(self, ops, verbose):
@@ -244,7 +259,7 @@ class ReadOnlyJob(object):
         return '\n'.join(s)
 
     def completion(self, pattern=None):
-        operators = list(self.get_ops(pattern, sort=False))
+        operators = list(self.get_ops(pattern, sort=True))
         is_complete = [op.is_complete(self.objects) for op in operators]
         completed_ops = [op for i, op in enumerate(operators) if is_complete[i]]
         incomplete_ops = [op for i, op in enumerate(operators) if not is_complete[i]]
@@ -261,9 +276,11 @@ class ReadOnlyJob(object):
             n_not_ready_incomplete=len(not_ready_incomplete_ops),
             ready_incomplete_ops=ready_incomplete_ops)
 
-    def completed_ops(self):
-        ops = list(self.get_ops(None, sort=False))
-        return [op for op in ops if op.is_complete(self.objects)]
+    def ready_incomplete_ops(self, sort=False):
+        return list(self.get_ops(None, sort=sort, complete=False, ready=True))
+
+    def completed_ops(self, sort=False):
+        return list(self.get_ops(None, sort=sort, complete=True))
 
 
 class Job(ReadOnlyJob):
@@ -337,6 +354,8 @@ class Job(ReadOnlyJob):
 
         if not operators:
             return False
+
+        indices = set(indices)
 
         return [
             op.run(self.objects, force, output_to_files, verbose)
