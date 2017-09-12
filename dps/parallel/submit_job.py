@@ -9,6 +9,7 @@ import numpy as np
 import glob
 from contextlib import contextmanager
 import time
+from collections import defaultdict
 
 from spectral_dagger.utils.misc import make_symlink
 
@@ -78,11 +79,11 @@ class ParallelSession(object):
         Path to scratch directory that is local to each remote process.
     ppn: int
         Number of processors per node.
-    walltime: str
+    wall_time: str
         String specifying the maximum wall-time allotted to running the selected ops.
     cleanup_time: str
         String specifying the amount of time required to clean-up. Job execution will be
-        halted when there is this much time left in the overall walltime, at which point
+        halted when there is this much time left in the overall wall_time, at which point
         results computed so far will be collected.
     add_date: bool
         Whether to add current date/time to the name of the directory where results are stored.
@@ -107,9 +108,9 @@ class ParallelSession(object):
     """
     def __init__(
             self, name, input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', ppn=12,
-            walltime="1:00:00", cleanup_time="00:15:00", time_slack=0,
+            wall_time="1:00:00", cleanup_time="00:15:00", time_slack=0,
             add_date=True, dry_run=0, parallel_exe="$HOME/.local/bin/parallel",
-            host_pool=None, max_hosts=1, env_vars=None, redirect=False, n_retries=10):
+            host_pool=None, min_hosts=1, max_hosts=1, env_vars=None, redirect=False, n_retries=10):
         input_zip = Path(input_zip)
         input_zip_abs = input_zip.resolve()
         input_zip_base = input_zip.name
@@ -130,17 +131,17 @@ class ParallelSession(object):
 
         cleanup_time = parse_timedelta(cleanup_time)
         try:
-            walltime = parse_timedelta(walltime)
+            wall_time = parse_timedelta(wall_time)
         except:
-            deadline = parse_date(walltime)
-            walltime = deadline - datetime.datetime.now()
-            if int(walltime.total_seconds()) < 0:
+            deadline = parse_date(wall_time)
+            wall_time = deadline - datetime.datetime.now()
+            if int(wall_time.total_seconds()) < 0:
                 raise Exception("Deadline {} is in the past!".format(deadline))
 
-        if cleanup_time > walltime:
-            raise Exception("Cleanup time {} is larger than walltime {}!".format(cleanup_time, walltime))
+        if cleanup_time > wall_time:
+            raise Exception("Cleanup time {} is larger than wall_time {}!".format(cleanup_time, wall_time))
 
-        walltime_seconds = int(walltime.total_seconds())
+        wall_time_seconds = int(wall_time.total_seconds())
         cleanup_time_seconds = int(cleanup_time.total_seconds())
 
         redirect = "--redirect" if redirect else ""
@@ -161,26 +162,18 @@ class ParallelSession(object):
             print("All jobs are finished! Exiting.")
             return
 
-        # Try hosts, weed out the ones that we can't connect to, trying to get a total of `max_hosts` working nodes.
-        host_pool = host_pool or HOST_POOL
+        self.min_hosts = min_hosts
+        self.max_hosts = max_hosts
         hosts = []
-        for host in host_pool:
-            if host is ':':
-                hosts.append(host)
-            else:
-                print("Testing connection to host {}...".format(host))
-                try:
-                    self.execute_command("ssh -oPasswordAuthentication=no -oStrictHostKeyChecking=no -oConnectTimeout=5 -T {} echo Connected to \$HOSTNAME".format(host))
-                except subprocess.CalledProcessError:
-                    pass
-                else:
-                    hosts.append(host)
-                if len(hosts) >= max_hosts:
-                    break
-        del host
-        if len(hosts) < max_hosts:
-            print("{} hosts were requested, "
-                  "but only {} usable hosts could be found.".format(max_hosts, len(hosts)))
+        host_pool = host_pool or HOST_POOL
+        bad_hosts = []
+
+        self.__dict__.update(locals())
+
+        with cd(self.job_directory):
+            self.filter_hosts(check_current=False, add_new=True)
+
+        node_file = " --sshloginfile nodefile.txt "
 
         n_nodes = len(hosts)
         n_procs = ppn * n_nodes
@@ -193,11 +186,7 @@ class ParallelSession(object):
         else:
             n_steps = int(np.ceil(n_jobs_to_run / n_procs))
 
-        with (Path(job_directory) / 'nodefile.txt').open('w') as f:
-            f.write('\n'.join(hosts))
-        node_file = " --sshloginfile nodefile.txt "
-
-        execution_time = int((walltime - cleanup_time).total_seconds())
+        execution_time = int((wall_time - cleanup_time).total_seconds())
         abs_seconds_per_step = int(np.floor(execution_time / n_steps))
         seconds_per_step = abs_seconds_per_step - time_slack
 
@@ -205,43 +194,162 @@ class ParallelSession(object):
         assert abs_seconds_per_step > 0
         assert seconds_per_step > 0
 
+        n_attempts = defaultdict(int)
+        staged_hosts = set()
+
         self.__dict__.update(locals())
 
         # Create convenience `latest` symlinks
         make_symlink(job_directory, os.path.join(scratch, 'latest'))
 
-    def on_all_execute(self, parallel_command, timeout=10, retries=5):
-        """ Execute a command once on each host. """
-        timeout = "--timeout {}".format(timeout) if timeout is not None else ""
-        retries = "--retries {}".format(retries) if retries is not None else ""
-        command = (
-            '{parallel_exe} ' + timeout + ' ' + retries +
-            ' --no-notice {node_file} --nonall {env_vars} -k "' + parallel_command + '"'
-        )
-        self.execute_command(command)
+    def filter_hosts(self, check_current=True, add_new=False):
+        if check_current:
+            print("Check current hosts...")
+            for host in self.hosts + []:
+                if host is not ':':
+                    print("Testing connection to host {}...".format(host))
+                    failed = self.ssh_execute("echo Connected to \$HOSTNAME", host, robust=True)
+                    if failed:
+                        print("Could not connect to houst {}, removing it.".format(host))
+                        self.hosts.remove(host)
 
-    def stage(self):
-        for host in self.hosts:
-            if host == ":":
-                command = "cp {input_zip_abs} {local_scratch}".format(**self.__dict__)
+        if add_new:
+            print("Adding new hosts...")
+            for host in self.host_pool:
+                if len(self.hosts) >= self.max_hosts:
+                    break
+
+                if host in self.hosts or host in self.bad_hosts:
+                    continue
+
+                print("\n" + ("~" * 40))
+                print("\nPreparing host {}...".format(host))
+
+                try:
+                    if host is ':':
+                        print("Creating local scratch directory...")
+                        command = "mkdir -p {local_scratch}"
+                        self.execute_command(command, robust=False)
+
+                        print("Printing local scratch directory...")
+                        command = (
+                            "cd {local_scratch} && "
+                            "echo Local scratch on host \\$(hostname) is {local_scratch}, "
+                            "working directory is \\$(pwd)."
+                        )
+                        self.execute_command(command, robust=False)
+
+                        print("Unzipping...")
+                        command = "cd {local_scratch} && unzip -ouq {input_zip_base} && echo \\$(hostname)"
+                        self.execute_command(command, robust=False)
+
+                        command = "cp {input_zip_abs} {local_scratch}".format(**self.__dict__)
+                        self.execute_command(command, frmt=False, robust=False)
+
+                        self.hosts.append(host)
+                    else:
+                        self.ssh_execute("echo Connected to \$HOSTNAME", host, robust=False)
+                        print("Connection to host {} succeeded, now trying to stage it...".format(host))
+
+                        print("Creating local scratch directory...")
+                        self.ssh_execute("mkdir -p {local_scratch}", host, robust=False)
+
+                        print("Printing local scratch directory...")
+                        command = (
+                            "cd {local_scratch} && "
+                            "echo Local scratch on host \\$(hostname) is {local_scratch}, "
+                            "working directory is \\$(pwd)."
+                        )
+                        self.ssh_execute(command, host, robust=False)
+
+                        command = "scp -q {input_zip_abs} {host}:{local_scratch}".format(host=host, **self.__dict__)
+                        self.execute_command(command, frmt=False, robust=False)
+
+                        print("Unzipping...")
+                        command = "cd {local_scratch} && unzip -ouq {input_zip_base} && echo \\$(hostname)"
+                        self.ssh_execute(command, host, robust=False)
+
+                        print("Host {} successfully prepared.".format(host))
+                        self.hosts.append(host)
+
+                except subprocess.CalledProcessError:
+                    print("Preparation of host {} failed, not adding it.".format(host))
+                    self.bad_hosts.append(host)
+
+            if len(self.hosts) < self.min_hosts:
+                raise Exception(
+                    "Found only {} usable hosts, but minimum "
+                    "required hosts is {}.".format(len(self.hosts), self.min_hosts))
+
+            if len(self.hosts) < self.max_hosts:
+                print("{} hosts were requested, "
+                      "but only {} usable hosts could be found.".format(self.max_hosts, len(self.hosts)))
+
+        with open('nodefile.txt', 'w') as f:
+            f.write('\n'.join(self.hosts))
+
+    def execute_command(self, command, frmt=True, shell=True, robust=False):
+        """ Uses `subprocess` to execute `command`. """
+        if frmt:
+            command = command.format(**self.__dict__)
+
+        print("\nExecuting command: ")
+        print(command)
+
+        if not shell:
+            command = command.split()
+
+        start = time.time()
+        try:
+            process = subprocess.run(command, check=True, universal_newlines=True, shell=shell)
+            print("Command took {} seconds.\n".format(time.time() - start))
+        except subprocess.CalledProcessError as e:
+            if isinstance(command, list):
+                command = ' '.join(command)
+            print("CalledProcessError has been raised while executing command: {}.".format(command))
+
+            if robust:
+                return e.returncode
             else:
-                command = "scp -q {input_zip_abs} {host}:{local_scratch}".format(host=host, **self.__dict__)
-            self.execute_command(command, frmt=False)
+                raise_with_traceback(e)
+
+        return process.returncode
+
+    def ssh_execute(self, command, host, **kwargs):
+        return self.execute_command(
+            "ssh -oPasswordAuthentication=no -oStrictHostKeyChecking=no "
+            "-oConnectTimeout=5 -T {host} \"{command}\"".format(host=host, command=command), **kwargs)
 
     def fetch(self):
         for i, host in enumerate(self.hosts):
-            if host == ":":
-                command = "cp {local_scratch}/results.zip ./results/{i}.zip".format(i=i, **self.__dict__)
-            else:
-                command = "scp -q {host}:{local_scratch}/results.zip ./results/{i}.zip".format(
-                    host=host, i=i, **self.__dict__)
-            self.execute_command(command, frmt=False)
+            try:
+                if host is ':':
+                    command = (
+                        "cd {local_scratch} && echo Zipping results on node \\$(hostname). "
+                        "&& zip -rq results {archive_root}"
+                    )
+                    self.execute_command(command, robust=False)
+                    command = "cp {local_scratch}/results.zip ./results/{i}.zip".format(i=i, **self.__dict__)
+                    self.execute_command(command, frmt=False, robust=True)
+                else:
+                    command = (
+                        "cd {local_scratch} && echo Zipping results on node \\$(hostname). "
+                        "&& zip -rq results {archive_root}"
+                    )
+                    self.ssh_execute(command, host, robust=False)
 
-    def step(self, i):
+                    command = "scp -q {host}:{local_scratch}/results.zip ./results/{i}.zip".format(
+                        host=host, i=i, **self.__dict__)
+                    self.execute_command(command, frmt=False, robust=True)
+
+            except subprocess.CalledProcessError:
+                print("Preparation of host {} failed, not adding it.".format(host))
+                self.bad_hosts.append(host)
+
+    def step(self, i, indices_for_step):
         print("Beginning step {} at: ".format(i) + "=" * 90)
         print(datetime.datetime.now())
 
-        indices_for_step = self.indices_to_run[i*self.n_procs:(i+1)*self.n_procs]
         if not indices_for_step:
             print("No jobs left to run on step {}.".format(i))
             return
@@ -262,14 +370,13 @@ class ParallelSession(object):
         command = command.format(
             indices_for_step=indices_for_step, **self.__dict__)
 
-        self.execute_command(command, frmt=False)
+        n_failed = self.execute_command(command, frmt=False, robust=True)
+        if n_failed:
+            self.filter_hosts(check_current=True, add_new=False)
 
     def checkpoint(self, i):
         print("Fetching results of step {} at: ".format(i))
         print(datetime.datetime.now())
-
-        command = "cd {local_scratch} && echo Zipping results on node \\$(hostname). && zip -rq results {archive_root}"
-        self.on_all_execute(command)
 
         self.fetch()
 
@@ -288,27 +395,6 @@ class ParallelSession(object):
         self.execute_command("dps-hyper summary results.zip")
         self.execute_command("dps-hyper view results.zip")
 
-    def execute_command(self, command, frmt=True, shell=True):
-        """ Uses `subprocess` to execute `command`. """
-        if frmt:
-            command = command.format(**self.__dict__)
-
-        print("\nExecuting command: ")
-        print(command)
-
-        if not shell:
-            command = command.split()
-
-        start = time.time()
-        try:
-            subprocess.run(command, check=True, universal_newlines=True, shell=shell)
-            print("Command took {} seconds.\n".format(time.time() - start))
-        except subprocess.CalledProcessError as e:
-            if isinstance(command, list):
-                command = ' '.join(command)
-            print("CalledProcessError has been raised while executing command: {}.".format(command))
-            raise_with_traceback(e)
-
     def run(self):
         if self.dry_run:
             print("Dry run, so not running.")
@@ -316,34 +402,36 @@ class ParallelSession(object):
 
         with cd(self.job_directory):
             print("Starting job at {}".format(datetime.datetime.now()))
-            print("Creating local scratch directories...")
 
-            self.on_all_execute("mkdir -p {local_scratch}")
-
-            print("Printing local scratch directories...")
-
-            command = (
-                "cd {local_scratch} && "
-                "echo Local scratch on host \\$(hostname) is {local_scratch}, working directory is \\$(pwd).")
-            self.on_all_execute(command)
-
-            print("Staging input archive...")
-            self.stage()
-
-            print("Unzipping...")
-            command = "cd {local_scratch} && unzip -ouq {input_zip_base} && echo \\$(hostname)"
-            self.on_all_execute(command)
-
-            print("We have {walltime_seconds} seconds to complete {n_jobs_to_run} "
+            print("We have {wall_time_seconds} seconds to complete {n_jobs_to_run} "
                   "sub-jobs (grouped into {n_steps} steps) using {n_procs} processors.".format(**self.__dict__))
             print("{execution_time} seconds have been reserved for job execution, "
                   "and {cleanup_time_seconds} seconds have been reserved for cleanup.".format(**self.__dict__))
             print("Each step has been allotted {abs_seconds_per_step} seconds, "
                   "{seconds_per_step} seconds of which is pure computation time.\n".format(**self.__dict__))
 
-            for i in range(self.n_steps):
-                self.step(i)
+            job = ReadOnlyJob(self.input_zip)
+            completion = job.completion(self.pattern)
+            jobs_remaining = [op.idx for op in completion['ready_incomplete_ops']]
+
+            i = 0
+            while jobs_remaining:
+                self.filter_hosts(check_current=True, add_new=True)
+
+                indices_for_step = jobs_remaining[:self.n_procs]
+                self.step(i, indices_for_step)
                 self.checkpoint(i)
+
+                for j in indices_for_step:
+                    self.n_attempts[j] += 1
+
+                job = ReadOnlyJob('results.zip')
+                completion = job.completion(self.pattern)
+                jobs_remaining = [
+                    op.idx for op in completion['ready_incomplete_ops']
+                    if self.n_attempts[j] <= self.n_retries]
+
+                i += 1
 
             self.execute_command("cp -f {input_zip_abs} {input_zip_abs}.bk")
             self.execute_command("cp -f results.zip {input_zip_abs}")
@@ -351,7 +439,7 @@ class ParallelSession(object):
 
 def submit_job_pbs(
         input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', n_nodes=1, ppn=12,
-        walltime="1:00:00", cleanup_time="00:15:00", time_slack=0,
+        wall_time="1:00:00", cleanup_time="00:15:00", time_slack=0,
         add_date=True, show_script=0, dry_run=0, parallel_exe="$HOME/.local/bin/parallel",
         queue=None, hosts=None, env_vars=None):
     """ Submit a Job to be executed in parallel.
@@ -371,11 +459,11 @@ def submit_job_pbs(
         Path to scratch directory that is local to each remote process.
     ppn: int
         Number of processors per node.
-    walltime: str
+    wall_time: str
         String specifying the maximum wall-time allotted to running the selected ops.
     cleanup_time: str
         String specifying the amount of time required to clean-up. Job execution will be
-        halted when there is this much time left in the overall walltime, at which point
+        halted when there is this much time left in the overall wall_time, at which point
         results computed so far will be collected.
     add_date: bool
         Whether to add current date/time to the name of the directory where results are stored.
@@ -415,11 +503,11 @@ def submit_job_pbs(
     local_scratch = '\\$RAMDISK'
 
     cleanup_time = parse_timedelta(cleanup_time)
-    walltime = parse_timedelta(walltime)
-    if cleanup_time > walltime:
-        raise Exception("Cleanup time {} is larger than walltime {}!".format(cleanup_time, walltime))
+    wall_time = parse_timedelta(wall_time)
+    if cleanup_time > wall_time:
+        raise Exception("Cleanup time {} is larger than wall_time {}!".format(cleanup_time, wall_time))
 
-    walltime_seconds = int(walltime.total_seconds())
+    wall_time_seconds = int(wall_time.total_seconds())
     cleanup_time_seconds = int(cleanup_time.total_seconds())
 
     node_file = " --sshloginfile $PBS_NODEFILE "
@@ -443,7 +531,7 @@ def submit_job_pbs(
         return
     kwargs['n_jobs_to_run'] = n_jobs_to_run
 
-    execution_time = int((walltime - cleanup_time).total_seconds())
+    execution_time = int((wall_time - cleanup_time).total_seconds())
     n_procs = ppn * n_nodes
     total_compute_time = n_procs * execution_time
     abs_seconds_per_job = int(np.floor(total_compute_time / n_jobs_to_run))
@@ -473,7 +561,7 @@ def submit_job_pbs(
 # MOAB/Torque submission script for multiple, dynamically-run serial jobs
 #
 #PBS -V
-#PBS -l nodes={n_nodes}:ppn={ppn},walltime={walltime}
+#PBS -l nodes={n_nodes}:ppn={ppn},wall_time={wall_time}
 #PBS -N {name}_{clean_pattern}
 #PBS -M eric.crawford@mail.mcgill.ca
 #PBS -m abe
@@ -505,7 +593,7 @@ echo Unzipping... {stderr}
 {parallel_exe} --no-notice {node_file} --nonall {env_vars} -k \\
     "cd {local_scratch} && unzip -ouq {input_zip_base} && echo \\$(hostname) && ls"
 
-echo We have {walltime_seconds} seconds to complete {n_jobs_to_run} sub-jobs using {n_procs} processors.
+echo We have {wall_time_seconds} seconds to complete {n_jobs_to_run} sub-jobs using {n_procs} processors.
 echo {execution_time} seconds have been reserved for job execution, and {cleanup_time_seconds} seconds have been reserved for cleanup.
 echo Each sub-job has been allotted {abs_seconds_per_job} seconds, {seconds_per_job} seconds of which is pure computation time.
 

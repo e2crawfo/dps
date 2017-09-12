@@ -14,7 +14,7 @@ config = DEFAULT_CONFIG.copy(
 
     n_train=10000,
     n_val=500,
-    max_steps=20000,
+    max_steps=100000,
     display_step=100,
     eval_step=10,
     patience=np.inf,
@@ -28,7 +28,6 @@ config = DEFAULT_CONFIG.copy(
     display=False,
     save_display=False,
     use_gpu=False,
-    reward_window=0.1,
     threshold=0.05,
 )
 
@@ -39,19 +38,15 @@ alg_config = Config(
     build_controller=BuildLstmController(),
     optimizer_spec="adam",
 
-    exploration_schedule=(
-        "MixtureSchedule("
-        "    [Poly(10, {0}, end=5.0), Poly(10, {0}, end=1.0), Poly(10, {0}, end=0.1)],"
-        "    100, shared_clock=False)"
-    ).format(config.max_steps),
-    test_time_explore=0.1,
+    exploration_schedule="Poly(10, {0}, end=1.0)".format(config.max_steps),
+    test_time_explore=-1,
 
     policy_weight=1.0,
     lr_schedule=1e-4,
     n_controller_units=128,
     batch_size=16,
     value_weight=1.0,
-    entropy_weight=0.01,
+    entropy_weight=0.1,
     gamma=1.0,
 )
 
@@ -91,16 +86,11 @@ config.update(env_config)
 
 
 grid = dict(
-    # opt_steps_per_update=np.linspace(1, 21, 11).astype('i'),
-    # epsilon=list(np.linspace(0.04, 0.4, 10)) + [None],
-    opt_steps_per_update=[1, 2, 3, 4],
-    epsilon=[0.2, None],
+    opt_steps_per_update=np.linspace(1, 21, 11).astype('i'),
+    epsilon=list(np.linspace(0.04, 0.4, 10)) + [None],
 )
 
 
 from dps.parallel.hyper import build_and_submit
-host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(17, 33)]
-clify.wrap_function(build_and_submit)(
-    config, grid, max_hosts=4, ppn=2, n_repeats=4, walltime="00:15:00",
-    cleanup_time="00:03:00", host_pool=host_pool
-)
+host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
+clify.wrap_function(build_and_submit)(config, grid, n_param_settings=None, host_pool=host_pool)

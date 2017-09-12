@@ -96,6 +96,7 @@ class PolicyEntropyBonus(ObjectiveFunctionTerm):
 
         label = "{}-entropy".format(self.policy.display_name)
         context.add_summary(tf.summary.scalar(label, objective))
+        context.add_recorded_value(label, objective)
 
         return objective
 

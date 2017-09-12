@@ -48,7 +48,8 @@ class Operator(object):
     metadata: dict
 
     """
-    def __init__(self, name, func_key, inp_keys, outp_keys, pass_store=False, metadata=None):
+    def __init__(self, idx, name, func_key, inp_keys, outp_keys, pass_store=False, metadata=None):
+        self.idx = idx
         self.name = name
         self.func_key = func_key
         self.inp_keys = inp_keys
@@ -60,13 +61,14 @@ class Operator(object):
         from pprint import pformat
         return """\
 Operator(
+    idx={},
     name={},
     func_key={},
     inp_keys={},
     outp_keys={},
     pass_store={},
     metadata={})""".format(
-            pformat(self.name), pformat(self.func_key), pformat(self.inp_keys),
+            pformat(self.idx), pformat(self.name), pformat(self.func_key), pformat(self.inp_keys),
             pformat(self.outp_keys), pformat(self.pass_store), pformat(self.metadata))
 
     def __repr__(self):
@@ -244,12 +246,12 @@ class ReadOnlyJob(object):
     def completion(self, pattern=None):
         operators = list(self.get_ops(pattern, sort=False))
         is_complete = [op.is_complete(self.objects) for op in operators]
-        completed_ops = [(i, op) for i, op in enumerate(operators) if is_complete[i]]
-        incomplete_ops = [(i, op) for i, op in enumerate(operators) if not is_complete[i]]
+        completed_ops = [op for i, op in enumerate(operators) if is_complete[i]]
+        incomplete_ops = [op for i, op in enumerate(operators) if not is_complete[i]]
 
-        is_ready = [op.is_ready(self.objects) for op in operators]
-        ready_incomplete_ops = [(i, op) for i, op in incomplete_ops if is_ready[i]]
-        not_ready_incomplete_ops = [(i, op) for i, op in incomplete_ops if not is_ready[i]]
+        is_ready = [op.is_ready(self.objects) for op in incomplete_ops]
+        ready_incomplete_ops = [op for i, op in enumerate(incomplete_ops) if is_ready[i]]
+        not_ready_incomplete_ops = [op for i, op in enumerate(incomplete_ops) if not is_ready[i]]
 
         return dict(
             n_ops=len(operators),
@@ -261,7 +263,7 @@ class ReadOnlyJob(object):
 
     def completed_ops(self):
         ops = list(self.get_ops(None, sort=False))
-        return [op for i, op in enumerate(ops) if op.is_complete(self.objects)]
+        return [op for op in ops if op.is_complete(self.objects)]
 
 
 class Job(ReadOnlyJob):
@@ -269,6 +271,7 @@ class Job(ReadOnlyJob):
         self.objects = FileSystemObjectStore(path)  # A store for functions, data and operators.
         self.map_idx = 0
         self.reduce_idx = 0
+        self.op_idx = 0
         self.n_signals = 0
 
     def save_object(self, kind, key, obj, force_unique=True, clobber=False):
@@ -296,9 +299,10 @@ class Job(ReadOnlyJob):
         outp_keys = [outp.key for outp in outputs]
 
         op = Operator(
-            name=name, func_key=func_key,
+            idx=self.op_idx, name=name, func_key=func_key,
             inp_keys=inp_keys, outp_keys=outp_keys,
             pass_store=pass_store)
+        self.op_idx += 1
         op_key = self.objects.get_unique_key('operator')
         self.save_object('operator', op_key, op, force_unique=True)
 
@@ -328,16 +332,15 @@ class Job(ReadOnlyJob):
 
         return op_result
 
-    def run(self, pattern, indices, force, output_to_files, verbose):
+    def run(self, pattern, indices, force, output_to_files, verbose, relative_idx):
         operators = self.get_ops(pattern)
 
         if not operators:
             return False
 
-        if not indices:
-            indices = set(range(len(operators)))
-
-        return [op.run(self.objects, force, output_to_files, verbose) for i, op in enumerate(operators) if i in indices]
+        return [
+            op.run(self.objects, force, output_to_files, verbose)
+            for op in operators if op.idx in indices]
 
     def zip(self, archive_name=None, delete=False):
         return self.objects.zip(archive_name, delete=delete)

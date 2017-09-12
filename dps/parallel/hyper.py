@@ -39,15 +39,39 @@ class LogUniform(object):
         return "LogUniform(lo={}, hi={}, base={})".format(self.lo, self.hi, self.base)
 
 
-def nested_sample(d):
-    if isinstance(d, dict):
-        return type(d)({k: nested_sample(v) for k, v in d.items()})
-    elif isinstance(d, list):
-        return nested_sample(d[np.random.randint(len(d))])
-    elif hasattr(d, 'rvs'):
-        return d.rvs()
-    else:
-        return d
+def nested_sample(distributions, n_samples=1):
+    assert isinstance(distributions, dict)
+    config = Config(distributions)
+    flat = config.flatten()
+    dists = OrderedDict()
+    other = {}
+
+    for k, v in flat.items():
+        try:
+            v = list(v)
+            dists[k] = v
+        except (TypeError, ValueError):
+            if hasattr(v, 'rvs'):
+                dists[k] = v
+            else:
+                other[k] = v
+
+    samples = []
+    for k, v in dists.items():
+        if hasattr(v, 'rvs'):
+            samples.append(v.rvs(n_samples))
+        else:
+            samples.append(np.random.choice(v, size=n_samples))
+
+    samples = zip(*samples)
+
+    _samples = []
+    for s in samples:
+        new = Config(deepcopy(other.copy()))
+        for k, item in zip(flat, s):
+            new[k] = item
+        _samples.append(type(distributions)(new))
+    return _samples
 
 
 def nested_map(d, f):
@@ -108,26 +132,7 @@ def sample_configs(distributions, base_config, n_repeats, n_samples=None):
     if n_samples is None:
         samples = generate_all(distributions)
     else:
-        max_tries = 1000
-        sample_traces = set()
-        for i in range(n_samples):
-            n_tries = 0
-            while True:
-                sample = nested_sample(distributions)
-
-                trace = str(sample)
-
-                if trace not in sample_traces:
-                    break
-
-                n_tries += 1
-
-                if n_tries >= max_tries:
-                    raise Exception("Tried {} times, could not generate "
-                                    "a new unique configuration.".format(n_tries))
-
-            sample_traces.add(trace)
-            samples.append(sample)
+        samples = nested_sample(distributions, n_samples)
 
     configs = []
     for i, s in enumerate(samples):
@@ -262,7 +267,7 @@ class RunTrainingLoop(object):
 
 
 def build_search(
-        path, name, distributions, config, n_repeats, n_samples=None,
+        path, name, distributions, config, n_repeats, n_param_settings=None,
         _zip=True, use_time=0, do_local_test=True):
     """ Create a Job implementing a hyper-parameter search.
 
@@ -278,7 +283,7 @@ def build_search(
         The base configuration.
     n_repeats: int
         Number of different random seeds to run each sample with.
-    n_samples: int
+    n_param_settings: int
         Number of parameter settings to sample. If not supplied, all possibilities are generated.
     _zip: bool
         Whether to zip the created search directory.
@@ -311,7 +316,7 @@ def build_search(
 
     job = Job(exp_dir.path)
 
-    new_configs = sample_configs(distributions, config, n_repeats, n_samples)
+    new_configs = sample_configs(distributions, config, n_repeats, n_param_settings)
 
     print("{} configs were sampled for parameter search.".format(len(new_configs)))
 
@@ -366,48 +371,86 @@ def hyper_search_cl():
 
 
 def build_and_submit(
-        config, distributions, max_hosts=1, ppn=1, walltime="00:15:00", cleanup_time="00:01:00",
-        n_param_settings=0, n_repeats=0, size=None, do_local_test=True, host_pool=None):
-
-    if host_pool is not None:
-        time_slack = 60
-    else:
-        host_pool = [':']
-        time_slack = 30
+        config, distributions, wall_time, cleanup_time=None, max_hosts=0, ppn=0,
+        n_param_settings=0, n_repeats=0, size=None, do_local_test=False, host_pool=None):
 
     if size == 'big':
-        n_param_settings = 50
-        n_repeats = 5
-        cleanup_time = "00:30:00"
+        build_params = dict(
+            n_param_settings=50,
+            n_repeats=5,
+        )
+
+        run_params = dict(
+            max_hosts=32,
+            ppn=2,
+            cleanup_time="00:30:00"
+        )
     elif size == 'medium':
-        n_param_settings = 8
-        n_repeats = 4
-        cleanup_time = "00:02:15"
+        build_params = dict(
+            n_param_settings=8,
+            n_repeats=4,
+        )
+
+        run_params = dict(
+            max_hosts=4,
+            ppn=2,
+            cleanup_time="00:02:15",
+        )
     elif size == 'small':
-        n_param_settings = 2
-        n_repeats = 2
-        cleanup_time = "00:00:45"
+        build_params = dict(
+            n_param_settings=2,
+            n_repeats=2,
+        )
+
+        run_params = dict(
+            max_hosts=2,
+            ppn=2,
+            cleanup_time="00:00:45"
+        )
+
     elif size is None:
-        pass
+        build_params = dict()
+        run_params = dict()
     else:
         raise Exception("Unknown size: `{}`.".format(size))
+    run_params['wall_time'] = wall_time
 
-    if not n_param_settings:
-        n_param_settings = None
-    assert n_repeats
-    assert cleanup_time
+    if cleanup_time is not None:
+        run_params['cleanup_time'] = cleanup_time
+    if max_hosts:
+        run_params['max_hosts'] = max_hosts
+    if ppn:
+        run_params['ppn'] = ppn
 
-    if n_param_settings is None:
+    if host_pool is not None:
+        run_params['time_slack'] = 60
+    else:
+        host_pool = [':']
+        run_params['time_slack'] = 30
+    run_params['host_pool'] = host_pool
+
+    assert run_params['cleanup_time'] is not None
+    assert run_params['max_hosts']
+    assert run_params['ppn']
+
+    if n_param_settings or n_param_settings is None:
+        build_params['n_param_settings'] = n_param_settings
+    if n_repeats:
+        build_params['n_repeats'] = n_repeats
+
+    assert 'n_param_settings' in build_params
+    assert build_params['n_repeats']
+
+    if build_params['n_param_settings'] is None:
         warnings.warn("`n_param_settings` is None, a grid search will be performed.")
 
     with config:
         job, archive_path = build_search(
             '/tmp/dps/search', config.name, distributions, config,
-            n_repeats, n_param_settings, use_time=1, _zip=True,
-            do_local_test=do_local_test)
+            use_time=1, _zip=True, do_local_test=do_local_test, **build_params)
 
         submit_job(
             config.name, archive_path, 'map', '/tmp/dps/search/execution/',
             parallel_exe='$HOME/.local/bin/parallel', dry_run=False,
-            env_vars=dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1'), ppn=ppn, host_pool=host_pool,
-            max_hosts=max_hosts, walltime=walltime, cleanup_time=cleanup_time, time_slack=time_slack, redirect=True)
+            env_vars=dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1'),
+            redirect=True, **run_params)
