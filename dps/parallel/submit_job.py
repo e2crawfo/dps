@@ -292,7 +292,7 @@ class ParallelSession(object):
         if frmt:
             command = command.format(**self.__dict__)
 
-        print("\nExecuting command: ")
+        print("\nExecuting command: " + (">" * 40) + "\n")
         print(command)
 
         if not shell:
@@ -301,7 +301,7 @@ class ParallelSession(object):
         start = time.time()
         try:
             process = subprocess.run(command, check=True, universal_newlines=True, shell=shell)
-            print("Command took {} seconds.\n".format(time.time() - start))
+            print("\nCommand took {} seconds.\n".format(time.time() - start))
         except subprocess.CalledProcessError as e:
             if isinstance(command, list):
                 command = ' '.join(command)
@@ -400,6 +400,7 @@ class ParallelSession(object):
             return
 
         with cd(self.job_directory):
+            print("\n" + ("=" * 80))
             print("Starting job at {}".format(datetime.datetime.now()))
 
             print("We have {wall_time_seconds} seconds to complete {n_jobs_to_run} "

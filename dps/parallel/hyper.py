@@ -237,6 +237,7 @@ class RunTrainingLoop(object):
         config = copy.copy(self.base_config)
         config.update(new)
         config.update(
+            render_hook=None,
             start_tensorboard=False,
             save_summaries=False,
             update_latest=False,
@@ -311,9 +312,12 @@ def build_search(
     new_configs = [Config(c).flatten() for c in new_configs]
 
     if do_local_test:
+        print("\nStarting local test " + ("=" * 80))
         test_config = new_configs[0].copy()
         test_config['max_steps'] = 100
+        test_config['visualize'] = False
         RunTrainingLoop(config)(test_config)
+        print("Done local test " + ("=" * 80) + "\n")
 
     job.map(RunTrainingLoop(config), new_configs)
 
