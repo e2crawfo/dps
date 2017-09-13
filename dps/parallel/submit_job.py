@@ -286,6 +286,7 @@ class ParallelSession(object):
 
         with open('nodefile.txt', 'w') as f:
             f.write('\n'.join(self.hosts))
+        self.n_procs = self.ppn * len(self.hosts)
 
     def execute_command(self, command, frmt=True, shell=True, robust=False):
         """ Uses `subprocess` to execute `command`. """
@@ -317,7 +318,8 @@ class ParallelSession(object):
     def ssh_execute(self, command, host, **kwargs):
         return self.execute_command(
             "ssh -oPasswordAuthentication=no -oStrictHostKeyChecking=no "
-            "-oConnectTimeout=5 -T {host} \"{command}\"".format(host=host, command=command), **kwargs)
+            "-oConnectTimeout=5 -oServerAliveInterval=2 "
+            "-T {host} \"{command}\"".format(host=host, command=command), **kwargs)
 
     def fetch(self):
         for i, host in enumerate(self.hosts):
