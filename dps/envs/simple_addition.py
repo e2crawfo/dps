@@ -13,20 +13,25 @@ def build_env():
     train = SimpleAdditionDataset(n_examples=cfg.n_train)
     val = SimpleAdditionDataset(n_examples=cfg.n_val)
     external = RegressionEnv(train, val)
-    internal = SimpleAdditionInternal()
+    internal = SimpleAddition()
     return CompositeEnv(external, internal)
 
 
 config = Config(
-    dense_reward=False,
+    dense_reward=True,
     build_env=build_env,
     T=30,
     curriculum=[
-        dict(width=1, base=10, threshold=0.01),
-        dict(width=2, base=10, threshold=0.01),
-        dict(width=3, base=10, threshold=0.01),
+        dict(width=1),
+        dict(width=2),
+        dict(width=3),
     ],
+    threshold=0.01,
+    reward_window=0.499,
+    base=10,
     n_controller_units=32,
+    n_train=10000,
+    n_val=500,
     log_name='simple_addition',
 )
 
@@ -41,7 +46,7 @@ class SimpleAdditionDataset(RegressionDataset):
         super(SimpleAdditionDataset, self).__init__(x, y)
 
 
-class SimpleAdditionInternal(InternalEnv):
+class SimpleAddition(InternalEnv):
     action_names = ['fovea += 1', 'fovea -= 1', 'wm1 = vision', 'wm2 = vision',
                     'output = vision', 'output = wm1 + wm2', 'no-op/stop']
 

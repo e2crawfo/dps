@@ -12,7 +12,7 @@ from .optimizer import Optimizer, StochasticGradientDescent
 from .trust_region import TrustRegionOptimizer
 from .policy import (
     BuildLstmController, BuildFeedforwardController, BuildLinearController,
-    BuildSoftmaxPolicy, BuildEpsilonGreedyPolicy,
+    BuildSoftmaxPolicy, BuildEpsilonGreedyPolicy, BuildEpsilonSoftmaxPolicy,
     Policy, DiscretePolicy, Softmax, EpsilonGreedy, EpsilonSoftmax, Deterministic,
     ProductDist, Normal, NormalWithFixedScale, NormalWithExploration, Gamma,
 )

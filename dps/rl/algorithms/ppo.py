@@ -3,25 +3,37 @@ from dps.utils import Config
 from dps.rl import (
     RLContext, Agent, StochasticGradientDescent,
     PolicyGradient, BasicAdvantageEstimator, RLUpdater,
-    BuildSoftmaxPolicy, BuildLstmController, PolicyEntropyBonus,
+    BuildSoftmaxPolicy, BuildEpsilonSoftmaxPolicy,
+    BuildLstmController, PolicyEntropyBonus,
 )
 
 
 def PPO(env):
-    with RLContext(cfg.gamma, name="PPO") as context:
-        policy = cfg.build_policy(env, name="actor")
-        context.set_behaviour_policy(policy)
+    with RLContext(cfg.gamma) as context:
+        if cfg.separate_exploration_policy:
+            mu = cfg.build_policy(env, name="mu")
+            # mu = BuildEpsilonSoftmaxPolicy()(env, name="mu")
+            context.set_behaviour_policy(mu)
 
-        # Build an agent with `policy` as one of its heads.
-        agent = Agent("agent", cfg.build_controller, [policy])
+            actor = cfg.build_policy(env, name="actor", exploration_schedule=cfg.actor_exploration_schedule)
+            context.set_validation_policy(actor)
+
+            agent = Agent("agent", cfg.build_controller, [actor])
+            agent.add_head(mu, existing_head=actor)
+        else:
+            actor = cfg.build_policy(env, name="actor")
+            context.set_behaviour_policy(actor)
+            context.set_validation_policy(actor)
+
+            agent = Agent("agent", cfg.build_controller, [actor])
 
         # Build an advantage estimator that estimates advantage from current set of rollouts.
-        advantage_estimator = BasicAdvantageEstimator(policy)
+        advantage_estimator = BasicAdvantageEstimator(actor)
 
         # Add a term to the objective function encapsulated by `context`.
-        # The surrogate objective function, when differentiated, yields the policy gradient.
-        PolicyGradient(policy, advantage_estimator, epsilon=cfg.epsilon)
-        PolicyEntropyBonus(policy, weight=cfg.entropy_weight)
+        # The surrogate objective function, when differentiated, yields the actor gradient.
+        PolicyGradient(actor, advantage_estimator, epsilon=cfg.epsilon)
+        PolicyEntropyBonus(actor, weight=cfg.entropy_weight)
 
         # Optimize the objective function using stochastic gradient descent with respect
         # to the variables stored inside `agent`.
@@ -45,17 +57,20 @@ config = Config(
     batch_size=16,
     optimizer_spec="adam",
     opt_steps_per_update=10,
-    lr_schedule="1e-4",
+    lr_schedule=1e-4,
+    separate_exploration_policy=True,
+    exploration_schedule="Poly(5.1, 10000, end=0.1)",
+    actor_exploration_schedule="Poly(5.0, 10000, end=0.1)",
     n_controller_units=64,
-    exploration_schedule='Poly(10.0, 10000, end=0.1)',
-    test_time_explore=0.1,
+    test_time_explore=-1,
     epsilon=0.2,
     entropy_weight=0.0,
+    importance_c=0,
 )
 
 
 reinforce_config = config.copy(
-    epsilon=0.0,
+    epsilon=None,
     opt_steps_per_update=1,
     name="REINFORCE",
 )

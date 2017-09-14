@@ -138,10 +138,19 @@ class Agent(RLObject):
         start, end = self._head_offsets[head_name]
         return utils[..., start:end], next_controller_state
 
-    def add_head(self, head, start, end):
+    def add_head(self, head, existing_head=None, start=None, end=None):
         """ Add a head to the agent. Mainly used for attaching multiple heads to the same location. """
+        assert (start is None) == (end is None)
+        assert (existing_head is None) != (start is None)
         assert head.name not in self.heads
+
+        if existing_head is not None:
+            if not isinstance(existing_head, str):
+                existing_head = existing_head.name
+            start, end = self._head_offsets[existing_head]
+
         assert 0 <= start < end <= self.size
+
         self._head_offsets[head.name] = (start, end)
         self.heads[head.name] = head
         head.set_agent(self)

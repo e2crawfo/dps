@@ -103,9 +103,8 @@ def QLearning(env):
 
         agent = Agent("agent", cfg.build_controller, [policy])
 
-        start, end = agent._head_offsets["actor"]
         action_value_function = ActionValueFunction(env.actions_dim, policy, "q")
-        agent.add_head(action_value_function, start, end)
+        agent.add_head(action_value_function, existing_head=policy)
 
         target_agent = agent.deepcopy("target_agent")
         target_agent['actor'].exploration_schedule = cfg.target_exploration_schedule

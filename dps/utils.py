@@ -541,6 +541,28 @@ class FixedDiscreteController(ScopedCell):
         return tf.cast(tf.fill((batch_size, 1), 0), dtype)
 
 
+class NullCell(ScopedCell):
+    """ A cell with no meaningful output. """
+    def __init__(self, output_size=0, name="null_cell"):
+        self._output_size = output_size
+        super(NullCell, self).__init__(name)
+
+    def _call(self, inp, state):
+        batch_size = tf.shape(inp)[0]
+        return tf.zeros((batch_size, self.output_size)), tf.zeros((batch_size, 1))
+
+    @property
+    def state_size(self):
+        return 1
+
+    @property
+    def output_size(self):
+        return self._output_size
+
+    def zero_state(self, batch_size, dtype):
+        return tf.zeros((batch_size, self.output_size), dtype=dtype)
+
+
 class CompositeCell(ScopedCell):
     """ A wrapper around a cell that adds an additional transformation of the output.
 

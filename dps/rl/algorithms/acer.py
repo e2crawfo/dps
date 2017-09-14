@@ -12,8 +12,16 @@ from dps.rl.algorithms.qlearning import MaxPriorityFunc
 
 def ACER(env):
     with RLContext(cfg.gamma) as context:
-        actor = cfg.build_policy(env, name="actor")
-        context.set_behaviour_policy(actor)
+        if cfg.separate_exploration_policy:
+            actor = cfg.build_policy(env, name="actor", exploration_schedule=cfg.actor_exploration_schedule)
+            context.set_validation_policy(actor)
+
+            mu = cfg.build_policy(env, name="mu")
+            context.set_behaviour_policy(mu)
+        else:
+            actor = cfg.build_policy(env, name="actor")
+            context.set_behaviour_policy(actor)
+            context.set_validation_policy(actor)
 
         value_function = ValueFunction(1, actor, "critic")
 
@@ -24,6 +32,9 @@ def ACER(env):
         else:
             agent = Agent("agent", cfg.build_controller, [actor, value_function])
             agents = [agent]
+
+        if cfg.separate_exploration_policy:
+            agents[0].add_head(mu, existing_head=actor)
 
         action_values_from_returns = Retrace(
             actor, value_function, lmbda=cfg.lmbda,

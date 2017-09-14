@@ -42,6 +42,7 @@ class Grid(TensorFlowEnv):
     def __init__(self, **kwargs):
         self.val = self._make_input(self.n_val)
         self.mode = 'train'
+        self.input_ph = None
 
         if self.l2l and not self.dense_reward:
             raise Exception("When learning to learn, reward must be dense!")
@@ -75,7 +76,10 @@ class Grid(TensorFlowEnv):
 
     def build_init(self, r):
         batch_size = tf.shape(r)[0]
-        self.input_ph = tf.placeholder(tf.float32, (None, 4))
+
+        if self.input_ph is None:
+            self.input_ph = tf.placeholder(tf.float32, (None, 4), name="grid_input_ph")
+
         return self.rb.wrap(
             x=self.input_ph[:, 0:1], y=self.input_ph[:, 1:2],
             goal_x=self.input_ph[:, 2:3], goal_y=self.input_ph[:, 3:4],

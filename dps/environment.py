@@ -270,8 +270,8 @@ class RegressionEnv(Env):
         obs = np.zeros(self.x.shape)
 
         if self.action_ph is None:
-            self.target_ph = tf.placeholder(tf.float32, (None, self.actions_dim))
-            self.action_ph = tf.placeholder(tf.float32, (None, self.actions_dim))
+            self.target_ph = tf.placeholder(tf.float32, (None, self.actions_dim), name="target_ph")
+            self.action_ph = tf.placeholder(tf.float32, (None, self.actions_dim), name="action_ph")
             self.reward = self.build_reward(self.action_ph, self.target_ph)
 
         sess = tf.get_default_session()
@@ -389,14 +389,15 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
     def get_sampler(self, policy):
         sampler = self._samplers.get(id(policy))
         if not sampler:
-            n_rollouts_ph = tf.placeholder(tf.int32, ())
-            T_ph = tf.placeholder(tf.int32, ())
+            with tf.name_scope("sampler_" + policy.display_name):
+                n_rollouts_ph = tf.placeholder(tf.int32, (), name="n_rollouts_ph")
+                T_ph = tf.placeholder(tf.int32, (), name="T_ph")
 
-            initial_policy_state = policy.zero_state(n_rollouts_ph, tf.float32)
-            initial_registers = self.rb.new_array(n_rollouts_ph, lib='tf')
+                initial_policy_state = policy.zero_state(n_rollouts_ph, tf.float32)
+                initial_registers = self.rb.new_array(n_rollouts_ph, lib='tf')
 
-            sampler_cell = SamplerCell(self, policy)
-            with tf.name_scope("sampler"):
+                sampler_cell = SamplerCell(self, policy)
+
                 initial_registers = self.build_init(initial_registers)
                 t = timestep_tensor(n_rollouts_ph, T_ph)
 
@@ -564,9 +565,11 @@ class InternalEnv(TensorFlowEnv):
         )
 
     def build_placeholders(self, r):
-        self.is_training_ph = tf.placeholder(tf.bool, ())
-        self.input_ph = tf.placeholder(tf.float32, (None,) + self.input_shape)
-        self.target_ph = tf.placeholder(tf.float32, (None,) + self.target_shape)
+        is_training_ph = getattr(self, 'is_training_ph', None)
+        if is_training_ph is None:
+            self.is_training_ph = tf.placeholder(tf.bool, (), name="is_training_ph")
+            self.input_ph = tf.placeholder(tf.float32, (None,) + self.input_shape, name="input_ph")
+            self.target_ph = tf.placeholder(tf.float32, (None,) + self.target_shape, name="target_ph")
 
     def build_rewards(self, r):
         if self.dense_reward:

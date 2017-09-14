@@ -52,6 +52,17 @@ class BuildEpsilonGreedyPolicy(object):
         return DiscretePolicy(EpsilonGreedy(n_actions, one_hot=self.one_hot), env.obs_shape, **kwargs)
 
 
+class BuildEpsilonSoftmaxPolicy(object):
+    def __init__(self, one_hot=True):
+        self.one_hot = one_hot
+
+    def __call__(self, env, **kwargs):
+        n_actions = env.actions_dim if self.one_hot else env.n_actions
+        if not self.one_hot:
+            assert env.actions_dim == 1
+        return DiscretePolicy(EpsilonSoftmax(n_actions, one_hot=self.one_hot), env.obs_shape, **kwargs)
+
+
 class _DoWeightingValue(object):
     def __init__(self, gamma):
         self.gamma = gamma
@@ -118,7 +129,8 @@ class Policy(AgentHead):
                 raise Exception("NotImplemented")
 
             rewards = context.get_signal('rewards')
-            rho = context.get_signal('rho', self)
+            rho = context.get_signal('importance_weights', self)
+            # rho = context.get_signal('rho', self)
 
             if key == 'monte_carlo_action_values':
                 rho = tf_roll(rho, 1, fill=1.0, reverse=True)
@@ -419,6 +431,24 @@ class Categorical(TensorFlowSelection):
         log_probs = dist.log_prob(sample)
         axis_perm = tuple(range(1, batch_rank+1)) + (0,)
         return tf.transpose(log_probs, perm=axis_perm)
+
+
+class FixedCategorical(Categorical):
+    def __init__(self, actions_dim, probs=None, logits=None, one_hot=True):
+        assert (probs is None) != (logits is None)
+        self.params_dim = 0
+        self.actions_dim = actions_dim if one_hot else 1
+        self.probs = probs
+        self.logits = logits
+        self.one_hot = one_hot
+
+    def _dist(self, utils, exploration):
+        logits = utils / exploration
+
+        if self.one_hot:
+            return tf_dists.OneHotCategorical(logits=logits)
+        else:
+            return tf_dists.Categorical(logits=logits)
 
 
 class Softmax(Categorical):

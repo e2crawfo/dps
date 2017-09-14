@@ -130,6 +130,9 @@ class RLContext(Parameterized):
     def set_behaviour_policy(self, mu):
         self.mu = mu
 
+    def set_validation_policy(self, pi):
+        self.pi = pi
+
     def set_optimizer(self, opt):
         self.optimizer = opt
 
@@ -345,7 +348,8 @@ class RLContext(Parameterized):
         return signal
 
     def _run_and_record(self, rollouts, run_mode, weights, do_update, summary_op, collect_summaries):
-        assert do_update or collect_summaries, "Both `do_update` and `collect_summaries` are False, no point in calling `_run_and_record`."
+        assert do_update or collect_summaries, (
+            "Both `do_update` and `collect_summaries` are False, no point in calling `_run_and_record`.")
 
         sess = tf.get_default_session()
         feed_dict = self.make_feed_dict(rollouts, run_mode, weights)
@@ -419,10 +423,10 @@ class RLContext(Parameterized):
             return train_summaries, update_summaries, train_record, update_record
 
     def evaluate(self, batch_size):
-        assert self.mu is not None, "A behaviour policy must be set using `set_behaviour_policy` before calling `evaluate`."
+        assert self.pi is not None, "A validation policy must be set using `set_validation_policy` before calling `evaluate`."
 
         with self:
-            rollouts = self.env.do_rollouts(self.mu, batch_size, mode='val')
+            rollouts = self.env.do_rollouts(self.pi, batch_size, mode='val')
 
             eval_summaries, eval_record = self._run_and_record(
                 rollouts, run_mode='val', weights=None, do_update=False,

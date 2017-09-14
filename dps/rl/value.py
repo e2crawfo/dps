@@ -168,7 +168,7 @@ class AdvantageEstimator(RLObject):
             _advantage = advantage - mean
             variance = masked_mean(_advantage**2, mask)
             std = tf.sqrt(variance)
-            _advantage = tf.cond(std < 1e-6, lambda: _advantage, lambda: _advantage/std)
+            _advantage = tf.cond(std <= 0, lambda: _advantage, lambda: _advantage/std)
             advantage = mask * _advantage + (1-mask) * advantage
         return advantage
 
@@ -181,8 +181,14 @@ class AdvantageEstimator(RLObject):
 
             mask = context.get_signal("mask")
             mean_advantage = masked_mean(advantage, mask)
+            mean_abs_advantage = masked_mean(tf.abs(advantage), mask)
+            positive_advantage = masked_mean(tf.maximum(advantage, 0.0), mask)
+            negative_advantage = masked_mean(tf.minimum(advantage, 0.0), mask)
 
             context.add_summary(tf.summary.scalar("advantage", mean_advantage))
+            context.add_summary(tf.summary.scalar("abs_advantage", mean_abs_advantage))
+            context.add_summary(tf.summary.scalar("positive_advantage", positive_advantage))
+            context.add_summary(tf.summary.scalar("negative_advantage", negative_advantage))
 
             return advantage
         elif signal_key == "advantage_all":

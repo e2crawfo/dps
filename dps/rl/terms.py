@@ -141,6 +141,7 @@ class PolicyEvaluation_State(ObjectiveFunctionTerm):
             weights = weights[:-1, ...]
 
         if self.use_weights:
+            td_error *= weights
             squared_td_error *= weights
 
         mean_td_error = masked_mean(td_error, mask)

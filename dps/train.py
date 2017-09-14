@@ -134,9 +134,6 @@ class TrainingLoop(object):
         for stage, stage_config in enumerate(self.curriculum):
             stage_config = Config(stage_config)
 
-            if stage > 0:
-                stage_config.init_steps = 0
-
             if self.time_remaining <= 1:
                 print("Time limit exceeded.")
                 break
@@ -302,9 +299,9 @@ class TrainingLoop(object):
                 self.latest['val_data'].append(val_record)
 
                 if evaluate and cfg.save_summaries:
-                    self.train_writer.add_summary(update_summaries, updater.n_experiences)
-                    self.update_writer.add_summary(update_summaries, updater.n_experiences)
-                    self.val_writer.add_summary(val_summaries, updater.n_experiences)
+                    self.train_writer.add_summary(update_summaries, (self.global_step + 1) * cfg.batch_size)
+                    self.update_writer.add_summary(update_summaries, (self.global_step + 1) * cfg.batch_size)
+                    self.val_writer.add_summary(val_summaries, (self.global_step + 1) * cfg.batch_size)
 
                 if cfg.stopping_function is not None:
                     stopping_criteria = cfg.stopping_function(val_record)
