@@ -10,6 +10,7 @@ import glob
 from contextlib import contextmanager
 import time
 from collections import defaultdict
+import progressbar
 
 from spectral_dagger.utils.misc import make_symlink
 
@@ -288,32 +289,65 @@ class ParallelSession(object):
             f.write('\n'.join(self.hosts))
         self.n_procs = self.ppn * len(self.hosts)
 
-    def execute_command(self, command, frmt=True, shell=True, robust=False):
+    def execute_command(self, command, frmt=True, shell=True, robust=False, max_seconds=None, progress=False):
         """ Uses `subprocess` to execute `command`. """
-        if frmt:
-            command = command.format(**self.__dict__)
-
-        print("\nExecuting command: " + (">" * 40) + "\n")
-        print(command)
-
-        if not shell:
-            command = command.split()
-
-        start = time.time()
+        p = None
         try:
-            process = subprocess.run(command, check=True, universal_newlines=True, shell=shell)
-            print("\nCommand took {} seconds.\n".format(time.time() - start))
-        except subprocess.CalledProcessError as e:
-            if isinstance(command, list):
-                command = ' '.join(command)
-            print("CalledProcessError has been raised while executing command: {}.".format(command))
+            assert isinstance(command, str)
+            if frmt:
+                command = command.format(**self.__dict__)
 
-            if robust:
-                return e.returncode
+            print("\nExecuting command: " + (">" * 40) + "\n")
+            print(command)
+
+            if not shell:
+                command = command.split()
+
+            start = time.time()
+            p = subprocess.Popen(command, shell=shell, universal_newlines=True)
+
+            if progress:
+                progress = progressbar.ProgressBar(
+                    widgets=['[', progressbar.Timer(), '] ', '(', progressbar.ETA(), ') ', progressbar.Bar()],
+                    max_value=max_seconds or progressbar.UnknownLength, redirect_stdout=True)
             else:
-                raise_with_traceback(e)
+                progress = None
 
-        return process.returncode
+            interval_length = 5
+            while True:
+                try:
+                    p.wait(interval_length)
+                except subprocess.TimeoutExpired:
+                    if progress is not None:
+                        progress.update(int(time.time() - start))
+
+                if p.returncode is not None:
+                    break
+
+            if progress is not None:
+                progress.finish()
+
+            print("\nCommand took {} seconds.\n".format(time.time() - start))
+
+            if p.returncode != 0:
+                if isinstance(command, list):
+                    command = ' '.join(command)
+
+                print("The command returned with non-zero exit code {}.".format(p.returncode))
+
+                if robust:
+                    return p.returncode
+                else:
+                    raise subprocess.CalledProcessError(p.returncode, command)
+
+            return p.returncode
+        except BaseException as e:
+            if p is not None:
+                p.terminate()
+                p.kill()
+            if progress is not None:
+                progress.finish()
+            raise_with_traceback(e)
 
     def ssh_execute(self, command, host, **kwargs):
         return self.execute_command(
@@ -371,7 +405,9 @@ class ParallelSession(object):
         command = command.format(
             indices_for_step=indices_for_step, **self.__dict__)
 
-        n_failed = self.execute_command(command, frmt=False, robust=True)
+        n_failed = self.execute_command(
+            command, frmt=False, robust=True,
+            max_seconds=self.abs_seconds_per_step, progress=True)
         if n_failed:
             self.filter_hosts(check_current=True, add_new=False)
 

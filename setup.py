@@ -26,6 +26,7 @@ setup(
         "psutil",
         "pyskiplist",
         "Pillow",
+        "progressbar2",
     ],
     entry_points={
         'console_scripts': ['dps-hyper=dps.parallel:hyper_search_cl',
