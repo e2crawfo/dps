@@ -50,6 +50,8 @@ DEFAULT_CONFIG = DpsConfig(
     stopping_function=None,
 
     max_time=0,
+    max_steps=np.inf,
+    max_experiences=np.inf,
 
     deadline='',
     render_hook=rl_render_hook,

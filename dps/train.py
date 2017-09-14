@@ -281,6 +281,10 @@ class TrainingLoop(object):
                 reason = "Maximum number of steps reached"
                 break
 
+            if updater.n_experiences >= cfg.max_experiences:
+                reason = "Maximum number of experiences reached"
+                break
+
             evaluate = self.global_step % cfg.eval_step == 0
             display = self.global_step % cfg.display_step == 0
             render = (self.global_step % cfg.render_step == 0) and self.global_step > 0
@@ -335,6 +339,7 @@ class TrainingLoop(object):
                     time_per_example=time_per_example,
                     time_per_batch=time_per_batch,
                     n_steps=self.local_step,
+                    n_experiences=self.local_step*cfg.batch_size,
                     epoch=updater.env.completion
                 )
 
