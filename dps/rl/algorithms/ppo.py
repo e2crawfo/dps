@@ -3,16 +3,14 @@ from dps.utils import Config
 from dps.rl import (
     RLContext, Agent, StochasticGradientDescent,
     PolicyGradient, BasicAdvantageEstimator, RLUpdater,
-    BuildSoftmaxPolicy, BuildEpsilonSoftmaxPolicy,
-    BuildLstmController, PolicyEntropyBonus,
+    BuildSoftmaxPolicy, BuildLstmController, PolicyEntropyBonus,
 )
 
 
 def PPO(env):
     with RLContext(cfg.gamma) as context:
-        if cfg.separate_exploration_policy:
+        if cfg.actor_exploration_schedule is not None:
             mu = cfg.build_policy(env, name="mu")
-            # mu = BuildEpsilonSoftmaxPolicy()(env, name="mu")
             context.set_behaviour_policy(mu)
 
             actor = cfg.build_policy(env, name="actor", exploration_schedule=cfg.actor_exploration_schedule)
@@ -58,7 +56,6 @@ config = Config(
     optimizer_spec="adam",
     opt_steps_per_update=10,
     lr_schedule=1e-4,
-    separate_exploration_policy=True,
     exploration_schedule="Poly(5.1, 10000, end=0.1)",
     actor_exploration_schedule="Poly(5.0, 10000, end=0.1)",
     n_controller_units=64,

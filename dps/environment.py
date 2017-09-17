@@ -353,6 +353,8 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
     rb = None
     action_names = None
 
+    scale_rewards = Param(True)
+
     def __init__(self, **kwargs):
         self._samplers = {}
         self._assert_defined('action_names')
@@ -407,6 +409,9 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
 
                 obs, hidden, done, utils, entropy, actions, log_probs, rewards, policy_states = _output[0]
                 final_registers, final_policy_state = _output[1]
+
+                if self.scale_rewards:
+                    rewards /= tf.cast(T_ph, tf.float32)
 
                 output = dict(
                     obs=obs,

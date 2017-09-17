@@ -2,8 +2,8 @@ from dps import cfg
 from dps.utils import Config
 from dps.rl import (
     RLContext, Agent, StochasticGradientDescent,
-    BuildSoftmaxPolicy, BuildEpsilonSoftmaxPolicy, BuildLstmController,
-    PolicyGradient, RLUpdater, AdvantageEstimator, MonteCarloValueEstimator,
+    BuildSoftmaxPolicy, BuildLstmController, PolicyGradient,
+    RLUpdater, AdvantageEstimator, MonteCarloValueEstimator,
     PolicyEntropyBonus, ValueFunction, PolicyEvaluation_State, Retrace,
     ValueFunctionRegularization
 )
@@ -12,7 +12,7 @@ from dps.rl import (
 def A2C(env):
     with RLContext(cfg.gamma) as context:
 
-        if cfg.separate_exploration_policy:
+        if cfg.actor_exploration_schedule is not None:
             actor = cfg.build_policy(env, name="actor", exploration_schedule=cfg.actor_exploration_schedule)
             context.set_validation_policy(actor)
 
@@ -33,14 +33,14 @@ def A2C(env):
             agent = Agent("agent", cfg.build_controller, [actor, value_function])
             agents = [agent]
 
-        if cfg.separate_exploration_policy:
+        if cfg.actor_exploration_schedule is not None:
             agents[0].add_head(mu, existing_head=actor)
 
-        # action_values_from_returns = Retrace(
-        #     actor, value_function, lmbda=cfg.lmbda,
-        #     to_action_value=True, from_action_value=False,
-        #     name="RetraceQ"
-        # )
+        action_values_from_returns = Retrace(
+            actor, value_function, lmbda=cfg.lmbda,
+            to_action_value=True, from_action_value=False,
+            name="RetraceQ"
+        )
 
         action_values_from_returns = MonteCarloValueEstimator(actor)
 
@@ -51,11 +51,11 @@ def A2C(env):
             actor, advantage_estimator, epsilon=cfg.epsilon,
             weight=cfg.policy_weight, importance_c=cfg.importance_c)
 
-        # values_from_returns = Retrace(
-        #     actor, value_function, lmbda=1.,
-        #     to_action_value=False, from_action_value=False,
-        #     name="RetraceV"
-        # )
+        values_from_returns = Retrace(
+            actor, value_function, lmbda=1.,
+            to_action_value=False, from_action_value=False,
+            name="RetraceV"
+        )
 
         values_from_returns = MonteCarloValueEstimator(actor)
 
@@ -87,7 +87,6 @@ config = Config(
     optimizer_spec="adam",
     opt_steps_per_update=10,
     lr_schedule="1e-4",
-    separate_exploration_policy=True,
     exploration_schedule=5.0,
     actor_exploration_schedule=5.0,
     test_time_explore=-1,
@@ -98,7 +97,7 @@ config = Config(
     lmbda=0.95,
     epsilon=0.2,
     split=True,
-    importance_c=None,
+    importance_c=0,
     max_grad_norm=5.0,
     gamma=0.98,
 )

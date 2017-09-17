@@ -12,7 +12,7 @@ from dps.rl.algorithms.qlearning import MaxPriorityFunc
 
 def ACER(env):
     with RLContext(cfg.gamma) as context:
-        if cfg.separate_exploration_policy:
+        if cfg.actor_exploration_schedule is not None:
             actor = cfg.build_policy(env, name="actor", exploration_schedule=cfg.actor_exploration_schedule)
             context.set_validation_policy(actor)
 
@@ -33,7 +33,7 @@ def ACER(env):
             agent = Agent("agent", cfg.build_controller, [actor, value_function])
             agents = [agent]
 
-        if cfg.separate_exploration_policy:
+        if cfg.actor_exploration_schedule is not None:
             agents[0].add_head(mu, existing_head=actor)
 
         action_values_from_returns = Retrace(
