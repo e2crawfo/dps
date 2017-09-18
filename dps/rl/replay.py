@@ -65,8 +65,9 @@ class PrioritizedReplayBuffer(RLObject):
             raise Exception("NotImplemented")
 
     def post_update(self, feed_dict, context):
-        priority = tf.get_default_session().run(self.priority_signal, feed_dict=feed_dict)
-        self.update_priority(priority)
+        if self._active_set is not None:
+            priority = tf.get_default_session().run(self.priority_signal, feed_dict=feed_dict)
+            self.update_priority(priority)
 
     @property
     def n_experiences(self):
@@ -127,6 +128,8 @@ class PrioritizedReplayBuffer(RLObject):
             if old_priority != -new_priority:
                 del self.skip_list[p_idx]
                 self.skip_list.insert(-new_priority, e_idx)
+
+        self._active_set = None
 
     def get_batch(self, batch_size):
         no_sample = (

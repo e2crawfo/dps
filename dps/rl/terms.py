@@ -5,7 +5,7 @@ from dps.utils import masked_mean
 
 
 class PolicyGradient(ObjectiveFunctionTerm):
-    def __init__(self, policy, advantage_estimator, epsilon=None, importance_c=None, **kwargs):
+    def __init__(self, policy, advantage_estimator, epsilon=None, importance_c=0, **kwargs):
         self.policy = policy
         self.advantage_estimator = advantage_estimator
         self.epsilon = epsilon

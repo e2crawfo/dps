@@ -37,7 +37,7 @@ def ACER(env):
             agents[0].add_head(mu, existing_head=actor)
 
         action_values_from_returns = Retrace(
-            actor, value_function, lmbda=cfg.lmbda,
+            actor, value_function, lmbda=cfg.q_lmbda, importance_c=cfg.q_importance_c,
             to_action_value=True, from_action_value=False,
             name="RetraceQ"
         )
@@ -47,13 +47,13 @@ def ACER(env):
 
         PolicyGradient(
             actor, advantage_estimator, epsilon=cfg.epsilon,
-            importance_c=cfg.c, weight=cfg.policy_weight)
+            importance_c=cfg.policy_importance_c, weight=cfg.policy_weight)
 
         # Entropy bonus
         PolicyEntropyBonus(actor, weight=cfg.entropy_weight)
 
         values_from_returns = Retrace(
-            actor, value_function, lmbda=cfg.lmbda,
+            actor, value_function, lmbda=cfg.v_lmbda, importance_c=cfg.v_importance_c,
             to_action_value=False, from_action_value=False,
             name="RetraceV"
         )
@@ -73,7 +73,6 @@ def ACER(env):
         optimizer = StochasticGradientDescent(
             agents=agents, alg=cfg.optimizer_spec,
             lr_schedule=cfg.lr_schedule,
-            opt_steps_per_update=cfg.opt_steps_per_update,
             max_grad_norm=cfg.max_grad_norm,
             noise_schedule=cfg.noise_schedule
         )
@@ -91,24 +90,29 @@ config = Config(
     lr_schedule="1e-4",
     n_controller_units=64,
 
-    split=False,
+    split=True,
 
-    exploration_schedule="Poly(10.0, 10000, end=0.1)",
+    exploration_schedule=5.0,
+    actor_exploration_schedule=None,
     test_time_explore=0.1,
 
-    batch_size=1,
-    update_batch_size=32,
-    opt_steps_per_update=1,
-    updates_per_sample=10,
+    batch_size=8,
+    update_batch_size=8,
+    replay_updates_per_sample=4,
+    on_policy_updates=True,
+    opt_steps_per_update=10,
     epsilon=0.2,
 
     policy_weight=1.0,
-    value_weight=10.0,
+    value_weight=1.0,
     value_reg_weight=0.0,
     entropy_weight=0.0,
-    lmbda=1,
 
-    c=1,
+    q_lmbda=1.0,
+    v_lmbda=1.0,
+    policy_importance_c=0,
+    q_importance_c=None,
+    v_importance_c=None,
 
     min_experiences=1000,
     replay_size=20000,

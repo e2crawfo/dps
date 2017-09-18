@@ -12,11 +12,10 @@ class Optimizer(object):
 
 
 class StochasticGradientDescent(Optimizer):
-    def __init__(self, agents, alg, lr_schedule, opt_steps_per_update, max_grad_norm=None, noise_schedule=None):
+    def __init__(self, agents, alg, lr_schedule, max_grad_norm=None, noise_schedule=None):
         super(StochasticGradientDescent, self).__init__(agents)
         self.alg = alg
         self.lr_schedule = lr_schedule
-        self.opt_steps_per_update = opt_steps_per_update
         self.max_grad_norm = max_grad_norm
         self.noise_schedule = noise_schedule
 
@@ -31,5 +30,4 @@ class StochasticGradientDescent(Optimizer):
 
     def update(self, feed_dict):
         sess = tf.get_default_session()
-        for k in range(self.opt_steps_per_update):
-            sess.run(self.train_op, feed_dict=feed_dict)
+        sess.run(self.train_op, feed_dict=feed_dict)

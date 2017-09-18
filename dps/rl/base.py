@@ -93,7 +93,10 @@ class RLContext(Parameterized):
 
     exploration_schedule = Param()
     test_time_explore = Param()
-    updates_per_sample = Param(1)
+
+    replay_updates_per_sample = Param(1)
+    opt_steps_per_update = Param(1)
+    on_policy_updates = Param(True)
 
     def __init__(self, gamma, truncated_rollouts=False, name=None):
         self.mu = None
@@ -362,7 +365,8 @@ class RLContext(Parameterized):
                 obj.pre_eval(feed_dict, self)
 
         if do_update:
-            self.optimizer.update(feed_dict)
+            for k in range(self.opt_steps_per_update):
+                self.optimizer.update(feed_dict)
 
         summaries = b""
         if collect_summaries:
@@ -398,27 +402,33 @@ class RLContext(Parameterized):
                     rollouts, run_mode='train', weights=None, do_update=False,
                     summary_op=self.summary_op, collect_summaries=collect_summaries)
 
-            weights = None
-            n_updates = 1
+            do_on_policy_update = self.replay_buffer is None or self.on_policy_updates
+
             if self.replay_buffer is not None:
                 self.replay_buffer.add_rollouts(rollouts)
 
-                # If we have a replay buffer, we can potentially do multiple updates,
-                # each with a different batch, per environment sample
-                n_updates = self.updates_per_sample
+                for i in range(self.replay_updates_per_sample):
+                    off_policy_rollouts, weights = self.replay_buffer.get_batch(self.update_batch_size)
+                    if off_policy_rollouts is None:
+                        # Most common reason for `rollouts` being None is there not being enough experiences in replay memory.
+                        break
 
-            for i in range(n_updates):
-                if self.replay_buffer is not None:
-                    rollouts, weights = self.replay_buffer.get_batch(self.update_batch_size)
+                    _collect_summaries = (
+                        collect_summaries and
+                        not do_on_policy_update and
+                        i == self.replay_updates_per_sample-1
+                    )
 
-                if rollouts is None:
-                    # Most common reason for `rollouts` being None is there not being enough experiences in replay memory.
-                    break
+                    update_summaries, update_record = self._run_and_record(
+                        off_policy_rollouts, run_mode='update', weights=weights, do_update=True,
+                        summary_op=self.train_summary_op,
+                        collect_summaries=_collect_summaries)
 
+            if do_on_policy_update:
                 update_summaries, update_record = self._run_and_record(
-                    rollouts, run_mode='update', weights=weights, do_update=True,
+                    rollouts, run_mode='update', weights=None, do_update=True,
                     summary_op=self.train_summary_op,
-                    collect_summaries=collect_summaries and i == n_updates-1)
+                    collect_summaries=collect_summaries)
 
             return train_summaries, update_summaries, train_record, update_record
 

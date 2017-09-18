@@ -38,7 +38,6 @@ def PPO(env):
         optimizer = StochasticGradientDescent(
             agents=[agent], alg=cfg.optimizer_spec,
             lr_schedule=cfg.lr_schedule,
-            opt_steps_per_update=cfg.opt_steps_per_update,
             max_grad_norm=cfg.max_grad_norm,
             noise_schedule=cfg.noise_schedule
         )

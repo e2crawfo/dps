@@ -278,13 +278,14 @@ class Retrace(RLObject):
 
     """
     def __init__(
-            self, policy, value_function, lmbda=1.0,
+            self, policy, value_function, lmbda=1.0, importance_c=0,
             to_action_value=False, from_action_value=False,
             name=None):
 
         self.policy = policy
         self.value_function = value_function
         self.lmbda = lmbda
+        self.importance_c = importance_c
         self.to_action_value = to_action_value
         self.from_action_value = from_action_value
         self.name = name or self.__class__.__name__
@@ -298,7 +299,15 @@ class Retrace(RLObject):
             raise Exception("NotImplemented")
 
         rewards = context.get_signal("rewards")
-        rho = context.get_signal("rho", self.policy)
+
+        if self.importance_c is not None:
+            if self.importance_c <= 0:
+                rho = context.get_signal("importance_weights", self.policy)
+            else:
+                rho = context.get_signal("rho_{}".format(self.importance_c), self.policy)
+        else:
+            _rho = context.get_signal("importance_weights", self.policy)
+            rho = tf.ones_like(_rho)
 
         if self.from_action_value:
             if isinstance(self.policy, DiscretePolicy):

@@ -37,27 +37,23 @@ def A2C(env):
             agents[0].add_head(mu, existing_head=actor)
 
         action_values_from_returns = Retrace(
-            actor, value_function, lmbda=cfg.lmbda,
+            actor, value_function, lmbda=cfg.q_lmbda, importance_c=cfg.q_importance_c,
             to_action_value=True, from_action_value=False,
             name="RetraceQ"
         )
-
-        action_values_from_returns = MonteCarloValueEstimator(actor)
 
         advantage_estimator = AdvantageEstimator(
             action_values_from_returns, value_function)
 
         PolicyGradient(
             actor, advantage_estimator, epsilon=cfg.epsilon,
-            weight=cfg.policy_weight, importance_c=cfg.importance_c)
+            weight=cfg.policy_weight, importance_c=cfg.policy_importance_c)
 
         values_from_returns = Retrace(
-            actor, value_function, lmbda=1.,
+            actor, value_function, lmbda=cfg.v_lmbda, importance_c=cfg.v_importance_c,
             to_action_value=False, from_action_value=False,
             name="RetraceV"
         )
-
-        values_from_returns = MonteCarloValueEstimator(actor)
 
         PolicyEntropyBonus(actor, weight=cfg.entropy_weight)
 
@@ -67,7 +63,6 @@ def A2C(env):
         optimizer = StochasticGradientDescent(
             agents=agents, alg=cfg.optimizer_spec,
             lr_schedule=cfg.lr_schedule,
-            opt_steps_per_update=cfg.opt_steps_per_update,
             max_grad_norm=cfg.max_grad_norm,
             noise_schedule=cfg.noise_schedule
         )
@@ -85,21 +80,24 @@ config = Config(
     build_controller=BuildLstmController(),
     batch_size=8,
     optimizer_spec="adam",
-    opt_steps_per_update=10,
+    opt_steps_per_update=50,
     lr_schedule="1e-4",
     exploration_schedule=5.0,
-    actor_exploration_schedule=5.0,
+    actor_exploration_schedule=None,
     test_time_explore=-1,
     policy_weight=1.0,
     value_weight=1.0,
     value_reg_weight=0.0,
     entropy_weight=0.0,
-    lmbda=0.95,
     epsilon=0.2,
     split=True,
-    importance_c=0,
-    max_grad_norm=5.0,
-    gamma=0.98,
+    q_lmbda=1.0,
+    v_lmbda=1.0,
+    policy_importance_c=0,
+    q_importance_c=None,
+    v_importance_c=None,
+    max_grad_norm=None,
+    gamma=1.0
 )
 
 
