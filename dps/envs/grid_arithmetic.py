@@ -57,15 +57,20 @@ config = Config(
         ('N', lambda x: min(x))
     ],
 
-    curriculum=[
-        dict(T=20, min_digits=2, max_digits=3, shape=(2, 2)),
-    ],
+    curriculum=[dict()],
     force_2d=False,
     mnist=False,
     op_loc=(0, 0),
     start_loc=(0, 0),
     base=10,
     threshold=0.04,
+    T=40,
+    min_digits=2,
+    max_digits=3,
+    shape=(2, 2),
+
+    n_train=10000,
+    n_val=500,
 
     dense_reward=True,
     reward_window=0.5,
@@ -85,7 +90,7 @@ config = Config(
     ),
 
     log_name='grid_arithmetic',
-    render_rollouts=None
+    render_rollouts=None,
 )
 
 
@@ -222,9 +227,7 @@ class GridArithmeticDataset(RegressionDataset):
 
 
 class GridArithmetic(InternalEnv):
-    action_names = [
-        '>', '<', 'v', '^', 'classify_digit', 'classify_op',
-        '+', '+1', '*', '=']
+    _action_names = ['>', '<', 'v', '^', 'classify_digit', 'classify_op']
 
     @property
     def element_shape(self):
@@ -239,15 +242,22 @@ class GridArithmetic(InternalEnv):
 
     mnist = Param()
     symbols = Param()
+    arithmetic_actions = Param({
+        '+': lambda acc, digit: acc + digit,
+        '+1': lambda acc, digit: acc + 1,
+        '*': lambda acc, digit: acc * digit,
+        '=': lambda acc, digit: digit
+    })
     shape = Param()
     base = Param()
     start_loc = Param()
     force_2d = Param()
     classification_bonus = Param(0.0)
-    order_bonus = Param(0.0)
     downsample_factor = Param(1)
+    visible_glimpse = Param(False)
 
     def __init__(self, **kwargs):
+        self.action_names = self._action_names + sorted(self.arithmetic_actions.keys())
         self.init_classifiers()
         self.init_rb()
 
@@ -257,10 +267,19 @@ class GridArithmetic(InternalEnv):
         values = (
             [0., 0., -1., 0., 0., -1.] +
             [np.zeros(np.product(self.element_shape), dtype='f')])
-        self.rb = RegisterBank(
-            'GridArithmeticRB',
-            'digit op acc fovea_x fovea_y prev_action', 'glimpse', values=values,
-            output_names='acc', no_display='glimpse')
+
+        if self.visible_glimpse:
+            self.rb = RegisterBank(
+                'GridArithmeticRB',
+                'digit op acc fovea_x fovea_y prev_action glimpse', '', values=values,
+                output_names='acc', no_display='glimpse' if self.mnist else None
+            )
+        else:
+            self.rb = RegisterBank(
+                'GridArithmeticRB',
+                'digit op acc fovea_x fovea_y prev_action', 'glimpse', values=values,
+                output_names='acc', no_display='glimpse' if self.mnist else None
+            )
 
     def init_classifiers(self):
         if self.mnist:
@@ -293,11 +312,9 @@ class GridArithmetic(InternalEnv):
         else:
 
             self.build_digit_classifier = lambda x: tf.where(
-                tf.logical_and(x >= 0, x < 10),
-                x, tf.random_uniform(tf.shape(x), -1000, -100, dtype=tf.float32))
+                tf.logical_and(x >= 0, x < 10), x, -1 * tf.ones(tf.shape(x)))
             self.build_op_classifier = lambda x: tf.where(
-                x >= 10,
-                x, tf.random_uniform(tf.shape(x), -1000, -100, dtype=tf.float32))
+                x >= 10, x, -1 * tf.ones(tf.shape(x)))
 
     def build_init_glimpse(self, batch_size, inp, fovea_y, fovea_x):
         indices = tf.concat([
@@ -310,8 +327,8 @@ class GridArithmetic(InternalEnv):
         return glimpse
 
     def build_init_storage(self, batch_size):
-        digit = tf.random_uniform((batch_size, 1), -1000, -100, dtype=tf.float32)
-        op = tf.random_uniform((batch_size, 1), -1000, -100, dtype=tf.float32)
+        digit = -1 * tf.ones((batch_size, 1))
+        op = -1 * tf.ones((batch_size, 1))
         return digit, op
 
     def build_init_fovea(self, batch_size, fovea_y, fovea_x):
@@ -333,7 +350,7 @@ class GridArithmetic(InternalEnv):
 
         digit, op, acc, fovea_x, fovea_y, prev_action, glimpse = self.rb.as_tuple(r)
 
-        acc = tf.random_uniform(tf.shape(digit), -1000, -100, dtype=tf.float32)
+        acc = -1 * tf.ones(tf.shape(digit), dtype=tf.float32)
 
         batch_size = tf.shape(self.input_ph)[0]
 
@@ -402,7 +419,7 @@ class GridArithmetic(InternalEnv):
             rewards = tf.fill((tf.shape(new_registers)[0], 1), 0.0),
 
         if actions is not None:
-            _, _, _, _, classify_digit, classify_op, _, _, _, _ = self.unpack_actions(actions)
+            _, _, _, _, classify_digit, classify_op, *_ = self.unpack_actions(actions)
 
             classification_bonus = tf.cond(
                 self.is_training_ph,
@@ -417,30 +434,30 @@ class GridArithmetic(InternalEnv):
             new_registers)
 
     def build_step(self, t, r, a):
-        _digit, _op, _acc, _fovea_x, _fovea_y, _, _ = self.rb.as_tuple(r)
+        _digit, _op, _acc, _fovea_x, _fovea_y, _, _glimpse = self.rb.as_tuple(r)
 
-        (right, left, down, up, classify_digit, classify_op,
-         add, inc, multiply, store) = self.unpack_actions(a)
+        (right, left, down, up, classify_digit, classify_op, *arithmetic_actions) = self.unpack_actions(a)
 
-        acc = (1 - add - inc - multiply - store) * _acc + \
-            add * (_digit + _acc) + \
-            multiply * (_digit * _acc) + \
-            inc * (_acc + 1) + \
-            store * _digit
+        acc = tf.zeros_like(_acc)
+        original_factor = tf.ones_like(right)
+        for key, action in zip(sorted(self.arithmetic_actions), arithmetic_actions):
+            original_factor -= action
+            acc += action * self.arithmetic_actions[key](_acc, _digit)
+        acc += original_factor * _acc
 
         acc = tf.clip_by_value(acc, -1000.0, 1000.0)
 
-        glimpse = self.build_update_glimpse(self.input_ph, _fovea_y, _fovea_x)
-
         digit, op = self.build_update_storage(
-            glimpse, _digit, classify_digit, _op, classify_op)
+            _glimpse, _digit, classify_digit, _op, classify_op)
+
+        glimpse = self.build_update_glimpse(self.input_ph, _fovea_y, _fovea_x)
 
         fovea_y, fovea_x = self.build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
 
-        prev_action = tf.cast(tf.reshape(tf.argmax(a, axis=1), (-1, 1)), tf.float32)
+        action = tf.cast(tf.reshape(tf.argmax(a, axis=1), (-1, 1)), tf.float32)
 
         return self.build_return(
-            digit, op, acc, fovea_x, fovea_y, prev_action, glimpse, a)
+            digit, op, acc, fovea_x, fovea_y, action, glimpse, a)
 
 
 class GridArithmeticBadWiring(GridArithmetic):
