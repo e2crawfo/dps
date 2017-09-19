@@ -61,7 +61,7 @@ config = Config(
     test_time_explore=-1,
     epsilon=0.2,
     entropy_weight=0.0,
-    importance_c=0,
+    importance_c=None,
 )
 
 

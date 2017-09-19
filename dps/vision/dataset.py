@@ -1,7 +1,6 @@
 from pathlib import Path
 import dill
 import gzip
-from scipy.misc import imresize
 
 import matplotlib.pyplot as plt
 import numpy as np

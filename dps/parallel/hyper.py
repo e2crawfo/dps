@@ -145,82 +145,6 @@ def sample_configs(distributions, base_config, n_repeats, n_samples=None):
     return configs
 
 
-def reduce_hyper_results(store, *results):
-    distributions = store.load_object('metadata', 'distributions')
-    distributions = Config(distributions)
-    keys = list(distributions.keys())
-
-    records = []
-    for r in results:
-        record = r['history'][-1].copy()
-        record['host'] = r['host']
-        del record['best_path']
-
-        for k, v in record['train_data'][-1].items():
-            record[k + '_train'] = v
-        for k, v in record['update_data'][-1].items():
-            record[k + '_update'] = v
-        for k, v in record['val_data'][-1].items():
-            record[k + '_val'] = v
-
-        del record['train_data']
-        del record['update_data']
-        del record['val_data']
-
-        config = Config(r['config'])
-        for k in keys:
-            record[k] = config[k]
-
-        record.update(
-            latest_stage=r['history'][-1]['stage'],
-            total_steps=sum(s['n_steps'] for s in r['history']),
-        )
-
-        record['seed'] = r['config']['seed']
-        records.append(record)
-
-    df = pd.DataFrame.from_records(records)
-    for key in keys:
-        df[key] = df[key].fillna(-np.inf)
-
-    groups = df.groupby(keys)
-
-    data = []
-    for k, _df in groups:
-        _df = _df.sort_values(['latest_stage', 'best_loss'])
-        data.append(dict(
-            data=_df,
-            keys=k,
-            latest_stage=_df.latest_stage.max(),
-            stage_sum=_df.latest_stage.sum(),
-            best_loss=_df.best_loss.mean()))
-
-    data = sorted(data, reverse=False, key=lambda x: (x['latest_stage'], -x['best_loss'], x['stage_sum']))
-
-    column_order = [
-        'latest_stage', 'best_loss', 'seed', 'reason', 'total_steps', 'n_steps', 'host']
-    remaining = [k for k in data[0]['data'].keys() if k not in column_order and k not in keys]
-    column_order = column_order + sorted(remaining)
-
-    with pd.option_context('display.max_rows', None, 'display.max_columns', None):
-        print('\n' + '*' * 100)
-        print("RESULTS GROUPED BY PARAM VALUES, WORST COMES FIRST: ")
-        for i, d in enumerate(data):
-            print('\n {} '.format(len(data)-i) + '*' * 40)
-            pprint({n: v for n, v in zip(keys, d['keys'])})
-            _data = d['data'].drop(keys, axis=1)
-            _data = _data[column_order]
-            print(tabulate(_data.transpose(), headers='keys', tablefmt='fancy_grid'))
-
-    print('\n' + '*' * 100)
-    print("BASE CONFIG")
-    print(store.load_object('metadata', 'config'))
-
-    print('\n' + '*' * 100)
-    print("DISTRIBUTIONS")
-    pprint(distributions)
-
-
 class RunTrainingLoop(object):
     def __init__(self, base_config):
         self.base_config = base_config
@@ -335,8 +259,87 @@ def build_search(
 def _summarize_search(args):
     # Get all completed jobs, get their outputs. Summarize em.
     job = ReadOnlyJob(args.path)
-    results = [op.get_outputs(job.objects)[0] for op in job.completed_ops() if 'map' in op.name]
-    reduce_hyper_results(job.objects, *results)
+    distributions = job.objects.load_object('metadata', 'distributions')
+    distributions = Config(distributions)
+    keys = list(distributions.keys())
+
+    records = []
+    for op in job.completed_ops():
+        if 'map' in op.name:
+            try:
+                r = op.get_outputs(job.objects)[0]
+            except BaseException as e:
+                print("Exception thrown when accessing output of op {}:\n    {}".format(op.name, e))
+
+        record = r['history'][-1].copy()
+        record['host'] = r['host']
+        del record['best_path']
+
+        for k, v in record['train_data'][-1].items():
+            record[k + '_train'] = v
+        for k, v in record['update_data'][-1].items():
+            record[k + '_update'] = v
+        for k, v in record['val_data'][-1].items():
+            record[k + '_val'] = v
+
+        del record['train_data']
+        del record['update_data']
+        del record['val_data']
+
+        config = Config(r['config'])
+        for k in keys:
+            record[k] = config[k]
+
+        record.update(
+            latest_stage=r['history'][-1]['stage'],
+            total_steps=sum(s['n_steps'] for s in r['history']),
+        )
+
+        record['seed'] = r['config']['seed']
+        records.append(record)
+
+    df = pd.DataFrame.from_records(records)
+    for key in keys:
+        df[key] = df[key].fillna(-np.inf)
+
+    groups = df.groupby(keys)
+
+    data = []
+    for k, _df in groups:
+        _df = _df.sort_values(['latest_stage', 'best_loss'])
+        data.append(dict(
+            data=_df,
+            keys=k,
+            latest_stage=_df.latest_stage.max(),
+            stage_sum=_df.latest_stage.sum(),
+            best_loss=_df.best_loss.mean()))
+
+    data = sorted(data, reverse=False, key=lambda x: (x['latest_stage'], -x['best_loss'], x['stage_sum']))
+
+    column_order = [
+        'latest_stage', 'best_loss', 'seed', 'reason', 'total_steps', 'n_steps', 'host']
+    remaining = [k for k in data[0]['data'].keys() if k not in column_order and k not in keys]
+    column_order = column_order + sorted(remaining)
+
+    with pd.option_context('display.max_rows', None, 'display.max_columns', None):
+        print('\n' + '*' * 100)
+        print("RESULTS GROUPED BY PARAM VALUES, WORST COMES FIRST: ")
+        for i, d in enumerate(data):
+            print('\n {} '.format(len(data)-i) + '*' * 40)
+            pprint({n: v for n, v in zip(keys, d['keys'])})
+            _data = d['data'].drop(keys, axis=1)
+            _data = _data[column_order]
+            print(tabulate(_data.transpose(), headers='keys', tablefmt='fancy_grid'))
+
+    print('\n' + '*' * 100)
+    print("BASE CONFIG")
+    print(job.objects.load_object('metadata', 'config'))
+
+    print('\n' + '*' * 100)
+    print("DISTRIBUTIONS")
+    pprint(distributions)
+
+
 
 
 def _zip_search(args):

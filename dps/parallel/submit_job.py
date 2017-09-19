@@ -164,27 +164,25 @@ class ParallelSession(object):
 
         self.min_hosts = min_hosts
         self.max_hosts = max_hosts
-        hosts = []
-        host_pool = host_pool or HOST_POOL
-        bad_hosts = []
-
+        self.hosts = []
+        self.host_pool = host_pool or HOST_POOL
         self.__dict__.update(locals())
 
-        with cd(self.job_directory):
-            self.filter_hosts(check_current=False, add_new=True)
+        with cd(job_directory):
+            # Get an estimate of the number of hosts we'll have available.
+            self.recruit_hosts()
 
         node_file = " --sshloginfile nodefile.txt "
 
-        n_nodes = len(hosts)
-        n_procs = ppn * n_nodes
+        n_nodes = len(self.hosts)
 
-        if n_jobs_to_run < n_procs:
+        if n_jobs_to_run < self.n_procs:
             n_steps = 1
             n_nodes = int(np.ceil(n_jobs_to_run / ppn))
             n_procs = n_nodes * ppn
-            hosts = hosts[:n_nodes]
+            self.hosts = self.hosts[:n_nodes]
         else:
-            n_steps = int(np.ceil(n_jobs_to_run / n_procs))
+            n_steps = int(np.ceil(n_jobs_to_run / self.n_procs))
 
         execution_time = int((wall_time - cleanup_time).total_seconds())
         abs_seconds_per_step = int(np.floor(execution_time / n_steps))
@@ -194,7 +192,6 @@ class ParallelSession(object):
         assert abs_seconds_per_step > 0
         assert seconds_per_step > 0
 
-        n_attempts = defaultdict(int)
         staged_hosts = set()
 
         self.__dict__.update(locals())
@@ -202,94 +199,98 @@ class ParallelSession(object):
         # Create convenience `latest` symlinks
         make_symlink(job_directory, os.path.join(scratch, 'latest'))
 
-    def filter_hosts(self, check_current=True, add_new=False):
-        if check_current:
-            print("Check current hosts...")
-            for host in self.hosts + []:
-                if host is not ':':
-                    print("Testing connection to host {}...".format(host))
-                    failed = self.ssh_execute("echo Connected to \$HOSTNAME", host, robust=True)
-                    if failed:
-                        print("Could not connect to houst {}, removing it.".format(host))
-                        self.hosts.remove(host)
+    def recruit_hosts(self, max_procs=np.inf):
+        self.hosts = []
+        for host in self.host_pool:
+            n_hosts = len(self.hosts)
+            if n_hosts >= self.max_hosts:
+                break
 
-        if add_new:
-            print("Adding new hosts...")
-            for host in self.host_pool:
-                if len(self.hosts) >= self.max_hosts:
-                    break
+            if n_hosts * self.ppn >= max_procs:
+                break
 
-                if host in self.hosts or host in self.bad_hosts:
+            print("\n" + ("~" * 40))
+            print("Recruiting host {}...".format(host))
+
+            if host is not ':':
+                print("Testing connection...")
+                failed = self.ssh_execute("echo Connected to \$HOSTNAME", host, robust=True)
+                if failed:
+                    print("Could not connect.")
                     continue
 
-                print("\n" + ("~" * 40))
-                print("\nPreparing host {}...".format(host))
+            print("Preparing host...")
+            try:
+                if host is ':':
+                    command = "stat {local_scratch}"
+                    create_local_scratch = self.execute_command(command, robust=True)
 
-                try:
-                    if host is ':':
+                    if create_local_scratch:
                         print("Creating local scratch directory...")
                         command = "mkdir -p {local_scratch}"
                         self.execute_command(command, robust=False)
 
-                        print("Printing local scratch directory...")
-                        command = (
-                            "cd {local_scratch} && "
-                            "echo Local scratch on host \\$(hostname) is {local_scratch}, "
-                            "working directory is \\$(pwd)."
-                        )
-                        self.execute_command(command, robust=False)
+                    command = "cd {local_scratch} && stat {archive_root}"
+                    missing_archive = self.execute_command(command, robust=True)
+
+                    if missing_archive:
+                        command = "cd {local_scratch} && stat {input_zip_base}"
+                        missing_zip = self.execute_command(command, robust=True)
+
+                        if missing_zip:
+                            print("Copying zip to local scratch...")
+                            command = "cp {input_zip_abs} {local_scratch}".format(**self.__dict__)
+                            self.execute_command(command, frmt=False, robust=False)
 
                         print("Unzipping...")
-                        command = "cd {local_scratch} && unzip -ouq {input_zip_base} && echo \\$(hostname)"
+                        command = "cd {local_scratch} && unzip -ouq {input_zip_base}"
                         self.execute_command(command, robust=False)
 
-                        command = "cp {input_zip_abs} {local_scratch}".format(**self.__dict__)
-                        self.execute_command(command, frmt=False, robust=False)
+                else:
+                    command = "stat {local_scratch}"
+                    create_local_scratch = self.ssh_execute(command, host, robust=True)
 
-                        self.hosts.append(host)
-                    else:
-                        self.ssh_execute("echo Connected to \$HOSTNAME", host, robust=False)
-                        print("Connection to host {} succeeded, now trying to stage it...".format(host))
-
+                    if create_local_scratch:
                         print("Creating local scratch directory...")
-                        self.ssh_execute("mkdir -p {local_scratch}", host, robust=False)
-
-                        print("Printing local scratch directory...")
-                        command = (
-                            "cd {local_scratch} && "
-                            "echo Local scratch on host \\$(hostname) is {local_scratch}, "
-                            "working directory is \\$(pwd)."
-                        )
+                        command = "mkdir -p {local_scratch}"
                         self.ssh_execute(command, host, robust=False)
 
-                        command = "scp -q {input_zip_abs} {host}:{local_scratch}".format(host=host, **self.__dict__)
-                        self.execute_command(command, frmt=False, robust=False)
+                    command = "cd {local_scratch} && stat {archive_root}"
+                    missing_archive = self.ssh_execute(command, host, robust=True)
+
+                    if missing_archive:
+                        command = "cd {local_scratch} && stat {input_zip_base}"
+                        missing_zip = self.ssh_execute(command, host, robust=True)
+
+                        if missing_zip:
+                            print("Copying zip to local scratch...")
+                            command = "scp -q {input_zip_abs} {host}:{local_scratch}".format(host=host, **self.__dict__)
+                            self.execute_command(command, frmt=False, robust=False)
 
                         print("Unzipping...")
-                        command = "cd {local_scratch} && unzip -ouq {input_zip_base} && echo \\$(hostname)"
+                        command = "cd {local_scratch} && unzip -ouq {input_zip_base}"
                         self.ssh_execute(command, host, robust=False)
 
-                        print("Host {} successfully prepared.".format(host))
-                        self.hosts.append(host)
+                print("Host successfully prepared.")
+                self.hosts.append(host)
 
-                except subprocess.CalledProcessError:
-                    print("Preparation of host {} failed, not adding it.".format(host))
-                    self.bad_hosts.append(host)
+            except subprocess.CalledProcessError:
+                print("Preparation of host failed.")
 
-            if len(self.hosts) < self.min_hosts:
-                raise Exception(
-                    "Found only {} usable hosts, but minimum "
-                    "required hosts is {}.".format(len(self.hosts), self.min_hosts))
+        if len(self.hosts) < self.min_hosts:
+            raise Exception(
+                "Found only {} usable hosts, but minimum "
+                "required hosts is {}.".format(len(self.hosts), self.min_hosts))
 
-            if len(self.hosts) < self.max_hosts:
-                print("{} hosts were requested, "
-                      "but only {} usable hosts could be found.".format(self.max_hosts, len(self.hosts)))
+        if len(self.hosts) < self.max_hosts:
+            print("{} hosts were requested, "
+                  "but only {} usable hosts could be found.".format(self.max_hosts, len(self.hosts)))
 
         with open('nodefile.txt', 'w') as f:
             f.write('\n'.join(self.hosts))
         self.n_procs = self.ppn * len(self.hosts)
 
-    def execute_command(self, command, frmt=True, shell=True, robust=False, max_seconds=None, progress=False):
+    def execute_command(self, command, frmt=True, shell=True, robust=False, max_seconds=None, progress=False, verbose=False, quiet=True):
         """ Uses `subprocess` to execute `command`. """
         p = None
         try:
@@ -297,14 +298,18 @@ class ParallelSession(object):
             if frmt:
                 command = command.format(**self.__dict__)
 
-            print("\nExecuting command: " + (">" * 40) + "\n")
-            print(command)
+            if verbose:
+                print("\nExecuting command: " + (">" * 40) + "\n")
+                print(command)
 
             if not shell:
                 command = command.split()
 
+            stdout = subprocess.DEVNULL if quiet else None
+            stderr = subprocess.DEVNULL if quiet else None
+
             start = time.time()
-            p = subprocess.Popen(command, shell=shell, universal_newlines=True)
+            p = subprocess.Popen(command, shell=shell, universal_newlines=True, stdout=stdout, stderr=stderr)
 
             if progress:
                 progress = progressbar.ProgressBar(
@@ -313,13 +318,13 @@ class ParallelSession(object):
             else:
                 progress = None
 
-            interval_length = 5
+            interval_length = 1
             while True:
                 try:
                     p.wait(interval_length)
                 except subprocess.TimeoutExpired:
                     if progress is not None:
-                        progress.update(int(time.time() - start))
+                        progress.update(min(int(time.time() - start), max_seconds))
 
                 if p.returncode is not None:
                     break
@@ -327,13 +332,15 @@ class ParallelSession(object):
             if progress is not None:
                 progress.finish()
 
-            print("\nCommand took {} seconds.\n".format(time.time() - start))
+            if verbose:
+                print("\nCommand took {} seconds.\n".format(time.time() - start))
 
             if p.returncode != 0:
                 if isinstance(command, list):
                     command = ' '.join(command)
 
-                print("The command returned with non-zero exit code {}.".format(p.returncode))
+                if verbose:
+                    print("The command returned with non-zero exit code {}:\n    {}".format(p.returncode, command))
 
                 if robust:
                     return p.returncode
@@ -357,29 +364,19 @@ class ParallelSession(object):
 
     def fetch(self):
         for i, host in enumerate(self.hosts):
-            try:
-                if host is ':':
-                    command = (
-                        "cd {local_scratch} && echo Zipping results on node \\$(hostname). "
-                        "&& zip -rq results {archive_root}"
-                    )
-                    self.execute_command(command, robust=False)
-                    command = "cp {local_scratch}/results.zip ./results/{i}.zip".format(i=i, **self.__dict__)
-                    self.execute_command(command, frmt=False, robust=True)
-                else:
-                    command = (
-                        "cd {local_scratch} && echo Zipping results on node \\$(hostname). "
-                        "&& zip -rq results {archive_root}"
-                    )
-                    self.ssh_execute(command, host, robust=False)
+            if host is ':':
+                command = "cd {local_scratch} && zip -rq results {archive_root}"
+                self.execute_command(command, robust=True)
 
-                    command = "scp -q {host}:{local_scratch}/results.zip ./results/{i}.zip".format(
-                        host=host, i=i, **self.__dict__)
-                    self.execute_command(command, frmt=False, robust=True)
+                command = "cp {local_scratch}/results.zip ./results/{i}.zip".format(i=i, **self.__dict__)
+                self.execute_command(command, frmt=False, robust=True)
+            else:
+                command = "cd {local_scratch} && zip -rq results {archive_root}"
+                self.ssh_execute(command, host, robust=True)
 
-            except subprocess.CalledProcessError:
-                print("Preparation of host {} failed, not adding it.".format(host))
-                self.bad_hosts.append(host)
+                command = "scp -q {host}:{local_scratch}/results.zip ./results/{i}.zip".format(
+                    host=host, i=i, **self.__dict__)
+                self.execute_command(command, frmt=False, robust=True)
 
     def step(self, i, indices_for_step):
         print("Beginning step {} at: ".format(i) + "=" * 90)
@@ -394,22 +391,22 @@ class ParallelSession(object):
         parallel_command = (
             "cd {local_scratch} && "
             "dps-hyper run {archive_root} {pattern} {{}} --max-time {seconds_per_step} "
-            "--log-root {local_scratch} --log-name experiments {redirect}")
+            "--log-root {local_scratch} --log-name experiments {redirect}"
+        )
 
         command = (
             '{parallel_exe} --timeout {abs_seconds_per_step} --no-notice -j {ppn} --retries {n_retries} \\\n'
             '    --joblog {job_directory}/job_log.txt {node_file} \\\n'
             '    --env PATH --env LD_LIBRARY_PATH {env_vars} -v \\\n'
             '    "' + parallel_command + '" \\\n'
-            '    ::: {indices_for_step}')
+            '    ::: {indices_for_step}'
+        )
         command = command.format(
             indices_for_step=indices_for_step, **self.__dict__)
 
-        n_failed = self.execute_command(
+        self.execute_command(
             command, frmt=False, robust=True,
-            max_seconds=self.abs_seconds_per_step, progress=True)
-        if n_failed:
-            self.filter_hosts(check_current=True, add_new=False)
+            max_seconds=self.abs_seconds_per_step, progress=True, quiet=False)
 
     def checkpoint(self, i):
         print("Fetching results of step {} at: ".format(i))
@@ -424,13 +421,13 @@ class ParallelSession(object):
             raise Exception("Did not find any results files from nodes on step {}.".format(i))
 
         for f in results_files:
-            self.execute_command("unzip -nuq {} -d results".format(f))
+            self.execute_command("unzip -nuq {} -d results".format(f), robust=True)
 
         with cd('results'):
-            self.execute_command("zip -rq ../results.zip {archive_root}")
+            self.execute_command("zip -rq ../results.zip {archive_root}", robust=True)
 
-        self.execute_command("dps-hyper summary results.zip")
-        self.execute_command("dps-hyper view results.zip")
+        self.execute_command("dps-hyper summary results.zip", robust=True, quiet=False)
+        self.execute_command("dps-hyper view results.zip", robust=True, quiet=False)
 
     def run(self):
         if self.dry_run:
@@ -451,22 +448,28 @@ class ParallelSession(object):
             job = ReadOnlyJob(self.input_zip)
             subjobs_remaining = sorted([op.idx for op in job.ready_incomplete_ops(sort=False)])
 
+            n_attempts = defaultdict(int)
+            dead_jobs = set()
+
             i = 0
             while subjobs_remaining:
-                self.filter_hosts(check_current=True, add_new=True)
+                self.recruit_hosts(len(subjobs_remaining))
 
                 indices_for_step = subjobs_remaining[:self.n_procs]
                 self.step(i, indices_for_step)
                 self.checkpoint(i)
 
                 for j in indices_for_step:
-                    self.n_attempts[j] += 1
+                    n_attempts[j] += 1
+                    if n_attempts[j] > self.n_retries:
+                        print("All {} attempts at completing job with index {} have failed, "
+                              "permanently removing it from set of eligible jobs.".format(j, self.n_retries))
+                        dead_jobs.add(j)
 
                 job = ReadOnlyJob('results.zip')
                 subjobs_remaining = [op.idx for op in job.ready_incomplete_ops(sort=False)]
                 subjobs_remaining = [
-                    idx for idx in subjobs_remaining
-                    if self.n_attempts[idx] <= self.n_retries]
+                    idx for idx in subjobs_remaining if idx not in dead_jobs]
                 subjobs_remaining = sorted(subjobs_remaining)
 
                 i += 1
@@ -570,7 +573,6 @@ def submit_job_pbs(
     kwargs['n_jobs_to_run'] = n_jobs_to_run
 
     execution_time = int((wall_time - cleanup_time).total_seconds())
-    n_procs = ppn * n_nodes
     total_compute_time = n_procs * execution_time
     abs_seconds_per_job = int(np.floor(total_compute_time / n_jobs_to_run))
     seconds_per_job = abs_seconds_per_job - time_slack
@@ -583,7 +585,6 @@ def submit_job_pbs(
     kwargs['abs_seconds_per_job'] = abs_seconds_per_job
     kwargs['seconds_per_job'] = seconds_per_job
     kwargs['execution_time'] = execution_time
-    kwargs['n_procs'] = n_procs
 
     stage_data_code = '''
 {parallel_exe} --no-notice {node_file} --nonall {env_vars} \\

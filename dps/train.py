@@ -11,6 +11,7 @@ import shutil
 import dill
 import os
 import socket
+import pandas as pd
 
 from spectral_dagger.utils.experiment import ExperimentStore
 from dps import cfg
@@ -260,6 +261,10 @@ class TrainingLoop(object):
             memory_after_mb=memory_after,
             memory_delta_mb=memory_after - memory_before
         )
+
+        self.latest['train_data'] = pd.DataFrame.from_records(self.latest['train_data'])
+        self.latest['update_data'] = pd.DataFrame.from_records(self.latest['update_data'])
+        self.latest['val_data'] = pd.DataFrame.from_records(self.latest['val_data'])
 
         if limiter.ran_out:
             reason = "Time limit reached"

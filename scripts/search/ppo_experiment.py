@@ -38,16 +38,15 @@ alg_config = Config(
     build_controller=BuildLstmController(),
     optimizer_spec="adam",
 
-    exploration_schedule="Poly(10, {0}, end=1.0)".format(config.max_steps),
+    exploration_schedule=5.0,
     test_time_explore=-1,
 
     policy_weight=1.0,
     lr_schedule=1e-4,
     n_controller_units=128,
     batch_size=16,
-    value_weight=1.0,
     entropy_weight=0.1,
-    gamma=1.0,
+    gamma=0.98
 )
 
 
@@ -86,7 +85,7 @@ config.update(env_config)
 
 
 grid = dict(
-    opt_steps_per_update=np.linspace(1, 21, 11).astype('i'),
+    opt_steps_per_update=np.linspace(1, 51, 11).astype('i'),
     epsilon=list(np.linspace(0.04, 0.4, 10)) + [None],
 )
 
