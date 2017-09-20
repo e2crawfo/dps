@@ -275,12 +275,15 @@ def _summarize_search(args):
         record['host'] = r['host']
         del record['best_path']
 
-        for k, v in record['train_data'][-1].items():
-            record[k + '_train'] = v
-        for k, v in record['update_data'][-1].items():
-            record[k + '_update'] = v
-        for k, v in record['val_data'][-1].items():
-            record[k + '_val'] = v
+        if len(record['train_data']) > 0:
+            for k, v in record['train_data'].iloc[-1].items():
+                record[k + '_train'] = v
+        if len(record['update_data']) > 0:
+            for k, v in record['update_data'].iloc[-1].items():
+                record[k + '_update'] = v
+        if len(record['val_data']) > 0:
+            for k, v in record['val_data'].iloc[-1].items():
+                record[k + '_val'] = v
 
         del record['train_data']
         del record['update_data']
@@ -309,7 +312,7 @@ def _summarize_search(args):
         _df = _df.sort_values(['latest_stage', 'best_loss'])
         data.append(dict(
             data=_df,
-            keys=k,
+            keys=[k] if len(distributions) == 1 else k,
             latest_stage=_df.latest_stage.max(),
             stage_sum=_df.latest_stage.sum(),
             best_loss=_df.best_loss.mean()))
@@ -340,8 +343,6 @@ def _summarize_search(args):
     pprint(distributions)
 
 
-
-
 def _zip_search(args):
     job = Job(args.to_zip)
     archive_name = args.name or Path(args.to_zip).stem
@@ -366,7 +367,7 @@ def hyper_search_cl():
 
 
 def build_and_submit(
-        config, distributions, wall_time, cleanup_time=None, max_hosts=0, ppn=0,
+        config, distributions, wall_time, cleanup_time=None, max_hosts=0, ppn=0, n_retries=0,
         n_param_settings=0, n_repeats=0, size=None, do_local_test=False, host_pool=None):
 
     if size == 'big':
@@ -423,6 +424,8 @@ def build_and_submit(
         host_pool = [':']
         run_params['time_slack'] = 30
     run_params['host_pool'] = host_pool
+
+    run_params['n_retries'] = n_retries
 
     assert run_params['cleanup_time'] is not None
     assert run_params['max_hosts']

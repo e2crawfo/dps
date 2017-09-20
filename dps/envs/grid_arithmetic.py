@@ -242,12 +242,12 @@ class GridArithmetic(InternalEnv):
 
     mnist = Param()
     symbols = Param()
-    arithmetic_actions = Param({
-        '+': lambda acc, digit: acc + digit,
-        '+1': lambda acc, digit: acc + 1,
-        '*': lambda acc, digit: acc * digit,
-        '=': lambda acc, digit: digit
-    })
+    arithmetic_actions = Param([
+        ('+', lambda acc, digit: acc + digit),
+        ('+1', lambda acc, digit: acc + 1),
+        ('*', lambda acc, digit: acc * digit),
+        ('=', lambda acc, digit: digit)
+    ])
     shape = Param()
     base = Param()
     start_loc = Param()
@@ -257,7 +257,9 @@ class GridArithmetic(InternalEnv):
     visible_glimpse = Param(False)
 
     def __init__(self, **kwargs):
+        self.arithmetic_actions = dict(self.arithmetic_actions)
         self.action_names = self._action_names + sorted(self.arithmetic_actions.keys())
+        self.actions_dim = len(self.action_names)
         self.init_classifiers()
         self.init_rb()
 
@@ -436,7 +438,7 @@ class GridArithmetic(InternalEnv):
     def build_step(self, t, r, a):
         _digit, _op, _acc, _fovea_x, _fovea_y, _, _glimpse = self.rb.as_tuple(r)
 
-        (right, left, down, up, classify_digit, classify_op, *arithmetic_actions) = self.unpack_actions(a)
+        right, left, down, up, classify_digit, classify_op, *arithmetic_actions = self.unpack_actions(a)
 
         acc = tf.zeros_like(_acc)
         original_factor = tf.ones_like(right)

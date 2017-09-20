@@ -66,8 +66,11 @@ class TrainingLoop(object):
 
             items = sorted(d.items(), key=lambda x: x[0])
             for k, v in items:
-                if k in 'train_data update_data val_data'.split() and v:
-                    s += "* {} (final_step): {}\n".format(k, v[-1])
+                if k in 'train_data update_data val_data'.split() and len(v) > 0:
+                    if isinstance(v, pd.DataFrame):
+                        s += "* {} (final_step): {}\n".format(k, v.iloc[-1].to_dict())
+                    else:
+                        s += "* {} (final_step): {}\n".format(k, v[-1])
                 else:
                     s += "* {}: {}\n".format(k, v)
             if not latest:

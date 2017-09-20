@@ -21,8 +21,11 @@ config.update(
     visible_glimpse=True,
     build_policy=BuildEpsilonSoftmaxPolicy(),
     exploration_schedule='Poly(1.0, 1000000, end=0.01)',
-    gamma=1.0,
+    gamma=0.98,
     T=30,
+    arithmetic_actions=[
+        ('+', lambda acc, digit: acc + digit),
+    ],
 )
 
 with config:

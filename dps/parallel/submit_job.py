@@ -104,14 +104,14 @@ class ParallelSession(object):
     redirect: bool
         If True, stderr and stdout of jobs is saved in files rather than being printed to screen.
     n_retries: int
-        Number of retries.
+        Number of retries per job.
 
     """
     def __init__(
             self, name, input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', ppn=12,
             wall_time="1:00:00", cleanup_time="00:15:00", time_slack=0,
             add_date=True, dry_run=0, parallel_exe="$HOME/.local/bin/parallel",
-            host_pool=None, min_hosts=1, max_hosts=1, env_vars=None, redirect=False, n_retries=10):
+            host_pool=None, min_hosts=1, max_hosts=1, env_vars=None, redirect=False, n_retries=0):
         input_zip = Path(input_zip)
         input_zip_abs = input_zip.resolve()
         input_zip_base = input_zip.name
@@ -290,8 +290,11 @@ class ParallelSession(object):
             f.write('\n'.join(self.hosts))
         self.n_procs = self.ppn * len(self.hosts)
 
-    def execute_command(self, command, frmt=True, shell=True, robust=False, max_seconds=None, progress=False, verbose=False, quiet=True):
+    def execute_command(
+            self, command, frmt=True, shell=True, robust=False, max_seconds=None,
+            progress=False, verbose=False, quiet=True):
         """ Uses `subprocess` to execute `command`. """
+
         p = None
         try:
             assert isinstance(command, str)
@@ -339,8 +342,7 @@ class ParallelSession(object):
                 if isinstance(command, list):
                     command = ' '.join(command)
 
-                if verbose:
-                    print("The command returned with non-zero exit code {}:\n    {}".format(p.returncode, command))
+                print("The following command returned with non-zero exit code {}:\n    {}".format(p.returncode, command))
 
                 if robust:
                     return p.returncode
@@ -395,7 +397,7 @@ class ParallelSession(object):
         )
 
         command = (
-            '{parallel_exe} --timeout {abs_seconds_per_step} --no-notice -j {ppn} --retries {n_retries} \\\n'
+            '{parallel_exe} --timeout {abs_seconds_per_step} --no-notice -j {ppn} \\\n'
             '    --joblog {job_directory}/job_log.txt {node_file} \\\n'
             '    --env PATH --env LD_LIBRARY_PATH {env_vars} -v \\\n'
             '    "' + parallel_command + '" \\\n'
@@ -406,7 +408,8 @@ class ParallelSession(object):
 
         self.execute_command(
             command, frmt=False, robust=True,
-            max_seconds=self.abs_seconds_per_step, progress=True, quiet=False)
+            max_seconds=self.abs_seconds_per_step, progress=True,
+            quiet=False, verbose=True)
 
     def checkpoint(self, i):
         print("Fetching results of step {} at: ".format(i))
@@ -448,7 +451,7 @@ class ParallelSession(object):
             job = ReadOnlyJob(self.input_zip)
             subjobs_remaining = sorted([op.idx for op in job.ready_incomplete_ops(sort=False)])
 
-            n_attempts = defaultdict(int)
+            n_failures = defaultdict(int)
             dead_jobs = set()
 
             i = 0
@@ -459,17 +462,19 @@ class ParallelSession(object):
                 self.step(i, indices_for_step)
                 self.checkpoint(i)
 
-                for j in indices_for_step:
-                    n_attempts[j] += 1
-                    if n_attempts[j] > self.n_retries:
-                        print("All {} attempts at completing job with index {} have failed, "
-                              "permanently removing it from set of eligible jobs.".format(j, self.n_retries))
-                        dead_jobs.add(j)
-
                 job = ReadOnlyJob('results.zip')
-                subjobs_remaining = [op.idx for op in job.ready_incomplete_ops(sort=False)]
-                subjobs_remaining = [
-                    idx for idx in subjobs_remaining if idx not in dead_jobs]
+
+                subjobs_remaining = set([op.idx for op in job.ready_incomplete_ops(sort=False)])
+
+                for j in indices_for_step:
+                    if j in subjobs_remaining:
+                        n_failures[j] += 1
+                        if n_failures[j] > self.n_retries:
+                            print("All {} attempts at completing job with index {} have failed, "
+                                  "permanently removing it from set of eligible jobs.".format(n_failures[j], j))
+                            dead_jobs.add(j)
+
+                subjobs_remaining = [idx for idx in subjobs_remaining if idx not in dead_jobs]
                 subjobs_remaining = sorted(subjobs_remaining)
 
                 i += 1
