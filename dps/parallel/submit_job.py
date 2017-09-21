@@ -264,7 +264,11 @@ class ParallelSession(object):
 
                         if missing_zip:
                             print("Copying zip to local scratch...")
-                            command = "scp -q {input_zip_abs} {host}:{local_scratch}".format(host=host, **self.__dict__)
+                            command = (
+                                "scp -q -oPasswordAuthentication=no -oStrictHostKeyChecking=no "
+                                "-oConnectTimeout=5 -oServerAliveInterval=2 "
+                                "{input_zip_abs} {host}:{local_scratch}".format(host=host, **self.__dict__)
+                            )
                             self.execute_command(command, frmt=False, robust=False)
 
                         print("Unzipping...")
@@ -376,8 +380,12 @@ class ParallelSession(object):
                 command = "cd {local_scratch} && zip -rq results {archive_root}"
                 self.ssh_execute(command, host, robust=True)
 
-                command = "scp -q {host}:{local_scratch}/results.zip ./results/{i}.zip".format(
-                    host=host, i=i, **self.__dict__)
+                command = (
+                    "scp -q -oPasswordAuthentication=no -oStrictHostKeyChecking=no "
+                    "-oConnectTimeout=5 -oServerAliveInterval=2 "
+                    "{host}:{local_scratch}/results.zip ./results/{i}.zip".format(
+                        host=host, i=i, **self.__dict__)
+                )
                 self.execute_command(command, frmt=False, robust=True)
 
     def step(self, i, indices_for_step):
@@ -420,11 +428,11 @@ class ParallelSession(object):
         print("Unzipping results from nodes...")
         results_files = glob.glob("results/*.zip")
 
-        if not results_files:
-            raise Exception("Did not find any results files from nodes on step {}.".format(i))
-
         for f in results_files:
             self.execute_command("unzip -nuq {} -d results".format(f), robust=True)
+
+        for f in results_files:
+            self.execute_command("rm -rf {}".format(f), robust=True)
 
         with cd('results'):
             self.execute_command("zip -rq ../results.zip {archive_root}", robust=True)
