@@ -306,7 +306,7 @@ class TrainingLoop(object):
             self.latest['update_data'].append(update_record)
 
             if evaluate or display:
-                val_loss, val_summaries, val_record = updater.evaluate(cfg.batch_size)
+                val_loss, val_summaries, val_record = updater.evaluate(cfg.n_val)
 
                 self.latest['val_data'].append(val_record)
 

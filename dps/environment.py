@@ -66,8 +66,6 @@ class BatchBox(gym.Space):
 
 
 class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
-    normalize_obs = Param()
-
     def set_mode(self, mode, batch_size):
         assert mode in 'train val'.split(), "Unknown mode: {}.".format(mode)
         self.mode = mode
@@ -360,6 +358,7 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
     action_names = None
 
     scale_rewards = Param(True)
+    normalize_obs = Param()
 
     def __init__(self, **kwargs):
         self._samplers = {}
