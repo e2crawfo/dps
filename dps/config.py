@@ -35,13 +35,18 @@ DEFAULT_CONFIG = DpsConfig(
     display_step=1000,
     eval_step=10,
 
+    n_train=10000,
+    n_val=500,
     batch_size=16,
     opt_steps_per_update=1,
+    reward_window=0.499,
+    threshold=0.01,
 
     gamma=1.0,
     noise_schedule=None,
     max_grad_norm=None,
 
+    normalize_obs=False,
     standardize_advantage=True,
     reset_env=True,
 
@@ -50,7 +55,7 @@ DEFAULT_CONFIG = DpsConfig(
     stopping_function=None,
 
     max_time=0,
-    max_steps=np.inf,
+    max_steps=1000000,
     max_experiences=np.inf,
 
     deadline='',

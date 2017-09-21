@@ -29,9 +29,20 @@ def concat(values, axis=-1, lib=None):
 
 
 class RegisterBank(object):
+    """
+    Parameters
+    ----------
+    values:
+        Initial values for each register in the unnormalized space.
+    min_values:
+        Minimum value for each register in the unnormalized space. Used for normalization.
+    max_values:
+        Maximum value for each register in the unnormalized space. Used for normalization.
+
+    """
     def __init__(
             self, bank_name, visible_names, hidden_names, values,
-            output_names, no_display=None):
+            output_names, min_values=None, max_values=None, no_display=None):
 
         if isinstance(visible_names, str):
             visible_names = visible_names.replace(',', ' ').split()
@@ -105,6 +116,16 @@ class RegisterBank(object):
         self.visible_width = visible_width
         self.hidden_width = self.width - self.visible_width
         self.dtype = tf.float32
+
+        self.min_values = min_values
+        if min_values is not None:
+            assert len(min_values) == visible_width
+            self.min_values = np.array(min_values).astype('f')
+
+        self.max_values = max_values
+        if max_values is not None:
+            assert len(max_values) == visible_width
+            self.max_values = np.array(max_values).astype('f')
 
     def __str__(self):
         s = ["{}(".format(self.__class__.__name__)]
@@ -197,3 +218,9 @@ class RegisterBank(object):
             raise Exception("Value provided for unknown registers {}.".format(extra))
         values = [kwargs[name] for name in self.names]
         return concat(values)
+
+    def normalize_visible(self, visible):
+        if self.min_values is not None and self.max_values is not None:
+            return (visible - self.min_values) / (self.max_values - self.min_values)
+        else:
+            return visible

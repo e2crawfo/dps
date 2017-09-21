@@ -43,10 +43,6 @@ config = Config(
 class Room(TensorFlowEnv):
     action_names = ['delta_x', 'delta_y']
 
-    rb = RegisterBank(
-        'RoomRB', 'x y r dx dy', 'goal_x goal_y',
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 'x y')
-
     T = Param()
     reward_radius = Param()
     max_step = Param()
@@ -58,6 +54,12 @@ class Room(TensorFlowEnv):
     def __init__(self, **kwargs):
         self.val_input = self._make_input(self.n_val)
         self.mode = 'train'
+
+        self.rb = RegisterBank(
+            'RoomRB', 'x y r dx dy', 'goal_x goal_y',
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 'x y',
+            min_values=[-1, -1, -1/self.T, -2, -2],
+            max_values=[1, 1, 0, 2, 2])
 
         if self.l2l and not self.dense_reward:
             raise Exception("When learning to learn, reward must be dense!")

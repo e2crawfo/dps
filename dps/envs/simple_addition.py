@@ -26,12 +26,8 @@ config = Config(
         dict(width=2),
         dict(width=3),
     ],
-    threshold=0.01,
-    reward_window=0.499,
     base=10,
     n_controller_units=32,
-    n_train=10000,
-    n_val=500,
     log_name='simple_addition',
 )
 
@@ -49,14 +45,19 @@ class SimpleAdditionDataset(RegressionDataset):
 class SimpleAddition(InternalEnv):
     action_names = ['fovea += 1', 'fovea -= 1', 'wm1 = vision', 'wm2 = vision',
                     'output = vision', 'output = wm1 + wm2', 'no-op/stop']
-
-    rb = RegisterBank(
-        'SimpleAdditionRB',
-        'fovea vision wm1 wm2 output', None,
-        values=([0.] * 5),
-        output_names='output')
-
     width = Param()
+
+    def __init__(self, **kwargs):
+
+        self.rb = RegisterBank(
+            'SimpleAdditionRB',
+            'fovea vision wm1 wm2 output', None,
+            values=[0.] * 5,
+            min_values=[-self.width] + ([0] * 4),
+            max_values=[self.width] + ([10] * 3) + [20],
+            output_names='output')
+
+        super(SimpleAddition, self).__init__(**kwargs)
 
     @property
     def input_shape(self):
@@ -64,7 +65,6 @@ class SimpleAddition(InternalEnv):
 
     def build_init(self, r):
         self.build_placeholders(r)
-
         fovea, vision, wm1, wm2, output = self.rb.as_tuple(r)
         std = tf.fill(tf.shape(fovea), 0.01)
         locations = tf.constant(
@@ -83,6 +83,7 @@ class SimpleAddition(InternalEnv):
         inc_fovea, dec_fovea, vision_to_wm1, vision_to_wm2, vision_to_output, add, no_op = self.unpack_actions(a)
 
         fovea = (1 - inc_fovea - dec_fovea) * _fovea + inc_fovea * (_fovea + 1) + dec_fovea * (_fovea - 1)
+        fovea = tf.clip_by_value(fovea, -self.width, self.width)
         wm1 = (1 - vision_to_wm1) * _wm1 + vision_to_wm1 * _vision
         wm2 = (1 - vision_to_wm2) * _wm2 + vision_to_wm2 * _vision
         output = (1 - vision_to_output - add) * _output + vision_to_output * _vision + add * (_wm1 + _wm2)

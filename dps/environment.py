@@ -66,6 +66,8 @@ class BatchBox(gym.Space):
 
 
 class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
+    normalize_obs = Param()
+
     def set_mode(self, mode, batch_size):
         assert mode in 'train val'.split(), "Unknown mode: {}.".format(mode)
         self.mode = mode
@@ -313,7 +315,11 @@ class SamplerCell(RNNCell):
             registers, policy_state = state
 
             with tf.name_scope('policy'):
-                obs = self.env.rb.visible(registers)
+                visible = self.env.rb.visible(registers)
+                if self.env.normalize_obs:
+                    obs = self.env.rb.normalize_visible(visible)
+                else:
+                    obs = visible
                 hidden = self.env.rb.hidden(registers)
                 (log_prob, action, entropy, util), new_policy_state = self.policy(obs, policy_state)
 

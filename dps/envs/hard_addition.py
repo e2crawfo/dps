@@ -80,7 +80,10 @@ class HardAddition(InternalEnv):
         self.rb = RegisterBank(
             'HardAdditionRB',
             'fovea_x fovea_y vision wm1 wm2 carry digit', 'outp',
-            values=values, output_names='outp')
+            values=values, output_names='outp',
+            min_values=[0, 0, 0, 0, 0, 0, 0],
+            max_values=[self.width, self.height, 10, 10, 10, 10, 10]
+        )
 
         super(HardAddition, self).__init__()
 

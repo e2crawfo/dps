@@ -7,10 +7,12 @@ import tensorflow as tf
 import clify
 
 from dps import cfg
-from dps.config import parse_task_actor_critic, tasks, actor_configs, critic_configs, test_configs
+from dps.config import DEFAULT_CONFIG
 from dps.train import training_loop, gen_seed, uninitialized_variables_initializer
 from dps.utils import pdb_postmortem
 from dps.rl.policy import Policy
+from dps.rl import algorithms as algorithms_module
+from dps import envs as envs_module
 
 
 def build_and_visualize():
@@ -61,27 +63,39 @@ def build_and_visualize():
         print("Visualization took {} seconds.".format(duration))
 
 
+def parse_env_alg(env, alg):
+    envs = [e for e in dir(envs_module) if e.startswith(env)]
+    assert len(envs) == 1, "Ambiguity in env selection, possibilities are: {}.".format(env)
+    env_config = getattr(envs_module, envs[0]).config
+
+    algs = [a for a in dir(algorithms_module) if a.startswith(alg)]
+    assert len(algs) == 1, "Ambiguity in alg selection, possibilities are: {}.".format(alg)
+    alg_config = getattr(algorithms_module, algs[0]).config
+
+    return env_config, alg_config
+
+
 def run():
     parser = argparse.ArgumentParser(allow_abbrev=False)
-    parser.add_argument('task')
-    parser.add_argument('actor')
-    parser.add_argument('--critic', type=str, default="baseline")
+    parser.add_argument('env')
+    parser.add_argument('alg')
     parser.add_argument('--pdb', action='store_true',
                         help="If supplied, enter post-mortem debugging on error.")
     args, _ = parser.parse_known_args()
 
-    task, actor, critic = parse_task_actor_critic(args.task, args.actor, args.critic)
+    env, alg = parse_env_alg(args.env, args.alg)
 
     if args.pdb:
         with pdb_postmortem():
-            _run(task, actor, critic)
+            _run(env, alg)
     else:
-        _run(task, actor, critic)
+        _run(env, alg)
 
 
-def _run(task, actor, critic, _config=None, **kwargs):
-    if actor == 'visualize':
-        config = test_configs[task]
+def _run(env_config, alg_config, _config=None, visualize=False, **kwargs):
+    if visualize:
+        raise Exception("NotImplemented")
+        config = None
         if _config is not None:
             config.update(_config)
         config.update(display=True, save_display=True)
@@ -93,9 +107,9 @@ def _run(task, actor, critic, _config=None, **kwargs):
 
             build_and_visualize()
     else:
-        config = tasks[task]
-        config.actor_config = actor_configs[actor]
-        config.critic_config = critic_configs[critic]
+        config = DEFAULT_CONFIG.copy()
+        config.update(alg_config)
+        config.update(env_config)
 
         if _config is not None:
             config.update(_config)

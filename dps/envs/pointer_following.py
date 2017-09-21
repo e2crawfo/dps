@@ -22,7 +22,6 @@ config = Config(
     T=30,
     dense_reward=True,
     curriculum=[
-        dict(width=1, base=10),
         dict(width=2, base=10)],
     log_name='pointer',
 )
@@ -42,11 +41,17 @@ class PointerDataset(RegressionDataset):
 
 class Pointer(InternalEnv):
     action_names = ['fovea += 1', 'fovea -= 1', 'wm = vision', 'no-op/stop']
-    rb = RegisterBank(
-        'PointerRB', 'fovea vision wm', None,
-        values=([0.0] * 3), output_names='wm')
 
     width = Param()
+
+    def __init__(self, **kwargs):
+        self.rb = RegisterBank(
+            'PointerRB', 'fovea vision wm', None,
+            values=([0.0] * 3), output_names='wm',
+            min_values=[-self.width] * 3,
+            max_values=[self.width, max(self.width, 10), max(self.width, 10)]
+        )
+        super(Pointer, self).__init__(**kwargs)
 
     @property
     def input_shape(self):
@@ -71,6 +76,7 @@ class Pointer(InternalEnv):
         inc_fovea, dec_fovea, vision_to_wm, no_op = self.unpack_actions(a)
 
         fovea = (1 - inc_fovea - dec_fovea) * _fovea + inc_fovea * (_fovea + 1) + dec_fovea * (_fovea - 1)
+        fovea = tf.clip_by_value(fovea, -self.width, self.width)
         wm = (1 - vision_to_wm) * _wm + vision_to_wm * _vision
 
         diag_std = tf.fill(tf.shape(fovea), 0.01)

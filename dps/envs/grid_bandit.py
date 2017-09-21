@@ -42,7 +42,11 @@ class GridBandit(TensorFlowEnv):
     def __init__(self, **kwargs):
         self.action_names = '^ > v < look'.split() + ["arm_{}".format(i) for i in range(self.n_arms)]
         self.actions_dim = len(self.action_names)
-        self.rb = RegisterBank('GridBanditRB', 'x y vision action arm', None, [0.0, 0.0, -1.0, 0.0, 0.0], 'x y')
+        self.rb = RegisterBank(
+            'GridBanditRB', 'x y vision action arm', None, [0.0, 0.0, -1.0, 0.0, 0.0], 'x y',
+            min_values=[0, 0, 0, 0, 0],
+            max_values=[self.shape[1], self.shape[0], self.n_arms, self.actions_dim, self.n_arms]
+        )
         self.val = self._make_input(self.n_val)
         self.mode = 'train'
 

@@ -28,10 +28,6 @@ test_config = Config()
 class Grid(TensorFlowEnv):
     action_names = '^ > v <'.split()
 
-    rb = RegisterBank(
-        'GridRB', 'x y r dx dy', 'goal_x goal_y',
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 'x y')
-
     T = Param()
     shape = Param()
     restart_prob = Param()
@@ -43,6 +39,13 @@ class Grid(TensorFlowEnv):
         self.val = self._make_input(self.n_val)
         self.mode = 'train'
         self.input_ph = None
+
+        self.rb = RegisterBank(
+            'GridRB', 'x y r dx dy', 'goal_x goal_y',
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 'x y',
+            min_values=[0, 0, -1/self.T, 0, 0],
+            max_values=[self.shape[1], self.shape[0], 0, self.shape[1], self.shape[0]]
+        )
 
         if self.l2l and not self.dense_reward:
             raise Exception("When learning to learn, reward must be dense!")

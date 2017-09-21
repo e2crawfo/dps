@@ -198,6 +198,7 @@ class RLContext(Parameterized):
 
         self._signals['obs'] = tf.placeholder(
             tf.float32, shape=(cfg.T, None) + self.obs_shape, name="_obs")
+
         self._signals['actions'] = tf.placeholder(
             tf.float32, shape=(cfg.T, None, self.actions_dim), name="_actions")
 
@@ -296,6 +297,7 @@ class RLContext(Parameterized):
             weights = np.tile(weights.reshape(1, -1, 1), (rollouts.T, 1, 1))
 
         feed_dict = {
+
             self._signals['mask']: (1-shift_fill(rollouts.done, 1)).astype('f'),
 
             self._signals['obs']: rollouts.o,

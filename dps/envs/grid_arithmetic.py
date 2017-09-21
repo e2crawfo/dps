@@ -270,17 +270,29 @@ class GridArithmetic(InternalEnv):
             [0., 0., -1., 0., 0., -1.] +
             [np.zeros(np.product(self.element_shape), dtype='f')])
 
+        min_values = [0, 10, 0, 0, 0, 0]
+        max_values = [9, 12, 999, self.shape[1], self.shape[0], self.actions_dim]
+
         if self.visible_glimpse:
+            min_values.extend([0] * np.product(self.element_shape))
+
+            if self.mnist:
+                max_values.extend([1] * np.product(self.element_shape))
+            else:
+                max_values.extend([12] * np.product(self.element_shape))
+
             self.rb = RegisterBank(
                 'GridArithmeticRB',
                 'digit op acc fovea_x fovea_y prev_action glimpse', '', values=values,
-                output_names='acc', no_display='glimpse' if self.mnist else None
+                output_names='acc', no_display='glimpse' if self.mnist else None,
+                min_values=min_values, max_values=max_values
             )
         else:
             self.rb = RegisterBank(
                 'GridArithmeticRB',
                 'digit op acc fovea_x fovea_y prev_action', 'glimpse', values=values,
-                output_names='acc', no_display='glimpse' if self.mnist else None
+                output_names='acc', no_display='glimpse' if self.mnist else None,
+                min_values=min_values, max_values=max_values
             )
 
     def init_classifiers(self):
@@ -288,7 +300,8 @@ class GridArithmetic(InternalEnv):
             build_classifier = cfg.build_classifier
             classifier_str = cfg.classifier_str
 
-            digit_config = cfg.mnist_config.copy(symbol=list(range(self.base)), downsample_factor=self.downsample_factor)
+            digit_config = cfg.mnist_config.copy(
+                symbol=list(range(self.base)), downsample_factor=self.downsample_factor)
 
             name = '{}_symbols={}_df={}.chk'.format(
                 classifier_str, '_'.join(str(s) for s in digit_config.symbols), self.downsample_factor)
