@@ -3,7 +3,7 @@ from dps.utils import Config
 from dps.rl import (
     RLContext, Agent, StochasticGradientDescent,
     PolicyGradient, BasicAdvantageEstimator, RLUpdater,
-    BuildSoftmaxPolicy, BuildLstmController, PolicyEntropyBonus,
+    BuildEpsilonSoftmaxPolicy, BuildLstmController, PolicyEntropyBonus,
 )
 
 
@@ -49,14 +49,14 @@ def PPO(env):
 config = Config(
     name="PPO",
     get_updater=PPO,
-    build_policy=BuildSoftmaxPolicy(),
+    build_policy=BuildEpsilonSoftmaxPolicy(),
     build_controller=BuildLstmController(),
-    batch_size=16,
+    batch_size=8,
     optimizer_spec="adam",
     opt_steps_per_update=10,
     lr_schedule=1e-4,
-    exploration_schedule="Poly(5.1, 10000, end=0.1)",
-    actor_exploration_schedule="Poly(5.0, 10000, end=0.1)",
+    exploration_schedule=0.2,
+    actor_exploration_schedule=None,
     n_controller_units=64,
     test_time_explore=-1,
     epsilon=0.2,

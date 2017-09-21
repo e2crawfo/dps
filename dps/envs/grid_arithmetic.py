@@ -25,6 +25,8 @@ def build_env():
         internal = GridArithmeticNoOps()
     elif cfg.ablation == 'no_modules':
         internal = GridArithmeticNoModules()
+    elif cfg.ablation == 'easy':
+        internal = GridArithmeticEasy()
     else:
         internal = GridArithmetic()
 
@@ -48,7 +50,6 @@ def build_policy(env, **kwargs):
 
 config = Config(
     build_env=build_env,
-    build_policy=build_policy,
     symbols=[
         ('A', lambda x: sum(x)),
         ('M', lambda x: np.product(x)),
@@ -449,11 +450,14 @@ class GridArithmetic(InternalEnv):
             new_registers)
 
     def build_step(self, t, r, a):
+        import pdb; pdb.set_trace()
         _digit, _op, _acc, _fovea_x, _fovea_y, _, _glimpse = self.rb.as_tuple(r)
 
         right, left, down, up, classify_digit, classify_op, *arithmetic_actions = self.unpack_actions(a)
 
+        digit = tf.zeros_like(_digit)
         acc = tf.zeros_like(_acc)
+
         original_factor = tf.ones_like(right)
         for key, action in zip(sorted(self.arithmetic_actions), arithmetic_actions):
             original_factor -= action
@@ -464,6 +468,45 @@ class GridArithmetic(InternalEnv):
 
         digit, op = self.build_update_storage(
             _glimpse, _digit, classify_digit, _op, classify_op)
+
+        glimpse = self.build_update_glimpse(self.input_ph, _fovea_y, _fovea_x)
+
+        fovea_y, fovea_x = self.build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
+
+        action = tf.cast(tf.reshape(tf.argmax(a, axis=1), (-1, 1)), tf.float32)
+
+        return self.build_return(
+            digit, op, acc, fovea_x, fovea_y, action, glimpse, a)
+
+
+class GridArithmeticEasy(GridArithmetic):
+    def build_step(self, t, r, a):
+        _digit, _op, _acc, _fovea_x, _fovea_y, _, _glimpse = self.rb.as_tuple(r)
+
+        right, left, down, up, classify_digit, classify_op, *arithmetic_actions = self.unpack_actions(a)
+
+        op_classification = self.build_op_classifier(_glimpse)
+        op_vision = tf.cast(op_classification, tf.float32)
+        op = (1 - classify_op) * _op + classify_op * op_vision
+
+        orig_digit_factor = tf.ones_like(right) - classify_digit
+        for action in arithmetic_actions:
+            orig_digit_factor -= action
+
+        digit_classification = self.build_digit_classifier(_glimpse)
+        digit_vision = tf.cast(digit_classification, tf.float32)
+
+        digit = orig_digit_factor * _digit * (1 - orig_digit_factor) * digit_vision
+
+        orig_acc_factor = tf.ones_like(right)
+        acc = tf.zeros_like(_acc)
+        for key, action in zip(sorted(self.arithmetic_actions), arithmetic_actions):
+            orig_acc_factor -= action
+            # Its crucial that we use `digit` here and not `_digit`
+            acc += action * self.arithmetic_actions[key](_acc, digit)
+        acc += orig_acc_factor * _acc
+
+        acc = tf.clip_by_value(acc, -1000.0, 1000.0)
 
         glimpse = self.build_update_glimpse(self.input_ph, _fovea_y, _fovea_x)
 

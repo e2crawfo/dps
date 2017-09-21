@@ -4,8 +4,8 @@ from dps.rl import (
     RLUpdater, RLContext, Agent, StochasticGradientDescent,
     PolicyGradient, PolicyEvaluation_State, PolicyEntropyBonus,
     AdvantageEstimator, ValueFunction, Retrace,
-    BuildSoftmaxPolicy, BuildLstmController, PrioritizedReplayBuffer,
-    ValueFunctionRegularization
+    BuildLstmController, PrioritizedReplayBuffer,
+    ValueFunctionRegularization, BuildEpsilonSoftmaxPolicy
 )
 from dps.rl.algorithms.qlearning import MaxPriorityFunc
 
@@ -84,30 +84,29 @@ def ACER(env):
 config = Config(
     name="ACER",
     get_updater=ACER,
-    build_policy=BuildSoftmaxPolicy(),
-    build_controller=BuildLstmController(),
-    optimizer_spec="adam",
-    lr_schedule="1e-4",
+    batch_size=8,
+    update_batch_size=8,
     n_controller_units=64,
+    optimizer_spec="adam",
+    opt_steps_per_update=10,
+    replay_updates_per_sample=4,
+    on_policy_updates=True,
+    lr_schedule="1e-4",
+    epsilon=0.2,
 
-    split=True,
-
-    exploration_schedule=5.0,
+    build_policy=BuildEpsilonSoftmaxPolicy(),
+    build_controller=BuildLstmController(),
+    exploration_schedule=0.2,
     actor_exploration_schedule=None,
     test_time_explore=0.1,
 
-    batch_size=8,
-    update_batch_size=8,
-    replay_updates_per_sample=4,
-    on_policy_updates=True,
-    opt_steps_per_update=10,
-    epsilon=0.2,
 
     policy_weight=1.0,
     value_weight=1.0,
     value_reg_weight=0.0,
     entropy_weight=0.0,
 
+    split=True,
     q_lmbda=1.0,
     v_lmbda=1.0,
     policy_importance_c=0,

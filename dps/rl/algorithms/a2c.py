@@ -2,10 +2,9 @@ from dps import cfg
 from dps.utils import Config
 from dps.rl import (
     RLContext, Agent, StochasticGradientDescent,
-    BuildSoftmaxPolicy, BuildEpsilonSoftmaxPolicy, BuildLstmController, PolicyGradient,
-    RLUpdater, AdvantageEstimator, MonteCarloValueEstimator,
-    PolicyEntropyBonus, ValueFunction, PolicyEvaluation_State, Retrace,
-    ValueFunctionRegularization
+    BuildEpsilonSoftmaxPolicy, BuildLstmController,
+    PolicyGradient, RLUpdater, AdvantageEstimator, PolicyEntropyBonus,
+    ValueFunction, PolicyEvaluation_State, Retrace, ValueFunctionRegularization
 )
 
 
@@ -76,21 +75,23 @@ config = Config(
     name="A2C",
     get_updater=A2C,
     n_controller_units=64,
-    # build_policy=BuildSoftmaxPolicy(),
-    build_policy=BuildEpsilonSoftmaxPolicy(),
-    build_controller=BuildLstmController(),
     batch_size=8,
     optimizer_spec="adam",
     opt_steps_per_update=50,
     lr_schedule="1e-4",
-    exploration_schedule="Poly(1.0, 100000, end=0.05)",
+    epsilon=0.2,
+
+    build_policy=BuildEpsilonSoftmaxPolicy(),
+    build_controller=BuildLstmController(),
+    exploration_schedule=0.2,
     actor_exploration_schedule=None,
     test_time_explore=-1,
+
     policy_weight=1.0,
     value_weight=1.0,
     value_reg_weight=0.0,
     entropy_weight=0.0,
-    epsilon=0.2,
+
     split=True,
     q_lmbda=1.0,
     v_lmbda=1.0,
