@@ -77,13 +77,13 @@ config = Config(
     n_controller_units=64,
     batch_size=8,
     optimizer_spec="adam",
-    opt_steps_per_update=50,
+    opt_steps_per_update=10,
     lr_schedule="1e-4",
     epsilon=0.2,
 
     build_policy=BuildEpsilonSoftmaxPolicy(),
     build_controller=BuildLstmController(),
-    exploration_schedule=0.2,
+    exploration_schedule="0.2",
     actor_exploration_schedule=None,
     test_time_explore=-1,
 
