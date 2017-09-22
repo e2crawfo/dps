@@ -89,7 +89,7 @@ env_config = Config(
     dense_reward=True,
     reward_window=0.499,
 
-    ablation='',  # anything other than "bad_wiring", "no_classifiers", "no_ops", "no_modules" will use the default.
+    ablation='easy',
     log_name='grid_arithmetic',
     render_rollouts=None
 )
@@ -100,7 +100,7 @@ config.update(env_config)
 
 
 grid = dict(
-    exploration_schedule=["Poly(1.0, {}, end=0.05)".format(i) for i in 2**np.arange(10, 20)],
+    exploration_schedule=[0.2] + ["Poly(1.0, {}, end=0.2)".format(i) for i in 2**np.arange(10, 20)],
 )
 
 

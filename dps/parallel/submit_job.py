@@ -286,13 +286,13 @@ class ParallelSession(object):
                 "Found only {} usable hosts, but minimum "
                 "required hosts is {}.".format(len(self.hosts), self.min_hosts))
 
-        if len(self.hosts) < self.max_hosts:
-            print("{} hosts were requested, "
-                  "but only {} usable hosts could be found.".format(self.max_hosts, len(self.hosts)))
+        self.n_procs = self.ppn * len(self.hosts)
+        print("Proceeding with {} usable hosts, translates into {} procs "
+              "(max_procs: {}, max_hosts: {}).".format(
+                  len(self.hosts), self.n_procs, max_procs, self.max_hosts))
 
         with open('nodefile.txt', 'w') as f:
             f.write('\n'.join(self.hosts))
-        self.n_procs = self.ppn * len(self.hosts)
 
     def execute_command(
             self, command, frmt=True, shell=True, robust=False, max_seconds=None,
