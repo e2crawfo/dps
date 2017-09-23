@@ -168,6 +168,7 @@ class RunTrainingLoop(object):
             display=False,
             save_display=False,
             max_experiments=np.inf,
+            visualize=True,
         )
 
         with config:
@@ -273,6 +274,7 @@ def _summarize_search(args):
 
         record = r['history'][-1].copy()
         record['host'] = r['host']
+        record['op_name'] = op.name
         del record['best_path']
 
         if len(record['train_data']) > 0:
@@ -332,7 +334,10 @@ def _summarize_search(args):
             pprint({n: v for n, v in zip(keys, d['keys'])})
             _data = d['data'].drop(keys, axis=1)
             _data = _data[column_order]
-            print(tabulate(_data.transpose(), headers='keys', tablefmt='fancy_grid'))
+            with_stats = pd.merge(
+                _data.transpose(), _data.describe().transpose(),
+                left_index=True, right_index=True, how='outer')
+            print(tabulate(with_stats, headers='keys', tablefmt='fancy_grid'))
 
     print('\n' + '*' * 100)
     print("BASE CONFIG")

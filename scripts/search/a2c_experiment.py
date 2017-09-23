@@ -38,7 +38,7 @@ alg_config = Config(
     build_controller=BuildLstmController(),
     optimizer_spec="adam",
 
-    test_time_explore=-1,
+    test_time_explore=0.0,
 
     policy_weight=1.0,
     value_weight=1.0,
@@ -46,10 +46,9 @@ alg_config = Config(
     entropy_weight=0.1,
 
     lr_schedule=1e-4,
-    n_controller_units=32,
+    n_controller_units=128,
     batch_size=16,
     gamma=0.98,
-    visible_glimpse=True,
     opt_steps_per_update=10,
     actor_exploration_schedule=None,
     epsilon=0.2,
@@ -73,6 +72,7 @@ env_config = Config(
     ],
     arithmetic_actions=[
         ('+', lambda acc, digit: acc + digit),
+        ('+1', lambda acc, digit: acc + 1),
     ],
 
     curriculum=[
@@ -85,6 +85,8 @@ env_config = Config(
     base=10,
     threshold=0.04,
     classification_bonus=0.0,
+    salience_action=True,
+    visible_glimpse=False,
 
     dense_reward=True,
     reward_window=0.499,
@@ -100,7 +102,7 @@ config.update(env_config)
 
 
 grid = dict(
-    exploration_schedule=[0.2] + ["Poly(1.0, {}, end=0.2)".format(i) for i in 2**np.arange(10, 20)],
+    exploration_schedule=[0.1] + ["Poly(1.0, {}, end=0.1)".format(i) for i in 2**np.arange(10, 20)],
 )
 
 

@@ -15,7 +15,7 @@ def rl_render_hook(updater):
             with learner:
                 updater.env.visualize(
                     policy=learner.mu,
-                    n_rollouts=4, T=cfg.T, mode='train',
+                    n_rollouts=10, T=cfg.T, mode='train',
                     render_rollouts=render_rollouts)
     else:
         print("Not rendering.")

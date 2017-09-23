@@ -83,6 +83,8 @@ config = Config(
 
     dense_reward=True,
     reward_window=0.5,
+    salience_action=True,
+    visible_glimpse=False,
 
     ablation='',  # anything other than "bad_wiring", "no_classifiers", "no_ops", "no_modules" will use the default.
 
@@ -100,8 +102,6 @@ config = Config(
 
     log_name='grid_arithmetic',
     render_rollouts=None,
-
-    salience_action=True,
 )
 
 
@@ -260,8 +260,8 @@ class GridArithmetic(InternalEnv):
     force_2d = Param()
     classification_bonus = Param(0.0)
     downsample_factor = Param(1)
-    visible_glimpse = Param(False)
-    salience_action = Param(False)
+    visible_glimpse = Param()
+    salience_action = Param()
 
     def __init__(self, **kwargs):
         self.arithmetic_actions = dict(self.arithmetic_actions)
