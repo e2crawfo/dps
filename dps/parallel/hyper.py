@@ -161,14 +161,12 @@ class RunTrainingLoop(object):
         config = copy.copy(self.base_config)
         config.update(new)
         config.update(
-            render_hook=None,
             start_tensorboard=False,
             save_summaries=False,
             update_latest=False,
             display=False,
             save_display=False,
             max_experiments=np.inf,
-            visualize=True,
         )
 
         with config:

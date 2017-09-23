@@ -6,6 +6,7 @@ from dps.utils import Config
 from dps.envs import grid_arithmetic
 from dps.rl.algorithms import a2c
 from dps.rl.policy import BuildEpsilonSoftmaxPolicy, BuildLstmController
+from dps.rl import rl_render_hook
 from dps.config import DEFAULT_CONFIG
 
 
@@ -24,11 +25,12 @@ config = DEFAULT_CONFIG.copy(
     save_summaries=False,
     start_tensorboard=False,
     verbose=False,
-    visualize=False,
+    visualize=True,
     display=False,
     save_display=False,
     use_gpu=False,
     threshold=0.05,
+    render_hook=rl_render_hook,
 )
 
 
