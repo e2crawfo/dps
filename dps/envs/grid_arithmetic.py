@@ -384,11 +384,10 @@ class GridArithmetic(InternalEnv):
 
         batch_size = tf.shape(self.input_ph)[0]
 
-        glimpse = self.build_init_glimpse(batch_size, self.input_ph, fovea_y, fovea_x)
-
         digit, op = self.build_init_storage(batch_size)
 
         fovea_y, fovea_x = self.build_init_fovea(batch_size, fovea_y, fovea_x)
+        glimpse = self.build_init_glimpse(batch_size, self.input_ph, fovea_y, fovea_x)
 
         _, _, ret = self.build_return(digit, op, acc, fovea_x, fovea_y, prev_action, salience, glimpse)
         return ret
@@ -468,8 +467,10 @@ class GridArithmetic(InternalEnv):
         _digit, _op, _acc, _fovea_x, _fovea_y, _prev_action, _salience, _glimpse = self.rb.as_tuple(r)
 
         if self.salience_action:
-            right, left, down, up, classify_digit, classify_op, _, update_salience, *arithmetic_actions = self.unpack_actions(a)
-            new_salience = tf.cast(tf.equal(self.input_ph, -1), tf.float32)
+            (right, left, down, up, classify_digit, classify_op, _,
+                update_salience, *arithmetic_actions) = self.unpack_actions(a)
+
+            new_salience = tf.reshape(tf.cast(tf.equal(self.input_ph, -1), tf.float32), (tf.shape(_digit)[0], -1))
             salience = (1-update_salience) * _salience + update_salience * new_salience
         else:
             right, left, down, up, classify_digit, classify_op, _, *arithmetic_actions = self.unpack_actions(a)
@@ -489,9 +490,8 @@ class GridArithmetic(InternalEnv):
         digit, op = self.build_update_storage(
             _glimpse, _digit, classify_digit, _op, classify_op)
 
-        glimpse = self.build_update_glimpse(self.input_ph, _fovea_y, _fovea_x)
-
         fovea_y, fovea_x = self.build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
+        glimpse = self.build_update_glimpse(self.input_ph, fovea_y, fovea_x)
 
         action = tf.cast(tf.reshape(tf.argmax(a, axis=1), (-1, 1)), tf.float32)
 
@@ -504,7 +504,9 @@ class GridArithmeticEasy(GridArithmetic):
         _digit, _op, _acc, _fovea_x, _fovea_y, _prev_action, _salience, _glimpse = self.rb.as_tuple(r)
 
         if self.salience_action:
-            right, left, down, up, classify_digit, classify_op, _, update_salience, *arithmetic_actions = self.unpack_actions(a)
+            (right, left, down, up, classify_digit, classify_op, _,
+                update_salience, *arithmetic_actions) = self.unpack_actions(a)
+
             new_salience = tf.reshape(tf.cast(tf.equal(self.input_ph, -1), tf.float32), (tf.shape(_digit)[0], -1))
             salience = (1-update_salience) * _salience + update_salience * new_salience
         else:
@@ -534,9 +536,8 @@ class GridArithmeticEasy(GridArithmetic):
 
         acc = tf.clip_by_value(acc, -1000.0, 1000.0)
 
-        glimpse = self.build_update_glimpse(self.input_ph, _fovea_y, _fovea_x)
-
         fovea_y, fovea_x = self.build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
+        glimpse = self.build_update_glimpse(self.input_ph, fovea_y, fovea_x)
 
         action = tf.cast(tf.reshape(tf.argmax(a, axis=1), (-1, 1)), tf.float32)
 
