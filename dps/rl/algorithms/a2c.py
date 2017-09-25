@@ -4,13 +4,13 @@ from dps.rl import (
     RLContext, Agent, StochasticGradientDescent,
     BuildEpsilonSoftmaxPolicy, BuildLstmController,
     PolicyGradient, RLUpdater, AdvantageEstimator, PolicyEntropyBonus,
-    ValueFunction, PolicyEvaluation_State, Retrace, ValueFunctionRegularization
+    ValueFunction, PolicyEvaluation_State, Retrace, ValueFunctionRegularization,
+    BasicAdvantageEstimator,
 )
 
 
 def A2C(env):
     with RLContext(cfg.gamma) as context:
-
         if cfg.actor_exploration_schedule is not None:
             actor = cfg.build_policy(env, name="actor", exploration_schedule=cfg.actor_exploration_schedule)
             context.set_validation_policy(actor)
@@ -22,42 +22,49 @@ def A2C(env):
             context.set_behaviour_policy(actor)
             context.set_validation_policy(actor)
 
-        value_function = ValueFunction(1, actor, "critic")
+        if cfg.value_weight:
+            value_function = ValueFunction(1, actor, "critic")
 
-        if cfg.split:
-            actor_agent = Agent("actor_agent", cfg.build_controller, [actor])
-            critic_agent = Agent("critic_agent", cfg.build_controller, [value_function])
-            agents = [actor_agent, critic_agent]
+            if cfg.split:
+                actor_agent = Agent("actor_agent", cfg.build_controller, [actor])
+                critic_agent = Agent("critic_agent", cfg.build_controller, [value_function])
+                agents = [actor_agent, critic_agent]
+            else:
+                agent = Agent("agent", cfg.build_controller, [actor, value_function])
+                agents = [agent]
+
+            values_from_returns = Retrace(
+                actor, value_function, lmbda=cfg.v_lmbda, importance_c=cfg.v_importance_c,
+                to_action_value=False, from_action_value=False,
+                name="RetraceV"
+            )
+
+            policy_eval = PolicyEvaluation_State(value_function, values_from_returns, weight=cfg.value_weight)
+            ValueFunctionRegularization(policy_eval, weight=cfg.value_reg_weight)
+
+            action_values_from_returns = Retrace(
+                actor, value_function, lmbda=cfg.q_lmbda, importance_c=cfg.q_importance_c,
+                to_action_value=True, from_action_value=False,
+                name="RetraceQ"
+            )
+
+            advantage_estimator = AdvantageEstimator(
+                action_values_from_returns, value_function)
         else:
-            agent = Agent("agent", cfg.build_controller, [actor, value_function])
+            agent = Agent("agent", cfg.build_controller, [actor])
             agents = [agent]
 
-        if cfg.actor_exploration_schedule is not None:
-            agents[0].add_head(mu, existing_head=actor)
-
-        action_values_from_returns = Retrace(
-            actor, value_function, lmbda=cfg.q_lmbda, importance_c=cfg.q_importance_c,
-            to_action_value=True, from_action_value=False,
-            name="RetraceQ"
-        )
-
-        advantage_estimator = AdvantageEstimator(
-            action_values_from_returns, value_function)
+            # Build an advantage estimator that estimates advantage from current set of rollouts.
+            advantage_estimator = BasicAdvantageEstimator(
+                actor, q_importance_c=cfg.q_importance_c, v_importance_c=cfg.v_importance_c)
 
         PolicyGradient(
             actor, advantage_estimator, epsilon=cfg.epsilon,
-            weight=cfg.policy_weight, importance_c=cfg.policy_importance_c)
-
-        values_from_returns = Retrace(
-            actor, value_function, lmbda=cfg.v_lmbda, importance_c=cfg.v_importance_c,
-            to_action_value=False, from_action_value=False,
-            name="RetraceV"
-        )
-
+            importance_c=cfg.policy_importance_c, weight=cfg.policy_weight)
         PolicyEntropyBonus(actor, weight=cfg.entropy_weight)
 
-        policy_eval = PolicyEvaluation_State(value_function, values_from_returns, weight=cfg.value_weight)
-        ValueFunctionRegularization(policy_eval, weight=cfg.value_reg_weight)
+        if cfg.actor_exploration_schedule is not None:
+            agents[0].add_head(mu, existing_head=actor)
 
         optimizer = StochasticGradientDescent(
             agents=agents, alg=cfg.optimizer_spec,
@@ -65,7 +72,6 @@ def A2C(env):
             max_grad_norm=cfg.max_grad_norm,
             noise_schedule=cfg.noise_schedule
         )
-
         context.set_optimizer(optimizer)
 
     return RLUpdater(env, context)
@@ -85,7 +91,7 @@ config = Config(
     build_controller=BuildLstmController(),
     exploration_schedule="0.2",
     actor_exploration_schedule=None,
-    test_time_explore=-1,
+    test_time_explore=-1.,
 
     policy_weight=1.0,
     value_weight=1.0,

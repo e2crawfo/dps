@@ -16,7 +16,7 @@ class ValueFunction(AgentHead):
     def size(self):
         return self._size
 
-    def generate_signal(self, key, context):
+    def generate_signal(self, key, context, **kwargs):
         if key == 'values':
             utils = self.agent.get_utils(self, context)
             values = tf.identity(utils, name="{}_{}_values".format(self.agent.name, self.name))
@@ -30,7 +30,8 @@ class ValueFunction(AgentHead):
         elif key == 'one_step_td_errors':
             rewards = context.get_signal('rewards')
             gamma = context.get_signal('gamma')
-            rho = context.get_signal('rho', self.policy)
+            c = kwargs.get('c', None)
+            rho = context.get_signal('rho', self.policy, c=c)
             values = context.get_signal('values', self, gradient=True)
 
             shifted_values = tf_roll(values, 1, fill=0.0, reverse=True, axis=0)
@@ -119,13 +120,14 @@ class ActionValueFunction(AgentHead):
 class AverageValueEstimator(RLObject):
     """ Value estimation without a value function. """
 
-    def __init__(self, policy):
+    def __init__(self, policy, importance_c=None):
         self.policy = policy
+        self.importance_c = importance_c
 
     def generate_signal(self, signal_key, context):
         if signal_key == "values":
             if self.policy is not None:
-                return context.get_signal('average_monte_carlo_values', self.policy)
+                return context.get_signal('average_monte_carlo_values', self.policy, importance_c=self.importance_c)
             else:
                 return context.get_signal('average_discounted_returns')
         else:
@@ -135,18 +137,19 @@ class AverageValueEstimator(RLObject):
 class MonteCarloValueEstimator(RLObject):
     """ Off-policy monte-carlo value estimation. """
 
-    def __init__(self, policy=None):
+    def __init__(self, policy=None, importance_c=None):
         self.policy = policy
+        self.importance_c = importance_c
 
     def generate_signal(self, signal_key, context):
         if signal_key == "values":
             if self.policy is not None:
-                return context.get_signal('monte_carlo_values', self.policy)
+                return context.get_signal('monte_carlo_values', self.policy, c=self.importance_c)
             else:
                 return context.get_signal('discounted_returns')
         elif signal_key == "action_values":
             if self.policy is not None:
-                return context.get_signal('monte_carlo_action_values', self.policy)
+                return context.get_signal('monte_carlo_action_values', self.policy, c=self.importance_c)
             else:
                 return context.get_signal('discounted_returns')
         else:
@@ -201,9 +204,9 @@ class AdvantageEstimator(RLObject):
 class BasicAdvantageEstimator(AdvantageEstimator):
     """ Advantage estimation without a value function. """
 
-    def __init__(self, policy=None, standardize=True):
-        q_estimator = MonteCarloValueEstimator(policy)
-        v_estimator = AverageValueEstimator(policy)
+    def __init__(self, policy=None, standardize=True, q_importance_c=None, v_importance_c=None):
+        q_estimator = MonteCarloValueEstimator(policy, importance_c=q_importance_c)
+        v_estimator = AverageValueEstimator(policy, importance_c=v_importance_c)
         super(BasicAdvantageEstimator, self).__init__(q_estimator, v_estimator, standardize)
 
 
@@ -295,15 +298,7 @@ class Retrace(RLObject):
             raise Exception("NotImplemented")
 
         rewards = context.get_signal("rewards")
-
-        if self.importance_c is not None:
-            if self.importance_c <= 0:
-                rho = context.get_signal("importance_weights", self.policy)
-            else:
-                rho = context.get_signal("rho_{}".format(self.importance_c), self.policy)
-        else:
-            _rho = context.get_signal("importance_weights", self.policy)
-            rho = tf.ones_like(_rho)
+        rho = context.get_signal("rho", self.policy, c=self.importance_c)
 
         if self.from_action_value:
             if isinstance(self.policy, DiscretePolicy):

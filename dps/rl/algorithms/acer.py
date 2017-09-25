@@ -4,8 +4,9 @@ from dps.rl import (
     RLUpdater, RLContext, Agent, StochasticGradientDescent,
     PolicyGradient, PolicyEvaluation_State, PolicyEntropyBonus,
     AdvantageEstimator, ValueFunction, Retrace,
-    BuildLstmController, PrioritizedReplayBuffer,
-    ValueFunctionRegularization, BuildEpsilonSoftmaxPolicy
+    BuildLstmController, PrioritizedReplayBuffer, ReplayBuffer,
+    ValueFunctionRegularization, BuildEpsilonSoftmaxPolicy,
+    BasicAdvantageEstimator,
 )
 from dps.rl.algorithms.qlearning import MaxPriorityFunc
 
@@ -23,53 +24,59 @@ def ACER(env):
             context.set_behaviour_policy(actor)
             context.set_validation_policy(actor)
 
-        value_function = ValueFunction(1, actor, "critic")
+        if cfg.value_weight:
+            value_function = ValueFunction(1, actor, "critic")
 
-        if cfg.split:
-            actor_agent = Agent("actor_agent", cfg.build_controller, [actor])
-            critic_agent = Agent("critic_agent", cfg.build_controller, [value_function])
-            agents = [actor_agent, critic_agent]
+            if cfg.split:
+                actor_agent = Agent("actor_agent", cfg.build_controller, [actor])
+                critic_agent = Agent("critic_agent", cfg.build_controller, [value_function])
+                agents = [actor_agent, critic_agent]
+            else:
+                agent = Agent("agent", cfg.build_controller, [actor, value_function])
+                agents = [agent]
+
+            values_from_returns = Retrace(
+                actor, value_function, lmbda=cfg.v_lmbda, importance_c=cfg.v_importance_c,
+                to_action_value=False, from_action_value=False,
+                name="RetraceV"
+            )
+
+            policy_eval = PolicyEvaluation_State(value_function, values_from_returns, weight=cfg.value_weight)
+            priority_func = MaxPriorityFunc(policy_eval)
+            replay_buffer = PrioritizedReplayBuffer(
+                cfg.replay_size, cfg.replay_n_partitions,
+                priority_func, cfg.alpha, cfg.beta_schedule, cfg.min_experiences
+            )
+
+            ValueFunctionRegularization(policy_eval, weight=cfg.value_reg_weight)
+
+            action_values_from_returns = Retrace(
+                actor, value_function, lmbda=cfg.q_lmbda, importance_c=cfg.q_importance_c,
+                to_action_value=True, from_action_value=False,
+                name="RetraceQ"
+            )
+
+            advantage_estimator = AdvantageEstimator(
+                action_values_from_returns, value_function)
         else:
-            agent = Agent("agent", cfg.build_controller, [actor, value_function])
+            agent = Agent("agent", cfg.build_controller, [actor])
             agents = [agent]
 
-        if cfg.actor_exploration_schedule is not None:
-            agents[0].add_head(mu, existing_head=actor)
+            # Build an advantage estimator that estimates advantage from current set of rollouts.
+            advantage_estimator = BasicAdvantageEstimator(
+                actor, q_importance_c=cfg.q_importance_c, v_importance_c=cfg.v_importance_c)
 
-        action_values_from_returns = Retrace(
-            actor, value_function, lmbda=cfg.q_lmbda, importance_c=cfg.q_importance_c,
-            to_action_value=True, from_action_value=False,
-            name="RetraceQ"
-        )
-
-        advantage_estimator = AdvantageEstimator(
-            action_values_from_returns, value_function)
+            replay_buffer = ReplayBuffer(cfg.replay_size, cfg.min_experiences)
 
         PolicyGradient(
             actor, advantage_estimator, epsilon=cfg.epsilon,
             importance_c=cfg.policy_importance_c, weight=cfg.policy_weight)
-
-        # Entropy bonus
         PolicyEntropyBonus(actor, weight=cfg.entropy_weight)
 
-        values_from_returns = Retrace(
-            actor, value_function, lmbda=cfg.v_lmbda, importance_c=cfg.v_importance_c,
-            to_action_value=False, from_action_value=False,
-            name="RetraceV"
-        )
-
-        # Policy evaluation
-        policy_eval = PolicyEvaluation_State(value_function, values_from_returns, weight=cfg.value_weight)
-        ValueFunctionRegularization(policy_eval, weight=cfg.value_reg_weight)
-
-        priority_func = MaxPriorityFunc(policy_eval)
-        replay_buffer = PrioritizedReplayBuffer(
-            cfg.replay_size, cfg.replay_n_partitions,
-            priority_func, cfg.alpha, cfg.beta_schedule, cfg.min_experiences)
+        if cfg.actor_exploration_schedule is not None:
+            agents[0].add_head(mu, existing_head=actor)
         context.set_replay_buffer(cfg.update_batch_size, replay_buffer)
 
-        # Optimize the objective function using stochastic gradient descent with respect
-        # to the variables stored inside `agent`.
         optimizer = StochasticGradientDescent(
             agents=agents, alg=cfg.optimizer_spec,
             lr_schedule=cfg.lr_schedule,
@@ -88,7 +95,7 @@ config = Config(
     update_batch_size=8,
     n_controller_units=64,
     optimizer_spec="adam",
-    opt_steps_per_update=10,
+    opt_steps_per_update=1,
     replay_updates_per_sample=4,
     on_policy_updates=True,
     lr_schedule="1e-4",
@@ -96,10 +103,9 @@ config = Config(
 
     build_policy=BuildEpsilonSoftmaxPolicy(),
     build_controller=BuildLstmController(),
-    exploration_schedule=0.2,
+    exploration_schedule="0.2",
     actor_exploration_schedule=None,
-    test_time_explore=0.1,
-
+    test_time_explore=-1.,
 
     policy_weight=1.0,
     value_weight=1.0,
@@ -109,9 +115,9 @@ config = Config(
     split=True,
     q_lmbda=1.0,
     v_lmbda=1.0,
-    policy_importance_c=0,
+    policy_importance_c=10,
     q_importance_c=None,
-    v_importance_c=None,
+    v_importance_c=10,
 
     min_experiences=1000,
     replay_size=20000,

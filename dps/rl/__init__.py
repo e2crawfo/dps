@@ -6,7 +6,7 @@ from .terms import (
     ValueFunctionRegularization
 )
 from .rollout import RolloutBatch
-from .replay import PrioritizedReplayBuffer
+from .replay import ReplayBuffer, PrioritizedReplayBuffer
 from .agent import AgentHead, Agent
 from .optimizer import Optimizer, StochasticGradientDescent
 from .trust_region import TrustRegionOptimizer

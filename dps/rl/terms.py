@@ -12,7 +12,7 @@ class PolicyGradient(ObjectiveFunctionTerm):
         self.importance_c = importance_c
         super(PolicyGradient, self).__init__(**kwargs)
 
-    def generate_signal(self, signal_key, context):
+    def generate_signal(self, signal_key, context, **kwargs):
         if signal_key == "prev_log_probs":
             self.log_probs = context.get_signal('log_probs', self.policy)
             self.prev_log_probs = tf.placeholder(tf.float32, shape=self.log_probs.shape, name="_prev_log_probs")
@@ -21,6 +21,34 @@ class PolicyGradient(ObjectiveFunctionTerm):
             self.advantage = context.get_signal('advantage', self.advantage_estimator)
             self.prev_advantage = tf.placeholder(tf.float32, shape=self.advantage.shape, name="_prev_advantage")
             return self.prev_advantage
+        elif signal_key == 'importance_weights':
+            pi_log_probs = context.get_signal("prev_log_probs", self)
+            mu_log_probs = context.get_signal("mu_log_probs")
+            importance_weights = tf.exp(pi_log_probs - mu_log_probs)
+
+            label = "{}-mean_importance_weight".format(self.name)
+            mask = context.get_signal("mask")
+            context.add_summary(tf.summary.scalar(label, masked_mean(importance_weights, mask)))
+
+            return importance_weights
+        elif signal_key == "rho":
+            c = kwargs.get('c', None)
+            importance_weights = context.get_signal("importance_weights", self)
+
+            if c is not None:
+                if c <= 0:
+                    rho = importance_weights
+                else:
+                    rho = tf.minimum(importance_weights, c)
+            else:
+                rho = tf.ones_like(importance_weights)
+
+            label = "{}-mean_rho_c={}".format(self.name, c)
+            mask = context.get_signal("mask")
+            context.add_summary(tf.summary.scalar(label, masked_mean(rho, mask)))
+
+            return rho
+
         elif signal_key == "adv_times_ratio":
             log_probs = context.get_signal('log_probs', self.policy, gradient=True)
             prev_log_probs = context.get_signal('prev_log_probs', self)
@@ -40,12 +68,8 @@ class PolicyGradient(ObjectiveFunctionTerm):
                 weights = context.get_signal('weights')
                 adv_times_ratio *= weights
 
-            if self.importance_c is not None:
-                if self.importance_c <= 0:
-                    weights = context.get_signal('importance_weights', self.policy)
-                else:
-                    weights = context.get_signal('rho_{}'.format(self.importance_c), self.policy)
-                adv_times_ratio *= weights
+            rho = context.get_signal('rho', self, c=self.importance_c)
+            adv_times_ratio *= rho
 
             return adv_times_ratio
         else:

@@ -321,7 +321,7 @@ class RLContext(Parameterized):
 
         return feed_dict
 
-    def get_signal(self, key, generator=None, gradient=False, masked=True, memoize=True):
+    def get_signal(self, key, generator=None, gradient=False, masked=True, memoize=True, **kwargs):
         """ Memoized signal retrieval and generation. """
         if generator is None:
             signal = self._signals[key]
@@ -332,15 +332,20 @@ class RLContext(Parameterized):
                 gen_key = id(generator)
             gen_key = str(gen_key)
             signal_key = key
-            key = gen_key + " | " + signal_key
+            key = [gen_key, signal_key]
+
+            for k in sorted(kwargs):
+                key.append("{}={}".format(k, kwargs[k]))
+
+            key = '|'.join(key)
 
             if memoize:
                 signal = self._signals.get(key, None)
                 if signal is None:
-                    signal = generator.generate_signal(signal_key, self)
+                    signal = generator.generate_signal(signal_key, self, **kwargs)
                     self._signals[key] = signal
             else:
-                signal = generator.generate_signal(signal_key, self)
+                signal = generator.generate_signal(signal_key, self, **kwargs)
 
         maskable = len(signal.shape) >= 2
         if masked and maskable:
@@ -399,12 +404,19 @@ class RLContext(Parameterized):
 
             train_summaries = b""
             train_record = {}
-            if collect_summaries and self.replay_buffer is not None:
+
+            if self.replay_buffer is None or self.on_policy_updates:
+                train_summaries, train_record = self._run_and_record(
+                    rollouts, run_mode='update', weights=None, do_update=True,
+                    summary_op=self.train_summary_op,
+                    collect_summaries=collect_summaries)
+            elif collect_summaries:
                 train_summaries, train_record = self._run_and_record(
                     rollouts, run_mode='train', weights=None, do_update=False,
-                    summary_op=self.summary_op, collect_summaries=collect_summaries)
+                    summary_op=self.summary_op, collect_summaries=True)
 
-            do_on_policy_update = self.replay_buffer is None or self.on_policy_updates
+            update_summaries = b""
+            update_record = {}
 
             if self.replay_buffer is not None:
                 self.replay_buffer.add_rollouts(rollouts)
@@ -417,7 +429,6 @@ class RLContext(Parameterized):
 
                     _collect_summaries = (
                         collect_summaries and
-                        not do_on_policy_update and
                         i == self.replay_updates_per_sample-1
                     )
 
@@ -425,12 +436,6 @@ class RLContext(Parameterized):
                         off_policy_rollouts, run_mode='update', weights=weights, do_update=True,
                         summary_op=self.train_summary_op,
                         collect_summaries=_collect_summaries)
-
-            if do_on_policy_update:
-                update_summaries, update_record = self._run_and_record(
-                    rollouts, run_mode='update', weights=None, do_update=True,
-                    summary_op=self.train_summary_op,
-                    collect_summaries=collect_summaries)
 
             return train_summaries, update_summaries, train_record, update_record
 

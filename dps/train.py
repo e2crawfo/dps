@@ -298,7 +298,7 @@ class TrainingLoop(object):
             render = (self.global_step % cfg.render_step == 0) and self.global_step > 0
 
             start_time = time.time()
-            update_summaries, update_summaries, train_record, update_record = updater.update(
+            train_summaries, update_summaries, train_record, update_record = updater.update(
                 cfg.batch_size, collect_summaries=evaluate and cfg.save_summaries)
             update_duration = time.time() - start_time
 
@@ -311,7 +311,7 @@ class TrainingLoop(object):
                 self.latest['val_data'].append(val_record)
 
                 if evaluate and cfg.save_summaries:
-                    self.train_writer.add_summary(update_summaries, (self.global_step + 1) * cfg.batch_size)
+                    self.train_writer.add_summary(train_summaries, (self.global_step + 1) * cfg.batch_size)
                     self.update_writer.add_summary(update_summaries, (self.global_step + 1) * cfg.batch_size)
                     self.val_writer.add_summary(val_summaries, (self.global_step + 1) * cfg.batch_size)
 

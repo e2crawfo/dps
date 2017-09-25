@@ -111,7 +111,8 @@ class Policy(AgentHead):
         else:
             self.exploration = context.get_signal('exploration')
 
-    def generate_signal(self, key, context):
+    def generate_signal(self, key, context, **kwargs):
+
         if key == 'log_probs':
             utils = self.agent.get_utils(self, context)
             actions = context.get_signal('actions')
@@ -128,9 +129,9 @@ class Policy(AgentHead):
             if context.truncated_rollouts:
                 raise Exception("NotImplemented")
 
+            c = kwargs.get('c', None)
+            rho = context.get_signal('rho', self, c=c)
             rewards = context.get_signal('rewards')
-            rho = context.get_signal('importance_weights', self)
-            # rho = context.get_signal('rho', self)
 
             if key == 'monte_carlo_action_values':
                 rho = tf_roll(rho, 1, fill=1.0, reverse=True)
@@ -158,7 +159,7 @@ class Policy(AgentHead):
             returns = tf.reverse(returns, axis=[0])
             return returns
         elif key == 'average_monte_carlo_values':
-            values = context.get_signal('monte_carlo_values', self)
+            values = context.get_signal('monte_carlo_values', self, **kwargs)
             average = tf.reduce_mean(values, axis=1, keep_dims=True)
             average += tf.zeros_like(values)
             return average
@@ -172,20 +173,19 @@ class Policy(AgentHead):
             context.add_summary(tf.summary.scalar(label, masked_mean(importance_weights, mask)))
 
             return importance_weights
-        elif key.startswith('rho'):
-            splits = key.split('_')
-            if len(splits) == 1:
-                c = 1.0
-            else:
-                assert len(splits) == 2
-                c = float(splits[-1])
-
+        elif key == 'rho':
+            c = kwargs.get('c', None)
             importance_weights = context.get_signal("importance_weights", self)
-            rho = tf.minimum(importance_weights, c)
 
-            label = "{}-mean_rho".format(self.display_name)
-            if len(splits) == 2:
-                label = label + "_c={}".format(c)
+            if c is not None:
+                if c <= 0:
+                    rho = importance_weights
+                else:
+                    rho = tf.minimum(importance_weights, c)
+            else:
+                rho = tf.ones_like(importance_weights)
+
+            label = "{}-mean_rho_c={}".format(self.display_name, c)
             mask = context.get_signal("mask")
             context.add_summary(tf.summary.scalar(label, masked_mean(rho, mask)))
 
@@ -235,12 +235,12 @@ class DiscretePolicy(Policy):
         assert isinstance(action_selection, Categorical)
         super(DiscretePolicy, self).__init__(action_selection, *args, **kwargs)
 
-    def generate_signal(self, key, context):
+    def generate_signal(self, key, context, **kwargs):
         if key == 'log_probs_all':
             utils = self.agent.get_utils(self, context)
             return self.action_selection.log_probs_all(utils, self.exploration)
         else:
-            return super(DiscretePolicy, self).generate_signal(key, context)
+            return super(DiscretePolicy, self).generate_signal(key, context, **kwargs)
 
 
 def rnn_cell_placeholder(state_size, batch_size=None, dtype=tf.float32, name=''):

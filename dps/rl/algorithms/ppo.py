@@ -26,11 +26,14 @@ def PPO(env):
             agent = Agent("agent", cfg.build_controller, [actor])
 
         # Build an advantage estimator that estimates advantage from current set of rollouts.
-        advantage_estimator = BasicAdvantageEstimator(actor)
+        advantage_estimator = BasicAdvantageEstimator(
+            actor, q_importance_c=cfg.q_importance_c, v_importance_c=cfg.v_importance_c)
 
         # Add a term to the objective function encapsulated by `context`.
         # The surrogate objective function, when differentiated, yields the actor gradient.
-        PolicyGradient(actor, advantage_estimator, epsilon=cfg.epsilon)
+        PolicyGradient(
+            actor, advantage_estimator, epsilon=cfg.epsilon,
+            weight=cfg.policy_weight, importance_c=cfg.policy_importance_c)
         PolicyEntropyBonus(actor, weight=cfg.entropy_weight)
 
         # Optimize the objective function using stochastic gradient descent with respect
@@ -58,10 +61,14 @@ config = Config(
     exploration_schedule=0.2,
     actor_exploration_schedule=None,
     n_controller_units=64,
-    test_time_explore=-1,
+    test_time_explore=-1.,
     epsilon=0.2,
+    policy_weight=1.0,
     entropy_weight=0.0,
-    importance_c=None,
+
+    policy_importance_c=10,
+    q_importance_c=None,
+    v_importance_c=None,
 )
 
 

@@ -7,6 +7,55 @@ from dps.rl import RolloutBatch, RLObject
 from dps.utils import build_scheduled_value
 
 
+class ReplayBuffer(RLObject):
+    """
+    Basic Experience Replay.
+
+    Parameters
+    ----------
+    size: int
+        Maximum number of experiences to store.
+    min_experiences: int > 0
+        Minimum number of experiences that must be stored in the replay buffer before it will return
+        a valid batch when `get_batch` is called. Before this point, it returns None, indicating that
+        whatever is making use of this replay memory should not make an update.
+
+    """
+    def __init__(self, size, min_experiences=None, name=None):
+        self.size = size
+        self.min_experiences = min_experiences
+        self.index = 0
+        self._experiences = {}
+
+        super(ReplayBuffer, self).__init__(name)
+
+    @property
+    def n_experiences(self):
+        return len(self._experiences)
+
+    def add_rollouts(self, rollouts):
+        assert isinstance(rollouts, RolloutBatch)
+        for r in rollouts.split():
+            # If there was already an experience at location `self.index`, it is effectively ejected.
+            self._experiences[self.index] = r
+            self.index = (self.index + 1) % self.size
+
+    def get_batch(self, batch_size):
+        no_sample = (
+            (self.min_experiences is not None and
+             self.n_experiences < self.min_experiences) or
+            self.n_experiences < batch_size)
+        if no_sample:
+            return None, None
+
+        indices = np.random.randint(self.n_experiences, size=batch_size)
+        experiences = RolloutBatch.join([self._experiences[i] for i in indices])
+
+        weights = np.ones_like(indices).astype('f')
+
+        return experiences, weights
+
+
 class PrioritizedReplayBuffer(RLObject):
     """
     Implements rank-based version of Prioritized Experience Replay.
@@ -143,15 +192,16 @@ class PrioritizedReplayBuffer(RLObject):
         start = 0
         permutation = np.random.permutation(self.n_partitions)
 
-        # batch_size = min(batch_size, self.n_experiences)
-
         selected_sizes = []
         for i in islice(cycle(permutation), batch_size):
             start, end = self.strata_starts[i], self.strata_ends[i]
             priority_indices.append(np.random.randint(start, end))
             selected_sizes.append(self.strata_sizes[i])
 
-        # p_x = np.array([self.pdf[idx] for idx in priority_indices])
+        # We set p_x to be the actual probability that we sampled with,
+        # namely 1 / (n_partitions * size_of_partition), rather than
+        # the pdf that our sampling method approximates, namely `self.pdf`.
+        # This is both more faithful, and works better when the memory is not full.
         p_x = (self.n_partitions * np.array(selected_sizes))**-1.
 
         beta = tf.get_default_session().run(self.beta)
