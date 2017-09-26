@@ -77,6 +77,7 @@ class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
 
         T = T or cfg.T
 
+        policy.set_mode(mode)
         self.set_mode(mode, n_rollouts)
         obs = self.reset()
         batch_size = obs.shape[0]
@@ -442,6 +443,7 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
         return sampler
 
     def do_rollouts(self, policy, n_rollouts=None, T=None, exploration=None, mode='train', save_utils=False):
+        policy.set_mode(mode)
         self.set_mode(mode, n_rollouts)
         T = T or cfg.T
 
@@ -616,6 +618,7 @@ class CompositeEnv(Env):
         (n_rollouts_ph, T_ph, initial_policy_state,
          initial_registers, output) = self.internal.get_sampler(policy)
 
+        policy.set_mode(mode)
         self.external.set_mode(mode, n_rollouts)
         self.internal.set_mode(mode, n_rollouts)
         external_obs = self.external.reset()

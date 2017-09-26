@@ -12,13 +12,23 @@ from dps.rl import (
 def A2C(env):
     with RLContext(cfg.gamma) as context:
         if cfg.actor_exploration_schedule is not None:
-            actor = cfg.build_policy(env, name="actor", exploration_schedule=cfg.actor_exploration_schedule)
+            actor = cfg.build_policy(
+                env, name="actor",
+                exploration_schedule=cfg.exploration_schedule,
+                val_exploration_schedule=cfg.val_exploration_schedule
+            )
+
             context.set_validation_policy(actor)
 
             mu = cfg.build_policy(env, name="mu")
             context.set_behaviour_policy(mu)
         else:
-            actor = cfg.build_policy(env, name="actor")
+            actor = cfg.build_policy(
+                env, name="actor",
+                exploration_schedule=cfg.exploration_schedule,
+                val_exploration_schedule=cfg.val_exploration_schedule
+            )
+
             context.set_behaviour_policy(actor)
             context.set_validation_policy(actor)
 
@@ -89,9 +99,10 @@ config = Config(
 
     build_policy=BuildEpsilonSoftmaxPolicy(),
     build_controller=BuildLstmController(),
-    exploration_schedule="0.2",
+
+    exploration_schedule="0.3",
     actor_exploration_schedule=None,
-    test_time_explore=-1.,
+    val_exploration_schedule="0.01",
 
     policy_weight=1.0,
     value_weight=1.0,

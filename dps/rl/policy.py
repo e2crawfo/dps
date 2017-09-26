@@ -82,14 +82,21 @@ class _DoWeightingActionValue(object):
 
 
 class Policy(AgentHead):
-    def __init__(self, action_selection, obs_shape, exploration_schedule=None, name=None):
+    def __init__(
+            self, action_selection, obs_shape,
+            exploration_schedule,
+            val_exploration_schedule=None, name=None):
+
         self.action_selection = action_selection
         self.params_dim = self.action_selection.params_dim
         self.actions_dim = self.action_selection.actions_dim
         self.obs_shape = obs_shape
 
         self.act_is_built = False
-        self.exploration_schedule = exploration_schedule
+        self.train_exploration_schedule = exploration_schedule
+        self.val_exploration_schedule = val_exploration_schedule
+
+        self.mode = None
 
         super(Policy, self).__init__(name)
 
@@ -104,15 +111,36 @@ class Policy(AgentHead):
         log_probs = self.action_selection.log_probs(utils, samples, self.exploration)
         return (log_probs, samples, entropy, utils), next_controller_state
 
+    def maybe_build_mode(self):
+        if self.mode is None:
+            self.mode = tf.Variable("", dtype=tf.string, name="{}-mode".format(self.display_name))
+            self._mode_input = tf.placeholder(tf.string, ())
+            self._mode_setter = tf.assign(self.mode, self._mode_input)
+
+    def set_mode(self, mode):
+        self.maybe_build_mode()
+        tf.get_default_session().run(self._mode_setter, feed_dict={self._mode_input: mode})
+
     def build_core_signals(self, context):
-        if self.exploration_schedule is not None:
-            label = "{}_exploration".format(self.display_name)
-            self.exploration = build_scheduled_value(self.exploration_schedule, label)
+        self.maybe_build_mode()
+
+        self.train_exploration = build_scheduled_value(self.train_exploration_schedule)
+        if self.val_exploration_schedule is None:
+            self.exploration = self.val_exploration = self.train_exploration
         else:
-            self.exploration = context.get_signal('exploration')
+            self.val_exploration = build_scheduled_value(self.val_exploration_schedule)
+            self.exploration = tf.cond(
+                tf.logical_or(
+                    tf.equal(self.mode, "train"),
+                    tf.equal(self.mode, "update"),
+                ),
+                lambda: self.train_exploration,
+                lambda: self.val_exploration
+            )
+        label = "{}-exploration".format(self.display_name)
+        context.add_summary(tf.summary.scalar(label, self.exploration, collections=['scheduled_value_summaries']))
 
     def generate_signal(self, key, context, **kwargs):
-
         if key == 'log_probs':
             utils = self.agent.get_utils(self, context)
             actions = context.get_signal('actions')
@@ -193,7 +221,7 @@ class Policy(AgentHead):
         else:
             raise Exception("NotImplemented")
 
-    def build_act(self):
+    def maybe_build_act(self):
         if not self.act_is_built:
             # Build a subgraph that we carry around with the Policy for implementing the ``act`` method
             self._policy_state = rnn_cell_placeholder(self.agent.controller.state_size, name='policy_state')
@@ -207,7 +235,8 @@ class Policy(AgentHead):
 
     def act(self, obs, policy_state, exploration=None):
         """ Return (actions, next policy state) given an observation and the current policy state. """
-        self.build_act()
+        self.maybe_build_mode()
+        self.maybe_build_act()
 
         sess = tf.get_default_session()
         feed_dict = flatten_dict_items({self._policy_state: policy_state})

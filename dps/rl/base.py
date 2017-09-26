@@ -14,8 +14,8 @@ def rl_render_hook(updater):
         for learner in updater.learners:
             with learner:
                 updater.env.visualize(
-                    policy=learner.mu,
-                    n_rollouts=10, T=cfg.T, mode='train',
+                    policy=learner.pi,
+                    n_rollouts=10, T=cfg.T, mode='val',
                     render_rollouts=render_rollouts)
     else:
         print("Not rendering.")
@@ -91,9 +91,6 @@ class RLContext(Parameterized):
     """
     active_context = None
 
-    exploration_schedule = Param()
-    test_time_explore = Param()
-
     replay_updates_per_sample = Param(1)
     opt_steps_per_update = Param(1)
     on_policy_updates = Param(True)
@@ -156,11 +153,15 @@ class RLContext(Parameterized):
     def add_recorded_value(self, name, tensor):
         self.recorded_values.append((name, tensor))
 
-    def build_graph(self, env, is_training):
+    def set_mode(self, mode):
+        for obj in self.rl_objects:
+            if hasattr(obj, 'set_mode'):
+                obj.set_mode(mode)
+
+    def build_graph(self, env):
         self.env = env
         self.obs_shape = env.obs_shape
         self.actions_dim = env.actions_dim
-        self.is_training = is_training
 
         with tf.name_scope(self.name):
             with self:
@@ -183,25 +184,12 @@ class RLContext(Parameterized):
                 self.summary_op = tf.summary.merge(self.summaries)
 
     def build_core_signals(self):
-        training_exploration = build_scheduled_value(self.exploration_schedule)
-        if isinstance(self.test_time_explore, str) or self.test_time_explore >= 0:
-            testing_exploration = build_scheduled_value(self.test_time_explore)
-            exploration = tf.cond(self.is_training, lambda: training_exploration, lambda: testing_exploration)
-        else:
-            exploration = training_exploration
-        exploration = tf.identity(exploration)
-        self._signals['exploration'] = exploration
-        tf.summary.scalar('default_exploration', exploration, collections=['scheduled_value_summaries'])
-
         self._signals['mask'] = tf.placeholder(
             tf.float32, shape=(cfg.T, None, 1), name="_mask")
-
         self._signals['obs'] = tf.placeholder(
             tf.float32, shape=(cfg.T, None) + self.obs_shape, name="_obs")
-
         self._signals['actions'] = tf.placeholder(
             tf.float32, shape=(cfg.T, None, self.actions_dim), name="_actions")
-
         self._signals['gamma'] = tf.constant(self.gamma)
         self._signals['batch_size'] = tf.shape(self._signals['obs'])[1]
         self._signals['batch_size_float'] = tf.cast(self._signals['batch_size'], tf.float32)
@@ -218,15 +206,18 @@ class RLContext(Parameterized):
 
         self._signals['train_n_experiences'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
         self._signals['train_cumulative_reward'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
-        self._signals['train_avg_cumulative_reward'] = self._signals['train_cumulative_reward'] / self._signals['train_n_experiences']
+        self._signals['train_avg_cumulative_reward'] = (
+            self._signals['train_cumulative_reward'] / self._signals['train_n_experiences'])
 
         self._signals['update_n_experiences'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
         self._signals['update_cumulative_reward'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
-        self._signals['update_avg_cumulative_reward'] = self._signals['update_cumulative_reward'] / self._signals['update_n_experiences']
+        self._signals['update_avg_cumulative_reward'] = (
+            self._signals['update_cumulative_reward'] / self._signals['update_n_experiences'])
 
         self._signals['val_n_experiences'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
         self._signals['val_cumulative_reward'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
-        self._signals['val_avg_cumulative_reward'] = self._signals['val_cumulative_reward'] / self._signals['val_n_experiences']
+        self._signals['val_avg_cumulative_reward'] = (
+            self._signals['val_cumulative_reward'] / self._signals['val_n_experiences'])
 
         run_mode = self._signals['run_mode'] = tf.placeholder(tf.string, ())
 
@@ -297,18 +288,12 @@ class RLContext(Parameterized):
             weights = np.tile(weights.reshape(1, -1, 1), (rollouts.T, 1, 1))
 
         feed_dict = {
-
             self._signals['mask']: (1-shift_fill(rollouts.done, 1)).astype('f'),
-
             self._signals['obs']: rollouts.o,
             self._signals['actions']: rollouts.a,
-
             self._signals['rewards']: rollouts.r,
-
             self._signals['weights']: weights,
-
             self._signals['mu_log_probs']: rollouts.log_probs,
-
             self._signals['run_mode']: run_mode,
         }
 
@@ -363,6 +348,7 @@ class RLContext(Parameterized):
 
         sess = tf.get_default_session()
         feed_dict = self.make_feed_dict(rollouts, run_mode, weights)
+        self.set_mode(run_mode)
         sess.run(self.update_stats_op, feed_dict=feed_dict)
 
         for obj in self.rl_objects:
@@ -424,7 +410,8 @@ class RLContext(Parameterized):
                 for i in range(self.replay_updates_per_sample):
                     off_policy_rollouts, weights = self.replay_buffer.get_batch(self.update_batch_size)
                     if off_policy_rollouts is None:
-                        # Most common reason for `rollouts` being None is there not being enough experiences in replay memory.
+                        # Most common reason for `rollouts` being None
+                        # is there not being enough experiences in replay memory.
                         break
 
                     _collect_summaries = (
@@ -485,7 +472,7 @@ class RLUpdater(Updater):
 
     def _build_graph(self):
         for learner in self.learners:
-            learner.build_graph(self.env, self.is_training)
+            learner.build_graph(self.env)
 
     def _update(self, batch_size, collect_summaries):
         train_summaries, update_summaries = [], []

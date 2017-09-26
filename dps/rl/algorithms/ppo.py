@@ -10,16 +10,25 @@ from dps.rl import (
 def PPO(env):
     with RLContext(cfg.gamma) as context:
         if cfg.actor_exploration_schedule is not None:
-            mu = cfg.build_policy(env, name="mu")
+            mu = cfg.build_policy(env, name="mu", exploration_schedule=cfg.exploration_schedule)
             context.set_behaviour_policy(mu)
 
-            actor = cfg.build_policy(env, name="actor", exploration_schedule=cfg.actor_exploration_schedule)
+            actor = cfg.build_policy(
+                env, name="actor",
+                exploration_schedule=cfg.actor_exploration_schedule,
+                val_exploration_schedule=cfg.val_exploration_schedule
+            )
+
             context.set_validation_policy(actor)
 
             agent = Agent("agent", cfg.build_controller, [actor])
             agent.add_head(mu, existing_head=actor)
         else:
-            actor = cfg.build_policy(env, name="actor")
+            actor = cfg.build_policy(
+                env, name="actor",
+                exploration_schedule=cfg.exploration_schedule,
+                val_exploration_schedule=cfg.val_exploration_schedule
+            )
             context.set_behaviour_policy(actor)
             context.set_validation_policy(actor)
 
@@ -58,10 +67,10 @@ config = Config(
     optimizer_spec="adam",
     opt_steps_per_update=10,
     lr_schedule=1e-4,
-    exploration_schedule=0.2,
+    exploration_schedule="0.3",
     actor_exploration_schedule=None,
+    val_exploration_schedule="0.01",
     n_controller_units=64,
-    test_time_explore=-1.,
     epsilon=0.2,
     policy_weight=1.0,
     entropy_weight=0.0,

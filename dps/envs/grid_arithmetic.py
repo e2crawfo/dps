@@ -62,28 +62,32 @@ config = Config(
         ('+', lambda acc, digit: acc + digit),
         ('+1', lambda acc, digit: acc + 1),
         # ('*', lambda acc, digit: acc * digit),
-        # ('=', lambda acc, digit: digit)
+        # ('=', lambda acc, digit: digit),
+        # ('max', lambda acc, digit: tf.maximum(acc, digit))
+        # ('min', lambda acc, digit: tf.minimum(acc, digit))
     ],
 
-    curriculum=[dict()],
-    force_2d=False,
+    # curriculum=[dict()],
+    curriculum=[dict(shape=(3, 1)), dict(shape=(3, 2))],
     mnist=False,
     op_loc=(0, 0),
     start_loc=(0, 0),
     base=10,
     threshold=0.04,
     T=30,
-    min_digits=1,
-    max_digits=1,
-    shape=(3, 3),
-    # shape=(3, 1),
+    min_digits=2,
+    max_digits=2,
+    shape=(3, 2),
+    salience_shape=(2, 2),
 
     n_train=10000,
     n_val=500,
 
+    show_op=True,
     dense_reward=True,
     reward_window=0.5,
     salience_action=True,
+    initial_salience=False,
     visible_glimpse=False,
 
     ablation='',  # anything other than "bad_wiring", "no_classifiers", "no_ops", "no_modules" will use the default.
@@ -114,10 +118,10 @@ class GridArithmeticDataset(RegressionDataset):
     base = Param()
     n_examples = Param()
     op_loc = Param()
-    force_2d = Param()
     loss_type = Param("2-norm")
     largest_digit = Param(10)
     downsample_factor = Param(1)
+    show_op = Param(True)
 
     def __init__(self, **kwargs):
         assert 1 <= self.base <= 10
@@ -160,7 +164,7 @@ class GridArithmeticDataset(RegressionDataset):
         x, y = self.make_dataset(
             self.shape, self.min_digits, self.max_digits, self.base,
             blank_element, symbol_reps, digit_reps,
-            functions, self.n_examples, self.op_loc, force_2d=self.force_2d,
+            functions, self.n_examples, self.op_loc, self.show_op,
             one_hot_output=self.loss_type == "xent", largest_digit=self.largest_digit)
 
         super(GridArithmeticDataset, self).__init__(x, y)
@@ -168,7 +172,7 @@ class GridArithmeticDataset(RegressionDataset):
     @staticmethod
     def make_dataset(
             shape, min_digits, max_digits, base, blank_element,
-            symbol_reps, digit_reps, functions, n_examples, op_loc, force_2d,
+            symbol_reps, digit_reps, functions, n_examples, op_loc, show_op,
             one_hot_output, largest_digit):
 
         if n_examples == 0:
@@ -182,34 +186,31 @@ class GridArithmeticDataset(RegressionDataset):
 
         element_shape = blank_element.shape
         m, n = element_shape
-        reshaped_blank_element = blank_element.reshape(
-            (1,)*len(shape) + blank_element.shape)
+        _op_loc = np.ravel_multi_index(op_loc, shape)
 
         for j in range(n_examples):
             nd = np.random.randint(min_digits, max_digits+1)
-            if op_loc is None:
-                indices = np.random.choice(size, nd+1, replace=False)
-            else:
-                _op_loc = np.ravel_multi_index(op_loc, shape)
-                indices = np.random.choice(size-1, nd, replace=False)
-                indices[indices == _op_loc] = size-1
-                indices = np.append(_op_loc, indices)
 
-            if force_2d:
-                env = np.tile(blank_element, shape)
-                locs = zip(*np.unravel_index(indices, shape))
-                locs = [(slice(i*m, (i+1)*m), slice(j*n, (j+1)*n)) for i, j in locs]
-            else:
-                env = np.tile(reshaped_blank_element, shape+(1,)*len(element_shape))
-                locs = list(zip(*np.unravel_index(indices, shape)))
+            indices = np.random.choice(size, nd+1, replace=False)
+
+            if op_loc is not None and show_op:
+                indices[indices == _op_loc] = indices[0]
+                indices[0] = _op_loc
+
+            env = np.tile(blank_element, shape)
+            locs = zip(*np.unravel_index(indices, shape))
+            locs = [(slice(i*m, (i+1)*m), slice(j*n, (j+1)*n)) for i, j in locs]
+            op_loc, *digit_locs = locs
 
             symbol_x, symbol_y = symbol_reps.get_random()
             func = functions[int(symbol_y)]
-            env[locs[0]] = symbol_x
+
+            if show_op:
+                env[op_loc] = symbol_x
 
             ys = []
 
-            for loc in locs[1:]:
+            for loc in digit_locs:
                 x, y = digit_reps.get_random()
                 ys.append(y)
                 env[loc] = x
@@ -246,10 +247,7 @@ class GridArithmetic(InternalEnv):
 
     @property
     def input_shape(self):
-        if self.force_2d:
-            return tuple(s*e for s, e in zip(self.shape, self.element_shape))
-        else:
-            return self.shape + self.element_shape
+        return tuple(s*e for s, e in zip(self.shape, self.element_shape))
 
     mnist = Param()
     symbols = Param()
@@ -257,11 +255,12 @@ class GridArithmetic(InternalEnv):
     shape = Param()
     base = Param()
     start_loc = Param()
-    force_2d = Param()
     classification_bonus = Param(0.0)
     downsample_factor = Param(1)
     visible_glimpse = Param()
+    salience_shape = Param()
     salience_action = Param()
+    initial_salience = Param()
 
     def __init__(self, **kwargs):
         self.arithmetic_actions = dict(self.arithmetic_actions)
@@ -269,6 +268,9 @@ class GridArithmetic(InternalEnv):
             self.action_names = self._action_names + ['update_salience'] + sorted(self.arithmetic_actions.keys())
         else:
             self.action_names = self._action_names + sorted(self.arithmetic_actions.keys())
+
+        if self.salience_shape is None:
+            self.salience_shape = self.shape
 
         self.actions_dim = len(self.action_names)
         self.init_classifiers()
@@ -282,11 +284,11 @@ class GridArithmetic(InternalEnv):
     def init_rb(self):
         values = (
             [0., 0., -1., 0., 0., -1.] +
-            [-1 * np.ones(np.product(self.shape), dtype='f')] +
+            [-1 * np.ones(np.product(self.salience_shape), dtype='f')] +
             [np.zeros(np.product(self.element_shape), dtype='f')])
 
-        min_values = [0, 10, 0, 0, 0, 0] + [-1] * np.product(self.shape)
-        max_values = [9, 12, 999, self.shape[1], self.shape[0], self.actions_dim] + [1] * np.product(self.shape)
+        min_values = [0, 10, 0, 0, 0, 0] + [-1] * np.product(self.salience_shape)
+        max_values = [9, 12, 999, self.shape[1], self.shape[0], self.actions_dim] + [1] * np.product(self.salience_shape)
 
         if self.visible_glimpse:
             min_values.extend([0] * np.product(self.element_shape))
@@ -347,13 +349,11 @@ class GridArithmetic(InternalEnv):
                 x >= 10, x, -1 * tf.ones(tf.shape(x)))
 
     def build_init_glimpse(self, batch_size, inp, fovea_y, fovea_x):
-        indices = tf.concat([
-            tf.reshape(tf.range(batch_size), (-1, 1)),
-            tf.cast(fovea_y, tf.int32),
-            tf.cast(fovea_x, tf.int32)], axis=1)
-        glimpse = tf.gather_nd(inp, indices)
-        glimpse = tf.reshape(
-            glimpse, (-1, np.product(self.element_shape)), name="glimpse")
+        centres = tf.concat([fovea_y, fovea_x], axis=-1) * np.array(self.element_shape)
+        centres += np.ceil(np.array(self.element_shape) / 2)
+        inp = tf.expand_dims(inp, -1)
+        glimpse = tf.image.extract_glimpse(inp, self.element_shape, centres, normalized=False, centered=False)
+        glimpse = tf.reshape(glimpse, (-1, np.product(self.element_shape)), name="glimpse")
         return glimpse
 
     def build_init_storage(self, batch_size):
@@ -380,6 +380,14 @@ class GridArithmetic(InternalEnv):
 
         digit, op, acc, fovea_x, fovea_y, prev_action, salience, glimpse = self.rb.as_tuple(r)
 
+        if self.initial_salience:
+            centres = tf.concat([fovea_y, fovea_x], axis=-1) * np.array(self.element_shape)
+            centres += np.ceil(np.array(self.element_shape) / 2)
+            inp = tf.cast(tf.equal(tf.expand_dims(self.input_ph, -1), -1), tf.float32)
+            new_salience = tf.image.extract_glimpse(inp, self.salience_shape, centres, normalized=False, centered=False)
+            new_salience = tf.reshape(new_salience, (tf.shape(digit)[0], -1))
+            salience = 0 * salience + new_salience
+
         acc = -1 * tf.ones(tf.shape(digit), dtype=tf.float32)
 
         batch_size = tf.shape(self.input_ph)[0]
@@ -393,13 +401,10 @@ class GridArithmetic(InternalEnv):
         return ret
 
     def build_update_glimpse(self, inp, fovea_y, fovea_x):
-        batch_size = tf.shape(inp)[0]
-        indices = tf.concat([
-            tf.reshape(tf.range(batch_size), (-1, 1)),
-            tf.cast(fovea_y, tf.int32),
-            tf.cast(fovea_x, tf.int32)],
-            axis=1)
-        glimpse = tf.gather_nd(inp, indices)
+        centres = tf.concat([fovea_y, fovea_x], axis=-1) * np.array(self.element_shape)
+        centres += np.ceil(np.array(self.element_shape) / 2)
+        inp = tf.expand_dims(inp, -1)
+        glimpse = tf.image.extract_glimpse(inp, self.element_shape, centres, normalized=False, centered=False)
         glimpse = tf.reshape(glimpse, (-1, np.product(self.element_shape)), name="glimpse")
         return glimpse
 
@@ -470,7 +475,12 @@ class GridArithmetic(InternalEnv):
             (right, left, down, up, classify_digit, classify_op, _,
                 update_salience, *arithmetic_actions) = self.unpack_actions(a)
 
-            new_salience = tf.reshape(tf.cast(tf.equal(self.input_ph, -1), tf.float32), (tf.shape(_digit)[0], -1))
+            centres = tf.concat([_fovea_y, _fovea_x], axis=-1) * np.array(self.element_shape)
+            centres += np.ceil(np.array(self.element_shape) / 2)
+            inp = tf.cast(tf.equal(tf.expand_dims(self.input_ph, -1), -1), tf.float32)
+            new_salience = tf.image.extract_glimpse(inp, self.salience_shape, centres, normalized=False, centered=False)
+            new_salience = tf.reshape(new_salience, (tf.shape(_digit)[0], -1))
+
             salience = (1-update_salience) * _salience + update_salience * new_salience
         else:
             right, left, down, up, classify_digit, classify_op, _, *arithmetic_actions = self.unpack_actions(a)
@@ -507,7 +517,12 @@ class GridArithmeticEasy(GridArithmetic):
             (right, left, down, up, classify_digit, classify_op, _,
                 update_salience, *arithmetic_actions) = self.unpack_actions(a)
 
-            new_salience = tf.reshape(tf.cast(tf.equal(self.input_ph, -1), tf.float32), (tf.shape(_digit)[0], -1))
+            centres = tf.concat([_fovea_y, _fovea_x], axis=-1) * np.array(self.element_shape)
+            centres += np.ceil(np.array(self.element_shape) / 2)
+            inp = tf.cast(tf.equal(tf.expand_dims(self.input_ph, -1), -1), tf.float32)
+            new_salience = tf.image.extract_glimpse(inp, self.salience_shape, centres, normalized=False, centered=False)
+            new_salience = tf.reshape(new_salience, (tf.shape(_digit)[0], -1))
+
             salience = (1-update_salience) * _salience + update_salience * new_salience
         else:
             right, left, down, up, classify_digit, classify_op, _, *arithmetic_actions = self.unpack_actions(a)
