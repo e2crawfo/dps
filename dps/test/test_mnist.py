@@ -4,28 +4,34 @@ import tensorflow as tf
 from pathlib import Path
 from shutil import rmtree
 
+from dps import cfg
 from dps.utils import MLP, NumpySeed
 from dps.vision import (
-    TranslatedMnistDataset, load_or_train, MNIST_CONFIG,
-    MnistPretrained, DRAW, LeNet, train_mnist)
+    load_or_train, MNIST_CONFIG, MnistPretrained, DRAW, LeNet, train_mnist, EmnistDataset)
 from dps.vision.attention import DRAW_attention_2D
 
 
 N = 7
 
 
-def _eval_model(sess, inference, x_ph, symbols):
-    test_dataset = TranslatedMnistDataset(n_examples=100, symbols=symbols)
-    y_ph = tf.placeholder(tf.int64, (None))
-    _y = tf.reshape(y_ph, (-1,))
-    loss = tf.reduce_mean(
-        tf.nn.sparse_softmax_cross_entropy_with_logits(
-            labels=_y, logits=tf.log(inference)))
-    correct_prediction = tf.equal(tf.argmax(inference, 1), _y)
-    accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+class_pool = (
+    [str(i) for i in range(10)] + [chr(i + ord('A')) for i in range(26)] +
+    [chr(i + ord('a')) for i in range(26)]
+)
+
+
+def _eval_model(sess, inference, x_ph):
+    test_dataset = EmnistDataset(
+        n_examples=100, classes=cfg.classes, one_hot=True, include_blank=cfg.include_blank,
+        downsample_factor=cfg.downsample_factor)
 
     x, y = test_dataset.next_batch(advance=False)
-    _loss, _accuracy = sess.run([loss, accuracy], {x_ph: x, y_ph: y})
+
+    loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y, logits=inference))
+    correct_prediction = tf.equal(tf.argmax(inference, 1), tf.argmax(y, 1))
+    accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+
+    _loss, _accuracy = sess.run([loss, accuracy], feed_dict={x_ph: x})
     print("Loss: {}, accuracy: {}".format(_loss, _accuracy))
     assert _accuracy > 0.7
 
@@ -46,8 +52,8 @@ def build_model(inp, output_size, is_training):
             N=N
         )
     glimpse = tf.reshape(glimpse, (-1, N**2))
-    logits = MLP([100, 100], activation_fn=tf.nn.sigmoid)(glimpse, output_size)
-    return tf.nn.softmax(logits)
+    logits = MLP([100, 100], activation_fn=tf.nn.sigmoid)(inp, output_size)
+    return logits
 
 
 def make_checkpoint_dir(config):
@@ -62,29 +68,29 @@ def make_checkpoint_dir(config):
 
 def test_mnist_load_or_train():
     with NumpySeed(83849):
-        n_symbols = 10
-        symbols = list(np.random.choice(20, n_symbols, replace=False))
+        n_classes = 10
+        classes = np.random.choice(len(class_pool), n_classes, replace=False)
+        classes = [class_pool[i] for i in classes]
 
         config = MNIST_CONFIG.copy(
-            threshold=0.20,
             patience=np.inf,
             max_steps=10000000,
-            symbols=symbols,
-            eval_step=100,
+            classes=classes,
             include_blank=True,
-            W=14,
+            image_width=14,
             downsample_factor=2,
+            threshold=0.2,
         )
 
         checkpoint_dir = make_checkpoint_dir(config)
-        output_size = n_symbols + 1
+        output_size = n_classes + 1
 
         g = tf.Graph()
         with g.device("/cpu:0"):
             with g.as_default():
 
                 with tf.variable_scope('mnist') as var_scope:
-                    x_ph = tf.placeholder(tf.float32, (None, config.W, config.W))
+                    x_ph = tf.placeholder(tf.float32, (None, config.image_width**2))
                     inference = build_model(x_ph, output_size, is_training=False)
 
                 sess = tf.Session()
@@ -94,14 +100,14 @@ def test_mnist_load_or_train():
                 assert not loaded
 
                 with config:
-                    _eval_model(sess, inference, x_ph, symbols)
+                    _eval_model(sess, inference, x_ph)
 
         g = tf.Graph()
         with g.device("/cpu:0"):
             with g.as_default():
 
                 with tf.variable_scope('mnist') as var_scope:
-                    x_ph = tf.placeholder(tf.float32, (None, config.W, config.W))
+                    x_ph = tf.placeholder(tf.float32, (None, config.image_width**2))
                     inference = build_model(x_ph, output_size, is_training=False)
 
                 sess = tf.Session()
@@ -111,17 +117,17 @@ def test_mnist_load_or_train():
                 assert loaded
 
                 with config:
-                    _eval_model(sess, inference, x_ph, symbols)
+                    _eval_model(sess, inference, x_ph)
 
 
 def mlp(inp, outp_size, is_training):
     logits = MLP([100, 100], activation_fn=tf.nn.sigmoid)(inp, outp_size)
-    return tf.nn.softmax(logits)
+    return logits
 
 
 def lenet(inp, output_size, is_training):
     logits = LeNet(1024, activation_fn=tf.nn.sigmoid)(inp, output_size, is_training)
-    return tf.nn.softmax(logits)
+    return logits
 
 
 @pytest.mark.parametrize('preprocess', [True, False])
@@ -138,18 +144,19 @@ def test_mnist_pretrained(preprocess, classifier):
         build_classifier = lenet
 
     with NumpySeed(83849):
-        n_symbols = 10
-        symbols = list(np.random.choice(20, n_symbols, replace=False))
-        output_size = n_symbols + 1
+        n_classes = 10
+        classes = np.random.choice(len(class_pool), n_classes, replace=False)
+        classes = [class_pool[i] for i in classes]
+        output_size = n_classes + 1
 
         config = MNIST_CONFIG.copy(
-            eval_step=100,
-            max_steps=10000,
-            symbols=list(symbols),
+            patience=np.inf,
+            max_steps=10000000,
+            classes=classes,
             include_blank=True,
+            image_width=14,
+            downsample_factor=2,
             threshold=0.2,
-            W=14,
-            downsample_factor=2
         )
 
         checkpoint_dir = make_checkpoint_dir(config)
@@ -162,12 +169,12 @@ def test_mnist_pretrained(preprocess, classifier):
             with sess.as_default():
                 build_model = MnistPretrained(
                     prepper, build_classifier, model_dir=str(checkpoint_dir), mnist_config=config)
-                x_ph = tf.placeholder(tf.float32, (None, config.W, config.W))
+                x_ph = tf.placeholder(tf.float32, (None, config.image_width**2))
                 inference = build_model(x_ph, output_size, is_training=False, preprocess=True)
                 assert not build_model.was_loaded
 
                 with config:
-                    _eval_model(sess, inference, x_ph, symbols)
+                    _eval_model(sess, inference, x_ph)
 
         g = tf.Graph()
         with g.as_default():
@@ -176,9 +183,9 @@ def test_mnist_pretrained(preprocess, classifier):
             with sess.as_default():
                 build_model = MnistPretrained(
                     prepper, build_classifier, model_dir=str(checkpoint_dir), mnist_config=config)
-                x_ph = tf.placeholder(tf.float32, (None, config.W, config.W))
+                x_ph = tf.placeholder(tf.float32, (None, config.image_width**2))
                 inference = build_model(x_ph, output_size, is_training=False, preprocess=True)
                 assert build_model.was_loaded
 
                 with config:
-                    _eval_model(sess, inference, x_ph, symbols)
+                    _eval_model(sess, inference, x_ph)

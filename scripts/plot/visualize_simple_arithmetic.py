@@ -52,7 +52,7 @@ class Config(DpsConfig):
 
     batch_size = 32
     entropy_schedule = 0.1
-    exploration_schedule = "Poly(10, 100000, end=0.1)"
+    exploration_schedule = "Poly(10, 0.1, 100000)"
     lr_schedule = "0.00025"
     n_controller_units = 128
 

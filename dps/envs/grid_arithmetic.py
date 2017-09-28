@@ -6,9 +6,10 @@ from dps.register import RegisterBank
 from dps.environment import (
     RegressionDataset, RegressionEnv, CompositeEnv, InternalEnv)
 from dps.vision import MnistPretrained, ClassifierFunc, LeNet, MNIST_CONFIG
-from dps.vision.dataset import char_to_idx, load_emnist
 from dps.utils import DataContainer, Param, Config
 from dps.rl.policy import Softmax, Normal, ProductDist, Policy, DiscretePolicy
+
+from mnist_arithmetic import load_emnist
 
 
 def build_env():
@@ -50,13 +51,13 @@ def build_policy(env, **kwargs):
 
 config = Config(
     build_env=build_env,
-    symbols=[
-        ('A', lambda x: sum(x)),
-        # ('M', lambda x: np.product(x)),
-        # ('C', lambda x: len(x)),
-        # ('X', lambda x: max(x)),
-        # ('N', lambda x: min(x))
-    ],
+    reductions={
+        'A': lambda x: sum(x),
+        'M': lambda x: np.product(x),
+        'C': lambda x: len(x),
+        'X': lambda x: max(x),
+        'N': lambda x: min(x),
+    },
 
     arithmetic_actions=[
         ('+', lambda acc, digit: acc + digit),
@@ -111,7 +112,7 @@ config = Config(
 
 class GridArithmeticDataset(RegressionDataset):
     mnist = Param()
-    symbols = Param()
+    reductions = Param()
     shape = Param()
     min_digits = Param()
     max_digits = Param()
@@ -130,21 +131,24 @@ class GridArithmeticDataset(RegressionDataset):
 
         self.s = s = int(28 / self.downsample_factor)
 
-        if self.mnist:
-            functions = {char_to_idx(s): f for s, f in self.symbols}
+        op_symbols = sorted(self.reductions)
 
+        if self.mnist:
+            op_symbols = sorted(self.reductions)
             emnist_x, emnist_y, symbol_map = load_emnist(
-                list(functions.keys()), balance=True, downsample_factor=self.downsample_factor)
+                cfg.data_dir, op_symbols, balance=True,
+                downsample_factor=self.downsample_factor)
             emnist_x = emnist_x.reshape(-1, s, s)
             emnist_x = np.uint8(255*np.minimum(emnist_x, 1))
             emnist_y = np.squeeze(emnist_y, 1)
 
-            functions = {symbol_map[k]: v for k, v in functions.items()}
+            reductions = {symbol_map[k]: v for k, v in self.reductions.items()}
 
             symbol_reps = DataContainer(emnist_x, emnist_y)
 
-            mnist_x, mnist_y, symbol_map = load_emnist(
-                list(range(self.base)), balance=True, downsample_factor=self.downsample_factor)
+            mnist_x, mnist_y, _ = load_emnist(
+                cfg.data_dir, list(range(self.base)), balance=True,
+                downsample_factor=self.downsample_factor)
             mnist_x = mnist_x.reshape(-1, s, s)
             mnist_x = np.uint8(255*np.minimum(mnist_x, 1))
             mnist_y = np.squeeze(mnist_y, 1)
@@ -152,19 +156,20 @@ class GridArithmeticDataset(RegressionDataset):
             digit_reps = DataContainer(mnist_x, mnist_y)
             blank_element = np.zeros((s, s))
         else:
-            sorted_symbols = sorted(self.symbols, key=lambda x: x[0])
-            functions = {i: f for i, (_, f) in enumerate(sorted_symbols)}
-            symbol_values = np.array(sorted(functions.keys()))
+            reductions = {i: self.reductions[k] for i, k in enumerate(op_symbols)}
+            symbol_values = np.array(sorted(reductions))
 
             symbol_reps = DataContainer(symbol_values + 10, symbol_values)
             digit_reps = DataContainer(np.arange(self.base), np.arange(self.base))
 
             blank_element = np.array([[-1]])
 
+        # By now, reductions show be a map from numerical class label to reduction function
+
         x, y = self.make_dataset(
             self.shape, self.min_digits, self.max_digits, self.base,
             blank_element, symbol_reps, digit_reps,
-            functions, self.n_examples, self.op_loc, self.show_op,
+            reductions, self.n_examples, self.op_loc, self.show_op,
             one_hot_output=self.loss_type == "xent", largest_digit=self.largest_digit)
 
         super(GridArithmeticDataset, self).__init__(x, y)

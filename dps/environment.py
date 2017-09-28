@@ -248,7 +248,7 @@ class RegressionEnv(Env):
         elif self.loss_type == "1-norm":
             return tf.reduce_mean(tf.abs(actions - targets), axis=-1, keep_dims=True)
         elif self.loss_type == "xent":
-            return tf.nn.softmax_cross_entropy_with_logits(labels=targets, logits=actions)
+            return tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=targets, logits=actions))
 
     def build_reward(self, actions, targets):
         if self.loss_type == "xent":

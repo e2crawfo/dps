@@ -12,7 +12,7 @@ config.update(
     max_steps=1000000,
     threshold=-1,
     display_step=100,
-    symbols=[('A', lambda x: sum(x))],
+    symbols={'A': lambda x: sum(x)},
     opt_steps_per_update=10,
     n_controller_units=32,
     min_digits=2,
@@ -20,7 +20,7 @@ config.update(
     shape=(3, 1),
     visible_glimpse=True,
     build_policy=BuildEpsilonSoftmaxPolicy(),
-    exploration_schedule='Poly(1.0, 1000000, end=0.01)',
+    exploration_schedule='Poly(1.0, 0.01, 1000000)',
     gamma=0.98,
     T=30,
     arithmetic_actions=[

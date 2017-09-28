@@ -1,3 +1,5 @@
+import numpy as np
+
 from dps.train import training_loop
 from dps.config import DEFAULT_CONFIG
 from dps.rl.algorithms import acer
@@ -13,7 +15,7 @@ acer_config = acer.config.copy(
     optimizer_spec="adam",
     exploration_schedule=(
         "MixtureSchedule("
-        "    [Poly(10, {0}, end=5.0), Poly(10, {0}, end=1.0), Poly(10, {0}, end=0.1)],"
+        "    [Poly(10, 5, {0}), Poly(10, 1, {0}), Poly(10, 0.1, {0})],"
         "    100, shared_clock=False)").format(config.max_steps),
     test_time_explore=-1,
 
@@ -35,7 +37,7 @@ acer_config = acer.config.copy(
     opt_steps_per_update=1,
     epsilon=0.2,
     value_weight=10.0,
-    entropy_weight='Poly(0.0625, {}, end=0.0)'.format(config.max_steps),
+    entropy_weight='Poly(0.0625, 0.0, {})'.format(config.max_steps),
     lmbda=1.0,
     gamma=1.0,
     c=2,
@@ -44,13 +46,13 @@ acer_config = acer.config.copy(
 
 
 env_config = grid_arithmetic.config.copy(
-    symbols=[
-        ('A', lambda x: sum(x)),
-        # ('M', lambda x: np.product(x)),
-        # ('C', lambda x: len(x)),
-        # ('X', lambda x: max(x)),
-        # ('N', lambda x: min(x))
-    ],
+    symbols={
+        'A': lambda x: sum(x),
+        'M': lambda x: np.product(x),
+        'C': lambda x: len(x),
+        'X': lambda x: max(x),
+        'N': lambda x: min(x)
+    },
     curriculum=[
         dict(T=40, min_digits=2, max_digits=3, shape=(2, 2)),
     ],

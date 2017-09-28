@@ -9,8 +9,8 @@ from dps.utils import (
 
 
 class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
-    def __init__(self, env, **kwargs):
-        self.scope = None
+    def __init__(self, env, scope=None, **kwargs):
+        self.scope = scope
         self.env = env
         self._n_experiences = 0
 
@@ -19,12 +19,8 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
         return self._n_experiences
 
     def build_graph(self):
-        with tf.variable_scope(self.__class__.__name__) as scope:
-            self.scope = scope
-
-            self.is_training = tf.Variable(False, trainable=False)
-            self._set_is_training = tf.placeholder(tf.bool, ())
-            self._assign_is_training = tf.assign(self.is_training, self._set_is_training)
+        with tf.variable_scope(self.scope or self.__class__.__name__) as scope:
+            self._scope = scope
 
             self._build_graph()
 
@@ -41,7 +37,6 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
 
     def update(self, batch_size, collect_summaries):
         self._n_experiences += batch_size
-        self.set_is_training(True)
 
         scheduled_value_summaries = \
             tf.get_default_session().run(self.scheduled_value_summaries_op)
@@ -55,8 +50,6 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
         raise Exception("NotImplemented")
 
     def evaluate(self, batch_size):
-        self.set_is_training(False)
-
         loss, summaries, record = self._evaluate(batch_size)
 
         scheduled_value_summaries = \
@@ -66,29 +59,25 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
         return loss, summaries, record
 
     @abc.abstractmethod
-    def _evaluate(self, batch_size, mode):
+    def _evaluate(self, batch_size):
         raise Exception("NotImplemented")
 
-    def set_is_training(self, is_training):
-        tf.get_default_session().run(
-            self._assign_is_training, feed_dict={self._set_is_training: is_training})
-
     def save(self, session, filename):
-        if self.scope is None:
+        if self._scope is None:
             raise Exception(
                 "Cannot save variables for an Updater that "
                 "has not had its `build_graph` method called.")
-        updater_variables = trainable_variables(self.scope.name)
+        updater_variables = trainable_variables(self._scope.name)
         saver = tf.train.Saver(updater_variables)
         path = saver.save(tf.get_default_session(), filename)
         return path
 
     def restore(self, session, path):
-        if self.scope is None:
+        if self._scope is None:
             raise Exception(
                 "Cannot save variables for an Updater that has "
                 "not had its `build_graph` method called.")
-        updater_variables = trainable_variables(self.scope.name)
+        updater_variables = trainable_variables(self._scope.name)
         saver = tf.train.Saver(updater_variables)
         saver.restore(tf.get_default_session(), path)
 
@@ -120,13 +109,21 @@ class DifferentiableUpdater(Updater):
         self.obs_shape = env.obs_shape
         self.actions_dim = env.actions_dim
 
-        super(DifferentiableUpdater, self).__init__(env)
+        super(DifferentiableUpdater, self).__init__(env, **kwargs)
+
+    def set_is_training(self, is_training):
+        tf.get_default_session().run(
+            self._assign_is_training, feed_dict={self._set_is_training: is_training})
 
     def _build_graph(self):
+        self.is_training = tf.Variable(False, trainable=False)
+        self._set_is_training = tf.placeholder(tf.bool, ())
+        self._assign_is_training = tf.assign(self.is_training, self._set_is_training)
+
         self.x_ph = tf.placeholder(tf.float32, (None,) + self.obs_shape)
         self.target_ph = tf.placeholder(tf.float32, (None, self.actions_dim))
-        self.output = self.f(self.x_ph)
-        self.loss = tf.reduce_mean(self.env.build_loss(self.output, self.target_ph))
+        self.output = self.f(self.x_ph, self.actions_dim, self.is_training)
+        self.loss = self.env.build_loss(self.output, self.target_ph)
         self.reward = tf.reduce_mean(self.env.build_reward(self.output, self.target_ph))
         self.mean_value = tf.reduce_mean(self.output)
 
@@ -144,6 +141,7 @@ class DifferentiableUpdater(Updater):
         ] + train_summaries)
 
     def _update(self, batch_size, collect_summaries):
+        self.set_is_training(True)
         sess = tf.get_default_session()
         train_x, train_y = self.env.next_batch(batch_size, mode='train')
 
@@ -153,15 +151,25 @@ class DifferentiableUpdater(Updater):
         }
 
         sess = tf.get_default_session()
+        loss, reward, mean_value = sess.run(
+            [self.loss, self.reward, self.mean_value], feed_dict=feed_dict)
+
         if collect_summaries:
             train_summaries, _ = sess.run([self.train_summary_op, self.train_op], feed_dict=feed_dict)
-            return b'', train_summaries, {}, {}
+            results = train_summaries, b'', {}, {}
         else:
             sess.run(self.train_op, feed_dict=feed_dict)
-            return b'', b'', {}, {}
+            results = b'', b'', {}, {}
 
-    def _evaluate(self, batch_size, mode):
-        x, y = self.env.next_batch(None, mode=mode)
+        loss, reward, mean_value = sess.run(
+            [self.loss, self.reward, self.mean_value], feed_dict=feed_dict)
+
+        return results
+
+    def _evaluate(self, batch_size):
+        self.set_is_training(False)
+
+        x, y = self.env.next_batch(None, mode='val')
 
         feed_dict = {
             self.x_ph: x,
@@ -171,4 +179,4 @@ class DifferentiableUpdater(Updater):
         sess = tf.get_default_session()
         summaries, loss, reward, mean_value = sess.run(
             [self.summary_op, self.loss, self.reward, self.mean_value], feed_dict=feed_dict)
-        return loss, summaries, {"reward": reward, "mean_value": mean_value}
+        return loss, summaries, {"loss": loss, "reward": reward, "mean_value": mean_value}

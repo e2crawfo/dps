@@ -166,7 +166,7 @@ config = Config(
     reverse_double=False,
 
     lr_schedule=1e-4,
-    exploration_schedule="Poly(1.0, 5000, end=0.1)",
+    exploration_schedule="Poly(1.0, 0.1, 5000)",
     test_time_explore=0.01,
 
     gamma=1.0,
@@ -198,7 +198,7 @@ config = Config(
 #     steps_per_target_update=1000,
 #     init_steps=1000,
 #     lmbda=1.0,
-#     exploration_schedule="Poly(1.0, 10000, end=0.1)",
+#     exploration_schedule="Poly(1.0, 0.1, 10000)",
 #     greedy_factor=10.0,
 #     beta_schedule=0.0,
 #     alpha=0.0,
@@ -236,7 +236,7 @@ config = Config(
 #
 #     # annealed linearly from 1 to 0.1 over first million frames,
 #     # fixed at 0.1 thereafter "
-#     exploration_schedule="Poly(1.0, 10000, end=0.1)",
+#     exploration_schedule="Poly(1.0, 0.1, 10000)",
 #
 #     replay_max_size=1e6,
 #

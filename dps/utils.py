@@ -22,12 +22,36 @@ from itertools import cycle, islice
 import clify
 
 import tensorflow as tf
-from tensorflow.python.ops import random_ops, math_ops
-from tensorflow.python.framework import ops, constant_op
+from tensorflow.python.ops import random_ops
+from tensorflow.python.framework import ops
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from tensorflow.contrib.slim import fully_connected
 
 import dps
+
+
+# Character used for ascii art, sorted in order of increasing sparsity
+ascii_art_chars = \
+    "$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\|()1{}[]?-_+~<>i!lI;:,\"^`'. "
+
+
+def char_map(value):
+    """ Maps a relative "sparsity" or "lightness" value in [0, 1) to a character. """
+    if value >= 1:
+        value = 1 - 1e-6
+    n_bins = len(ascii_art_chars)
+    bin_id = int(value * n_bins)
+    return ascii_art_chars[bin_id]
+
+
+def image_to_string(array):
+    """ Convert an image stored as an array to an ascii art string """
+    if array.ndim == 1:
+        array = array.reshape(-1, int(np.sqrt(array.shape[0])))
+    array = array / array.max()
+    image = [char_map(value) for value in array.flatten()]
+    image = np.reshape(image, array.shape)
+    return '\n'.join(''.join(c for c in row) for row in image)
 
 
 def shift_fill(a, n, axis=0, fill=0.0, reverse=False):
@@ -793,12 +817,16 @@ class RepeatSchedule(Schedule):
 
 
 class Exponential(Schedule):
-    def __init__(self, initial, decay_rate, decay_steps, end=0.0, staircase=False):
-        self.initial = initial
+    def __init__(self, start, end, decay_steps, decay_rate, staircase=False):
+        self.start = start
+        self.end = end
         self.decay_steps = decay_steps
         self.decay_rate = decay_rate
-        self.end = end
         self.staircase = staircase
+
+        assert isinstance(self.decay_steps, int)
+        assert self.decay_steps > 1
+        assert 0 < self.decay_rate < 1
 
     def build(self, t):
         t = t.copy()
@@ -806,7 +834,7 @@ class Exponential(Schedule):
             t //= self.decay_steps
         else:
             t /= self.decay_steps
-        return (self.initial - self.end) * (self.decay_rate ** t) + self.end
+        return (self.start - self.end) * (self.decay_rate ** t) + self.end
 
 
 class Exp(Exponential):
@@ -814,16 +842,20 @@ class Exp(Exponential):
 
 
 class Polynomial(Schedule):
-    def __init__(self, initial, decay_steps, power=1.0, end=0.0):
-        self.initial = initial
+    def __init__(self, start, end, decay_steps, power=1.0):
+        self.start = start
+        self.end = end
         self.decay_steps = decay_steps
         self.power = power
-        self.end = end
+
+        assert isinstance(self.decay_steps, int)
+        assert self.decay_steps > 1
+        assert power > 0
 
     def build(self, t):
         t = t.copy()
         t = np.minimum(self.decay_steps, t)
-        return (self.initial - self.end) * ((1 - t / self.decay_steps) ** self.power) + self.end
+        return (self.start - self.end) * ((1 - t / self.decay_steps) ** self.power) + self.end
 
 
 class Poly(Polynomial):
@@ -831,12 +863,16 @@ class Poly(Polynomial):
 
 
 class Reciprocal(Schedule):
-    def __init__(self, initial, decay_steps, gamma=1.0, end=0.0, staircase=False, name=None):
-        self.initial = initial
+    def __init__(self, start, end, decay_steps, gamma=1.0, staircase=False):
+        self.start = start
+        self.end = end
         self.decay_steps = decay_steps
         self.gamma = gamma
-        self.end = end
         self.staircase = staircase
+
+        assert isinstance(self.decay_steps, int)
+        assert self.decay_steps > 1
+        assert self.gamma > 0
 
     def build(self, t):
         t = t.copy()
@@ -844,7 +880,7 @@ class Reciprocal(Schedule):
             t //= self.decay_steps
         else:
             t /= self.decay_steps
-        return ((self.initial - self.end) / (1 + t))**self.gamma + self.end
+        return ((self.start - self.end) / (1 + t))**self.gamma + self.end
 
 
 class Constant(Schedule):

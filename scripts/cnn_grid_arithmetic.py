@@ -22,7 +22,6 @@ def build_env():
 config = DEFAULT_CONFIG.copy(
     display_step=10,
 
-    force_2d=True,
     n_train=10000,
     n_val=32,
     shape=(2, 2),
@@ -32,13 +31,13 @@ config = DEFAULT_CONFIG.copy(
     max_digits=3,
     ablation='',
     dense_reward=False,
-    symbols=[
-        ('A', lambda x: sum(x)),
-        ('M', lambda x: np.product(x)),
-        ('C', lambda x: len(x)),
-        ('X', lambda x: max(x)),
-        ('N', lambda x: min(x))
-    ],
+    reductions={
+        'A': lambda x: sum(x),
+        'M': lambda x: np.product(x),
+        'C': lambda x: len(x),
+        'X': lambda x: max(x),
+        'N': lambda x: min(x)
+    },
     op_loc=None,
     # op_loc=(0, 0),
     base=10,

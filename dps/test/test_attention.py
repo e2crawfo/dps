@@ -1,8 +1,11 @@
 import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
+from itertools import product
+import pickle
+import gzip
 
-from dps.vision import TranslatedMnistDataset
+from dps.vision import MnistArithmeticDataset
 from dps.vision.attention import DRAW_attention_2D, discrete_attention
 from dps.utils import DpsConfig
 
@@ -38,8 +41,8 @@ def test_draw_mnist(display):
     z = gzip.open(config.data_dir + '/mnist.pkl.gz', 'rb')
     (train, _), (dev, _), (test, _) = pickle.load(z, encoding='bytes')
     train = train[:batch_size, :]
-    W = int(np.sqrt(train[0].shape[0]))
-    train = tf.constant(train.reshape(-1, W, W))
+    image_width = int(np.sqrt(train[0].shape[0]))
+    train = tf.constant(train.reshape(-1, image_width, image_width))
 
     N = 20
     tf_attended_images = DRAW_attention_2D(
@@ -56,16 +59,12 @@ def test_draw_mnist(display):
 
 
 def test_draw_parameter_effect(display):
-    from itertools import product
-    n_digits = 1
-    max_overlap = 200
-    W = 28
+    image_width = 28
     n_images = 2
-    mnist = TranslatedMnistDataset(
-        W=W, n_digits=n_digits, max_overlap=max_overlap, n_examples=n_images)
+    mnist = MnistArithmeticDataset(reductions=sum, image_width=image_width, n_examples=n_images, max_overlap=200)
 
     images, _ = mnist.next_batch(2)
-    images = np.reshape(images, (-1, W, W))
+    images = np.reshape(images, (-1, image_width, image_width))
 
     N = 14
 
@@ -109,8 +108,6 @@ def test_draw_parameter_effect(display):
 
 
 def test_discrete_mnist(display):
-    import pickle
-    import gzip
     params = tf.constant([
         [0.0, 0.0, 1.0, 1, 1],
         [-1.0, 0.0, 1.0, 1, 1],
@@ -138,8 +135,8 @@ def test_discrete_mnist(display):
     z = gzip.open(config.data_dir + '/mnist.pkl.gz', 'rb')
     (train, _), (dev, _), (test, _) = pickle.load(z, encoding='bytes')
     train = train[:batch_size, :]
-    W = int(np.sqrt(train[0].shape[0]))
-    train = tf.constant(train.reshape(-1, W, W))
+    image_width = int(np.sqrt(train[0].shape[0]))
+    train = tf.constant(train.reshape(-1, image_width, image_width))
 
     N = 10
     tf_attended_images = discrete_attention(train, params[:, 0:1], params[:, 1:2], params[:, 2:3], N)

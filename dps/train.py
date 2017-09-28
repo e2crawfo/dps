@@ -319,7 +319,7 @@ class TrainingLoop(object):
                     stopping_criteria = cfg.stopping_function(val_record)
                 else:
                     stopping_criteria = val_loss
-                new_best, stop = early_stop.check(stopping_criteria, self.local_step, **val_record)
+                new_best, stop = early_stop.check(stopping_criteria, self.local_step, val_record)
 
                 if new_best:
                     print("Storing new best on (local, global) step ({}, {}), "
@@ -327,8 +327,12 @@ class TrainingLoop(object):
                           "with validation loss of {}.".format(
                               self.local_step, self.global_step, updater.n_experiences, val_loss))
 
-                    filename = self.exp_dir.path_for('best_of_stage_{}'.format(stage))
-                    best_path = updater.save(tf.get_default_session(), filename)
+                    try:
+                        path = cfg.save_path
+                        assert path
+                    except (AttributeError, AssertionError):
+                        path = self.exp_dir.path_for('best_of_stage_{}'.format(stage))
+                    best_path = updater.save(tf.get_default_session(), path)
 
                     self.record(best_path=best_path, best_global_step=self.global_step)
                     self.record(**{'best_' + k: v for k, v in early_stop.best.items()})
@@ -372,12 +376,12 @@ class EarlyStopHook(object):
         self.patience = patience
         self.reset()
 
-    def check(self, loss, step, **kwargs):
+    def check(self, loss, step, record):
         new_best = self._best_loss is None or loss < self._best_loss
         if new_best:
             self._best_loss = loss
             self._best_step = step
-            self._best_record = kwargs.copy()
+            self._best_record = record.copy()
 
         self._early_stopped = (
             self._early_stopped or

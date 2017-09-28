@@ -8,7 +8,7 @@ from dps.utils import (
 
 
 def test_schedule():
-    components = "[Exp(2.0, 0.9, 100, end=1.0), Constant(2), Poly(2.0, 5000, end=1.0), Reciprocal(2.0, 5000, end=1.0)]"
+    components = "[Exp(2.0, 1.0, 100, 0.9), Constant(2), Poly(2.0, 1.0, 5000), Reciprocal(2.0, 1.0, 5000)]"
 
     schedules = [
         "MixtureSchedule({}, 115, shared_clock=True, p=[0.1, 0.2, 0.3, 0.4])".format(components),
@@ -17,10 +17,10 @@ def test_schedule():
         "MixtureSchedule({}, 115, shared_clock=False, p=None)".format(components),
         "ChainSchedule({}, 1050, shared_clock=True)".format(components),
         "ChainSchedule({}, 1050, shared_clock=False)".format(components),
-        "RepeatSchedule(Exp(2.0, 0.9, 100, end=1.0), 1000)",
-        "Exp(2.0, 0.9, 100, end=1.0)",
-        "Poly(2.0, 5000, end=1.0)",
-        "Reciprocal(2.0, 5000, end=1.0)",
+        "RepeatSchedule(Exp(2.0, 1.0, 100, 0.9), 1000)",
+        "Exp(2.0, 1.0, 100, 0.9)",
+        "Poly(2.0, 1.0, 5000)",
+        "Reciprocal(2.0, 1.0, 5000)",
     ]
     for schedule in schedules:
         s = eval(schedule)

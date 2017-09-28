@@ -27,6 +27,7 @@ setup(
         "pyskiplist",
         "Pillow",
         "progressbar2",
+        "mnist_arithmetic",
     ],
     entry_points={
         'console_scripts': ['dps-hyper=dps.parallel:hyper_search_cl',
