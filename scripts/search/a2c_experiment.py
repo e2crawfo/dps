@@ -1,4 +1,5 @@
 import numpy as np
+import tensorflow as tf
 
 import clify
 
@@ -43,15 +44,16 @@ alg_config = Config(
     test_time_explore=0.0,
 
     policy_weight=1.0,
-    value_weight=1.0,
     value_reg_weight=0.0,
-    entropy_weight=0.1,
+    value_weight=32.0,
+    entropy_weight=2.0,
 
     lr_schedule=1e-4,
     n_controller_units=128,
     batch_size=16,
     gamma=0.98,
     opt_steps_per_update=10,
+    exploration_schedule="Poly(1.0, 8192, end=0.1)",
     actor_exploration_schedule=None,
     epsilon=0.2,
     split=False,
@@ -71,9 +73,16 @@ env_config = Config(
     build_env=grid_arithmetic.build_env,
     symbols=[
         ('A', lambda x: sum(x)),
+        ('M', lambda x: np.product(x)),
+        ('N', lambda x: max(x)),
+        ('X', lambda x: min(x)),
+        ('C', lambda x: len(x)),
     ],
     arithmetic_actions=[
         ('+', lambda acc, digit: acc + digit),
+        ('*', lambda acc, digit: acc * digit),
+        ('max', lambda acc, digit: tf.maximum(acc, digit)),
+        ('min', lambda acc, digit: tf.minimum(acc, digit)),
         ('+1', lambda acc, digit: acc + 1),
     ],
 
@@ -104,7 +113,7 @@ config.update(env_config)
 
 
 grid = dict(
-    exploration_schedule=[0.1] + ["Poly(1.0, {}, end=0.1)".format(i) for i in 2**np.arange(10, 20)],
+    entropy_weight=[0] + list(2.**np.arange(-5, 5))
 )
 
 

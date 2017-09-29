@@ -256,7 +256,8 @@ def build_search(
 
 
 def _summarize_search(args):
-    # Get all completed jobs, get their outputs. Summarize em.
+    """ Get all completed jobs, get their outputs. Summarize em. """
+    print("Summarizing search stored at {}.".format(Path(args.path).absolute()))
     job = ReadOnlyJob(args.path)
     distributions = job.objects.load_object('metadata', 'distributions')
     distributions = Config(distributions)
