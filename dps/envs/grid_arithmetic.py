@@ -131,6 +131,11 @@ class GridArithmeticDataset(RegressionDataset):
 
         self.s = s = int(28 / self.downsample_factor)
 
+        if not isinstance(self.reductions, dict):
+            assert callable(self.reductions)
+            self.reductions = {'A': self.reductions}
+            self.show_op = False
+
         op_symbols = sorted(self.reductions)
 
         if self.mnist:
@@ -139,7 +144,6 @@ class GridArithmeticDataset(RegressionDataset):
                 cfg.data_dir, op_symbols, balance=True,
                 downsample_factor=self.downsample_factor)
             emnist_x = emnist_x.reshape(-1, s, s)
-            emnist_x = np.uint8(255*np.minimum(emnist_x, 1))
             emnist_y = np.squeeze(emnist_y, 1)
 
             reductions = {symbol_map[k]: v for k, v in self.reductions.items()}
@@ -150,7 +154,6 @@ class GridArithmeticDataset(RegressionDataset):
                 cfg.data_dir, list(range(self.base)), balance=True,
                 downsample_factor=self.downsample_factor)
             mnist_x = mnist_x.reshape(-1, s, s)
-            mnist_x = np.uint8(255*np.minimum(mnist_x, 1))
             mnist_y = np.squeeze(mnist_y, 1)
 
             digit_reps = DataContainer(mnist_x, mnist_y)
@@ -191,7 +194,8 @@ class GridArithmeticDataset(RegressionDataset):
 
         element_shape = blank_element.shape
         m, n = element_shape
-        _op_loc = np.ravel_multi_index(op_loc, shape)
+        if op_loc is not None:
+            _op_loc = np.ravel_multi_index(op_loc, shape)
 
         for j in range(n_examples):
             nd = np.random.randint(min_digits, max_digits+1)

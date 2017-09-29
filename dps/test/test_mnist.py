@@ -22,7 +22,8 @@ class_pool = (
 
 def _eval_model(sess, inference, x_ph):
     test_dataset = EmnistDataset(
-        n_examples=100, classes=cfg.classes, one_hot=True, include_blank=cfg.include_blank,
+        n_examples=100, classes=cfg.classes, one_hot=True,
+        include_blank=cfg.include_blank,
         downsample_factor=cfg.downsample_factor)
 
     x, y = test_dataset.next_batch(advance=False)

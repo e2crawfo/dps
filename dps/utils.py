@@ -18,6 +18,7 @@ import copy
 import datetime
 import psutil
 from itertools import cycle, islice
+import resource
 
 import clify
 
@@ -28,6 +29,15 @@ from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from tensorflow.contrib.slim import fully_connected
 
 import dps
+
+
+@contextmanager
+def memory_limit(mb):
+    rsrc = resource.RLIMIT_DATA
+    prev_soft_limit, hard = resource.getrlimit(rsrc)
+    resource.setrlimit(rsrc, (int(mb) * 1024**2, hard))
+    yield
+    resource.setrlimit(rsrc, (prev_soft_limit, hard))
 
 
 # Character used for ascii art, sorted in order of increasing sparsity

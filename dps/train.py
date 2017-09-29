@@ -16,7 +16,7 @@ import pandas as pd
 from spectral_dagger.utils.experiment import ExperimentStore
 from dps import cfg
 from dps.utils import (
-    restart_tensorboard, gen_seed, time_limit, memory_usage,
+    restart_tensorboard, gen_seed, time_limit, memory_usage, memory_limit,
     uninitialized_variables_initializer, du, Config, parse_date)
 
 
@@ -177,14 +177,20 @@ class TrainingLoop(object):
                 stack.enter_context(sess)
                 stack.enter_context(sess.as_default())
 
+                memory_limit_mb = cfg.get("memory_limit_mb", None)
+                if memory_limit_mb is not None:
+                    stack.enter_context(memory_limit(cfg.memory_limit_mb))
+
                 print("\nStarting stage {} of the curriculum at {}.\n"
                       "New config values for this stage are: \n{}\n".format(
                           stage, datetime.datetime.now(), pformat(stage_config)))
 
                 stack.enter_context(stage_config)
 
-                self.env = env = cfg.build_env()
-                updater = cfg.get_updater(env)
+                if stage == 0 or not cfg.preserve_env:
+                    self.env = cfg.build_env()
+
+                updater = cfg.get_updater(self.env)
                 updater.build_graph()
 
                 if stage > 0 and cfg.preserve_policy:
@@ -324,8 +330,8 @@ class TrainingLoop(object):
                 if new_best:
                     print("Storing new best on (local, global) step ({}, {}), "
                           "constituting {} local experiences, "
-                          "with validation loss of {}.".format(
-                              self.local_step, self.global_step, updater.n_experiences, val_loss))
+                          "with stopping criteria of {} and validation loss of {}.".format(
+                              self.local_step, self.global_step, updater.n_experiences, stopping_criteria, val_loss))
 
                     try:
                         path = cfg.save_path
@@ -342,8 +348,8 @@ class TrainingLoop(object):
                     reason = "Early stopping triggered"
                     break
 
-                if val_loss < cfg.threshold:
-                    reason = "Validation loss threshold reached"
+                if stopping_criteria < cfg.threshold:
+                    reason = "Stopping criteria threshold reached"
                     threshold_reached = True
                     break
 

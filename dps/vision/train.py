@@ -3,6 +3,7 @@ import os
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.contrib.slim.python.slim.nets.vgg import vgg_a, vgg_16, vgg_19
 
 from dps import cfg
 from dps.train import training_loop
@@ -133,18 +134,18 @@ class _MnistPretrainedBuilder(object):
 
 
 class LeNet(object):
-    def __init__(self, n_units=1024, dropout_keep_prob=0.5, scope='LeNet', output_size=None, **fc_kwargs):
+    def __init__(
+            self, n_units=1024, dropout_keep_prob=0.5, scope='LeNet',
+            conv_kwargs=None, fc_kwargs=None):
+
         self.n_units = n_units
         self.dropout_keep_prob = dropout_keep_prob
         self.scope = scope
-        self.output_size = output_size
-        self.fc_kwargs = fc_kwargs
+        self.conv_kwargs = conv_kwargs or {}
+        self.fc_kwargs = fc_kwargs or {}
 
-    def __call__(self, images, output_size=None, is_training=False):
-        if (output_size is None) == (self.output_size is None):
-            raise Exception("Conflicting or ambigous values received for attribute `output_size`.")
-        output_size = self.output_size if output_size is None else output_size
-
+    def __call__(self, images, output_size, is_training=False):
+        output_size = int(output_size)
         if len(images.shape) <= 1:
             raise Exception()
 
@@ -158,9 +159,9 @@ class LeNet(object):
         slim = tf.contrib.slim
         net = images
         with tf.variable_scope(self.scope, 'LeNet', [images, output_size]):
-            net = slim.conv2d(net, 32, 5, scope='conv1')
+            net = slim.conv2d(net, 32, 5, scope='conv1', **self.conv_kwargs)
             net = slim.max_pool2d(net, 2, 2, scope='pool1')
-            net = slim.conv2d(net, 64, 5, scope='conv2')
+            net = slim.conv2d(net, 64, 5, scope='conv2', **self.conv_kwargs)
             net = slim.max_pool2d(net, 2, 2, scope='pool2')
             net = slim.flatten(net)
 
@@ -172,6 +173,32 @@ class LeNet(object):
 
             logits = slim.fully_connected(net, output_size, scope='fc4', **fc_kwargs)
             return logits
+
+
+class VGGNet(object):
+
+    def __init__(self, kind):
+        assert kind in 'a 16 19'.split()
+        self.kind = kind
+
+    def __call__(self, images, output_size, is_training):
+        output_size = int(output_size)
+        if len(images.shape) <= 1:
+            raise Exception()
+        if len(images.shape) == 2:
+            s = int(np.sqrt(int(images.shape[1])))
+            images = tf.reshape(images, (-1, s, s, 1))
+        if len(images.shape) == 3:
+            images = tf.expand_dims(images, -1)
+
+        if self.kind == 'a':
+            return vgg_a(images, output_size, is_training)
+        elif self.kind == '16':
+            return vgg_16(images, output_size, is_training)
+        elif self.kind == '19':
+            return vgg_19(images, output_size, is_training)
+        else:
+            raise Exception()
 
 
 class ClassifierFunc(object):

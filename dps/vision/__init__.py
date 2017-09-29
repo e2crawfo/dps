@@ -18,4 +18,4 @@ class MnistArithmeticDataset(ExternalDataset, RegressionDataset):
 
 from .attention import DRAW, DiscreteAttn
 from .train import (
-    MnistPretrained, MNIST_CONFIG, ClassifierFunc, LeNet, load_or_train, train_mnist, EmnistDataset)
+    MnistPretrained, MNIST_CONFIG, ClassifierFunc, LeNet, VGGNet, load_or_train, train_mnist, EmnistDataset)

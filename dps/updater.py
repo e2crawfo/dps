@@ -99,6 +99,7 @@ class DifferentiableUpdater(Updater):
     lr_schedule = Param()
     noise_schedule = Param()
     max_grad_norm = Param()
+    l2_weight = Param(None)
 
     def __init__(self, env, f, **kwargs):
         assert hasattr(env, 'build_loss'), (
@@ -128,11 +129,12 @@ class DifferentiableUpdater(Updater):
         self.mean_value = tf.reduce_mean(self.output)
 
         tvars = trainable_variables()
+        if self.l2_weight is not None:
+            self.loss += self.l2_weight * sum(tf.nn.l2_loss(v) for v in tvars if 'weights' in v.name)
+
         self.train_op, train_summaries = build_gradient_train_op(
             self.loss, tvars, self.optimizer_spec, self.lr_schedule,
             self.max_grad_norm, self.noise_schedule)
-
-        self.train_summary_op = tf.summary.merge(train_summaries)
 
         self.summary_op = tf.summary.merge([
             tf.summary.scalar("loss_per_ep", self.loss),
@@ -151,20 +153,12 @@ class DifferentiableUpdater(Updater):
         }
 
         sess = tf.get_default_session()
-        loss, reward, mean_value = sess.run(
-            [self.loss, self.reward, self.mean_value], feed_dict=feed_dict)
-
         if collect_summaries:
-            train_summaries, _ = sess.run([self.train_summary_op, self.train_op], feed_dict=feed_dict)
-            results = train_summaries, b'', {}, {}
+            train_summaries, _ = sess.run([self.summary_op, self.train_op], feed_dict=feed_dict)
+            return train_summaries, b'', {}, {}
         else:
             sess.run(self.train_op, feed_dict=feed_dict)
-            results = b'', b'', {}, {}
-
-        loss, reward, mean_value = sess.run(
-            [self.loss, self.reward, self.mean_value], feed_dict=feed_dict)
-
-        return results
+            return b'', b'', {}, {}
 
     def _evaluate(self, batch_size):
         self.set_is_training(False)
