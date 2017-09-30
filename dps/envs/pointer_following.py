@@ -12,7 +12,8 @@ from dps.utils import Param, Config
 def build_env():
     train = PointerDataset(n_examples=cfg.n_train)
     val = PointerDataset(n_examples=cfg.n_val)
-    external = RegressionEnv(train, val)
+    test = PointerDataset(n_examples=cfg.n_val)
+    external = RegressionEnv(train, val, test)
     internal = Pointer()
     return CompositeEnv(external, internal)
 

@@ -37,7 +37,6 @@ class CliffWalk(TensorFlowEnv):
         self.actions_dim = self.n_actions
         state_names = ["s{}".format(i) for i in range(self.width)]
         self.rb = RegisterBank('CliffWalkRB', state_names, None, [1.0] + [0.0]*(self.width-1), state_names)
-        self.mode = 'train'
 
         if self.order is None:
             self.order = np.random.randint(self.n_actions, size=self.width)

@@ -41,8 +41,6 @@ alg_config = Config(
     build_controller=BuildLstmController(),
     optimizer_spec="adam",
 
-    test_time_explore=0.0,
-
     policy_weight=1.0,
     value_reg_weight=0.0,
     value_weight=32.0,
@@ -53,10 +51,12 @@ alg_config = Config(
     batch_size=16,
     gamma=0.98,
     opt_steps_per_update=10,
-    exploration_schedule="Poly(1.0, 8192, end=0.1)",
-    actor_exploration_schedule=None,
     epsilon=0.2,
     split=False,
+
+    exploration_schedule="Poly(1.0, 0.1, 8192)",
+    actor_exploration_schedule=None,
+    val_exploration_schedule="0.0",
 
     q_lmbda=1.0,
     v_lmbda=1.0,
@@ -71,13 +71,14 @@ alg_config = Config(
 
 env_config = Config(
     build_env=grid_arithmetic.build_env,
-    symbols=[
+    reductions=[
         ('A', lambda x: sum(x)),
         ('M', lambda x: np.product(x)),
         ('N', lambda x: max(x)),
         ('X', lambda x: min(x)),
         ('C', lambda x: len(x)),
     ],
+
     arithmetic_actions=[
         ('+', lambda acc, digit: acc + digit),
         ('*', lambda acc, digit: acc * digit),
@@ -89,15 +90,17 @@ env_config = Config(
     curriculum=[
         dict(T=30, min_digits=2, max_digits=3, shape=(2, 2)),
     ],
-    force_2d=False,
     mnist=False,
     op_loc=(0, 0),
     start_loc=(0, 0),
     base=10,
     threshold=0.04,
     classification_bonus=0.0,
+
+    salience_shape=(2, 2),
     salience_action=True,
     visible_glimpse=False,
+    initial_salience=False,
 
     dense_reward=True,
     reward_window=0.499,
@@ -107,15 +110,12 @@ env_config = Config(
     render_rollouts=None
 )
 
-
 config.update(alg_config)
 config.update(env_config)
 
-
 grid = dict(
-    entropy_weight=[0] + list(2.**np.arange(-5, 5))
+    entropy_weight=np.linspace(1.0, 4.0, 11),
 )
-
 
 from dps.parallel.hyper import build_and_submit
 host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]

@@ -49,8 +49,8 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
     def _update(self, batch_size, collect_summaries=None):
         raise Exception("NotImplemented")
 
-    def evaluate(self, batch_size):
-        loss, summaries, record = self._evaluate(batch_size)
+    def evaluate(self, batch_size, mode):
+        loss, summaries, record = self._evaluate(batch_size, mode)
 
         scheduled_value_summaries = \
             tf.get_default_session().run(self.scheduled_value_summaries_op)
@@ -59,7 +59,8 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
         return loss, summaries, record
 
     @abc.abstractmethod
-    def _evaluate(self, batch_size):
+    def _evaluate(self, batch_size, mode):
+        assert mode in 'val test'.split()
         raise Exception("NotImplemented")
 
     def save(self, session, filename):
@@ -160,10 +161,10 @@ class DifferentiableUpdater(Updater):
             sess.run(self.train_op, feed_dict=feed_dict)
             return b'', b'', {}, {}
 
-    def _evaluate(self, batch_size):
+    def _evaluate(self, batch_size, mode):
         self.set_is_training(False)
 
-        x, y = self.env.next_batch(None, mode='val')
+        x, y = self.env.next_batch(None, mode)
 
         feed_dict = {
             self.x_ph: x,

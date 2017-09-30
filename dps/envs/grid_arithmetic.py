@@ -15,8 +15,9 @@ from mnist_arithmetic import load_emnist
 def build_env():
     train = GridArithmeticDataset(n_examples=cfg.n_train)
     val = GridArithmeticDataset(n_examples=cfg.n_val)
+    test = GridArithmeticDataset(n_examples=cfg.n_val)
 
-    external = RegressionEnv(train, val)
+    external = RegressionEnv(train, val, test)
 
     if cfg.ablation == 'bad_wiring':
         internal = GridArithmeticBadWiring()
@@ -51,13 +52,13 @@ def build_policy(env, **kwargs):
 
 config = Config(
     build_env=build_env,
-    reductions={
-        'A': lambda x: sum(x),
-        'M': lambda x: np.product(x),
-        'C': lambda x: len(x),
-        'X': lambda x: max(x),
-        'N': lambda x: min(x),
-    },
+    reductions=[
+        ('A', lambda x: sum(x)),
+        ('M', lambda x: np.product(x)),
+        ('N', lambda x: max(x)),
+        ('X', lambda x: min(x)),
+        ('C', lambda x: len(x)),
+    ],
 
     arithmetic_actions=[
         ('+', lambda acc, digit: acc + digit),
@@ -131,10 +132,11 @@ class GridArithmeticDataset(RegressionDataset):
 
         self.s = s = int(28 / self.downsample_factor)
 
-        if not isinstance(self.reductions, dict):
-            assert callable(self.reductions)
+        if callable(self.reductions):
             self.reductions = {'A': self.reductions}
             self.show_op = False
+        else:
+            self.reductions = dict(self.reductions)
 
         op_symbols = sorted(self.reductions)
 
@@ -166,8 +168,6 @@ class GridArithmeticDataset(RegressionDataset):
             digit_reps = DataContainer(np.arange(self.base), np.arange(self.base))
 
             blank_element = np.array([[-1]])
-
-        # By now, reductions show be a map from numerical class label to reduction function
 
         x, y = self.make_dataset(
             self.shape, self.min_digits, self.max_digits, self.base,
@@ -259,7 +259,7 @@ class GridArithmetic(InternalEnv):
         return tuple(s*e for s, e in zip(self.shape, self.element_shape))
 
     mnist = Param()
-    symbols = Param()
+    reductions = Param()
     arithmetic_actions = Param()
     shape = Param()
     base = Param()
@@ -327,28 +327,29 @@ class GridArithmetic(InternalEnv):
             classifier_str = cfg.classifier_str
 
             digit_config = cfg.mnist_config.copy(
-                symbol=list(range(self.base)), downsample_factor=self.downsample_factor)
+                classes=list(range(self.base)), downsample_factor=self.downsample_factor)
 
-            name = '{}_symbols={}_df={}.chk'.format(
-                classifier_str, '_'.join(str(s) for s in digit_config.symbols), self.downsample_factor)
+            name = '{}_classes={}_df={}.chk'.format(
+                classifier_str, '_'.join(str(s) for s in digit_config.classes), self.downsample_factor)
             digit_pretrained = MnistPretrained(
                 None, build_classifier, name=name,
                 model_dir='/tmp/dps/mnist_pretrained/',
                 var_scope_name='digit_classifier', mnist_config=digit_config,
                 downsample_factor=self.downsample_factor)
-            self.build_digit_classifier = ClassifierFunc(digit_pretrained, self.base + 1)
+            self.build_digit_classifier = ClassifierFunc(digit_pretrained, len(digit_config.classes) + 1)
 
-            op_config = cfg.mnist_config.copy(symbols=[10, 12, 22], downsample_factor=self.downsample_factor)
+            op_config = cfg.mnist_config.copy(
+                classes=self.reductions.keys(), downsample_factor=self.downsample_factor)
 
-            name = '{}_symbols={}_df={}.chk'.format(
-                classifier_str, '_'.join(str(s) for s in op_config.symbols), self.downsample_factor)
+            name = '{}_classes={}_df={}.chk'.format(
+                classifier_str, '_'.join(str(s) for s in op_config.classes), self.downsample_factor)
 
             op_pretrained = MnistPretrained(
                 None, build_classifier, name=name,
                 model_dir='/tmp/dps/mnist_pretrained/',
                 var_scope_name='op_classifier', mnist_config=op_config,
                 downsample_factor=self.downsample_factor)
-            self.build_op_classifier = ClassifierFunc(op_pretrained, len(op_config.symbols) + 1)
+            self.build_op_classifier = ClassifierFunc(op_pretrained, len(op_config.classes) + 1)
 
         else:
 

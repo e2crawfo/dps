@@ -11,7 +11,8 @@ from dps.environment import (
 def build_env():
     train = HelloWorldDataset(n_examples=cfg.n_train)
     val = HelloWorldDataset(n_examples=cfg.n_val)
-    external = RegressionEnv(train, val)
+    test = HelloWorldDataset(n_examples=cfg.n_val)
+    external = RegressionEnv(train, val, test)
     internal = HelloWorld()
     return CompositeEnv(external, internal)
 

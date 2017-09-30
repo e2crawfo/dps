@@ -127,7 +127,7 @@ def mlp(inp, outp_size, is_training):
 
 
 def lenet(inp, output_size, is_training):
-    logits = LeNet(1024, activation_fn=tf.nn.sigmoid)(inp, output_size, is_training)
+    logits = LeNet(1024, fc_kwargs=dict(activation_fn=tf.nn.sigmoid))(inp, output_size, is_training)
     return logits
 
 

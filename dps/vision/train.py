@@ -48,7 +48,12 @@ def build_mnist_env():
         downsample_factor=cfg.downsample_factor, one_hot=True,
         include_blank=cfg.include_blank
     )
-    return RegressionEnv(train_dataset, val_dataset)
+    test_dataset = EmnistDataset(
+        n_examples=cfg.n_val, classes=cfg.classes,
+        downsample_factor=cfg.downsample_factor, one_hot=True,
+        include_blank=cfg.include_blank
+    )
+    return RegressionEnv(train_dataset, val_dataset, test_dataset)
 
 
 MNIST_CONFIG = DpsConfig(
@@ -66,6 +71,7 @@ MNIST_CONFIG = DpsConfig(
     log_name='mnist_pretrained',
     downsample_factor=1,
     loss_type='xent',
+    classes=list(range(10)),
 )
 
 

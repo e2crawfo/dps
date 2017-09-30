@@ -36,8 +36,8 @@ class Grid(TensorFlowEnv):
     n_val = Param()
 
     def __init__(self, **kwargs):
-        self.val = self._make_input(self.n_val)
-        self.mode = 'train'
+        self.val_input = self._make_input(self.n_val)
+        self.test_input = self._make_input(self.n_val)
         self.input_ph = None
 
         self.rb = RegisterBank(
@@ -68,14 +68,18 @@ class Grid(TensorFlowEnv):
 
         return np.concatenate([start_x, start_y, goal_x, goal_y], axis=1).astype('f')
 
-    def start_episode(self, batch_size):
+    def start_episode(self, n_rollouts):
         if self.mode == 'train':
-            self.input = self._make_input(batch_size)
+            inp = self._make_input(n_rollouts)
         elif self.mode == 'val':
-            self.input = self.val
+            inp = self.val_input
+        elif self.mode == 'test':
+            inp = self.test_input
         else:
             raise Exception("Unknown mode: {}.".format(self.mode))
-        return self.input.shape[0], {self.input_ph: self.input}
+        if n_rollouts is not None:
+            inp = inp[:n_rollouts, :]
+        return inp.shape[0], {self.input_ph: inp}
 
     def build_init(self, r):
         batch_size = tf.shape(r)[0]

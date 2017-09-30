@@ -28,7 +28,7 @@ class GymEnvWrapper(Env):
         self._done = np.ones((0, 1)).astype('bool')
 
     def set_mode(self, mode, batch_size):
-        assert mode in 'train val'.split(), "Unknown mode: {}.".format(mode)
+        assert mode in 'train val test'.split(), "Unknown mode: {}.".format(mode)
         self.mode = mode
         self.batch_size = batch_size
 

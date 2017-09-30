@@ -18,8 +18,9 @@ from dps.utils import Param, Config, MLP
 def build_env():
     train = MnistArithmeticDataset(n_examples=cfg.n_train)
     val = MnistArithmeticDataset(n_examples=cfg.n_val)
+    test = MnistArithmeticDataset(n_examples=cfg.n_val)
 
-    external = RegressionEnv(train, val)
+    external = RegressionEnv(train, val, test)
     internal = MnistArithmetic()
     return CompositeEnv(external, internal)
 

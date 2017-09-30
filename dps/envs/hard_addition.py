@@ -12,8 +12,9 @@ from dps.utils import Param, digits_to_numbers, numbers_to_digits, Config
 def build_env():
     train = HardAdditionDataset(n_examples=cfg.n_train)
     val = HardAdditionDataset(n_examples=cfg.n_val)
+    test = HardAdditionDataset(n_examples=cfg.n_val)
 
-    external = RegressionEnv(train, val)
+    external = RegressionEnv(train, val, test)
     internal = HardAddition()
     return CompositeEnv(external, internal)
 

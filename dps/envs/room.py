@@ -53,7 +53,7 @@ class Room(TensorFlowEnv):
 
     def __init__(self, **kwargs):
         self.val_input = self._make_input(self.n_val)
-        self.mode = 'train'
+        self.test_input = self._make_input(self.n_val)
 
         self.rb = RegisterBank(
             'RoomRB', 'x y r dx dy', 'goal_x goal_y',
@@ -80,12 +80,16 @@ class Room(TensorFlowEnv):
 
     def start_episode(self, n_rollouts):
         if self.mode == 'train':
-            self.input = self._make_input(n_rollouts)
+            inp = self._make_input(n_rollouts)
         elif self.mode == 'val':
-            self.input = self.val_input
+            inp = self.val_input
+        elif self.mode == 'test':
+            inp = self.test_input
         else:
             raise Exception("Unknown mode: {}.".format(self.mode))
-        return self.input.shape[0], {self.input_ph: self.input}
+        if n_rollouts is not None:
+            inp = inp[:n_rollouts, :]
+        return inp.shape[0], {self.input_ph: inp}
 
     def build_init(self, r):
         batch_size = tf.shape(r)[0]

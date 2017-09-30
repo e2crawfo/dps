@@ -219,19 +219,19 @@ class RLContext(Parameterized):
         self._signals['val_avg_cumulative_reward'] = (
             self._signals['val_cumulative_reward'] / self._signals['val_n_experiences'])
 
-        run_mode = self._signals['run_mode'] = tf.placeholder(tf.string, ())
+        mode = self._signals['mode'] = tf.placeholder(tf.string, ())
 
         self.update_stats_op = tf.case(
             [
-                (tf.equal(run_mode, 'train'), lambda: tf.group(
+                (tf.equal(mode, 'train'), lambda: tf.group(
                     tf.assign_add(self._signals['train_n_experiences'], self._signals['batch_size_float']),
                     tf.assign_add(self._signals['train_cumulative_reward'], tf.reduce_sum(self._signals['rewards']))
                 )),
-                (tf.equal(run_mode, 'update'), lambda: tf.group(
+                (tf.equal(mode, 'update'), lambda: tf.group(
                     tf.assign_add(self._signals['update_n_experiences'], self._signals['batch_size_float']),
                     tf.assign_add(self._signals['update_cumulative_reward'], tf.reduce_sum(self._signals['rewards']))
                 )),
-                (tf.equal(run_mode, 'val'), lambda: tf.group(
+                (tf.equal(mode, 'val'), lambda: tf.group(
                     tf.assign_add(self._signals['val_n_experiences'], self._signals['batch_size_float']),
                     tf.assign_add(self._signals['val_cumulative_reward'], tf.reduce_sum(self._signals['rewards']))
                 )),
@@ -242,9 +242,9 @@ class RLContext(Parameterized):
 
         self._signals['avg_cumulative_reward'] = tf.case(
             [
-                (tf.equal(run_mode, 'train'), lambda: self._signals['train_avg_cumulative_reward']),
-                (tf.equal(run_mode, 'update'), lambda: self._signals['update_avg_cumulative_reward']),
-                (tf.equal(run_mode, 'val'), lambda: self._signals['val_avg_cumulative_reward']),
+                (tf.equal(mode, 'train'), lambda: self._signals['train_avg_cumulative_reward']),
+                (tf.equal(mode, 'update'), lambda: self._signals['update_avg_cumulative_reward']),
+                (tf.equal(mode, 'val'), lambda: self._signals['val_avg_cumulative_reward']),
             ],
             default=lambda: tf.zeros_like(self._signals['train_avg_cumulative_reward']),
             exclusive=True
@@ -281,7 +281,7 @@ class RLContext(Parameterized):
         for obj in self.rl_objects:
             obj.build_core_signals(self)
 
-    def make_feed_dict(self, rollouts, run_mode, weights=None):
+    def make_feed_dict(self, rollouts, mode, weights=None):
         if weights is None:
             weights = np.ones((rollouts.T, rollouts.batch_size, 1))
         elif weights.ndim == 1:
@@ -294,7 +294,7 @@ class RLContext(Parameterized):
             self._signals['rewards']: rollouts.r,
             self._signals['weights']: weights,
             self._signals['mu_log_probs']: rollouts.log_probs,
-            self._signals['run_mode']: run_mode,
+            self._signals['mode']: mode,
         }
 
         if hasattr(rollouts, 'utils'):
@@ -342,13 +342,13 @@ class RLContext(Parameterized):
 
         return signal
 
-    def _run_and_record(self, rollouts, run_mode, weights, do_update, summary_op, collect_summaries):
+    def _run_and_record(self, rollouts, mode, weights, do_update, summary_op, collect_summaries):
         assert do_update or collect_summaries, (
             "Both `do_update` and `collect_summaries` are False, no point in calling `_run_and_record`.")
 
         sess = tf.get_default_session()
-        feed_dict = self.make_feed_dict(rollouts, run_mode, weights)
-        self.set_mode(run_mode)
+        feed_dict = self.make_feed_dict(rollouts, mode, weights)
+        self.set_mode(mode)
         sess.run(self.update_stats_op, feed_dict=feed_dict)
 
         for obj in self.rl_objects:
@@ -393,12 +393,12 @@ class RLContext(Parameterized):
 
             if self.replay_buffer is None or self.on_policy_updates:
                 train_summaries, train_record = self._run_and_record(
-                    rollouts, run_mode='update', weights=None, do_update=True,
+                    rollouts, mode='update', weights=None, do_update=True,
                     summary_op=self.train_summary_op,
                     collect_summaries=collect_summaries)
             elif collect_summaries:
                 train_summaries, train_record = self._run_and_record(
-                    rollouts, run_mode='train', weights=None, do_update=False,
+                    rollouts, mode='train', weights=None, do_update=False,
                     summary_op=self.summary_op, collect_summaries=True)
 
             update_summaries = b""
@@ -420,20 +420,20 @@ class RLContext(Parameterized):
                     )
 
                     update_summaries, update_record = self._run_and_record(
-                        off_policy_rollouts, run_mode='update', weights=weights, do_update=True,
+                        off_policy_rollouts, mode='update', weights=weights, do_update=True,
                         summary_op=self.train_summary_op,
                         collect_summaries=_collect_summaries)
 
             return train_summaries, update_summaries, train_record, update_record
 
-    def evaluate(self, batch_size):
+    def evaluate(self, batch_size, mode):
         assert self.pi is not None, "A validation policy must be set using `set_validation_policy` before calling `evaluate`."
 
         with self:
-            rollouts = self.env.do_rollouts(self.pi, batch_size, mode='val')
+            rollouts = self.env.do_rollouts(self.pi, batch_size, mode=mode)
 
             eval_summaries, eval_record = self._run_and_record(
-                rollouts, run_mode='val', weights=None, do_update=False,
+                rollouts, mode=mode, weights=None, do_update=False,
                 summary_op=self.summary_op,
                 collect_summaries=True)
 
@@ -494,14 +494,14 @@ class RLUpdater(Updater):
 
         return train_summaries, update_summaries, train_record, update_record
 
-    def _evaluate(self, batch_size):
+    def _evaluate(self, batch_size, mode):
         """ Return list of tf summaries and a dictionary of values to be displayed. """
         summaries = []
         records = []
         record = {}
 
         for learner in self.learners:
-            s, r = learner.evaluate(batch_size)
+            s, r = learner.evaluate(batch_size, mode)
             summaries.append(s)
 
             for k, v in r.items():

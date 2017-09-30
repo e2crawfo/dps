@@ -47,8 +47,8 @@ class GridBandit(TensorFlowEnv):
             min_values=[0, 0, 0, 0, 0],
             max_values=[self.shape[1], self.shape[0], self.n_arms, self.actions_dim, self.n_arms]
         )
-        self.val = self._make_input(self.n_val)
-        self.mode = 'train'
+        self.val_input = self._make_input(self.n_val)
+        self.test_input = self._make_input(self.n_val)
 
         super(GridBandit, self).__init__()
 
@@ -62,14 +62,18 @@ class GridBandit(TensorFlowEnv):
         grid = np.random.randint(self.n_arms, size=(batch_size, np.product(self.shape)))
         return np.concatenate([start_x, start_y, grid], axis=1).astype('f')
 
-    def start_episode(self, batch_size):
+    def start_episode(self, n_rollouts):
         if self.mode == 'train':
-            self.input = self._make_input(batch_size)
+            inp = self._make_input(n_rollouts)
         elif self.mode == 'val':
-            self.input = self.val
+            inp = self.val_input
+        elif self.mode == 'test':
+            inp = self.test_input
         else:
             raise Exception("Unknown mode: {}.".format(self.mode))
-        return self.input.shape[0], {self.input_ph: self.input}
+        if n_rollouts is not None:
+            inp = inp[:n_rollouts, :]
+        return inp.shape[0], {self.input_ph: inp}
 
     def build_init(self, r):
         self.input_ph = tf.placeholder(tf.float32, (None, 2+np.product(self.shape)))

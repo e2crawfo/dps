@@ -12,7 +12,8 @@ from dps.utils import Param, Config
 def build_env():
     train = SimpleAdditionDataset(n_examples=cfg.n_train)
     val = SimpleAdditionDataset(n_examples=cfg.n_val)
-    external = RegressionEnv(train, val)
+    test = SimpleAdditionDataset(n_examples=cfg.n_val)
+    external = RegressionEnv(train, val, test)
     internal = SimpleAddition()
     return CompositeEnv(external, internal)
 

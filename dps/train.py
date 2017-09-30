@@ -220,6 +220,11 @@ class TrainingLoop(object):
                 print("Loading best hypothesis for this stage "
                       "from file {}...".format(best_path))
                 updater.restore(tf.get_default_session(), best_path)
+                test_loss, _, test_record = updater.evaluate(cfg.n_val, 'test')
+                print("Results on test dataset: ")
+                print("Test loss: {}".format(test_loss))
+                print(test_record)
+                self.record(**{'test_' + k: v for k, v in test_record.items()})
 
                 if cfg.start_tensorboard:
                     restart_tensorboard(
@@ -312,7 +317,7 @@ class TrainingLoop(object):
             self.latest['update_data'].append(update_record)
 
             if evaluate or display:
-                val_loss, val_summaries, val_record = updater.evaluate(cfg.n_val)
+                val_loss, val_summaries, val_record = updater.evaluate(cfg.n_val, 'val')
 
                 self.latest['val_data'].append(val_record)
 

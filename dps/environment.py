@@ -67,7 +67,7 @@ class BatchBox(gym.Space):
 
 class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
     def set_mode(self, mode, batch_size):
-        assert mode in 'train val'.split(), "Unknown mode: {}.".format(mode)
+        assert mode in 'train val test'.split(), "Unknown mode: {}.".format(mode)
         self.mode = mode
         self.batch_size = batch_size
 
@@ -216,11 +216,12 @@ class RegressionEnv(Env):
 
     loss_type = Param("2-norm")
 
-    def __init__(self, train, val, **kwargs):
-        self.train, self.val = train, val
+    def __init__(self, train, val, test=None, **kwargs):
+        self.train, self.val, self.test = train, val, test
         self.datasets = {
             'train': self.train,
             'val': self.val,
+            'test': self.test,
         }
 
         self.actions_dim = self.train.y.shape[1]
@@ -236,9 +237,9 @@ class RegressionEnv(Env):
         self.reset()
 
     def __str__(self):
-        return "<RegressionEnv train={} val={}>".format(self.train, self.val)
+        return "<RegressionEnv train={} val={} test={}>".format(self.train, self.val, self.test)
 
-    def next_batch(self, batch_size=None, mode='train'):
+    def next_batch(self, batch_size, mode):
         advance = mode == 'train'
         return self.datasets[mode].next_batch(batch_size=batch_size, advance=advance)
 
@@ -573,25 +574,25 @@ class InternalEnv(TensorFlowEnv):
             external_obs.shape[0],
             {self.input_ph: external_obs,
              self.target_ph: external.y,
-             self.is_training_ph: self.mode == 'train'}
+             self.is_training_ph: self.mode == 'train',
+             self.is_testing_ph: self.mode == 'test'}
         )
 
     def build_placeholders(self, r):
         is_training_ph = getattr(self, 'is_training_ph', None)
         if is_training_ph is None:
             self.is_training_ph = tf.placeholder(tf.bool, (), name="is_training_ph")
+            self.is_testing_ph = tf.placeholder(tf.bool, (), name="is_testing_ph")
             self.input_ph = tf.placeholder(tf.float32, (None,) + self.input_shape, name="input_ph")
             self.target_ph = tf.placeholder(tf.float32, (None,) + self.target_shape, name="target_ph")
 
     def build_rewards(self, r):
-        if self.dense_reward:
-            output = self.rb.get_output(r)
-            abs_error = tf.reduce_sum(
-                tf.abs(output - self.target_ph),
-                axis=-1, keep_dims=True)
-            rewards = -tf.cast(abs_error > cfg.reward_window, tf.float32)
-        else:
-            rewards = tf.fill((tf.shape(r)[0], 1), 0.0),
+        rewards = tf.cond(
+            self.is_testing_ph,
+            lambda: tf.fill((tf.shape(r)[0], 1), 0.0),
+            lambda: -tf.cast(
+                tf.reduce_sum(tf.abs(self.rb.get_output(r) - self.target_ph), axis=-1, keep_dims=True) > cfg.reward_window, tf.float32)
+        )
         return rewards
 
 
@@ -677,8 +678,7 @@ class CompositeEnv(Env):
             new_external_obs, external_reward, external_done, i = \
                 self.external.step(external_action)
 
-            if not hasattr(self.internal, 'dense_reward') or not self.internal.dense_reward:
-                rewards[-1, :, :] += external_reward
+            rewards[-1, :, :] += external_reward
 
             if save_utils:
                 rb = RolloutBatch(
