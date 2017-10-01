@@ -21,7 +21,6 @@ def build_env():
 config = Config(
     build_env=build_env,
     T=30,
-    dense_reward=True,
     curriculum=[dict(width=2, base=10)],
     log_name='pointer',
 )

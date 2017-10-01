@@ -19,7 +19,6 @@ def build_env():
 
 
 config = Config(
-    dense_reward=True,
     build_env=build_env,
     T=30,
     curriculum=[

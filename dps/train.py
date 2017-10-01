@@ -214,8 +214,6 @@ class TrainingLoop(object):
                       "step (g: {best_global_step}, l: {best_local_step}) "
                       "with validation loss = {best_loss}.".format(**self.latest))
 
-                print(self.summarize(latest=True))
-
                 best_path = self.latest['best_path']
                 print("Loading best hypothesis for this stage "
                       "from file {}...".format(best_path))
@@ -225,6 +223,8 @@ class TrainingLoop(object):
                 print("Test loss: {}".format(test_loss))
                 print(test_record)
                 self.record(**{'test_' + k: v for k, v in test_record.items()})
+
+                print(self.summarize(latest=True))
 
                 if cfg.start_tensorboard:
                     restart_tensorboard(

@@ -86,7 +86,6 @@ config = Config(
     n_val=500,
 
     show_op=True,
-    dense_reward=True,
     reward_window=0.5,
     salience_action=True,
     initial_salience=False,
@@ -454,14 +453,7 @@ class GridArithmetic(InternalEnv):
                 salience=tf.identity(salience, "salience"),
                 glimpse=glimpse)
 
-        if self.dense_reward:
-            output = self.rb.get_output(new_registers)
-            abs_error = tf.reduce_sum(
-                tf.abs(output - self.target_ph),
-                axis=-1, keep_dims=True)
-            rewards = -tf.cast(abs_error > cfg.reward_window, tf.float32)
-        else:
-            rewards = tf.fill((tf.shape(new_registers)[0], 1), 0.0),
+        rewards = self.build_rewards(new_registers)
 
         if actions is not None:
             _, _, _, _, classify_digit, classify_op, *_ = self.unpack_actions(actions)

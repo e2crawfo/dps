@@ -76,7 +76,7 @@ env_config = Config(
         ('M', lambda x: np.product(x)),
         ('N', lambda x: max(x)),
         ('X', lambda x: min(x)),
-        ('C', lambda x: len(x)),
+    #     ('C', lambda x: len(x)),
     ],
 
     arithmetic_actions=[
@@ -102,8 +102,8 @@ env_config = Config(
     visible_glimpse=False,
     initial_salience=False,
 
-    dense_reward=True,
     reward_window=0.499,
+    final_reward=False,
 
     ablation='easy',
     log_name='grid_arithmetic',
@@ -114,7 +114,7 @@ config.update(alg_config)
 config.update(env_config)
 
 grid = dict(
-    entropy_weight=np.linspace(1.0, 4.0, 11),
+    entropy_weight=np.linspace(1.0, 3.0, 11),
 )
 
 from dps.parallel.hyper import build_and_submit

@@ -71,7 +71,6 @@ env_config = Config(
 
     updates_per_sample=1,
 
-    dense_reward=True,
     reward_window=0.499,
 
     ablation='',  # anything other than "bad_wiring", "no_classifiers", "no_ops", "no_modules" will use the default.

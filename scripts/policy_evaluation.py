@@ -67,7 +67,6 @@ config = DEFAULT_CONFIG.copy(
     reward_radius=0.2,
     max_step=0.1,
     restart_prob=0.0,
-    dense_reward=False,
     l2l=False,
     n_val=200,
 

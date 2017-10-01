@@ -14,7 +14,6 @@ config = Config(
     build_env=build_grid,
     curriculum=[dict()],
     log_name='grid',
-    dense_reward=True,
     restart_prob=0.0,
     l2l=False,
     shape=(5, 5),
@@ -31,7 +30,6 @@ class Grid(TensorFlowEnv):
     T = Param()
     shape = Param()
     restart_prob = Param()
-    dense_reward = Param()
     l2l = Param()
     n_val = Param()
 
@@ -47,8 +45,6 @@ class Grid(TensorFlowEnv):
             max_values=[self.shape[1], self.shape[0], 0, self.shape[1], self.shape[0]]
         )
 
-        if self.l2l and not self.dense_reward:
-            raise Exception("When learning to learn, reward must be dense!")
         super(Grid, self).__init__()
 
     @property
@@ -116,13 +112,7 @@ class Grid(TensorFlowEnv):
             new_x = tf.where(tf.equal(restart, 1), start_x, new_x)
             new_y = tf.where(tf.equal(restart, 1), start_y, new_y)
 
-        if self.dense_reward:
-            reward = -tf.cast(tf.sqrt((new_x-goal_x)**2 + (new_y-goal_y)**2) > 0.1, tf.float32)
-        else:
-            reward = tf.cond(
-                tf.equal(t[0, 0], tf.constant(self.T-1)),
-                lambda: -tf.cast(tf.sqrt((new_x-goal_x)**2 + (new_y-goal_y)**2) > 0.1, tf.float32),
-                lambda: tf.fill(tf.shape(x), 0.0))
+        reward = -tf.cast(tf.sqrt((new_x-goal_x)**2 + (new_y-goal_y)**2) > 0.1, tf.float32)
 
         new_registers = self.rb.wrap(
             x=new_x, y=new_y, goal_x=goal_x, goal_y=goal_y,

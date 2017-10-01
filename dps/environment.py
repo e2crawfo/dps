@@ -565,7 +565,6 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
 
 
 class InternalEnv(TensorFlowEnv):
-    dense_reward = Param()
     target_shape = (1,)
     input_shape = None
 
@@ -597,6 +596,8 @@ class InternalEnv(TensorFlowEnv):
 
 
 class CompositeEnv(Env):
+    final_reward = Param(False)
+
     def __init__(self, external, internal):
         assert isinstance(internal, TensorFlowEnv)
         self.external, self.internal = external, internal
@@ -678,7 +679,8 @@ class CompositeEnv(Env):
             new_external_obs, external_reward, external_done, i = \
                 self.external.step(external_action)
 
-            rewards[-1, :, :] += external_reward
+            if self.final_reward:
+                rewards[-1, ...] += external_reward
 
             if save_utils:
                 rb = RolloutBatch(

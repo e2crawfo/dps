@@ -30,7 +30,6 @@ config = Config(
     build_policy=build_policy,
     log_name='room',
     T=20,
-    dense_reward=True,
     restart_prob=0.0,
     max_step=0.1,
     room_angular=False,
@@ -47,7 +46,6 @@ class Room(TensorFlowEnv):
     reward_radius = Param()
     max_step = Param()
     restart_prob = Param()
-    dense_reward = Param()
     l2l = Param()
     n_val = Param()
 
@@ -61,8 +59,6 @@ class Room(TensorFlowEnv):
             min_values=[-1, -1, -1/self.T, -2, -2],
             max_values=[1, 1, 0, 2, 2])
 
-        if self.l2l and not self.dense_reward:
-            raise Exception("When learning to learn, reward must be dense!")
         super(Room, self).__init__()
 
     @property
@@ -127,13 +123,7 @@ class Room(TensorFlowEnv):
                 tf.contrib.distributions.Uniform(-1., 1.).sample(tf.shape(x)),
                 new_y)
 
-        if self.dense_reward:
-            reward = -tf.cast(tf.sqrt((new_x-goal_x)**2 + (new_y-goal_y)**2) > self.reward_radius, tf.float32)
-        else:
-            reward = tf.cond(
-                tf.equal(t[0, 0], tf.constant(self.T-1)),
-                lambda: -tf.cast(tf.sqrt((new_x-goal_x)**2 + (new_y-goal_y)**2) > self.reward_radius, tf.float32),
-                lambda: tf.fill(tf.shape(x), 0.0))
+        reward = -tf.cast(tf.sqrt((new_x-goal_x)**2 + (new_y-goal_y)**2) > self.reward_radius, tf.float32)
 
         new_registers = self.rb.wrap(
             x=new_x, y=new_y, goal_x=goal_x, goal_y=goal_y,
