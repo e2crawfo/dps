@@ -368,6 +368,22 @@ class TensorFlowSelection(ActionSelection):
         return tf_dists.kl(dist1, dist2)[..., None]
 
 
+class Deterministic(TensorFlowSelection):
+    def __init__(self, params_dim, actions_dim=None, func=None):
+        self.params_dim = params_dim
+        self.actions_dim = actions_dim or params_dim
+        self.func = func or (lambda x: tf.identity(x))
+
+    def _dist(self, utils, exploration):
+        return tf_dists.VectorDeterministic(self.func(utils))
+
+    def entropy(self, utils, exploration):
+        return tf.fill((tf.shape(utils)[0], 1), 0.)
+
+    def kl(self, utils1, utils2, e1, e2=None):
+        raise Exception()
+
+
 def softplus(x):
     return tf.log(1 + tf.exp(x))
 
@@ -429,37 +445,62 @@ class Bernoulli(TensorFlowSelection):
         return tf_dists.BernoulliWithSigmoidProbs(utils[..., 0])
 
 
+def build_categorical_dist(*args, probs=None, **kwargs):
+    if tf.__version__ < "1.1":
+        return tf_dists.Categorical(*args, p=probs, **kwargs)
+    else:
+        return tf_dists.Categorical(*args, probs=probs, **kwargs)
+
+
 class Categorical(TensorFlowSelection):
+    """ Don't use tf_dists.OneHotCategorical even if `one_hot` is True, because it doesn't work in tf versions <= 1.0.0 """
+
     def __init__(self, actions_dim, one_hot=True):
         self.params_dim = actions_dim
         self.actions_dim = actions_dim if one_hot else 1
         self.one_hot = one_hot
 
     def sample(self, utils, exploration):
-        sample = super(Categorical, self).sample(utils, exploration)
-        if not self.one_hot:
-            return tf.cast(sample, tf.int32)
+        dist = self._dist(utils, exploration)
+        sample = dist.sample()
+        if self.one_hot:
+            sample = tf.one_hot(sample, depth=int(utils.shape[-1]), axis=-1)
         else:
-            return sample
+            sample = sample[..., None]
+
+        return tf.cast(sample, tf.float32)
 
     def log_probs(self, utils, actions, exploration):
-        if not self.one_hot:
-            actions = tf.cast(actions, tf.int32)
-        return super(Categorical, self).log_probs(utils, actions, exploration)
+        dist = self._dist(utils, exploration)
+        if self.one_hot:
+            actions = tf.argmax(actions, axis=-1)
+        else:
+            actions = tf.reshape(actions, tf.shape(dist.sample()))
+        return dist.log_prob(actions)[..., None]
 
     def log_probs_all(self, utils, exploration):
-        batch_rank = len(utils.shape)-1
-
-        if not self.one_hot:
-            sample_shape = (self.actions_dim,) + (1,) * batch_rank
-            sample = tf.reshape(tf.range(self.actions_dim), sample_shape)
-        else:
-            sample_shape = (self.actions_dim,) + (1,) * batch_rank + (self.actions_dim,)
-            sample = tf.reshape(tf.eye(self.actions_dim), sample_shape)
         dist = self._dist(utils, exploration)
+
+        batch_rank = len(utils.shape)-1
+        sample_shape = (self.actions_dim,) + (1,) * batch_rank
+        sample = tf.reshape(tf.range(self.actions_dim), sample_shape)
         log_probs = dist.log_prob(sample)
         axis_perm = tuple(range(1, batch_rank+1)) + (0,)
         return tf.transpose(log_probs, perm=axis_perm)
+
+    def entropy(self, utils, exploration):
+        dist = self._dist(utils, exploration)
+        return dist.entropy()[..., None]
+
+    def kl(self, utils1, utils2, e1, e2=None):
+        e2 = e1 if e2 is None else e2
+        dist1 = self._dist(utils1, e1)
+        dist2 = self._dist(utils2, e2)
+        return tf_dists.kl(dist1, dist2)[..., None]
+
+    def _dist(self, utils, exploration):
+        raise Exception("NotImplemented")
+        # return build_categorical_dist()
 
 
 class FixedCategorical(Categorical):
@@ -472,40 +513,12 @@ class FixedCategorical(Categorical):
         self.one_hot = one_hot
 
     def _dist(self, utils, exploration):
-        logits = utils / exploration
-
-        if self.one_hot:
-            return tf_dists.OneHotCategorical(logits=logits)
-        else:
-            return tf_dists.Categorical(logits=logits)
+        return build_categorical_dist(logits=utils/exploration)
 
 
 class Softmax(Categorical):
     def _dist(self, utils, exploration):
-        logits = utils / exploration
-
-        if self.one_hot:
-            return tf_dists.OneHotCategorical(logits=logits)
-        else:
-            return tf_dists.Categorical(logits=logits)
-
-
-class EpsilonGreedy(Categorical):
-    def _probs(self, q_values, exploration):
-        epsilon = exploration
-        mx = tf.reduce_max(q_values, axis=-1, keep_dims=True)
-        bool_is_max = tf.equal(q_values, mx)
-        float_is_max = tf.cast(bool_is_max, tf.float32)
-        max_count = tf.reduce_sum(float_is_max, axis=-1, keep_dims=True)
-        _probs = (float_is_max / max_count) * (1 - epsilon)
-        return _probs + epsilon / tf.cast(self.params_dim, tf.float32)
-
-    def _dist(self, q_values, exploration):
-        probs = self._probs(q_values, exploration)
-        if self.one_hot:
-            return tf_dists.OneHotCategorical(probs=probs)
-        else:
-            return tf_dists.Categorical(probs=probs)
+        return build_categorical_dist(logits=utils/exploration)
 
 
 class EpsilonSoftmax(Categorical):
@@ -514,25 +527,15 @@ class EpsilonSoftmax(Categorical):
         coefficient epsilon, and the softmax uses a temperature of 1.
 
     """
+    def __init__(self, *args, softmax_temp=1.0, **kwargs):
+        self.softmax_temp = softmax_temp
+        super(EpsilonSoftmax, self).__init__(*args, **kwargs)
+
     def _dist(self, utils, epsilon):
         probs = (1 - epsilon) * tf.nn.softmax(utils) + epsilon / self.params_dim
-        if self.one_hot:
-            return tf_dists.OneHotCategorical(probs=probs)
-        else:
-            return tf_dists.Categorical(probs=probs)
+        return build_categorical_dist(probs=probs)
 
 
-class Deterministic(TensorFlowSelection):
-    def __init__(self, params_dim, actions_dim=None, func=None):
-        self.params_dim = params_dim
-        self.actions_dim = actions_dim or params_dim
-        self.func = func or (lambda x: tf.identity(x))
-
-    def _dist(self, utils, exploration):
-        return tf_dists.VectorDeterministic(self.func(utils))
-
-    def entropy(self, utils, exploration):
-        return tf.fill((tf.shape(utils)[0], 1), 0.)
-
-    def kl(self, utils1, utils2, e1, e2=None):
-        raise Exception()
+class EpsilonGreedy(EpsilonSoftmax):
+    def __init__(self, *args, **kwargs):
+        super(EpsilonGreedy, self).__init__(*args, softmax_temp=0.1, **kwargs)
