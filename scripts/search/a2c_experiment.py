@@ -76,7 +76,6 @@ env_config = Config(
         ('M', lambda x: np.product(x)),
         ('N', lambda x: max(x)),
         ('X', lambda x: min(x)),
-    #     ('C', lambda x: len(x)),
     ],
 
     arithmetic_actions=[
@@ -103,7 +102,7 @@ env_config = Config(
     initial_salience=False,
 
     reward_window=0.499,
-    final_reward=False,
+    final_reward=True,
 
     ablation='easy',
     log_name='grid_arithmetic',
@@ -114,9 +113,12 @@ config.update(alg_config)
 config.update(env_config)
 
 grid = dict(
-    entropy_weight=np.linspace(1.0, 3.0, 11),
+    entropy_weight=2.**np.linspace(-5, 3, 11),
 )
 
-from dps.parallel.hyper import build_and_submit
-host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
-clify.wrap_function(build_and_submit)(config, grid, n_param_settings=None, host_pool=host_pool)
+from dps.parallel.hyper import build_and_submit_hpc
+clify.wrap_function(build_and_submit_hpc)(config, grid, n_param_settings=None)
+
+# from dps.parallel.hyper import build_and_submit
+# host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
+# clify.wrap_function(build_and_submit)(config, grid, n_param_settings=None, host_pool=host_pool)

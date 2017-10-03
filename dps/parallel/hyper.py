@@ -8,16 +8,19 @@ import datetime
 from collections import OrderedDict
 from itertools import product
 from copy import deepcopy
-import warnings
 import os
 from tabulate import tabulate
+import shutil
+import dill
+import sys
+import subprocess
 
 import clify
 
 from dps import cfg
 from dps.train import training_loop
-from dps.utils import gen_seed, Config
-from dps.parallel.submit_job import submit_job
+from dps.utils import gen_seed, Config, cd
+from dps.parallel.submit_job import ParallelSession
 from dps.parallel.base import Job, ReadOnlyJob
 from spectral_dagger.utils.experiment import ExperimentStore
 
@@ -371,88 +374,76 @@ def hyper_search_cl():
 
 
 def build_and_submit(
-        config, distributions, wall_time, cleanup_time=None, max_hosts=0, ppn=0, n_retries=0,
-        n_param_settings=0, n_repeats=0, size=None, do_local_test=False, host_pool=None):
+        config, distributions, wall_time, cleanup_time, max_hosts=2, ppn=2,
+        n_param_settings=2, n_repeats=2, host_pool=None, n_retries=1, do_local_test=False):
 
-    if size == 'big':
-        build_params = dict(
-            n_param_settings=50,
-            n_repeats=5,
-        )
-
-        run_params = dict(
-            max_hosts=32,
-            ppn=2,
-            cleanup_time="00:30:00"
-        )
-    elif size == 'medium':
-        build_params = dict(
-            n_param_settings=8,
-            n_repeats=4,
-        )
-
-        run_params = dict(
-            max_hosts=4,
-            ppn=2,
-            cleanup_time="00:02:15",
-        )
-    elif size == 'small':
-        build_params = dict(
-            n_param_settings=2,
-            n_repeats=2,
-        )
-
-        run_params = dict(
-            max_hosts=2,
-            ppn=2,
-            cleanup_time="00:00:45"
-        )
-
-    elif size is None:
-        build_params = dict()
-        run_params = dict()
-    else:
-        raise Exception("Unknown size: `{}`.".format(size))
-    run_params['wall_time'] = wall_time
-
-    if cleanup_time is not None:
-        run_params['cleanup_time'] = cleanup_time
-    if max_hosts:
-        run_params['max_hosts'] = max_hosts
-    if ppn:
-        run_params['ppn'] = ppn
-
-    if host_pool is not None:
-        run_params['time_slack'] = 60
-    else:
-        host_pool = [':']
-        run_params['time_slack'] = 30
-    run_params['host_pool'] = host_pool
-
-    run_params['n_retries'] = n_retries
-
-    assert run_params['cleanup_time'] is not None
-    assert run_params['max_hosts']
-    assert run_params['ppn']
-
-    if n_param_settings or n_param_settings is None:
-        build_params['n_param_settings'] = n_param_settings
-    if n_repeats:
-        build_params['n_repeats'] = n_repeats
-
-    assert 'n_param_settings' in build_params
-    assert build_params['n_repeats']
-
-    if build_params['n_param_settings'] is None:
-        warnings.warn("`n_param_settings` is None, a grid search will be performed.")
+    build_params = dict(n_param_settings=n_param_settings, n_repeats=n_repeats)
+    run_params = dict(
+        wall_time=wall_time, cleanup_time=cleanup_time, time_slack=60,
+        max_hosts=max_hosts, ppn=ppn, n_retries=n_retries, hpc=False,
+        host_pool=host_pool)
 
     with config:
         job, archive_path = build_search(
             '/tmp/dps/search', config.name, distributions, config,
             use_time=1, _zip=True, do_local_test=do_local_test, **build_params)
 
-        submit_job(
+        session = ParallelSession(
             config.name, archive_path, 'map', '/tmp/dps/search/execution/',
             parallel_exe='$HOME/.local/bin/parallel', dry_run=False,
             env_vars=dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1'),
             redirect=True, **run_params)
+
+        session.run()
+
+
+def build_and_submit_hpc(
+        config, distributions, wall_time, cleanup_time, max_hosts=2, ppn=2,
+        n_param_settings=2, n_repeats=2, n_retries=1, do_local_test=False, queue=""):
+
+    build_params = dict(n_param_settings=n_param_settings, n_repeats=n_repeats)
+    run_params = dict(
+        wall_time=wall_time, cleanup_time=cleanup_time, time_slack=60,
+        max_hosts=max_hosts, ppn=ppn, n_retries=n_retries, hpc=True)
+
+    with config:
+        job, archive_path = build_search(
+            '/tmp/dps/search', config.name, distributions, config,
+            use_time=1, _zip=True, do_local_test=do_local_test, **build_params)
+
+        session = ParallelSession(
+            config.name, archive_path, 'map', '$SCRATCH', local_scratch_prefix="\\$RAMDISK",
+            parallel_exe='$HOME/.local/bin/parallel', dry_run=False,
+            env_vars=dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1'),
+            redirect=True, **run_params)
+
+    os.remove(str(archive_path))
+    shutil.rmtree(str(archive_path).split('.')[0])
+
+    job_dir = Path(session.job_directory)
+
+    python_script = """#!{}
+import dill
+with open("./session.pkl", "rb") as f:
+session = dill.load(f)
+session.run()
+""".format(sys.executable)
+    with (job_dir / "run.py").open('w') as f:
+        f.write(python_script)
+
+    with (job_dir / "session.pkl").open('wb') as f:
+        dill.dump(session, f, protocol=dill.HIGHEST_PROTOCOL, recurse=True)
+
+    resources = "nodes={},ppn={},wall_time={}".format(session.n_nodes, session.ppn, session.wall_time_seconds)
+    project = "jim-594-aa"
+    email = "eric.crawford@mail.mcgill.ca"
+    command = (
+        "qsub -N {name} -d {job_dir} -w {job_dir} -m abe -M {email} -A {project} -q {queue} -V "
+        "-l {resources} -e stderr.txt -o stdout.txt run.py".format(
+            name=config.name, job_dir=job_dir, email=email, project=project,
+            queue=queue, resources=resources
+        )
+    )
+
+    with cd(job_dir):
+        subprocess.run(command.split())

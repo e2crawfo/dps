@@ -19,6 +19,7 @@ import datetime
 import psutil
 from itertools import cycle, islice
 import resource
+from datetime import timedelta
 
 import clify
 
@@ -29,6 +30,60 @@ from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from tensorflow.contrib.slim import fully_connected
 
 import dps
+
+
+def make_directory_name(experiments_dir, network_name, add_date=True):
+    if add_date:
+        working_dir = os.path.join(experiments_dir, network_name + "_")
+        dts = str(datetime.datetime.now()).split('.')[0]
+        for c in [":", " ", "-"]:
+            dts = dts.replace(c, "_")
+        working_dir += dts
+    else:
+        working_dir = os.path.join(experiments_dir, network_name)
+
+    return working_dir
+
+
+def _parse_timedelta(s):
+    """ ``s`` should be of the form HH:MM:SS """
+    args = [int(i) for i in s.split(":")]
+    return timedelta(hours=args[0], minutes=args[1], seconds=args[2])
+
+
+def parse_timedelta(d, fmt='%a %b  %d %H:%M:%S %Z %Y'):
+    """ ``s`` should be of the form HH:MM:SS """
+    date = parse_date(d, fmt)
+    return date - datetime.datetime.now()
+
+
+def parse_date(d, fmt='%a %b  %d %H:%M:%S %Z %Y'):
+    # default value for `fmt` is default format used by GNU `date`
+    with open(os.devnull, 'w') as devnull:
+        # A quick hack since just using the first option was causing weird things to happen, fix later.
+        if " " in d:
+            dstr = subprocess.check_output(["date", "-d", d], stderr=devnull)
+        else:
+            dstr = subprocess.check_output("date -d {}".format(d).split(), stderr=devnull)
+
+    dstr = dstr.decode().strip()
+    return datetime.datetime.strptime(dstr, fmt)
+
+
+@contextmanager
+def cd(path):
+    """ A context manager that changes into given directory on __enter__,
+        change back to original_file directory on exit. Exception safe.
+
+    """
+    path = str(path)
+    old_dir = os.getcwd()
+    os.chdir(path)
+
+    try:
+        yield
+    finally:
+        os.chdir(old_dir)
 
 
 @contextmanager
@@ -231,19 +286,6 @@ class Parameterized(object):
             except:
                 pass
         return params
-
-
-def parse_date(d, fmt='%a %b  %d %H:%M:%S %Z %Y'):
-    # default value for `fmt` is default format used by GNU `date`
-    with open(os.devnull, 'w') as devnull:
-        # A quick hack since just using the first option was causing weird things to happen, fix later.
-        if " " in d:
-            dstr = subprocess.check_output(["date", "-d", d], stderr=devnull)
-        else:
-            dstr = subprocess.check_output("date -d {}".format(d).split(), stderr=devnull)
-
-    dstr = dstr.decode().strip()
-    return datetime.datetime.strptime(dstr, fmt)
 
 
 def du(path):
