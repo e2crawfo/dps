@@ -38,7 +38,7 @@ config = DEFAULT_CONFIG.copy(
     batch_size=64,
     n_controller_units=256 if not do_search else None,
     log_name="cnn_grid_arithmetic",
-    max_steps=np.inf,
+    max_steps=1000000,
     display_step=100,
     eval_step=100,
     patience=5000,
@@ -57,7 +57,7 @@ config = DEFAULT_CONFIG.copy(
     save_display=False,
     use_gpu=True,
     threshold=0.05,
-    memory_limit_mb=8*1024
+    memory_limit_mb=12*1024
 )
 
 env_config = Config(
