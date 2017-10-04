@@ -4,24 +4,9 @@ from pathlib import Path
 from zipfile import ZipFile
 from collections import defaultdict
 import argparse
-from contextlib import contextmanager
-import sys
 import signal
 
-from dps.utils import SigTerm, KeywordMapping, pdb_postmortem
-
-
-@contextmanager
-def redirect_stream(stream, filename, mode='w'):
-    assert stream in ['stdout', 'stderr']
-    with open(str(filename), mode=mode) as f:
-        old = getattr(sys, stream)
-        setattr(sys, stream, f)
-
-        try:
-            yield
-        finally:
-            setattr(sys, stream, old)
+from dps.utils import SigTerm, KeywordMapping, pdb_postmortem, redirect_stream
 
 
 def raise_sigterm(*args, **kwargs):

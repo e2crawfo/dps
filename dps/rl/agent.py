@@ -5,7 +5,7 @@ from copy import deepcopy
 
 from dps import cfg
 from dps.rl import RLObject
-from dps.utils import vec_to_lst, lst_to_vec, trainable_variables, ScopedCell
+from dps.utils.tf import vec_to_lst, lst_to_vec, trainable_variables, ScopedCell
 
 
 class AgentHead(RLObject):

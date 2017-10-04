@@ -1,6 +1,6 @@
 import tensorflow as tf
 
-from dps.utils import build_gradient_train_op
+from dps.utils.tf import build_gradient_train_op
 
 
 class Optimizer(object):

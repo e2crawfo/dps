@@ -7,7 +7,7 @@ from dps.config import DEFAULT_CONFIG, PPO_CONFIG, PE_CONFIG
 from dps.gym_env import GymEnvWrapper
 from dps.train import training_loop
 from dps.rl.policy import Softmax
-from dps.utils import MLP, FeedforwardCell
+from dps.utils.tf import MLP, FeedforwardCell
 
 
 def build_env():

@@ -4,7 +4,10 @@ import tensorflow.contrib.distributions as tf_dists
 
 from dps import cfg
 from dps.rl import AgentHead
-from dps.utils import MLP, FeedforwardCell, CompositeCell, tf_roll, masked_mean, build_scheduled_value
+from dps.utils.tf import (
+    MLP, FeedforwardCell, CompositeCell, tf_roll,
+    masked_mean, build_scheduled_value
+)
 
 
 class BuildLstmController(object):

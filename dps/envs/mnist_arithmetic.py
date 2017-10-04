@@ -12,7 +12,8 @@ from dps.environment import (
 from dps.vision import (
     MnistArithmeticDataset, DRAW,
     MnistPretrained, MNIST_CONFIG, ClassifierFunc)
-from dps.utils import Param, Config, MLP
+from dps.utils import Param, Config
+from dps.utils.tf import MLP
 
 
 def build_env():

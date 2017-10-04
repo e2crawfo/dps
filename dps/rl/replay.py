@@ -4,7 +4,7 @@ from itertools import cycle, islice
 from pyskiplist import SkipList
 
 from dps.rl import RolloutBatch, RLObject
-from dps.utils import build_scheduled_value
+from dps.utils.tf import build_scheduled_value
 
 
 class ReplayBuffer(RLObject):

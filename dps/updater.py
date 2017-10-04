@@ -3,9 +3,9 @@ from future.utils import with_metaclass
 
 import tensorflow as tf
 
-from dps.utils import (
-    build_gradient_train_op, Parameterized, Param,
-    trainable_variables, scheduled_value_summaries)
+from dps.utils import Parameterized, Param
+from dps.utils.tf import (
+    build_gradient_train_op, trainable_variables, scheduled_value_summaries)
 
 
 class Updater(with_metaclass(abc.ABCMeta, Parameterized)):

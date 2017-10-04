@@ -4,7 +4,7 @@ import numpy as np
 
 from dps import cfg
 from dps.rl.optimizer import Optimizer
-from dps.utils import lst_to_vec, vec_to_lst, masked_mean, build_scheduled_value
+from dps.utils.tf import lst_to_vec, vec_to_lst, masked_mean, build_scheduled_value
 
 
 class TrustRegionOptimizer(Optimizer):

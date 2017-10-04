@@ -3,8 +3,8 @@ import tensorflow as tf
 import abc
 
 from dps import cfg
-from dps.utils import masked_mean, tf_discount_matrix, shift_fill
-from dps.utils import build_scheduled_value, Param, Parameterized
+from dps.utils import Param, Parameterized, shift_fill
+from dps.utils.tf import masked_mean, tf_discount_matrix, build_scheduled_value
 from dps.updater import Updater
 
 

@@ -15,7 +15,7 @@ from dps.rl.value import (
     PolicyEvaluation, ProximalPolicyEvaluation, TrustRegionPolicyEvaluation,
     NeuralValueEstimator)
 from dps.rl.policy import Policy, Deterministic
-from dps.utils import FeedforwardCell, MLP
+from dps.utils.tf import FeedforwardCell, MLP
 
 
 def build_env():

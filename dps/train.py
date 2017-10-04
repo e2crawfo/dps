@@ -16,8 +16,10 @@ import pandas as pd
 from spectral_dagger.utils.experiment import ExperimentStore
 from dps import cfg
 from dps.utils import (
-    restart_tensorboard, gen_seed, time_limit, memory_usage, memory_limit,
-    uninitialized_variables_initializer, du, Config, parse_date)
+    gen_seed, time_limit, memory_usage,
+    memory_limit, du, Config, parse_date
+)
+from dps.utils.tf import restart_tensorboard, uninitialized_variables_initializer
 
 
 def training_loop(exp_name='', start_time=None):

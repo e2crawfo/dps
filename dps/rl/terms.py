@@ -1,7 +1,7 @@
 import tensorflow as tf
 
 from dps.rl import ObjectiveFunctionTerm
-from dps.utils import masked_mean
+from dps.utils.tf import masked_mean
 
 
 class PolicyGradient(ObjectiveFunctionTerm):

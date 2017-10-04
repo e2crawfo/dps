@@ -1,4 +1,5 @@
-from dps.utils import DpsConfig, MLP, CompositeCell
+from dps.utils import DpsConfig
+from dps.utils.tf import MLP, CompositeCell
 from dps.envs.simple_arithmetic import render_rollouts_static
 from dps.vision import LeNet
 from dps.run import _run

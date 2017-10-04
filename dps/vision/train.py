@@ -8,7 +8,8 @@ from tensorflow.contrib.slim.python.slim.nets.vgg import vgg_a, vgg_16, vgg_19
 from dps import cfg
 from dps.train import training_loop
 from dps.updater import DifferentiableUpdater
-from dps.utils import DpsConfig, load_or_train, Config
+from dps.utils import DpsConfig, Config
+from dps.utils.tf import load_or_train
 from dps.environment import RegressionEnv, RegressionDataset
 
 from mnist_arithmetic import load_emnist

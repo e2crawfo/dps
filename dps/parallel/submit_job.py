@@ -144,7 +144,10 @@ class ParallelSession(object):
         else:
             n_steps = int(np.ceil(n_jobs_to_run / n_procs))
 
-        node_file = " --sshloginfile nodefile.txt "
+        if hpc:
+            node_file = " --sshloginfile $PBS_NODEFILE "
+        else:
+            node_file = " --sshloginfile nodefile.txt "
 
         execution_time = int((wall_time - cleanup_time).total_seconds())
         abs_seconds_per_step = int(np.floor(execution_time / n_steps))
@@ -161,6 +164,13 @@ class ParallelSession(object):
         # Create convenience `latest` symlinks
         make_symlink(job_directory, os.path.join(scratch, 'latest'))
 
+        print("We have {wall_time_seconds} seconds to complete {n_jobs_to_run} "
+              "sub-jobs (grouped into {n_steps} steps) using {n_procs} processors.".format(**self.__dict__))
+        print("{execution_time} seconds have been reserved for job execution, "
+              "and {cleanup_time_seconds} seconds have been reserved for cleanup.".format(**self.__dict__))
+        print("Each step has been allotted {abs_seconds_per_step} seconds, "
+              "{seconds_per_step} seconds of which is pure computation time.\n".format(**self.__dict__))
+
     def recruit_hosts(self, hpc, min_hosts, max_hosts, host_pool, ppn, max_procs):
         hosts = []
         for host in host_pool:
@@ -176,7 +186,7 @@ class ParallelSession(object):
 
             if host is not ':':
                 print("Testing connection...")
-                failed = self.ssh_execute("echo Connected to \$HOSTNAME", host, robust=True)
+                failed = self.ssh_execute("echo Connected to \$HOSTNAME", host, robust=True, verbose=True)
                 if failed:
                     print("Could not connect.")
                     continue
@@ -331,7 +341,7 @@ class ParallelSession(object):
         return self.execute_command(
             "ssh -oPasswordAuthentication=no -oStrictHostKeyChecking=no "
             "-oConnectTimeout=5 -oServerAliveInterval=2 "
-            "-T {host} \"{command}\"".format(host=host, command=command), **kwargs)
+            "-T -vvv {host} \"{command}\"".format(host=host, command=command), **kwargs)
 
     def fetch(self):
         for i, host in enumerate(self.hosts):
@@ -414,13 +424,6 @@ class ParallelSession(object):
             print("\n" + ("=" * 80))
             print("Starting job at {}".format(datetime.datetime.now()))
 
-            print("We have {wall_time_seconds} seconds to complete {n_jobs_to_run} "
-                  "sub-jobs (grouped into {n_steps} steps) using {n_procs} processors.".format(**self.__dict__))
-            print("{execution_time} seconds have been reserved for job execution, "
-                  "and {cleanup_time_seconds} seconds have been reserved for cleanup.".format(**self.__dict__))
-            print("Each step has been allotted {abs_seconds_per_step} seconds, "
-                  "{seconds_per_step} seconds of which is pure computation time.\n".format(**self.__dict__))
-
             job = ReadOnlyJob(self.input_zip)
             subjobs_remaining = sorted([op.idx for op in job.ready_incomplete_ops(sort=False)])
 
@@ -429,10 +432,12 @@ class ParallelSession(object):
 
             i = 0
             while subjobs_remaining:
-
                 if not self.host_pool:
-                    with open('nodefile.txt', 'r') as f:
-                        self.host_pool = list(iter(f.readline, ''))
+                    with open(os.path.expandvars("$PBS_NODEFILE"), 'r') as f:
+                        self.host_pool = [s.strip() for s in iter(f.readline, '')]
+                        print(self.host_pool)
+                    with open(os.path.expandvars("$PBS_NODEFILE"), 'r') as f:
+                        print(f.read())
 
                 self.hosts, self.n_procs = self.recruit_hosts(
                     self.hpc, self.min_hosts, self.max_hosts, self.host_pool,

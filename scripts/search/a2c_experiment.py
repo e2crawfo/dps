@@ -74,8 +74,8 @@ env_config = Config(
     reductions=[
         ('A', lambda x: sum(x)),
         ('M', lambda x: np.product(x)),
-        ('N', lambda x: max(x)),
-        ('X', lambda x: min(x)),
+        ('X', lambda x: max(x)),
+        ('N', lambda x: min(x)),
     ],
 
     arithmetic_actions=[

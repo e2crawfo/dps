@@ -18,27 +18,10 @@ import subprocess
 import clify
 
 from dps import cfg
-from dps.train import training_loop
 from dps.utils import gen_seed, Config, cd
 from dps.parallel.submit_job import ParallelSession
 from dps.parallel.base import Job, ReadOnlyJob
 from spectral_dagger.utils.experiment import ExperimentStore
-
-
-class LogUniform(object):
-    def __init__(self, lo, hi, base=None):
-        self.lo = lo
-        self.hi = hi
-        self.base = base or np.e
-
-    def rvs(self, shape=None):
-        return self.base ** np.random.uniform(self.lo, self.hi, shape)
-
-    def __repr__(self):
-        return str(self)
-
-    def __str__(self):
-        return "LogUniform(lo={}, hi={}, base={})".format(self.lo, self.hi, self.base)
 
 
 def nested_sample(distributions, n_samples=1):
@@ -176,6 +159,7 @@ class RunTrainingLoop(object):
             cl_args = clify.wrap_object(cfg).parse()
             config.update(cl_args)
 
+            from dps.train import training_loop
             val = training_loop(start_time=start_time)
 
         return val
@@ -425,7 +409,7 @@ def build_and_submit_hpc(
     python_script = """#!{}
 import dill
 with open("./session.pkl", "rb") as f:
-session = dill.load(f)
+    session = dill.load(f)
 session.run()
 """.format(sys.executable)
     with (job_dir / "run.py").open('w') as f:
@@ -434,11 +418,13 @@ session.run()
     with (job_dir / "session.pkl").open('wb') as f:
         dill.dump(session, f, protocol=dill.HIGHEST_PROTOCOL, recurse=True)
 
-    resources = "nodes={},ppn={},wall_time={}".format(session.n_nodes, session.ppn, session.wall_time_seconds)
+    resources = "nodes={}:ppn={},walltime={}".format(session.n_nodes, session.ppn, session.wall_time_seconds)
     project = "jim-594-aa"
     email = "eric.crawford@mail.mcgill.ca"
+    if queue:
+        queue = "-q " + queue
     command = (
-        "qsub -N {name} -d {job_dir} -w {job_dir} -m abe -M {email} -A {project} -q {queue} -V "
+        "qsub -N {name} -d {job_dir} -w {job_dir} -m abe -M {email} -A {project} {queue} -V "
         "-l {resources} -e stderr.txt -o stdout.txt run.py".format(
             name=config.name, job_dir=job_dir, email=email, project=project,
             queue=queue, resources=resources

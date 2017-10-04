@@ -5,7 +5,8 @@ from pathlib import Path
 from shutil import rmtree
 
 from dps import cfg
-from dps.utils import MLP, NumpySeed
+from dps.utils import NumpySeed
+from dps.utils.tf import MLP
 from dps.vision import (
     load_or_train, MNIST_CONFIG, MnistPretrained, DRAW, LeNet, train_mnist, EmnistDataset)
 from dps.vision.attention import DRAW_attention_2D

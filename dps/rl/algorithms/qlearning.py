@@ -1,7 +1,8 @@
 import tensorflow as tf
 
 from dps import cfg
-from dps.utils import Config, MLP, CompositeCell
+from dps.utils import Config
+from dps.utils.tf import MLP, CompositeCell
 from dps.rl import (
     RLContext, RLObject, Agent, StochasticGradientDescent, BuildEpsilonGreedyPolicy,
     DiscretePolicy, RLUpdater, ActionValueFunction,
