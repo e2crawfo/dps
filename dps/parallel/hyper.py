@@ -18,10 +18,9 @@ import subprocess
 import clify
 
 from dps import cfg
-from dps.utils import gen_seed, Config, cd
+from dps.utils.base import gen_seed, Config, cd, ExperimentStore
 from dps.parallel.submit_job import ParallelSession
 from dps.parallel.base import Job, ReadOnlyJob
-from spectral_dagger.utils.experiment import ExperimentStore
 
 
 def nested_sample(distributions, n_samples=1):
@@ -167,7 +166,7 @@ class RunTrainingLoop(object):
 
 def build_search(
         path, name, distributions, config, n_repeats, n_param_settings=None,
-        _zip=True, use_time=0, do_local_test=True):
+        _zip=True, add_date=0, do_local_test=True):
     """ Create a Job implementing a hyper-parameter search.
 
     Parameters
@@ -186,7 +185,7 @@ def build_search(
         Number of parameter settings to sample. If not supplied, all possibilities are generated.
     _zip: bool
         Whether to zip the created search directory.
-    use_time: bool
+    add_date: bool
         Whether to add time to name of experiment directory.
     do_local_test: bool
         If True, run a short test using one of the sampled
@@ -204,7 +203,7 @@ def build_search(
     has_built = False
     while not has_built:
         try:
-            exp_dir = es.new_experiment(name, use_time=use_time, force_fresh=1)
+            exp_dir = es.new_experiment(name, add_date=add_date, force_fresh=1)
             has_built = True
         except FileExistsError:
             name = "{}_{}".format(base_name, count)
@@ -224,8 +223,8 @@ def build_search(
     if do_local_test:
         print("\nStarting local test " + ("=" * 80))
         test_config = new_configs[0].copy()
-        test_config['max_steps'] = 100
-        test_config['visualize'] = False
+        test_config['max_time'] = 60
+        test_config['render_hook'] = None
         RunTrainingLoop(config)(test_config)
         print("Done local test " + ("=" * 80) + "\n")
 
@@ -245,6 +244,7 @@ def build_search(
 def _summarize_search(args):
     """ Get all completed jobs, get their outputs. Summarize em. """
     print("Summarizing search stored at {}.".format(Path(args.path).absolute()))
+
     job = ReadOnlyJob(args.path)
     distributions = job.objects.load_object('metadata', 'distributions')
     distributions = Config(distributions)
@@ -358,7 +358,7 @@ def hyper_search_cl():
 
 
 def build_and_submit(
-        config, distributions, wall_time, cleanup_time, max_hosts=2, ppn=2,
+        name, config, distributions, wall_time, cleanup_time, max_hosts=2, ppn=2,
         n_param_settings=2, n_repeats=2, host_pool=None, n_retries=1, do_local_test=False):
 
     build_params = dict(n_param_settings=n_param_settings, n_repeats=n_repeats)
@@ -367,13 +367,15 @@ def build_and_submit(
         max_hosts=max_hosts, ppn=ppn, n_retries=n_retries, hpc=False,
         host_pool=host_pool)
 
+    config.name = name
+
     with config:
         job, archive_path = build_search(
-            '/tmp/dps/search', config.name, distributions, config,
-            use_time=1, _zip=True, do_local_test=do_local_test, **build_params)
+            '/tmp/dps/search', name, distributions, config,
+            add_date=1, _zip=True, do_local_test=do_local_test, **build_params)
 
         session = ParallelSession(
-            config.name, archive_path, 'map', '/tmp/dps/search/execution/',
+            name, archive_path, 'map', '/tmp/dps/search/execution/',
             parallel_exe='$HOME/.local/bin/parallel', dry_run=False,
             env_vars=dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1'),
             redirect=True, **run_params)
@@ -382,21 +384,25 @@ def build_and_submit(
 
 
 def build_and_submit_hpc(
-        config, distributions, wall_time, cleanup_time, max_hosts=2, ppn=2,
-        n_param_settings=2, n_repeats=2, n_retries=1, do_local_test=False, queue=""):
+        name, config, distributions, wall_time, cleanup_time, max_hosts=2, ppn=2,
+        n_param_settings=2, n_repeats=2, n_retries=0, do_local_test=False, pmem=0, queue=""):
 
     build_params = dict(n_param_settings=n_param_settings, n_repeats=n_repeats)
     run_params = dict(
-        wall_time=wall_time, cleanup_time=cleanup_time, time_slack=60,
+        wall_time=wall_time, cleanup_time=cleanup_time, time_slack=120,
         max_hosts=max_hosts, ppn=ppn, n_retries=n_retries, hpc=True)
+
+    config.name = name
+    if pmem:
+        config.memory_limit_mb = int(pmem)
 
     with config:
         job, archive_path = build_search(
-            '/tmp/dps/search', config.name, distributions, config,
-            use_time=1, _zip=True, do_local_test=do_local_test, **build_params)
+            '/tmp/dps/search', name, distributions, config,
+            add_date=1, _zip=True, do_local_test=do_local_test, **build_params)
 
         session = ParallelSession(
-            config.name, archive_path, 'map', '$SCRATCH', local_scratch_prefix="\\$RAMDISK",
+            name, archive_path, 'map', '$SCRATCH/experiments', local_scratch_prefix="\\$RAMDISK",
             parallel_exe='$HOME/.local/bin/parallel', dry_run=False,
             env_vars=dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1'),
             redirect=True, **run_params)
@@ -419,6 +425,9 @@ session.run()
         dill.dump(session, f, protocol=dill.HIGHEST_PROTOCOL, recurse=True)
 
     resources = "nodes={}:ppn={},walltime={}".format(session.n_nodes, session.ppn, session.wall_time_seconds)
+    if pmem:
+        resources = "{},pmem={}mb".format(resources, pmem)
+
     project = "jim-594-aa"
     email = "eric.crawford@mail.mcgill.ca"
     if queue:
@@ -426,7 +435,7 @@ session.run()
     command = (
         "qsub -N {name} -d {job_dir} -w {job_dir} -m abe -M {email} -A {project} {queue} -V "
         "-l {resources} -e stderr.txt -o stdout.txt run.py".format(
-            name=config.name, job_dir=job_dir, email=email, project=project,
+            name=name, job_dir=job_dir, email=email, project=project,
             queue=queue, resources=resources
         )
     )

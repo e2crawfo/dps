@@ -13,10 +13,9 @@ import os
 import socket
 import pandas as pd
 
-from spectral_dagger.utils.experiment import ExperimentStore
 from dps import cfg
 from dps.utils import (
-    gen_seed, time_limit, memory_usage,
+    gen_seed, time_limit, memory_usage, ExperimentStore,
     memory_limit, du, Config, parse_date
 )
 from dps.utils.tf import restart_tensorboard, uninitialized_variables_initializer
@@ -122,7 +121,7 @@ class TrainingLoop(object):
 
         es = ExperimentStore(str(cfg.log_dir), max_experiments=cfg.max_experiments, delete_old=1)
         self.exp_dir = exp_dir = es.new_experiment(
-            self.exp_name, use_time=1, force_fresh=1, update_latest=cfg.update_latest)
+            self.exp_name, add_date=1, force_fresh=1, update_latest=cfg.update_latest)
 
         print("Scratch directory is {}.".format(exp_dir.path))
         cfg.path = exp_dir.path
@@ -244,7 +243,7 @@ class TrainingLoop(object):
 
         print(self.summarize(latest=False))
         result = dict(
-            config=cfg.freeze(),
+            config=cfg.freeze(remove_callable=True),
             history=self.history,
             host=socket.gethostname()
         )

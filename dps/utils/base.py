@@ -17,17 +17,144 @@ import datetime
 import psutil
 from itertools import cycle, islice
 import resource
-from datetime import timedelta
 import sys
+import shutil
+import pandas as pd
+import errno
 
 import clify
 import dps
 
 
+def make_symlink(target, name):
+    """ NB: ``target`` is just used as a simple string when creating
+    the link. That is, ``target`` is the location of the file we want
+    to point to, relative to the location that the link resides.
+    It is not the case that the target file is identified, and then
+    some kind of smart process occurs to have the link point to that file.
+
+    """
+    try:
+        os.remove(name)
+    except OSError:
+        pass
+
+    os.symlink(target, name)
+
+
+class ExperimentStore(object):
+    """ Stores a collection of experiments. Each new experiment is assigned a fresh sub-path. """
+    def __init__(self, path, prefix='exp', max_experiments=None, delete_old=False):
+        self.path = os.path.abspath(str(path))
+        assert prefix, "prefix cannot be empty"
+        self.prefix = prefix
+        self.max_experiments = max_experiments
+        self.delete_old = delete_old
+        try:
+            os.makedirs(os.path.realpath(self.path))
+        except:
+            pass
+
+    def new_experiment(self, name, data=None, add_date=False, force_fresh=True, update_latest=True):
+        """ Create a new experiment path. """
+        if self.max_experiments is not None:
+            experiments = os.listdir(self.path)
+            n_experiments = len(experiments)
+
+            if n_experiments >= self.max_experiments:
+                if self.delete_old:
+                    paths = [
+                        os.path.join(self.path, p) for p in experiments
+                        if p.startswith(self.prefix)]
+                    sorted_by_modtime = sorted(
+                        paths, key=lambda x: os.stat(x).st_mtime, reverse=True)
+                    for p in sorted_by_modtime[self.max_experiments-1:]:
+                        print("Deleting old experiment directory {}.".format(p))
+                        try:
+                            shutil.rmtree(p)
+                        except NotADirectoryError:
+                            os.remove(p)
+                else:
+                    raise Exception(
+                        "Too many experiments (greater than {}) in "
+                        "directory {}.".format(self.max_experiments, self.path))
+
+        filename = make_filename(self.prefix + '_' + name, add_date=add_date, config_dict=data)
+        if update_latest:
+            make_symlink(filename, os.path.join(self.path, 'latest'))
+        return ExperimentDirectory(
+            os.path.join(self.path, filename), store=self, force_fresh=force_fresh)
+
+    def __str__(self):
+        return "ExperimentStore({})".format(self.path)
+
+    def __repr__(self):
+        return str(self)
+
+    def get_latest_experiment(self, kind=None):
+        path = self.path
+        if kind is not None:
+            path = os.path.join(self.path, kind)
+
+        latest = os.readlink(os.path.join(path, 'latest'))
+        return ExperimentDirectory(latest, store=self)
+
+    def get_latest_results(self, filename='results'):
+        exp_dir = self.get_latest_exp_dir()
+        return pd.read_csv(exp_dir.path_for(filename))
+
+    def experiment_finished(self, exp_dir, success):
+        dest_name = 'complete' if success else 'incomplete'
+        dest_path = os.path.join(self.path, dest_name)
+        try:
+            os.makedirs(dest_path)
+        except:
+            pass
+        shutil.move(exp_dir.path, dest_path)
+        exp_dir.path = os.path.join(dest_path, os.path.basename(exp_dir.path))
+
+
+def _checked_makedirs(directory, force_fresh):
+    try:
+        os.makedirs(directory)
+    except OSError as e:
+        if e.errno != errno.EEXIST or force_fresh:
+            raise
+    except FileExistsError:
+        if force_fresh:
+            raise
+
+
+class ExperimentDirectory(object):
+    """ Wraps a directory storing data related to an experiment. """
+    def __init__(self, path, store=None, force_fresh=False):
+        self.path = path
+        _checked_makedirs(path, force_fresh)
+        self.store = store
+
+    def path_for(self, path, is_dir=False):
+        """ Get a path for a file, creating necessary subdirs. """
+        if is_dir:
+            filename = ""
+        else:
+            path, filename = os.path.split(path)
+
+        full_path = self.make_directory(path)
+        return os.path.join(full_path, filename)
+
+    def make_directory(self, path):
+        full_path = os.path.join(self.path, path)
+        try:
+            os.makedirs(full_path)
+        except:
+            pass
+        return full_path
+
+
 @contextmanager
-def redirect_stream(stream, filename, mode='w'):
+def redirect_stream(stream, filename, mode='w', **kwargs):
     assert stream in ['stdout', 'stderr']
-    with open(str(filename), mode=mode) as f:
+    with open(str(filename), mode=mode, **kwargs) as f:
         old = getattr(sys, stream)
         setattr(sys, stream, f)
 
@@ -37,27 +164,65 @@ def redirect_stream(stream, filename, mode='w'):
             setattr(sys, stream, old)
 
 
-def make_directory_name(experiments_dir, network_name, add_date=True):
+def make_filename(main_title, directory='', config_dict=None, add_date=True,
+                  sep='_', kvsep=':', extension='', omit=[]):
+    """ Create a filename.
+
+    Parameters
+    ----------
+    main_title: string
+        The main title for the file.
+    directory: string
+        The directory to write the file to.
+    config_dict: dict
+        Keys and values that will be added to the filename. Key/value
+        pairs are put into the filename by the alphabetical order of the keys.
+    add_date: boolean
+        Whether to append the current date/time to the filename.
+    sep: string
+        Separates items in the config dict in the returned filename.
+    kvsep: string
+        Separates keys from values in the returned filename.
+    extension: string
+        Appears at end of filename.
+
+    """
+    if config_dict is None:
+        config_dict = {}
+    if directory and directory[-1] != '/':
+        directory += '/'
+
+    labels = [directory + main_title]
+    key_vals = list(config_dict.items())
+    key_vals.sort(key=lambda x: x[0])
+
+    for key, value in key_vals:
+        if not isinstance(key, str):
+            raise ValueError("keys in config_dict must be strings.")
+        if not isinstance(value, str):
+            raise ValueError("values in config_dict must be strings.")
+
+        if not str(key) in omit and not hasattr(value, '__len__'):
+            labels.append(kvsep.join([key, value]))
+
     if add_date:
-        working_dir = os.path.join(experiments_dir, network_name + "_")
-        dts = str(datetime.datetime.now()).split('.')[0]
-        for c in [":", " ", "-"]:
-            dts = dts.replace(c, "_")
-        working_dir += dts
-    else:
-        working_dir = os.path.join(experiments_dir, network_name)
+        date_time_string = str(datetime.datetime.now()).split('.')[0]
+        for c in ": -":
+            date_time_string = date_time_string.replace(c, '_')
+        labels.append(date_time_string)
 
-    return working_dir
+    file_name = sep.join(labels)
 
+    if extension:
+        if extension[0] != '.':
+            extension = '.' + extension
 
-def _parse_timedelta(s):
-    """ ``s`` should be of the form HH:MM:SS """
-    args = [int(i) for i in s.split(":")]
-    return timedelta(hours=args[0], minutes=args[1], seconds=args[2])
+        file_name += extension
+
+    return file_name
 
 
 def parse_timedelta(d, fmt='%a %b  %d %H:%M:%S %Z %Y'):
-    """ ``s`` should be of the form HH:MM:SS """
     date = parse_date(d, fmt)
     return date - datetime.datetime.now()
 
@@ -837,10 +1002,13 @@ class ConfigStack(dict, metaclass=Singleton):
     def update(self, *args, **kwargs):
         self._stack[-1].update(*args, **kwargs)
 
-    def freeze(self):
+    def freeze(self, remove_callable=False):
         cfg = Config()
         for key in self.keys():
-            cfg[key] = self[key]
+            value = self[key]
+            if remove_callable and callable(value):
+                value = str(value)
+            cfg[key] = value
         return cfg
 
     @property

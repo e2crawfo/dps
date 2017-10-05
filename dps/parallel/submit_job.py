@@ -10,11 +10,10 @@ import time
 import progressbar
 import shutil
 from collections import defaultdict
-
-from spectral_dagger.utils.misc import make_symlink
+import sys
 
 from dps.parallel.base import ReadOnlyJob, zip_root
-from dps.utils import cd, parse_timedelta, make_directory_name
+from dps.utils import cd, parse_timedelta, make_filename, make_symlink
 
 
 DEFAULT_HOST_POOL = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 32)]
@@ -77,9 +76,9 @@ class ParallelSession(object):
 
         # Create directory to run the job from - should be on scratch.
         scratch = os.path.abspath(os.path.expandvars(str(scratch)))
-        job_directory = make_directory_name(
-            scratch,
+        job_directory = make_filename(
             '{}_{}'.format(name, clean_pattern),
+            directory=scratch,
             add_date=add_date)
         os.makedirs(os.path.realpath(job_directory + "/results"))
 
@@ -144,10 +143,7 @@ class ParallelSession(object):
         else:
             n_steps = int(np.ceil(n_jobs_to_run / n_procs))
 
-        if hpc:
-            node_file = " --sshloginfile $PBS_NODEFILE "
-        else:
-            node_file = " --sshloginfile nodefile.txt "
+        node_file = " --sshloginfile nodefile.txt "
 
         execution_time = int((wall_time - cleanup_time).total_seconds())
         abs_seconds_per_step = int(np.floor(execution_time / n_steps))
@@ -186,7 +182,7 @@ class ParallelSession(object):
 
             if host is not ':':
                 print("Testing connection...")
-                failed = self.ssh_execute("echo Connected to \$HOSTNAME", host, robust=True, verbose=True)
+                failed = self.ssh_execute("echo Connected to \$HOSTNAME", host, robust=True)
                 if failed:
                     print("Could not connect.")
                     continue
@@ -263,9 +259,8 @@ class ParallelSession(object):
               "(max_procs: {}, max_hosts: {}).".format(
                   len(hosts), n_procs, max_procs, max_hosts))
 
-        if not hpc:
-            with open('nodefile.txt', 'w') as f:
-                f.write('\n'.join(hosts))
+        with open('nodefile.txt', 'w') as f:
+            f.write('\n'.join(hosts))
 
         return hosts, n_procs
 
@@ -291,6 +286,10 @@ class ParallelSession(object):
             stderr = subprocess.DEVNULL if quiet else None
 
             start = time.time()
+
+            sys.stdout.flush()
+            sys.stderr.flush()
+
             p = subprocess.Popen(command, shell=shell, universal_newlines=True, stdout=stdout, stderr=stderr)
 
             if progress:
@@ -364,9 +363,6 @@ class ParallelSession(object):
                 self.execute_command(command, frmt=False, robust=True)
 
     def step(self, i, indices_for_step):
-        print("Beginning step {} at: ".format(i) + "=" * 90)
-        print(datetime.datetime.now())
-
         if not indices_for_step:
             print("No jobs left to run on step {}.".format(i))
             return
@@ -391,7 +387,7 @@ class ParallelSession(object):
 
         self.execute_command(
             command, frmt=False, robust=True,
-            max_seconds=self.abs_seconds_per_step, progress=True,
+            max_seconds=self.abs_seconds_per_step, progress=not self.hpc,
             quiet=False, verbose=True)
 
     def checkpoint(self, i):
@@ -422,7 +418,8 @@ class ParallelSession(object):
 
         with cd(self.job_directory):
             print("\n" + ("=" * 80))
-            print("Starting job at {}".format(datetime.datetime.now()))
+            job_start = datetime.datetime.now()
+            print("Starting job at {}".format(job_start))
 
             job = ReadOnlyJob(self.input_zip)
             subjobs_remaining = sorted([op.idx for op in job.ready_incomplete_ops(sort=False)])
@@ -432,12 +429,15 @@ class ParallelSession(object):
 
             i = 0
             while subjobs_remaining:
+                step_start = datetime.datetime.now()
+
+                print("Starting step {} at: ".format(i) + "=" * 90)
+                print("{} ({} since start of job)".format(step_start, step_start - job_start))
+
                 if not self.host_pool:
                     with open(os.path.expandvars("$PBS_NODEFILE"), 'r') as f:
-                        self.host_pool = [s.strip() for s in iter(f.readline, '')]
+                        self.host_pool = list(set([s.strip() for s in iter(f.readline, '')]))
                         print(self.host_pool)
-                    with open(os.path.expandvars("$PBS_NODEFILE"), 'r') as f:
-                        print(f.read())
 
                 self.hosts, self.n_procs = self.recruit_hosts(
                     self.hpc, self.min_hosts, self.max_hosts, self.host_pool,
@@ -464,6 +464,4 @@ class ParallelSession(object):
 
                 i += 1
 
-            if not self.hpc:
-                self.execute_command("cp -f {input_zip_abs} {input_zip_abs}.bk")
-                self.execute_command("cp -f results.zip {input_zip_abs}")
+                print("Step duration: {}.".format(datetime.datetime.now() - step_start))

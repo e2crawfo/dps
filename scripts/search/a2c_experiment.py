@@ -44,10 +44,10 @@ alg_config = Config(
     policy_weight=1.0,
     value_reg_weight=0.0,
     value_weight=32.0,
-    entropy_weight=2.0,
+    entropy_weight=0.5,
 
     lr_schedule=1e-4,
-    n_controller_units=128,
+    n_controller_units=64,
     batch_size=16,
     gamma=0.98,
     opt_steps_per_update=10,
@@ -71,12 +71,16 @@ alg_config = Config(
 
 env_config = Config(
     build_env=grid_arithmetic.build_env,
-    reductions=[
-        ('A', lambda x: sum(x)),
-        ('M', lambda x: np.product(x)),
-        ('X', lambda x: max(x)),
-        ('N', lambda x: min(x)),
-    ],
+    # reductions=sum,
+    # reductions=np.product,
+    # reductions=max,
+    reductions=min,
+    # reductions=[
+    #     ('A', lambda x: sum),
+    #     ('M', lambda x: np.product),
+    #     ('X', lambda x: max),
+    #     ('N', lambda x: min),
+    # ],
 
     arithmetic_actions=[
         ('+', lambda acc, digit: acc + digit),
@@ -112,12 +116,10 @@ env_config = Config(
 config.update(alg_config)
 config.update(env_config)
 
-grid = dict(
-    entropy_weight=2.**np.linspace(-5, 3, 11),
-)
+grid = dict(n_train=2**np.arange(10, 18))
 
 from dps.parallel.hyper import build_and_submit_hpc
-clify.wrap_function(build_and_submit_hpc)(config, grid, n_param_settings=None)
+clify.wrap_function(build_and_submit_hpc)(config=config, distributions=grid, n_param_settings=None)
 
 # from dps.parallel.hyper import build_and_submit
 # host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
