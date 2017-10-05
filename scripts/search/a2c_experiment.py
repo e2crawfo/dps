@@ -15,7 +15,7 @@ config = DEFAULT_CONFIG.copy(
     name="A2CExperiment",
 
     n_train=10000,
-    n_val=500,
+    n_val=1000,
     max_steps=1000000,
     display_step=100,
     eval_step=10,
@@ -32,6 +32,7 @@ config = DEFAULT_CONFIG.copy(
     use_gpu=False,
     threshold=0.05,
     render_hook=rl_render_hook,
+    memory_limit_mb=2*1024,
 )
 
 
@@ -43,8 +44,8 @@ alg_config = Config(
 
     policy_weight=1.0,
     value_reg_weight=0.0,
-    value_weight=32.0,
-    entropy_weight=0.5,
+    value_weight=20.0,
+    entropy_weight=0.5,  # use 2.0 if final_reward=False
 
     lr_schedule=1e-4,
     n_controller_units=64,
@@ -118,9 +119,9 @@ config.update(env_config)
 
 grid = dict(n_train=2**np.arange(10, 18))
 
-from dps.parallel.hyper import build_and_submit_hpc
-clify.wrap_function(build_and_submit_hpc)(config=config, distributions=grid, n_param_settings=None)
+# from dps.parallel.hyper import build_and_submit_hpc
+# clify.wrap_function(build_and_submit_hpc)(config=config, distributions=grid, n_param_settings=None)
 
-# from dps.parallel.hyper import build_and_submit
-# host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
-# clify.wrap_function(build_and_submit)(config, grid, n_param_settings=None, host_pool=host_pool)
+from dps.parallel.hyper import build_and_submit
+host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
+clify.wrap_function(build_and_submit)(config, grid, n_param_settings=None, host_pool=host_pool)

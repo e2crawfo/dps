@@ -5,7 +5,7 @@ import pandas as pd
 from pprint import pprint
 import time
 import datetime
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from itertools import product
 from copy import deepcopy
 import os
@@ -14,6 +14,7 @@ import shutil
 import dill
 import sys
 import subprocess
+import matplotlib.pyplot as plt
 
 import clify
 
@@ -334,6 +335,62 @@ def _summarize_search(args):
     pprint(distributions)
 
 
+def _rl_plot(args):
+    path = args.path
+    print("Plotting search stored at {}.".format(Path(path).absolute()))
+
+    job = ReadOnlyJob(path)
+    distributions = job.objects.load_object('metadata', 'distributions')
+    distributions = Config(distributions)
+    keys = sorted(list(distributions.keys()))
+
+    val_data = defaultdict(list)
+
+    for op in job.completed_ops():
+        if 'map' in op.name:
+            try:
+                r = op.get_outputs(job.objects)[0]
+            except BaseException as e:
+                print("Exception thrown when accessing output of op {}:\n    {}".format(op.name, e))
+
+        config = Config(r['config'])
+        key = ",".join("{}={}".format(k, config[k]) for k in keys)
+
+        val_data[key].append(r['history'][-1]['val_data']['RLContext:loss'])
+        del op
+        del r
+
+    n_plots = len(val_data) + 1
+    w = int(np.ceil(np.sqrt(n_plots)))
+    h = int(np.ceil(n_plots / w))
+
+    fig, axes = plt.subplots(h, w, sharex=True, sharey=True, figsize=(15, 10))
+    final_ax = axes[-1, -1]
+
+    for n, key in enumerate(sorted(val_data)):
+        i = int(n / w)
+        j = n % w
+        ax = axes[i, j]
+        for vd in val_data[key]:
+            ax.plot(vd)
+        ax.set_title(key)
+        mean = pd.concat(val_data[key], axis=1).mean(axis=1)
+        final_ax.plot(mean, label=key)
+
+    legend_handles = {l: h for h, l in zip(*final_ax.get_legend_handles_labels())}
+    ordered_labels = sorted(legend_handles.keys())
+    ordered_handles = [legend_handles[l] for l in ordered_labels]
+
+    final_ax.legend(
+        ordered_handles, ordered_labels, loc='center left',
+        bbox_to_anchor=(1.05, 0.5), ncol=1)
+
+    plt.subplots_adjust(
+        left=0.05, bottom=0.05, right=0.86, top=0.97, wspace=0.05, hspace=0.18)
+
+    plt.show()
+
+
 def _zip_search(args):
     job = Job(args.to_zip)
     archive_name = args.name or Path(args.to_zip).stem
@@ -347,6 +404,11 @@ def hyper_search_cl():
         ('path', dict(help="Location of data store for job.", type=str)),
     )
 
+    rl_plot_cmd = (
+        'rl_plot', 'Plot results of an RL hyper-parameter search.', _rl_plot,
+        ('path', dict(help="Location of data store for job.", type=str)),
+    )
+
     zip_cmd = (
         'zip', 'Zip up a job.', _zip_search,
         ('to_zip', dict(help="Path to the job we want to zip.", type=str)),
@@ -354,7 +416,7 @@ def hyper_search_cl():
         ('--delete', dict(help="If True, delete the original.", action='store_true'))
     )
 
-    parallel_cl('Build, run and view hyper-parameter searches.', [summary_cmd, zip_cmd])
+    parallel_cl('Build, run and view hyper-parameter searches.', [summary_cmd, rl_plot_cmd, zip_cmd])
 
 
 def build_and_submit(
