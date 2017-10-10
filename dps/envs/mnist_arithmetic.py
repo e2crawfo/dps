@@ -9,9 +9,7 @@ from dps import cfg
 from dps.register import RegisterBank
 from dps.environment import (
     RegressionEnv, CompositeEnv, InternalEnv)
-from dps.vision import (
-    MnistArithmeticDataset, DRAW,
-    MnistPretrained, MNIST_CONFIG, ClassifierFunc)
+from dps.vision import MnistArithmeticDataset, DRAW, MNIST_CONFIG
 from dps.utils import Param, Config
 from dps.utils.tf import MLP
 

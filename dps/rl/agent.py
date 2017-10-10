@@ -24,7 +24,7 @@ class AgentHead(RLObject):
         if self.agent is None:
             return self.name
         else:
-            return "{}/{}".format(self.agent.name, self.name)
+            return "{}.{}".format(self.agent.name, self.name)
 
     def set_agent(self, agent):
         self.agent = agent

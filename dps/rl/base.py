@@ -1,6 +1,7 @@
 import numpy as np
 import tensorflow as tf
 import abc
+from contextlib import ExitStack
 
 from dps import cfg
 from dps.utils import Param, Parameterized, shift_fill
@@ -95,10 +96,10 @@ class RLContext(Parameterized):
     opt_steps_per_update = Param(1)
     on_policy_updates = Param(True)
 
-    def __init__(self, gamma, truncated_rollouts=False, name=None):
+    def __init__(self, gamma, truncated_rollouts=False, name=""):
         self.mu = None
         self.gamma = gamma
-        self.name = name or self.__class__.__name__
+        self.name = name
         self.terms = []
         self.plugins = []
         self._signals = {}
@@ -110,6 +111,7 @@ class RLContext(Parameterized):
         self.update_batch_size = None
         self.replay_buffer = None
         self.objective_fn_terms = []
+        self.agents = []
         self.rl_objects = []
 
     def __enter__(self):
@@ -121,9 +123,15 @@ class RLContext(Parameterized):
     def __exit__(self, type_, value, tb):
         RLContext.active_context = None
 
+    def trainable_variables(self):
+        return [v for agent in self.agents for v in agent.trainable_variables()]
+
     def add_rl_object(self, obj):
         if isinstance(obj, ObjectiveFunctionTerm):
             self.objective_fn_terms.append(obj)
+        from dps.rl.agent import Agent
+        if isinstance(obj, Agent):
+            self.agents.append(obj)
         assert isinstance(obj, RLObject)
         self.rl_objects.append(obj)
 
@@ -163,25 +171,29 @@ class RLContext(Parameterized):
         self.obs_shape = env.obs_shape
         self.actions_dim = env.actions_dim
 
-        with tf.name_scope(self.name):
-            with self:
-                self.build_core_signals()
+        with ExitStack() as stack:
+            if self.name:
+                stack.enter_context(tf.name_scope(self.name))
 
-                objective = None
-                for term in self.objective_fn_terms:
-                    if objective is None:
-                        objective = term.weight * term.build_graph(self)
-                    else:
-                        objective += term.weight * term.build_graph(self)
-                self.objective = objective
-                self.loss = -objective
+            stack.enter_context(self)
 
-                self.add_recorded_value("objective", self.objective)
+            self.build_core_signals()
 
-                self.optimizer.build_update(self)
+            objective = None
+            for term in self.objective_fn_terms:
+                if objective is None:
+                    objective = term.weight * term.build_graph(self)
+                else:
+                    objective += term.weight * term.build_graph(self)
+            self.objective = objective
+            self.loss = -objective
 
-                self.train_summary_op = tf.summary.merge(self.train_summaries + self.summaries)
-                self.summary_op = tf.summary.merge(self.summaries)
+            self.add_recorded_value("objective", self.objective)
+
+            self.optimizer.build_update(self)
+
+            self.train_summary_op = tf.summary.merge(self.train_summaries + self.summaries)
+            self.summary_op = tf.summary.merge(self.summaries)
 
     def build_core_signals(self):
         self._signals['mask'] = tf.placeholder(
@@ -464,11 +476,18 @@ class RLUpdater(Updater):
         except:
             self.learners = [learners]
 
+        learner_names = [l.name for l in self.learners]
+        assert len(learner_names) == len(set(learner_names)), (
+            "Learners must have unique names. Names are: {}".format(learner_names))
+
         if loss_func is None:
             loss_func = lambda records: records[0]['loss']
         self.loss_func = loss_func
 
-        super(RLUpdater, self).__init__(env)
+        super(RLUpdater, self).__init__(env, **kwargs)
+
+    def trainable_variables(self):
+        return [v for learner in self.learners for v in learner.trainable_variables()]
 
     def _build_graph(self):
         for learner in self.learners:
@@ -484,10 +503,18 @@ class RLUpdater(Updater):
             update_summaries.append(us)
 
             for k, v in tr.items():
-                train_record[learner.name + ":" + k] = v
+                if learner.name:
+                    s = learner.name + ":" + k
+                else:
+                    s = k
+                train_record[s] = v
 
             for k, v in ur.items():
-                update_record[learner.name + ":" + k] = v
+                if learner.name:
+                    s = learner.name + ":" + k
+                else:
+                    s = k
+                update_record[s] = v
 
         train_summaries = (b'').join(train_summaries)
         update_summaries = (b'').join(update_summaries)
@@ -505,7 +532,11 @@ class RLUpdater(Updater):
             summaries.append(s)
 
             for k, v in r.items():
-                record[learner.name + ":" + k] = v
+                if learner.name:
+                    s = learner.name + ":" + k
+                else:
+                    s = k
+                record[s] = v
             records.append(r)
 
         loss = self.loss_func(records)

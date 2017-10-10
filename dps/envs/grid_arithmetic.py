@@ -5,7 +5,8 @@ from dps import cfg
 from dps.register import RegisterBank
 from dps.environment import (
     RegressionDataset, RegressionEnv, CompositeEnv, InternalEnv)
-from dps.vision import MnistPretrained, ClassifierFunc, LeNet, MNIST_CONFIG
+from dps.vision import MNIST_CONFIG
+from dps.utils.tf import LeNet
 from dps.utils import DataContainer, Param, Config
 from dps.rl.policy import Softmax, Normal, ProductDist, Policy, DiscretePolicy
 
@@ -246,6 +247,14 @@ class GridArithmeticDataset(RegressionDataset):
         return new_X, new_Y
 
 
+def classifier_head(x):
+    x = tf.stop_gradient(x)
+    x = tf.argmax(x, 1)
+    x = tf.expand_dims(x, 1)
+    x = tf.cast(x, tf.float32)
+    return x
+
+
 class GridArithmetic(InternalEnv):
     _action_names = ['>', '<', 'v', '^', 'classify_digit', 'classify_op', 'no-op']
 
@@ -322,46 +331,35 @@ class GridArithmetic(InternalEnv):
 
     def init_classifiers(self):
         if self.mnist:
-            build_classifier = cfg.build_classifier
-            classifier_str = cfg.classifier_str
-
             digit_config = cfg.mnist_config.copy(
-                classes=list(range(self.base)), downsample_factor=self.downsample_factor)
+                classes=list(range(self.base)),
+                downsample_factor=self.downsample_factor
+            )
 
-            name = '{}_classes={}_df={}.chk'.format(
-                classifier_str, '_'.join(str(s) for s in digit_config.classes), self.downsample_factor)
-            digit_pretrained = MnistPretrained(
-                None, build_classifier, name=name,
-                model_dir='/tmp/dps/mnist_pretrained/',
-                var_scope_name='digit_classifier', mnist_config=digit_config,
-                downsample_factor=self.downsample_factor)
-            self.build_digit_classifier = ClassifierFunc(digit_pretrained, len(digit_config.classes) + 1)
+            self.digit_classifier = LeNet()
+            self.digit_classifier.set_pretraining_params(digit_config, '/tmp/dps/mnist_pretrained/')
 
             op_config = cfg.mnist_config.copy(
-                classes=self.reductions.keys(), downsample_factor=self.downsample_factor)
+                classes=self.reductions.keys(),
+                downsample_factor=self.downsample_factor
+            )
 
-            name = '{}_classes={}_df={}.chk'.format(
-                classifier_str, '_'.join(str(s) for s in op_config.classes), self.downsample_factor)
+            self.op_classifier = LeNet()
+            self.op_classifier.set_pretraining_params(op_config, '/tmp/dps/mnist_pretrained/')
 
-            op_pretrained = MnistPretrained(
-                None, build_classifier, name=name,
-                model_dir='/tmp/dps/mnist_pretrained/',
-                var_scope_name='op_classifier', mnist_config=op_config,
-                downsample_factor=self.downsample_factor)
-            self.build_op_classifier = ClassifierFunc(op_pretrained, len(op_config.classes) + 1)
+            self.classifier_head = classifier_head
 
         else:
-
-            self.build_digit_classifier = lambda x: tf.where(
-                tf.logical_and(x >= 0, x < 10), x, -1 * tf.ones(tf.shape(x)))
-            self.build_op_classifier = lambda x: tf.where(
-                x >= 10, x, -1 * tf.ones(tf.shape(x)))
+            self.digit_classifer = lambda x, *_: tf.where(tf.logical_and(x >= 0, x < 10), x, -1 * tf.ones(tf.shape(x)))
+            self.op_classifer = lambda x, *_: tf.where(x >= 10, x, -1 * tf.ones(tf.shape(x)))
+            self.classifier_head = lambda x: tf.cast(x, tf.float32)
 
     def build_init_glimpse(self, batch_size, inp, fovea_y, fovea_x):
         centres = tf.concat([fovea_y, fovea_x], axis=-1) * np.array(self.element_shape)
         centres += np.ceil(np.array(self.element_shape) / 2)
         inp = tf.expand_dims(inp, -1)
-        glimpse = tf.image.extract_glimpse(inp, self.element_shape, centres, normalized=False, centered=False)
+        glimpse = tf.image.extract_glimpse(
+            inp, self.element_shape, centres, normalized=False, centered=False)
         glimpse = tf.reshape(glimpse, (-1, np.product(self.element_shape)), name="glimpse")
         return glimpse
 
@@ -417,15 +415,14 @@ class GridArithmetic(InternalEnv):
         glimpse = tf.reshape(glimpse, (-1, np.product(self.element_shape)), name="glimpse")
         return glimpse
 
-    def build_update_storage(self, glimpse, digit, classify_digit, op, classify_op):
-        digit_classification = self.build_digit_classifier(glimpse)
-        digit_vision = tf.cast(digit_classification, tf.float32)
-        digit = (1 - classify_digit) * digit + classify_digit * digit_vision
+    def build_update_storage(self, glimpse, prev_digit, classify_digit, prev_op, classify_op):
+        digit = self.classifier_head(self.digit_classifier(glimpse, self.base + 1, False))
+        new_digit = (1 - classify_digit) * prev_digit + classify_digit * digit
 
-        op_classification = self.build_op_classifier(glimpse)
-        op_vision = tf.cast(op_classification, tf.float32)
-        op = (1 - classify_op) * op + classify_op * op_vision
-        return digit, op
+        op = self.classifier_head(self.op_classifier(glimpse, len(self.reductions), False))
+        new_op = (1 - classify_op) * prev_op + classify_op * op
+
+        return new_digit, new_op
 
     def build_update_fovea(self, right, left, down, up, fovea_y, fovea_x):
         fovea_x = (1 - right - left) * fovea_x + \
@@ -530,18 +527,15 @@ class GridArithmeticEasy(GridArithmetic):
             right, left, down, up, classify_digit, classify_op, _, *arithmetic_actions = self.unpack_actions(a)
             salience = _salience
 
-        op_classification = self.build_op_classifier(_glimpse)
-        op_vision = tf.cast(op_classification, tf.float32)
-        op = (1 - classify_op) * _op + classify_op * op_vision
+        op = self.classifier_head(self.op_classifier(_glimpse, len(self.reductions), False))
+        op = (1 - classify_op) * _op + classify_op * op
 
         orig_digit_factor = tf.ones_like(right) - classify_digit
         for action in arithmetic_actions:
             orig_digit_factor -= action
 
-        digit_classification = self.build_digit_classifier(_glimpse)
-        digit_vision = tf.cast(digit_classification, tf.float32)
-
-        digit = orig_digit_factor * _digit + (1 - orig_digit_factor) * digit_vision
+        digit = self.classifier_head(self.digit_classifier(_glimpse, self.base + 1, False))
+        digit = (1 - classify_digit) * _digit + classify_digit * digit
 
         orig_acc_factor = tf.ones_like(right)
         acc = tf.zeros_like(_acc)

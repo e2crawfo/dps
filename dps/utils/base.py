@@ -360,7 +360,7 @@ class Parameterized(object):
 
     def _resolve_params(self, **kwargs):
         if not self._resolved:
-            for p in self._params:
+            for p in self.param_names():
                 value = kwargs.get(p)
                 if value is None:
                     try:
@@ -375,16 +375,21 @@ class Parameterized(object):
                 setattr(self, p, value)
             self._resolved = True
 
-    @property
-    def _params(self):
+    @classmethod
+    def param_names(cls):
         params = []
-        for p in dir(self):
+        for p in dir(cls):
             try:
-                if p != 'params' and isinstance(getattr(self, p), Param):
+                if p != 'params' and isinstance(getattr(cls, p), Param):
                     params.append(p)
             except:
                 pass
         return params
+
+    def param_values(self):
+        if not self._resolved:
+            raise Exception("Cannot supply `param_values` as parameters have not yet been resolved.")
+        return {n: getattr(self, n) for n in self.param_names()}
 
 
 def du(path):

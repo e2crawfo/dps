@@ -3,25 +3,16 @@ import numpy as np
 import tensorflow as tf
 from pathlib import Path
 from shutil import rmtree
+from contextlib import ExitStack
 
 from dps import cfg
 from dps.utils import NumpySeed
-from dps.utils.tf import MLP
-from dps.vision import (
-    load_or_train, MNIST_CONFIG, MnistPretrained, DRAW, LeNet, train_mnist, EmnistDataset)
-from dps.vision.attention import DRAW_attention_2D
+from dps.utils.tf import MLP, LeNet, FullyConvolutional, SalienceMap
+from dps.vision import MNIST_CONFIG, MNIST_SALIENCE_CONFIG, EmnistDataset
+from dps.train import load_or_train
 
 
-N = 7
-
-
-class_pool = (
-    [str(i) for i in range(10)] + [chr(i + ord('A')) for i in range(26)] +
-    [chr(i + ord('a')) for i in range(26)]
-)
-
-
-def _eval_model(sess, inference, x_ph):
+def _eval_model(inference, x_ph):
     test_dataset = EmnistDataset(
         n_examples=100, classes=cfg.classes, one_hot=True,
         include_blank=cfg.include_blank,
@@ -33,33 +24,14 @@ def _eval_model(sess, inference, x_ph):
     correct_prediction = tf.equal(tf.argmax(inference, 1), tf.argmax(y, 1))
     accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
 
+    sess = tf.get_default_session()
     _loss, _accuracy = sess.run([loss, accuracy], feed_dict={x_ph: x})
     print("Loss: {}, accuracy: {}".format(_loss, _accuracy))
     assert _accuracy > 0.7
 
 
-def build_model(inp, output_size, is_training):
-    if len(inp.shape) == 2:
-        s = int(np.sqrt(int(inp.shape[1])))
-        inp = tf.reshape(inp, (-1, s, s))
-
-    batch_size = tf.shape(inp)[0]
-    with tf.name_scope('DRAW'):
-        glimpse = DRAW_attention_2D(
-            inp,
-            fovea_x=tf.zeros((batch_size, 1)),
-            fovea_y=tf.zeros((batch_size, 1)),
-            delta=tf.ones((batch_size, 1)),
-            std=tf.ones((batch_size, 1)),
-            N=N
-        )
-    glimpse = tf.reshape(glimpse, (-1, N**2))
-    logits = MLP([100, 100], activation_fn=tf.nn.sigmoid)(inp, output_size)
-    return logits
-
-
-def make_checkpoint_dir(config):
-    checkpoint_dir = Path(config.log_root) / 'mnist_test/checkpoint'
+def make_checkpoint_dir(config, name):
+    checkpoint_dir = Path(config.log_root) / name / 'checkpoint'
     try:
         rmtree(str(checkpoint_dir))
     except FileNotFoundError:
@@ -71,10 +43,13 @@ def make_checkpoint_dir(config):
 def test_mnist_load_or_train():
     with NumpySeed(83849):
         n_classes = 10
-        classes = np.random.choice(len(class_pool), n_classes, replace=False)
-        classes = [class_pool[i] for i in classes]
+        classes = EmnistDataset.sample_classes(n_classes)
+
+        def build_function():
+            return MLP([100, 100])
 
         config = MNIST_CONFIG.copy(
+            build_function=build_function,
             patience=np.inf,
             max_steps=10000000,
             classes=classes,
@@ -84,74 +59,62 @@ def test_mnist_load_or_train():
             threshold=0.2,
         )
 
-        checkpoint_dir = make_checkpoint_dir(config)
+        checkpoint_dir = make_checkpoint_dir(config, 'test_mnist')
         output_size = n_classes + 1
 
         g = tf.Graph()
-        with g.device("/cpu:0"):
-            with g.as_default():
+        sess = tf.Session(graph=g)
+        with ExitStack() as stack:
+            stack.enter_context(g.device("/cpu:0"))
+            stack.enter_context(g.as_default())
+            stack.enter_context(sess)
+            stack.enter_context(sess.as_default())
 
-                with tf.variable_scope('mnist') as var_scope:
-                    x_ph = tf.placeholder(tf.float32, (None, config.image_width**2))
-                    inference = build_model(x_ph, output_size, is_training=False)
+            f = build_function()
+            x_ph = tf.placeholder(tf.float32, (None, config.image_width**2))
+            inference = f(x_ph, output_size, False)
 
-                sess = tf.Session()
-                loaded = load_or_train(
-                    sess, build_model, train_mnist, var_scope,
-                    str(checkpoint_dir / 'model.chk'), train_config=config)
-                assert not loaded
+            loaded = load_or_train(config, f.scope, str(checkpoint_dir / 'model.chk'))
+            assert not loaded
 
-                with config:
-                    _eval_model(sess, inference, x_ph)
+            with config:
+                _eval_model(inference, x_ph)
 
         g = tf.Graph()
-        with g.device("/cpu:0"):
-            with g.as_default():
+        sess = tf.Session(graph=g)
+        with ExitStack() as stack:
+            stack.enter_context(g.device("/cpu:0"))
+            stack.enter_context(g.as_default())
+            stack.enter_context(sess)
+            stack.enter_context(sess.as_default())
 
-                with tf.variable_scope('mnist') as var_scope:
-                    x_ph = tf.placeholder(tf.float32, (None, config.image_width**2))
-                    inference = build_model(x_ph, output_size, is_training=False)
+            f = build_function()
+            x_ph = tf.placeholder(tf.float32, (None, config.image_width**2))
+            inference = f(x_ph, output_size, False)
 
-                sess = tf.Session()
-                loaded = load_or_train(
-                    sess, build_model, train_mnist, var_scope,
-                    str(checkpoint_dir / 'model.chk'), train_config=config)
-                assert loaded
+            loaded = load_or_train(config, f.scope, str(checkpoint_dir / 'model.chk'))
+            assert loaded
 
-                with config:
-                    _eval_model(sess, inference, x_ph)
-
-
-def mlp(inp, outp_size, is_training):
-    logits = MLP([100, 100], activation_fn=tf.nn.sigmoid)(inp, outp_size)
-    return logits
+            with config:
+                _eval_model(inference, x_ph)
 
 
-def lenet(inp, output_size, is_training):
-    logits = LeNet(1024, fc_kwargs=dict(activation_fn=tf.nn.sigmoid))(inp, output_size, is_training)
-    return logits
+def build_mlp():
+    return MLP([100, 100])
 
 
-@pytest.mark.parametrize('preprocess', [True, False])
-@pytest.mark.parametrize('classifier', ['mlp', 'lenet'])
-def test_mnist_pretrained(preprocess, classifier):
-    if preprocess:
-        prepper = DRAW(N)
-    else:
-        prepper = None
+def build_lenet():
+    return LeNet(100)
 
-    if classifier == 'mlp':
-        build_classifier = mlp
-    else:
-        build_classifier = lenet
 
+@pytest.mark.parametrize("build_function", [build_mlp, build_lenet])
+def test_mnist_pretrained(build_function):
     with NumpySeed(83849):
         n_classes = 10
-        classes = np.random.choice(len(class_pool), n_classes, replace=False)
-        classes = [class_pool[i] for i in classes]
-        output_size = n_classes + 1
+        classes = EmnistDataset.sample_classes(n_classes)
 
         config = MNIST_CONFIG.copy(
+            build_function=build_function,
             patience=np.inf,
             max_steps=10000000,
             classes=classes,
@@ -161,33 +124,165 @@ def test_mnist_pretrained(preprocess, classifier):
             threshold=0.2,
         )
 
-        checkpoint_dir = make_checkpoint_dir(config)
+        checkpoint_dir = make_checkpoint_dir(config, 'test_mnist')
+        output_size = n_classes + 1
+
+        name_params = ['classes', 'include_blank', 'image_width']
 
         g = tf.Graph()
-        with g.as_default():
+        sess = tf.Session(graph=g)
+        with ExitStack() as stack:
+            stack.enter_context(g.device("/cpu:0"))
+            stack.enter_context(g.as_default())
+            stack.enter_context(sess)
+            stack.enter_context(sess.as_default())
 
-            sess = tf.Session()
+            f = build_function()
+            f.set_pretraining_params(config, name_params, checkpoint_dir)
+            x_ph = tf.placeholder(tf.float32, (None, config.image_width**2))
+            inference = f(x_ph, output_size, False)
 
-            with sess.as_default():
-                build_model = MnistPretrained(
-                    prepper, build_classifier, model_dir=str(checkpoint_dir), mnist_config=config)
-                x_ph = tf.placeholder(tf.float32, (None, config.image_width**2))
-                inference = build_model(x_ph, output_size, is_training=False, preprocess=True)
-                assert not build_model.was_loaded
+            assert f.was_loaded is False
 
-                with config:
-                    _eval_model(sess, inference, x_ph)
+            with config:
+                _eval_model(inference, x_ph)
 
         g = tf.Graph()
-        with g.as_default():
-            sess = tf.Session()
+        sess = tf.Session(graph=g)
+        with ExitStack() as stack:
+            stack.enter_context(g.device("/cpu:0"))
+            stack.enter_context(g.as_default())
+            stack.enter_context(sess)
+            stack.enter_context(sess.as_default())
 
-            with sess.as_default():
-                build_model = MnistPretrained(
-                    prepper, build_classifier, model_dir=str(checkpoint_dir), mnist_config=config)
-                x_ph = tf.placeholder(tf.float32, (None, config.image_width**2))
-                inference = build_model(x_ph, output_size, is_training=False, preprocess=True)
-                assert build_model.was_loaded
+            f = build_function()
+            f.set_pretraining_params(config, name_params, checkpoint_dir)
+            x_ph = tf.placeholder(tf.float32, (None, config.image_width**2))
+            inference = f(x_ph, output_size, False)
 
-                with config:
-                    _eval_model(sess, inference, x_ph)
+            assert f.was_loaded is True
+
+            with config:
+                _eval_model(inference, x_ph)
+
+
+class salience_render_hook(object):
+    def __init__(self):
+        self.axes = None
+
+    def __call__(self, updater):
+        print("Rendering...")
+        import matplotlib.pyplot as plt
+        n_train = n_val = 10
+        n_plots = n_train + n_val
+        train_x = updater.env.datasets['train'].x[:n_train, ...]
+        train_y = updater.env.datasets['train'].y[:n_train, ...]
+        val_x = updater.env.datasets['val'].x[:n_val, ...]
+        val_y = updater.env.datasets['val'].y[:n_val, ...]
+
+        x = np.concatenate([train_x, val_x], axis=0)
+        y = np.concatenate([train_y, val_y], axis=0)
+
+        sess = tf.get_default_session()
+        _y = sess.run(updater.output, feed_dict={updater.x_ph: x})
+
+        x = x.reshape(-1, cfg.image_width, cfg.image_width)
+        y = y.reshape(-1, cfg.output_width, cfg.output_width)
+        _y = _y.reshape(-2, cfg.output_width, cfg.output_width)
+
+        fig, self.axes = plt.subplots(3, n_plots)
+
+        for i in range(n_plots):
+            self.axes[0, i].imshow(x[i])
+            self.axes[1, i].imshow(y[i])
+            self.axes[2, i].imshow(_y[i])
+        plt.show(block=True)
+
+
+def test_mnist_salience_pretrained():
+    with NumpySeed(83849):
+        # def build_function():
+        #     return FullyConvolutional(
+        #         [
+        #             dict(num_outputs=16, kernel_size=10, activation_fn=tf.nn.relu, padding='valid'),
+        #             dict(num_outputs=16, kernel_size=10, activation_fn=tf.nn.relu, padding='valid'),
+        #             dict(num_outputs=1, kernel_size=11, activation_fn=None, padding='valid'),
+        #         ],
+        #         pool=False,
+        #         flatten_output=True
+        #     )
+        # def build_function():
+        #     return FullyConvolutional(
+        #         [
+        #             dict(num_outputs=16, kernel_size=5, activation_fn=tf.nn.relu, padding='valid'),
+        #             dict(num_outputs=16, kernel_size=5, activation_fn=tf.nn.relu, padding='valid'),
+        #             dict(num_outputs=16, kernel_size=5, activation_fn=tf.nn.relu, padding='valid'),
+        #             dict(num_outputs=16, kernel_size=5, activation_fn=tf.nn.relu, padding='valid'),
+        #             dict(num_outputs=1, kernel_size=11, activation_fn=None, padding='valid'),
+        #         ],
+        #         pool=False,
+        #         flatten_output=True
+        #     )
+
+        config = MNIST_SALIENCE_CONFIG.copy(
+            min_digits=1,
+            max_digits=3,
+            patience=np.inf,
+            max_steps=10000000,
+            include_blank=True,
+            image_width=3*14,
+            output_width=14,
+            downsample_factor=2,
+            threshold=0.000,
+            render_hook=salience_render_hook(),
+            render_step=100000,
+            std=0.1
+        )
+
+        def build_function():
+            return SalienceMap(
+                4, MLP([100, 100]),  # LeNet(100),
+                (config.output_width, config.output_width),
+                std=config.std, flatten_output=True)
+        config.build_function = build_function
+
+        checkpoint_dir = make_checkpoint_dir(config, 'test_mnist')
+        output_size = 1
+
+        name_params = ['image_width']
+
+        g = tf.Graph()
+        sess = tf.Session(graph=g)
+        with ExitStack() as stack:
+            stack.enter_context(g.device("/cpu:0"))
+            stack.enter_context(g.as_default())
+            stack.enter_context(sess)
+            stack.enter_context(sess.as_default())
+
+            f = build_function()
+            f.set_pretraining_params(config, name_params, checkpoint_dir)
+            x_ph = tf.placeholder(tf.float32, (None, config.image_width**2))
+            inference = f(x_ph, output_size, False)
+
+            assert f.was_loaded is False
+
+            # with config:
+            #     _eval_model(inference, x_ph)
+
+        g = tf.Graph()
+        sess = tf.Session(graph=g)
+        with ExitStack() as stack:
+            stack.enter_context(g.device("/cpu:0"))
+            stack.enter_context(g.as_default())
+            stack.enter_context(sess)
+            stack.enter_context(sess.as_default())
+
+            f = build_function()
+            f.set_pretraining_params(config, name_params, checkpoint_dir)
+            x_ph = tf.placeholder(tf.float32, (None, config.image_width**2))
+            inference = f(x_ph, output_size, False)
+
+            assert f.was_loaded is True
+
+            # with config:
+            #     _eval_model(inference, x_ph)

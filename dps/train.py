@@ -12,13 +12,17 @@ import dill
 import os
 import socket
 import pandas as pd
+from pathlib import Path
 
 from dps import cfg
 from dps.utils import (
     gen_seed, time_limit, memory_usage, ExperimentStore,
     memory_limit, du, Config, parse_date
 )
-from dps.utils.tf import restart_tensorboard, uninitialized_variables_initializer
+from dps.utils.tf import (
+    restart_tensorboard, uninitialized_variables_initializer,
+    trainable_variables
+)
 
 
 def training_loop(exp_name='', start_time=None):
@@ -411,3 +415,36 @@ class EarlyStopHook(object):
         self._best_record = None
         self._best_step = None
         self._early_stopped = 0
+
+
+def load_or_train(train_config, var_scope, path, sess=None):
+    """ Attempts to load variables into ``var_scope`` from checkpoint stored at ``path``.
+
+    If said checkpoint is not found, trains a model using the function
+    ``train`` and stores the resulting variables for future use.
+
+    Returns True iff model was successfully loaded, False otherwise.
+
+    """
+    sess = sess or tf.get_default_session()
+
+    to_be_loaded = trainable_variables(var_scope.name)
+    saver = tf.train.Saver(var_list=to_be_loaded)
+
+    if path is not None:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+
+    success = False
+    try:
+        print("Trying to load variables for variable scope {} "
+              "from checkpoint {}...".format(var_scope.name, path))
+        saver.restore(sess, path)
+        success = True
+        print("Load successful.")
+    except tf.errors.NotFoundError:
+        print("Loading failed, training a model...")
+        with train_config.copy(save_path=path):
+            training_loop(var_scope.name)
+        saver.restore(sess, path)
+        print("Training successful.")
+    return success

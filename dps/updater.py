@@ -19,7 +19,7 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
         return self._n_experiences
 
     def build_graph(self):
-        with tf.variable_scope(self.scope or self.__class__.__name__) as scope:
+        with tf.name_scope(self.scope or self.__class__.__name__) as scope:
             self._scope = scope
 
             self._build_graph()
@@ -63,22 +63,17 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
         assert mode in 'val test'.split()
         raise Exception("NotImplemented")
 
+    def trainable_variables(self):
+        raise Exception("AbstractMethod")
+
     def save(self, session, filename):
-        if self._scope is None:
-            raise Exception(
-                "Cannot save variables for an Updater that "
-                "has not had its `build_graph` method called.")
-        updater_variables = trainable_variables(self._scope.name)
+        updater_variables = self.trainable_variables()
         saver = tf.train.Saver(updater_variables)
         path = saver.save(tf.get_default_session(), filename)
         return path
 
     def restore(self, session, path):
-        if self._scope is None:
-            raise Exception(
-                "Cannot save variables for an Updater that has "
-                "not had its `build_graph` method called.")
-        updater_variables = trainable_variables(self._scope.name)
+        updater_variables = self.trainable_variables()
         saver = tf.train.Saver(updater_variables)
         saver.restore(tf.get_default_session(), path)
 
@@ -117,15 +112,18 @@ class DifferentiableUpdater(Updater):
         tf.get_default_session().run(
             self._assign_is_training, feed_dict={self._set_is_training: is_training})
 
+    def trainable_variables(self):
+        return trainable_variables(self.f.scope_name)
+
     def _build_graph(self):
         self.is_training = tf.Variable(False, trainable=False)
         self._set_is_training = tf.placeholder(tf.bool, ())
         self._assign_is_training = tf.assign(self.is_training, self._set_is_training)
 
-        self.x_ph = tf.placeholder(tf.float32, (None,) + self.obs_shape)
-        self.target_ph = tf.placeholder(tf.float32, (None, self.actions_dim))
+        self.x_ph = tf.placeholder(tf.float32, (None,) + self.obs_shape, name="x_ph")
+        self.target_ph = tf.placeholder(tf.float32, (None, self.actions_dim), name="target_ph")
         self.output = self.f(self.x_ph, self.actions_dim, self.is_training)
-        self.loss = self.env.build_loss(self.output, self.target_ph)
+        self.loss = tf.reduce_mean(self.env.build_loss(self.output, self.target_ph))
         self.reward = tf.reduce_mean(self.env.build_reward(self.output, self.target_ph))
         self.mean_value = tf.reduce_mean(self.output)
 

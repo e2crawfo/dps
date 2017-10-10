@@ -1,12 +1,15 @@
 import subprocess as sp
 import numpy as np
-from pathlib import Path
 from collections import deque
+import os
+from pathlib import Path
+import hashlib
 
 import tensorflow as tf
 from tensorflow.python.ops import random_ops
 from tensorflow.python.framework import ops
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
+from tensorflow.contrib.slim.python.slim.nets.vgg import vgg_a, vgg_16, vgg_19
 from tensorflow.contrib.slim import fully_connected
 
 import dps
@@ -28,42 +31,107 @@ def uninitialized_variables_initializer():
     return uninit_init
 
 
-def load_or_train(sess, build_model, train, var_scope, path=None, train_config=None):
-    """ Attempts to load variables into ``var_scope`` from checkpoint stored at ``path``.
-
-    If said variables are not found, trains a model using the function
-    ``train`` and stores the resulting variables for future use.
-
-    Returns True iff model was successfully loaded, False otherwise.
+class ScopedFunction(object):
+    """
+    Parameters
+    ----------
+    scope: string or VariableScope instance
+        The scope where we will build the variables, or a string giving the name of a variable
+        scope to be created.
 
     """
-    to_be_loaded = trainable_variables(var_scope.name)
-    saver = tf.train.Saver(var_list=to_be_loaded)
+    def __init__(self, scope=None):
+        if scope is None:
+            scope = self.__class__.__name__
+        if isinstance(scope, tf.VariableScope):
+            self.scope_name = scope.name
+            self.scope = scope
+        else:
+            self.scope_name = scope
+            self.scope = None
 
-    if path is not None:
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self.n_builds = 0
 
-    success = False
-    try:
-        print("Trying to load variables for variable scope {} from checkpoint {}...".format(var_scope.name, path))
-        saver.restore(sess, path)
-        success = True
-        print("Load successful.")
-    except tf.errors.NotFoundError:
-        print("Loading failed, training a model...")
-        with train_config:
-            train(build_model, var_scope, path)
-        saver.restore(sess, path)
-        print("Training successful.")
-    return success
+        self.initialized = False
+        self.path = None
+        self.directory = None
+        self.train_config = None
+        self.was_loaded = None
+
+        self.do_pretraining = False
+
+    def resolve_scope(self):
+        if self.scope is None:
+            with tf.variable_scope(self.scope_name):
+                self.scope = tf.get_variable_scope()
+
+    def _call(self, inp, output_size, is_training):
+        raise Exception("NotImplemented")
+
+    def __call__(self, inp, output_size, is_training):
+        self.resolve_scope()
+
+        with tf.variable_scope(self.scope, reuse=self.n_builds > 0):
+            outp = self._call(inp, output_size, is_training)
+
+        self.n_builds += 1
+
+        self._maybe_initialize()
+
+        return outp
+
+    def _maybe_initialize(self):
+        if not self.initialized and (self.n_builds > 0 and self.do_pretraining):
+            from dps.train import load_or_train
+            self.was_loaded = load_or_train(self.train_config, self.scope, self.path)
+            self.initialized = True
+
+    def set_pretraining_params(self, train_config, name_params=None, directory=None):
+        assert train_config is not None
+        self.directory = str(directory or Path(dps.cfg.log_dir))
+        name_params = sorted(name_params or [])
+        param_hash = get_param_hash(train_config, name_params)
+        filename = "{}_{}.chk".format(self.scope_name, param_hash)
+        self.path = os.path.join(self.directory, filename)
+        self.train_config = train_config
+        self.do_pretraining = True
+
+        self._maybe_initialize()
 
 
-class MLP(object):
-    def __init__(self, n_units=None, **fc_kwargs):
+def get_param_hash(train_config, name_params):
+    param_str = []
+    for name in name_params:
+        value = train_config[name]
+        try:
+            value = sorted(value)
+        except:
+            pass
+        param_str.append("{}={}".format(name, value))
+    param_str = "_".join(param_str)
+    param_hash = hashlib.sha1(param_str.encode()).hexdigest()
+    return param_hash
+
+
+class ScopedFunctionWrapper(ScopedFunction):
+    """ Similar to ScopedFunction, but used in cases where the function we want
+        to scope does not inherit from ScopedFunction. """
+
+    def __init__(self, function, scope=None):
+        self.function = function
+        super(ScopedFunctionWrapper, self).__init__(scope)
+
+    def _call(self, inp, output_size, is_training):
+        return self.function(inp, output_size, is_training)
+
+
+class MLP(ScopedFunction):
+    def __init__(self, n_units=None, scope=None, **fc_kwargs):
         self.n_units = n_units or []
         self.fc_kwargs = fc_kwargs
+        super(MLP, self).__init__(scope)
 
-    def __call__(self, inp, output_size):
+    def _call(self, inp, output_size, is_training):
         if len(inp.shape) > 2:
             trailing_dim = np.product([int(s) for s in inp.shape[1:]])
             inp = tf.reshape(inp, (tf.shape(inp)[0], trailing_dim))
@@ -73,6 +141,173 @@ class MLP(object):
         fc_kwargs = self.fc_kwargs.copy()
         fc_kwargs['activation_fn'] = None
         return fully_connected(hidden, output_size, **fc_kwargs)
+
+
+class LeNet(ScopedFunction):
+    def __init__(
+            self, n_units=1024, dropout_keep_prob=0.5,
+            conv_kwargs=None, fc_kwargs=None, scope=None):
+
+        self.n_units = n_units
+        self.dropout_keep_prob = dropout_keep_prob
+        self.conv_kwargs = conv_kwargs or {}
+        self.fc_kwargs = fc_kwargs or {}
+        super(LeNet, self).__init__(scope)
+
+    def _call(self, images, output_size, is_training):
+        output_size = int(output_size)
+        if len(images.shape) <= 1:
+            raise Exception()
+
+        if len(images.shape) == 2:
+            s = int(np.sqrt(int(images.shape[1])))
+            images = tf.reshape(images, (-1, s, s, 1))
+
+        if len(images.shape) == 3:
+            images = tf.expand_dims(images, -1)
+
+        slim = tf.contrib.slim
+        net = images
+        net = slim.conv2d(net, 32, 5, scope='conv1', **self.conv_kwargs)
+        net = slim.max_pool2d(net, 2, 2, scope='pool1')
+        net = slim.conv2d(net, 64, 5, scope='conv2', **self.conv_kwargs)
+        net = slim.max_pool2d(net, 2, 2, scope='pool2')
+        net = slim.flatten(net)
+
+        net = slim.fully_connected(net, self.n_units, scope='fc3', **self.fc_kwargs)
+        net = slim.dropout(net, self.dropout_keep_prob, is_training=is_training, scope='dropout3')
+
+        fc_kwargs = self.fc_kwargs.copy()
+        fc_kwargs['activation_fn'] = None
+
+        outp = slim.fully_connected(net, output_size, scope='fc4', **fc_kwargs)
+        return outp
+
+
+class VGGNet(ScopedFunction):
+
+    def __init__(self, kind, scope=None):
+        assert kind in 'a 16 19'.split()
+        self.kind = kind
+        super(VGGNet, self).__init__(scope)
+
+    def _call(self, images, output_size, is_training):
+        output_size = int(output_size)
+        if len(images.shape) <= 1:
+            raise Exception()
+        if len(images.shape) == 2:
+            s = int(np.sqrt(int(images.shape[1])))
+            images = tf.reshape(images, (-1, s, s, 1))
+        if len(images.shape) == 3:
+            images = tf.expand_dims(images, -1)
+
+        if self.kind == 'a':
+            return vgg_a(images, output_size, is_training)
+        elif self.kind == '16':
+            return vgg_16(images, output_size, is_training)
+        elif self.kind == '19':
+            return vgg_19(images, output_size, is_training)
+        else:
+            raise Exception()
+
+
+class FullyConvolutional(ScopedFunction):
+    def __init__(self, layer_kwargs, pool=True, flatten_output=False, scope=None):
+        self.layer_kwargs = layer_kwargs
+        self.pool = pool
+        self.flatten_output = flatten_output
+        self.scope = scope
+        super(FullyConvolutional, self).__init__(scope)
+
+    def _call(self, images, output_size, is_training):
+        output_size = int(output_size)
+        if len(images.shape) <= 1:
+            raise Exception()
+
+        if len(images.shape) == 2:
+            s = int(np.sqrt(int(images.shape[1])))
+            images = tf.reshape(images, (-1, s, s, 1))
+
+        if len(images.shape) == 3:
+            images = tf.expand_dims(images, -1)
+        slim = tf.contrib.slim
+        net = images
+
+        for i, kw in enumerate(self.layer_kwargs):
+            net = slim.conv2d(net, scope='conv'+str(i), **kw)
+            if self.pool:
+                net = slim.max_pool2d(net, 2, 2, scope='pool'+str(i))
+
+        if self.flatten_output:
+            net = tf.reshape(net, (tf.shape(net)[0], int(np.prod(net.shape[1:]))))
+
+        return net
+
+
+class SalienceMap(ScopedFunction):
+    def __init__(
+            self, n_locs, func, output_dims, std=None,
+            flatten_output=False, scope=None):
+        self.n_locs = n_locs
+        self.func = func
+        self.output_dims = output_dims
+        self.std = std
+        self.flatten_output = flatten_output
+        super(SalienceMap, self).__init__(scope)
+
+    def _call(self, inp, output_size, is_training):
+        if self.std is None:
+            func_output = self.func(inp, self.n_locs*5, is_training)
+        else:
+            func_output = self.func(inp, self.n_locs*3, is_training)
+
+        y = (np.arange(self.output_dims[0]).astype('f') + 0.5) / self.output_dims[0]
+        x = (np.arange(self.output_dims[1]).astype('f') + 0.5) / self.output_dims[1]
+        yy, xx = tf.meshgrid(y, x, indexing='ij')
+        yy = yy[None, ...]
+        xx = xx[None, ...]
+        output = None
+
+        params = tf.nn.sigmoid(func_output/100.)
+
+        per_loc_params = tf.split(params, self.n_locs, axis=1)
+        for p in per_loc_params:
+            if self.std is None:
+                weight, mu_y, mu_x, std_y, std_x = tf.unstack(p, axis=1)
+                std_y = std_y[:, None, None]
+                std_x = std_x[:, None, None]
+            else:
+                weight, mu_y, mu_x = tf.unstack(p, axis=1)
+                try:
+                    std_y = float(self.std)
+                    std_x = float(self.std)
+                except:
+                    std_y, std_x = self.std
+
+            weight = weight[:, None, None]
+            mu_y = mu_y[:, None, None]
+            mu_x = mu_x[:, None, None]
+
+            new = weight * tf.exp(
+                0.5 * (
+                    0. -
+                    ((yy - mu_y)/std_y)**2 -
+                    ((xx - mu_x)/std_x)**2
+                )
+            )
+
+            if output is None:
+                output = new
+            else:
+                output += new
+
+        if self.flatten_output:
+            output = tf.reshape(
+                output,
+                (tf.shape(output)[0], int(np.prod(output.shape[1:])))
+            )
+
+        return output
 
 
 class ScopedCell(RNNCell):
@@ -240,7 +475,7 @@ class CompositeCell(ScopedCell):
 
     def _call(self, inp, state):
         output, new_state = self.cell(inp, state)
-        return self.output(output, self._output_size), new_state
+        return self.output(output, self._output_size, False), new_state
 
     @property
     def state_size(self):
