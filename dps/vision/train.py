@@ -2,9 +2,9 @@ import numpy as np
 
 from dps import cfg
 from dps.updater import DifferentiableUpdater
-from dps.utils import DpsConfig
 from dps.environment import RegressionEnv, RegressionDataset
 from dps.utils import Param
+from dps.config import DEFAULT_CONFIG
 
 from mnist_arithmetic import load_emnist
 from mnist_arithmetic import MnistArithmeticDataset as _MnistArithmeticDataset
@@ -19,6 +19,7 @@ class MnistArithmeticDataset(RegressionDataset):
     reductions = Param()
     base = Param(10)
     downsample_factor = Param(1)
+    n_examples = Param()
 
     def __init__(self, *args, **kwargs):
         _dataset = _MnistArithmeticDataset(cfg.data_dir, **self.param_values())
@@ -26,11 +27,12 @@ class MnistArithmeticDataset(RegressionDataset):
 
 
 class EmnistDataset(RegressionDataset):
-    class_pool = (
+    class_pool = ''.join(
         [str(i) for i in range(10)] +
         [chr(i + ord('A')) for i in range(26)] +
         [chr(i + ord('a')) for i in range(26)]
     )
+    n_examples = Param()
 
     @staticmethod
     def sample_classes(n_classes):
@@ -39,6 +41,10 @@ class EmnistDataset(RegressionDataset):
 
     def __init__(self, n_examples, classes, **kwargs):
         x, y, class_map = load_emnist(cfg.data_dir, classes, max_examples=n_examples, **kwargs)
+        if x.shape[0] < n_examples:
+            raise Exception(
+                "Too few datapoints. Requested {}, "
+                "only {} are available.".format(n_examples, x.shape[0]))
         super(EmnistDataset, self).__init__(x, y)
 
 
@@ -52,6 +58,7 @@ class MnistSalienceDataset(RegressionDataset):
     output_width = Param(10)
     std = Param(0.1)
     flatten_output = Param(False)
+    n_examples = Param()
 
     def __init__(self, *args, **kwargs):
         _dataset = _MnistSalienceDataset(cfg.data_dir, **self.param_values())
@@ -82,7 +89,7 @@ def build_mnist_env():
     return RegressionEnv(train_dataset, val_dataset, test_dataset)
 
 
-MNIST_CONFIG = DpsConfig(
+MNIST_CONFIG = DEFAULT_CONFIG.copy(
     get_updater=get_updater,
     build_env=build_mnist_env,
     batch_size=128,
@@ -115,15 +122,15 @@ def build_mnist_salience_env():
     return RegressionEnv(train_dataset, val_dataset, test_dataset)
 
 
-MNIST_SALIENCE_CONFIG = DpsConfig(
+MNIST_SALIENCE_CONFIG = DEFAULT_CONFIG.copy(
     get_updater=get_updater,
     build_env=build_mnist_salience_env,
-    batch_size=8,
+    batch_size=32,
     eval_step=1000,
     display_step=10,
     max_steps=100000,
     patience=10000,
-    lr_schedule="Exp(0.001, 0, 10000, 0.9)",
+    lr_schedule="Exp(0.0001, 0, 10000, 0.9)",
     optimizer_spec="adam",
     threshold=-np.inf,
     n_train=10000,
@@ -132,8 +139,8 @@ MNIST_SALIENCE_CONFIG = DpsConfig(
     downsample_factor=2,
     loss_type='2-norm',
     classes=EmnistDataset.class_pool,
-    max_overlap=1,
-    std=0.1,
+    max_overlap=20,
+    std=0.01,
     output_width=14,
     image_width=3*14,
     flatten_output=True,

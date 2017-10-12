@@ -16,6 +16,22 @@ import dps
 from dps.utils.base import Schedule, _bool, popleft, eval_schedule
 
 
+def extract_glimpse_numpy_like(inp, glimpse_shape, glimpse_offsets, name=None, uniform_noise=None):
+    """ Taken from: https://github.com/tensorflow/tensorflow/issues/2134#issuecomment-262525617
+
+    Works like numpy with pixel coordinates starting at (0, 0), returns:
+       inp[:, glimpse_offset[0] : glimpse_offset[0] + glimpse_size[0],
+                glimpse_offset[1] : glimpse_offset[1] + glimpse_size[1], :]
+
+    """
+    assert(len(glimpse_shape) == 2)
+    inp_shape = tuple(inp.get_shape().as_list())  # includes batch and number of channels
+    corrected_offsets = 2 * glimpse_offsets - np.array(inp_shape[1:3]) + np.array(glimpse_shape)
+    return tf.image.extract_glimpse(
+        inp, glimpse_shape, corrected_offsets, centered=True, normalized=False,
+        uniform_noise=uniform_noise, name=name)
+
+
 def uninitialized_variables_initializer():
     """ init only uninitialized variables - from
         http://stackoverflow.com/questions/35164529/
@@ -89,6 +105,8 @@ class ScopedFunction(object):
     def set_pretraining_params(self, train_config, name_params=None, directory=None):
         assert train_config is not None
         self.directory = str(directory or Path(dps.cfg.log_dir))
+        if isinstance(name_params, str):
+            name_params = name_params.split()
         name_params = sorted(name_params or [])
         param_hash = get_param_hash(train_config, name_params)
         filename = "{}_{}.chk".format(self.scope_name, param_hash)
@@ -180,8 +198,8 @@ class LeNet(ScopedFunction):
         fc_kwargs = self.fc_kwargs.copy()
         fc_kwargs['activation_fn'] = None
 
-        outp = slim.fully_connected(net, output_size, scope='fc4', **fc_kwargs)
-        return outp
+        net = slim.fully_connected(net, output_size, scope='fc4', **fc_kwargs)
+        return net
 
 
 class VGGNet(ScopedFunction):

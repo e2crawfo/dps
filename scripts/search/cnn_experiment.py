@@ -10,20 +10,19 @@ from dps.train import training_loop
 from dps.updater import DifferentiableUpdater
 from dps.envs.grid_arithmetic import GridArithmeticDataset
 from dps.environment import RegressionEnv
-from dps.vision import LeNet, VGGNet
+from dps.vision import LeNet
 from dps.utils import Config
 
 
 def build_env():
     train = GridArithmeticDataset(n_examples=cfg.n_train)
     val = GridArithmeticDataset(n_examples=cfg.n_val)
-    return RegressionEnv(train, val)
+    test = GridArithmeticDataset(n_examples=cfg.n_val)
+    return RegressionEnv(train, val, test)
 
 
 def get_updater(env):
-    # output_size = cfg.largest_digit + 2 if cfg.loss_type == "xent" else 1
     build_model = LeNet(n_units=int(cfg.n_controller_units))
-    # build_model = LeNet(n_units=cfg.n_controller_units)
     return DifferentiableUpdater(env, build_model)
 
 
@@ -66,14 +65,11 @@ env_config = Config(
     mnist=True,
     min_digits=2,
     max_digits=3,
-    reductions=lambda x: sum(x),
-    #     lambda x: np.product(x),
-    #     lambda x: len(x),
-    #     lambda x: max(x),
-    #     lambda x: min(x)
+    reductions=lambda x: np.product(x),
     op_loc=None,
     base=10,
     largest_digit=26,
+    final_reward=True,
 )
 
 alg_config = Config(

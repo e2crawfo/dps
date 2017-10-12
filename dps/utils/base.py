@@ -283,7 +283,8 @@ def image_to_string(array):
     """ Convert an image stored as an array to an ascii art string """
     if array.ndim == 1:
         array = array.reshape(-1, int(np.sqrt(array.shape[0])))
-    array = array / array.max()
+    if not np.isclose(array.max(), 0.0):
+        array = array / array.max()
     image = [char_map(value) for value in array.flatten()]
     image = np.reshape(image, array.shape)
     return '\n'.join(''.join(c for c in row) for row in image)
@@ -882,6 +883,10 @@ class Config(dict, MutableMapping):
         nested_update(self, kwargs)
 
 
+class ClearConfig(Config):
+    pass
+
+
 Config._reserved_keys = dir(Config)
 
 
@@ -941,6 +946,15 @@ class Singleton(type):
 class ConfigStack(dict, metaclass=Singleton):
     _stack = []
 
+    @property
+    def config_sequence(self):
+        """ Get all configs up the the first occurence of an instance of ClearConfig """
+        stack = ConfigStack._stack[::-1]
+        for i, config in enumerate(stack):
+            if isinstance(config, ClearConfig):
+                return stack[:i]
+        return stack
+
     def clear_stack(self, default=None):
         self._stack.clear()
         if default is not None:
@@ -965,7 +979,7 @@ class ConfigStack(dict, metaclass=Singleton):
 
     def _keys(self):
         keys = set()
-        for config in ConfigStack._stack[::-1]:
+        for config in self.config_sequence:
             keys |= config.keys()
         return list(keys)
 
@@ -987,7 +1001,7 @@ class ConfigStack(dict, metaclass=Singleton):
             return True
 
     def __getitem__(self, key):
-        for config in reversed(ConfigStack._stack):
+        for config in self.config_sequence:
             if key in config:
                 return config[key]
         raise KeyError("Cannot find a value for key `{}`".format(key))

@@ -38,6 +38,8 @@ pandas==0.19.2
 pandocfilters==1.4.1
 pexpect==4.2.1
 pickleshare==0.7.4
+Pillow==4.3.0
+progressbar2==3.34.3
 prompt-toolkit==1.0.14
 protobuf==3.2.0
 psutil==5.2.2
@@ -62,8 +64,7 @@ seaborn==0.7.1
 simplegeneric==0.8.1
 six==1.10.0
 sklearn==0.0
-spectral-dagger==0.1.0.dev0
-tensorflow==1.0.1
+tensorflow==1.1
 terminado==0.6
 testpath==0.3
 tornado==4.4.3

@@ -15,7 +15,7 @@ from gym.spaces import prng
 
 from dps import cfg
 from dps.rl import RolloutBatch
-from dps.utils import Parameterized, Param
+from dps.utils import Parameterized, Param, image_to_string
 
 
 class BatchBox(gym.Space):
@@ -128,8 +128,6 @@ class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
 
 
 class RegressionDataset(Parameterized):
-    n_examples = Param()
-
     def __init__(self, x, y, shuffle=True, **kwargs):
         self.x = x
         self.y = y
@@ -139,6 +137,10 @@ class RegressionDataset(Parameterized):
         self._index_in_epoch = 0
 
         super(RegressionDataset, self).__init__(**kwargs)
+
+    @property
+    def n_examples(self):
+        return self.x.shape[0]
 
     @property
     def obs_shape(self):
@@ -233,8 +235,7 @@ class RegressionEnv(Env):
         self.batch_size = None
 
         self.action_ph, self.loss, self.target_ph = None, None, None
-
-        self.reset()
+        self.t = 0
 
     def __str__(self):
         return "<RegressionEnv train={} val={} test={}>".format(self.train, self.val, self.test)
@@ -367,6 +368,7 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
         self._assert_defined('action_names')
         self._assert_defined('rb')
         self.mode = 'train'
+        self._built = False
         super(TensorFlowEnv, self).__init__(**kwargs)
 
     @property
@@ -409,6 +411,10 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
 
                 initial_registers = self.build_init(initial_registers)
                 t = timestep_tensor(n_rollouts_ph, T_ph)
+
+                # Force build-step to be called in a safe environment for the first time.
+                dummy_action = tf.zeros((n_rollouts_ph, self.actions_dim))
+                self.build_step(t, initial_registers, dummy_action)
 
                 _output = dynamic_rnn(
                     sampler_cell, t, initial_state=(initial_registers, initial_policy_state),
@@ -756,10 +762,13 @@ class CompositeEnv(Env):
         for b in range(batch_size):
             print("\nElement {} of batch ".format(b) + "-" * 40)
 
-            if external_obs[0].shape[-1] < 40:
-                print("External observations: ")
-                for i, e in enumerate(external_obs):
-                    print("{}: {}".format(i, e[b, :]))
+            if getattr(self, 'obs_is_image', None):
+                for e in external_obs:
+                    print(image_to_string(e[b, :]))
+            else:
+                if np.product(external_obs[0].shape[1:]) < 40:
+                    for e in external_obs:
+                        print(e[b, :])
 
             values = np.zeros((total_internal_steps+1, len(row_names)))
             external_t, internal_t = 0, 0

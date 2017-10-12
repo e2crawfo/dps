@@ -226,22 +226,21 @@ def test_mnist_salience_pretrained():
 
         config = MNIST_SALIENCE_CONFIG.copy(
             min_digits=1,
-            max_digits=3,
+            max_digits=4,
             patience=np.inf,
             max_steps=10000000,
-            include_blank=True,
             image_width=3*14,
             output_width=14,
             downsample_factor=2,
-            threshold=0.000,
+            threshold=0.,
             render_hook=salience_render_hook(),
             render_step=100000,
-            std=0.1
+            std=0.05
         )
 
         def build_function():
             return SalienceMap(
-                4, MLP([100, 100]),  # LeNet(100),
+                5, MLP([100, 100]),  # LeNet(100),
                 (config.output_width, config.output_width),
                 std=config.std, flatten_output=True)
         config.build_function = build_function
@@ -262,7 +261,7 @@ def test_mnist_salience_pretrained():
             f = build_function()
             f.set_pretraining_params(config, name_params, checkpoint_dir)
             x_ph = tf.placeholder(tf.float32, (None, config.image_width**2))
-            inference = f(x_ph, output_size, False)
+            f(x_ph, output_size, False)
 
             assert f.was_loaded is False
 
@@ -280,7 +279,7 @@ def test_mnist_salience_pretrained():
             f = build_function()
             f.set_pretraining_params(config, name_params, checkpoint_dir)
             x_ph = tf.placeholder(tf.float32, (None, config.image_width**2))
-            inference = f(x_ph, output_size, False)
+            f(x_ph, output_size, False)
 
             assert f.was_loaded is True
 

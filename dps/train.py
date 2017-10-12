@@ -17,7 +17,7 @@ from pathlib import Path
 from dps import cfg
 from dps.utils import (
     gen_seed, time_limit, memory_usage, ExperimentStore,
-    memory_limit, du, Config, parse_date
+    memory_limit, du, Config, ClearConfig, parse_date
 )
 from dps.utils.tf import (
     restart_tensorboard, uninitialized_variables_initializer,
@@ -443,8 +443,9 @@ def load_or_train(train_config, var_scope, path, sess=None):
         print("Load successful.")
     except tf.errors.NotFoundError:
         print("Loading failed, training a model...")
-        with train_config.copy(save_path=path):
-            training_loop(var_scope.name)
+        with ClearConfig():
+            with train_config.copy(save_path=path):
+                training_loop(var_scope.name)
         saver.restore(sess, path)
         print("Training successful.")
     return success
