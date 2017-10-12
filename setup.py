@@ -20,7 +20,7 @@ setup(
         "pytest",
         "future",
         "six",
-        "tensorflow",
+        # "tensorflow",
         "gym",
         "tabulate",
         "psutil",

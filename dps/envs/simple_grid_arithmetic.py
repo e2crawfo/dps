@@ -52,7 +52,7 @@ config = Config(
     T=30,
     min_digits=2,
     max_digits=3,
-    shape=(4, 1),
+    shape=(2, 2),
 
     n_train=10000,
     n_val=500,
@@ -60,9 +60,10 @@ config = Config(
     show_op=True,
     reward_window=0.499,
     salience_action=True,
-    salience_shape=(3, 3),
+    salience_shape=(2, 2),
     initial_salience=False,
     visible_glimpse=False,
+    final_reward=True,
 
     ablation='easy',
 
