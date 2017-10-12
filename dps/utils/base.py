@@ -918,6 +918,7 @@ def _parse_dps_config_from_file(key=None):
         update_latest=_config.getboolean(key, 'update_latest'),
         save_summaries=_config.getboolean(key, 'save_summaries'),
         data_dir=process_path(_config.get(key, 'data_dir')),
+        model_dir=process_path(_config.get(key, 'model_dir')),
         log_root=process_path(_config.get(key, 'log_root')),
         display=_config.getboolean(key, 'display'),
         save_display=_config.getboolean(key, 'save_display'),
