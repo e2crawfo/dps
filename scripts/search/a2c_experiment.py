@@ -51,7 +51,7 @@ alg_config = Config(
     entropy_weight=0.5,  # use 2.0 if final_reward=False
 
     lr_schedule=1e-4,
-    n_controller_units=64,
+    n_controller_units=128,
     batch_size=16,
     gamma=0.98,
     opt_steps_per_update=10,
@@ -78,13 +78,13 @@ env_config = Config(
     # reductions=sum,
     # reductions=np.product,
     # reductions=max,
-    reductions=min,
-    # reductions=[
-    #     ('A', lambda x: sum),
-    #     ('M', lambda x: np.product),
-    #     ('X', lambda x: max),
-    #     ('N', lambda x: min),
-    # ],
+    # reductions=min,
+    reductions=[
+        ('A', sum),
+        ('M', np.product),
+        ('X', max),
+        ('N', min),
+    ],
 
     arithmetic_actions=[
         ('+', lambda acc, digit: acc + digit),
@@ -140,7 +140,7 @@ env_config = Config(
 config.update(alg_config)
 config.update(env_config)
 
-# grid = dict(n_train=2**np.arange(10, 18))
+grid = dict(n_train=2**np.arange(10, 18))
 
 # from dps.parallel.hyper import build_and_submit_hpc
 # clify.wrap_function(build_and_submit_hpc)(config=config, distributions=grid, n_param_settings=None)

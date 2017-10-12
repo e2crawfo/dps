@@ -124,6 +124,7 @@ class ParallelSession(object):
             host_pool = []
             n_nodes = max_hosts
             n_procs = n_nodes * ppn
+            n_steps = int(np.ceil(n_jobs_to_run / n_procs))
         else:
             self.__dict__.update(locals())
             host_pool = host_pool or DEFAULT_HOST_POOL
@@ -135,13 +136,13 @@ class ParallelSession(object):
                     ppn, max_procs=np.inf)
             n_nodes = len(hosts)
 
-        if n_jobs_to_run < n_procs:
-            n_steps = 1
-            n_nodes = int(np.ceil(n_jobs_to_run / ppn))
-            n_procs = n_nodes * ppn
-            hosts = hosts[:n_nodes]
-        else:
-            n_steps = int(np.ceil(n_jobs_to_run / n_procs))
+            if n_jobs_to_run < n_procs:
+                n_steps = 1
+                n_nodes = int(np.ceil(n_jobs_to_run / ppn))
+                n_procs = n_nodes * ppn
+                hosts = hosts[:n_nodes]
+            else:
+                n_steps = int(np.ceil(n_jobs_to_run / n_procs))
 
         node_file = " --sshloginfile nodefile.txt "
 
