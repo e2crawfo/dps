@@ -375,7 +375,7 @@ class GridArithmetic(InternalEnv):
         self.digit_classifier.set_pretraining_params(
             digit_config,
             name_params='classes downsample_factor',
-            directory='/tmp/dps/mnist_pretrained/'
+            directory=cfg.model_dir + '/mnist_pretrained/'
         )
 
         op_config = cfg.mnist_config.copy(
@@ -389,7 +389,7 @@ class GridArithmetic(InternalEnv):
         self.op_classifier.set_pretraining_params(
             op_config,
             name_params='classes downsample_factor',
-            directory='/tmp/dps/mnist_pretrained/'
+            directory=cfg.model_dir + '/mnist_pretrained/'
         )
 
         self.classifier_head = classifier_head
@@ -397,8 +397,8 @@ class GridArithmetic(InternalEnv):
         if self.salience_action:
             def build_salience_detector(output_width=self.salience_output_width):
                 return SalienceMap(
-                    # cfg.max_digits, LeNet(cfg.n_units, scope="salience_detector"), (output_width, output_width),
-                    cfg.max_digits, MLP([cfg.n_units, cfg.n_units, cfg.n_units], scope="salience_detector"), (output_width, output_width),
+                    cfg.max_digits, MLP([cfg.n_units, cfg.n_units, cfg.n_units], scope="salience_detector"),
+                    (output_width, output_width),
                     std=cfg.std, flatten_output=True
                 )
 
@@ -420,7 +420,7 @@ class GridArithmetic(InternalEnv):
                 salience_config,
                 name_params='min_digits max_digits image_width n_units '
                             'downsample_factor output_width',
-                directory='/tmp/dps/mnist_salience_pretrained'
+                directory=cfg.model_dir + '/mnist_salience_pretrained'
             )
         else:
             self.salience_detector = None
