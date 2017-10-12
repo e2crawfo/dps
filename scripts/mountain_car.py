@@ -29,7 +29,6 @@ config = DEFAULT_CONFIG.copy(
     threshold=-10,
     n_val=100,
     batch_size=1,
-    visualize=False,
     render_step=10,
     display_step=10,
     test_time_explore=-1,

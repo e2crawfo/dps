@@ -905,7 +905,7 @@ def _parse_dps_config_from_file(key=None):
     _config.read(str(location / 'config.ini'))
 
     if not key:
-        key = socket.gethostname().split('-')[0]
+        key = socket.gethostname()
 
     if key not in _config:
         key = 'DEFAULT'
@@ -923,7 +923,6 @@ def _parse_dps_config_from_file(key=None):
         save_display=_config.getboolean(key, 'save_display'),
         mpl_backend=_config.get(key, 'mpl_backend'),
         use_gpu=_config.getboolean(key, 'use_gpu'),
-        visualize=_config.getboolean(key, 'visualize'),
         tbport=_config.getint(key, 'tbport'),
         verbose=_config.getboolean(key, 'verbose'),
     )

@@ -24,7 +24,6 @@ class Config(DpsConfig):
     preserve_policy = True
     start_tensorboard = True
     verbose = 0
-    visualize = True
 
     reward_window = 0.5
     test_time_explore = 0.1

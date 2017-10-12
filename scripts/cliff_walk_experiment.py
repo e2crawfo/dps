@@ -11,8 +11,6 @@ config.update(qlearning.config)
 config.update(cliff_walk.config)
 
 config.update(
-    visualize=True,
-
     T=20,
     width=4,
     n_actions=2,

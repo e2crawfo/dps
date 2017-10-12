@@ -51,7 +51,6 @@ config = DEFAULT_CONFIG.copy(
     save_summaries=not do_search,
     start_tensorboard=not do_search,
     verbose=False,
-    visualize=True,
     display=False,
     save_display=False,
     use_gpu=True,

@@ -30,7 +30,6 @@ config = DEFAULT_CONFIG.copy(
     save_summaries=False,
     start_tensorboard=False,
     verbose=False,
-    visualize=True,
     display=False,
     save_display=False,
     use_gpu=False,

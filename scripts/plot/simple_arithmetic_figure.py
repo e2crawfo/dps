@@ -33,7 +33,6 @@ config.update({
     'test_time_explore': 0.1,
     'use_gpu': 0,
     'verbose': 1,
-    'visualize': True,
     'policy_scope': 'SimpleArithmetic_policy',
     'render_rollouts': render_rollouts_static,
     'controller_func': lambda n_actions: CompositeCell(
