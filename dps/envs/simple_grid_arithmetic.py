@@ -6,7 +6,7 @@ from dps.register import RegisterBank
 from dps.environment import (
     RegressionDataset, RegressionEnv, CompositeEnv, InternalEnv)
 from dps.utils import DataContainer, Param, Config
-from dps.utils.tf import extract_glimpse_numpy_like
+from dps.utils.tf import extract_glimpse_numpy_like, resize_image_with_crop_or_pad
 from dps.envs.grid_arithmetic import GridArithmeticDataset
 
 
@@ -27,22 +27,9 @@ def build_env():
 
 config = Config(
     build_env=build_env,
-    reductions=[
-        ('A', sum),
-        ('M', np.product),
-        ('X', max),
-        ('N', min),
-        # ('C', len),
-    ],
 
-    arithmetic_actions=[
-        ('+', lambda acc, digit: acc + digit),
-        ('+1', lambda acc, digit: acc + 1),
-        ('*', lambda acc, digit: acc * digit),
-        ('max', lambda acc, digit: tf.maximum(acc, digit)),
-        ('min', lambda acc, digit: tf.minimum(acc, digit)),
-        # ('=', lambda acc, digit: digit),
-    ],
+    reductions="A:sum M:prod X:max N:min",
+    arithmetic_actions="+ * max min +1",
 
     curriculum=[{}],
     op_loc=(0, 0),
@@ -84,16 +71,28 @@ class SimpleGridArithmeticDataset(RegressionDataset):
     largest_digit = Param(9)
     show_op = Param(True)
 
+    reductions_dict = {
+        "sum": sum,
+        "prod": np.product,
+        "max": max,
+        "min": min,
+        "len": len,
+    }
+
     def __init__(self, **kwargs):
         assert 1 <= self.base <= 10
         assert self.min_digits <= self.max_digits
         assert np.product(self.shape) >= self.max_digits + 1
 
-        if callable(self.reductions):
-            self.reductions = {'A': self.reductions}
+        if ":" not in self.reductions:
+            self.reductions = {'A': self.reductions_dict[self.reductions.strip()]}
             self.show_op = False
         else:
-            self.reductions = dict(self.reductions)
+            _reductions = {}
+            for pair in self.reductions.split():
+                char, key = pair.split(':')
+                _reductions[char] = self.reductions_dict[key]
+            self.reductions = _reductions
 
         digits = list(range(self.base))
         digit_reps = DataContainer(digits, digits)
@@ -132,8 +131,23 @@ class SimpleGridArithmetic(InternalEnv):
     salience_shape = Param((2, 2))
     initial_salience = Param()
 
+    arithmetic_actions_dict = {
+        '+': lambda acc, digit: acc + digit,
+        '-': lambda acc, digit: acc - digit,
+        '*': lambda acc, digit: acc * digit,
+        '/': lambda acc, digit: acc / digit,
+        'max': lambda acc, digit: tf.maximum(acc, digit),
+        'min': lambda acc, digit: tf.minimum(acc, digit),
+        '+1': lambda acc, digit: acc + 1,
+        '-1': lambda acc, digit: acc - 1,
+    }
+
     def __init__(self, **kwargs):
-        self.arithmetic_actions = dict(self.arithmetic_actions)
+        _arithmetic_actions = {}
+        for key in self.arithmetic_actions.split():
+            _arithmetic_actions[key] = self.arithmetic_actions_dict[key]
+        self.arithmetic_actions = _arithmetic_actions
+
         if self.salience_action:
             self.action_names = (
                 self._action_names +
@@ -251,7 +265,7 @@ class SimpleGridArithmetic(InternalEnv):
         target_height = int(self.input_ph.shape[1]) + 2 * self.pad_offset[0]
         target_width = int(self.input_ph.shape[2]) + 2 * self.pad_offset[1]
         inp = self.input_ph[..., None]
-        self.padded_input = tf.image.resize_image_with_crop_or_pad(inp, target_height, target_width)
+        self.padded_input = resize_image_with_crop_or_pad(inp, target_height, target_width)
 
         _digit, _op, _acc, _fovea_x, _fovea_y, _prev_action, _salience, _glimpse = self.rb.as_tuple(r)
 

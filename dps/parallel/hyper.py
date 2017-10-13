@@ -224,7 +224,7 @@ def build_search(
     if do_local_test:
         print("\nStarting local test " + ("=" * 80))
         test_config = new_configs[0].copy()
-        test_config['max_time'] = 60
+        test_config['max_steps'] = 1000
         test_config['render_hook'] = None
         RunTrainingLoop(config)(test_config)
         print("Done local test " + ("=" * 80) + "\n")

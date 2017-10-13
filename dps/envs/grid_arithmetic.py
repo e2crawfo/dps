@@ -6,7 +6,7 @@ from dps.register import RegisterBank
 from dps.environment import (
     RegressionDataset, RegressionEnv, CompositeEnv, InternalEnv)
 from dps.vision import MNIST_CONFIG, MNIST_SALIENCE_CONFIG
-from dps.utils.tf import LeNet, MLP, SalienceMap, extract_glimpse_numpy_like
+from dps.utils.tf import LeNet, MLP, SalienceMap, extract_glimpse_numpy_like, resize_image_with_crop_or_pad
 from dps.utils import DataContainer, Param, Config, image_to_string
 from dps.rl.policy import Softmax, Normal, ProductDist, Policy, DiscretePolicy
 from dps.test.test_mnist import salience_render_hook
@@ -98,22 +98,9 @@ def build_policy(env, **kwargs):
 
 config = Config(
     build_env=build_env,
-    reductions=[
-        ('A', sum),
-        ('M', np.product),
-        ('X', max),
-        ('N', min),
-        # ('C', len),
-    ],
 
-    arithmetic_actions=[
-        ('+', lambda acc, digit: acc + digit),
-        ('+1', lambda acc, digit: acc + 1),
-        ('*', lambda acc, digit: acc * digit),
-        ('max', lambda acc, digit: tf.maximum(acc, digit)),
-        ('min', lambda acc, digit: tf.minimum(acc, digit)),
-        # ('=', lambda acc, digit: digit),
-    ],
+    reductions="A:sum M:prod X:max N:min",
+    arithmetic_actions="+ * max min +1",
 
     curriculum=[dict()],
     op_loc=(0, 0),
@@ -177,6 +164,14 @@ class GridArithmeticDataset(RegressionDataset):
     downsample_factor = Param(2)
     show_op = Param(True)
 
+    reductions_dict = {
+        "sum": sum,
+        "prod": np.product,
+        "max": max,
+        "min": min,
+        "len": len,
+    }
+
     def __init__(self, **kwargs):
         self.image_width = int(28 / self.downsample_factor)
         assert 1 <= self.base <= 10
@@ -185,11 +180,15 @@ class GridArithmeticDataset(RegressionDataset):
 
         self.s = s = int(28 / self.downsample_factor)
 
-        if callable(self.reductions):
-            self.reductions = {'A': self.reductions}
+        if ":" not in self.reductions:
+            self.reductions = {'A': self.reductions_dict[self.reductions.strip()]}
             self.show_op = False
         else:
-            self.reductions = dict(self.reductions)
+            _reductions = {}
+            for pair in self.reductions.split():
+                char, key = pair.split(':')
+                _reductions[char] = self.reductions_dict[key]
+            self.reductions = _reductions
 
         op_symbols = sorted(self.reductions)
         emnist_x, emnist_y, symbol_map = load_emnist(
@@ -302,18 +301,34 @@ class GridArithmetic(InternalEnv):
     shape = Param()
     base = Param()
     start_loc = Param()
-    downsample_factor = Param(2)
+    downsample_factor = Param()
     visible_glimpse = Param()
     salience_action = Param()
-    salience_input_width = Param(3*14)
-    salience_output_width = Param(14)
+    salience_input_width = Param()
+    salience_output_width = Param()
     initial_salience = Param()
 
     op_classes = list('AMXNC')
 
+    arithmetic_actions_dict = {
+        '+': lambda acc, digit: acc + digit,
+        '-': lambda acc, digit: acc - digit,
+        '*': lambda acc, digit: acc * digit,
+        '/': lambda acc, digit: acc / digit,
+        'max': lambda acc, digit: tf.maximum(acc, digit),
+        'min': lambda acc, digit: tf.minimum(acc, digit),
+        '+1': lambda acc, digit: acc + 1,
+        '-1': lambda acc, digit: acc - 1,
+    }
+
     def __init__(self, **kwargs):
         self.image_width = int(28 / self.downsample_factor)
-        self.arithmetic_actions = dict(self.arithmetic_actions)
+
+        _arithmetic_actions = {}
+        for key in self.arithmetic_actions.split():
+            _arithmetic_actions[key] = self.arithmetic_actions_dict[key]
+        self.arithmetic_actions = _arithmetic_actions
+
         if self.salience_action:
             self.action_names = (
                 self._action_names +
@@ -497,7 +512,7 @@ class GridArithmetic(InternalEnv):
         target_height = int(self.input_ph.shape[1]) + 2 * self.pad_offset[0]
         target_width = int(self.input_ph.shape[2]) + 2 * self.pad_offset[1]
         inp = self.input_ph[..., None]
-        self.padded_input = tf.image.resize_image_with_crop_or_pad(inp, target_height, target_width)
+        self.padded_input = resize_image_with_crop_or_pad(inp, target_height, target_width)
 
         _digit, _op, _acc, _fovea_x, _fovea_y, _prev_action, _salience, _glimpse, _salience_input = self.rb.as_tuple(r)
 

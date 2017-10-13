@@ -16,6 +16,34 @@ import dps
 from dps.utils.base import Schedule, _bool, popleft, eval_schedule
 
 
+def resize_image_with_crop_or_pad(img, target_height, target_width):
+    if tf.__version__ >= "1.1":
+        return tf.image.resize_image_with_crop_or_pad(img, target_height, target_width)
+    else:
+        batch_size = tf.shape(img)[0]
+        img_height = int(img.shape[1])
+        img_width = int(img.shape[2])
+        depth = int(img.shape[3])
+
+        upper_height = int(np.ceil((target_height - img_height) / 2))
+        upper = tf.zeros((batch_size, upper_height, img_width, depth))
+
+        lower_height = int(np.floor((target_height - img_height) / 2))
+        lower = tf.zeros((batch_size, lower_height, img_width, depth))
+
+        img = tf.concat([upper, img, lower], axis=1)
+
+        left_width = int(np.ceil((target_width - img_width) / 2))
+        left = tf.zeros((batch_size, target_height, left_width, depth))
+
+        right_width = int(np.floor((target_width - img_width) / 2))
+        right = tf.zeros((batch_size, target_height, right_width, depth))
+
+        img = tf.concat([left, img, right], axis=2)
+
+        return img
+
+
 def extract_glimpse_numpy_like(inp, glimpse_shape, glimpse_offsets, name=None, uniform_noise=None):
     """ Taken from: https://github.com/tensorflow/tensorflow/issues/2134#issuecomment-262525617
 
