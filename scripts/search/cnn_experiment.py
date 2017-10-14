@@ -10,7 +10,7 @@ from dps.train import training_loop
 from dps.updater import DifferentiableUpdater
 from dps.envs.grid_arithmetic import GridArithmeticDataset
 from dps.environment import RegressionEnv
-from dps.vision import LeNet
+from dps.utils.tf import LeNet
 from dps.utils import Config
 
 
@@ -54,7 +54,7 @@ config = DEFAULT_CONFIG.copy(
     display=False,
     save_display=False,
     use_gpu=True,
-    threshold=0.05,
+    threshold=0.01,
     memory_limit_mb=12*1024
 )
 
@@ -67,7 +67,7 @@ env_config = Config(
     reductions=lambda x: np.product(x),
     op_loc=None,
     base=10,
-    largest_digit=26,
+    largest_digit=100,
     final_reward=True,
 )
 
@@ -90,7 +90,7 @@ if do_search:
     from dps.parallel.hyper import build_and_submit
     grid = dict(n_train=2**np.arange(10, 18), n_controller_units=2**np.arange(5, 11))
     host_pool = [':']
-    clify.wrap_function(build_and_submit)(config, grid, n_param_settings=None, host_pool=host_pool)
+    clify.wrap_function(build_and_submit)(config=config, distributions=grid, n_param_settings=None, host_pool=host_pool)
 else:
     start_time = time.time()
     print("Starting new training run at: ")

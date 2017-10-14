@@ -93,7 +93,7 @@ env_config = Config(
     salience_shape=(2, 2),
     salience_action=True,
     visible_glimpse=False,
-    initial_salience=True,
+    initial_salience=False,
     salience_input_width=3*14,
     salience_output_width=14,
 

@@ -926,6 +926,8 @@ def _parse_dps_config_from_file(key=None):
         use_gpu=_config.getboolean(key, 'use_gpu'),
         tbport=_config.getint(key, 'tbport'),
         verbose=_config.getboolean(key, 'verbose'),
+        per_process_gpu_memory_fraction=_config.getfloat(key, 'per_process_gpu_memory_fraction'),
+        gpu_allow_growth=_config.getboolean(key, 'gpu_allow_growth'),
     )
 
     config.max_experiments = _config.getint(key, 'max_experiments')

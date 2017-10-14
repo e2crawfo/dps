@@ -152,7 +152,23 @@ class TrainingLoop(object):
             self.history.append(dict(stage=stage, train_data=[], val_data=[], update_data=[]))
 
             with ExitStack() as stack:
+                session_config = tf.ConfigProto()
+                session_config.gpu_options.allow_growth = True
+
+                if cfg.use_gpu:
+
+                    per_process_gpu_memory_fraction = getattr(cfg, 'per_process_gpu_memory_fraction', None)
+                    if per_process_gpu_memory_fraction:
+                        session_config.gpu_options.per_process_gpu_memory_fraction = per_process_gpu_memory_fraction
+                        print("Using {}% of GPU memory.".format(100 * per_process_gpu_memory_fraction))
+
+                    gpu_allow_growth = getattr(cfg, 'gpu_allow_growth', None)
+                    if gpu_allow_growth:
+                        session_config.gpu_options.allow_growth = gpu_allow_growth
+                        print("Allowing growth of GPU memory: {}".format(gpu_allow_growth))
+
                 graph = tf.Graph()
+                sess = tf.Session(graph=graph, config=session_config)
 
                 print("Available devices: ")
                 print(device_lib.list_local_devices())
@@ -176,8 +192,6 @@ class TrainingLoop(object):
 
                     print("Writing summaries to {}.".format(exp_dir.path))
 
-                sess = tf.Session(graph=graph)
-
                 stack.enter_context(graph.as_default())
                 stack.enter_context(sess)
                 stack.enter_context(sess.as_default())
@@ -199,8 +213,7 @@ class TrainingLoop(object):
                 updater.build_graph()
 
                 if stage > 0 and cfg.preserve_policy:
-                    updater.restore(
-                        tf.get_default_session(), self.history[-2]['best_path'])
+                    updater.restore(sess, self.history[-2]['best_path'])
 
                 tf_seed = gen_seed()
                 tf.set_random_seed(tf_seed)
@@ -222,7 +235,7 @@ class TrainingLoop(object):
                 best_path = self.latest['best_path']
                 print("Loading best hypothesis for this stage "
                       "from file {}...".format(best_path))
-                updater.restore(tf.get_default_session(), best_path)
+                updater.restore(sess, best_path)
                 test_loss, _, test_record = updater.evaluate(cfg.n_val, 'test')
                 print("Results on test dataset: ")
                 print("Test loss: {}".format(test_loss))
