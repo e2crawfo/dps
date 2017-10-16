@@ -1,13 +1,15 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
+import statsmodels.stats.api as sms
+from scipy.stats import sem
+plt.style.use('ggplot')
 
 from dps.utils import Config
 from dps.parallel.base import ReadOnlyJob
 
 
-def _summarize_search():
-    """ Get all completed jobs, get their outputs. Summarize em. """
+def plot(spread_measure='std'):
     job = ReadOnlyJob('results.zip')
     distributions = job.objects.load_object('metadata', 'distributions')
     distributions = Config(distributions)
@@ -58,26 +60,52 @@ def _summarize_search():
 
     groups = df.groupby('n_controller_units')
 
-    for k, _df in groups:
+    field_to_plot = 'test_reward'
+    colours = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    groups = sorted(groups, key=lambda x: x[0])
+
+    label_order = []
+
+    for i, (k, _df) in enumerate(groups):
         _groups = _df.groupby('n_train')
         values = list(_groups)
         x = [v[0] for v in values]
-        y = [v[1]['best_loss'].mean() for v in values]
+        ys = [-100 * v[1][field_to_plot] for v in values]
 
-        y_lower = y - np.array([v[1]['best_loss'].quantile(0.25) for v in values])
-        y_upper = np.array([v[1]['best_loss'].quantile(0.75) for v in values]) - y
+        y = [_y.mean() for _y in ys]
+
+        if spread_measure == 'std_dev':
+            y_upper = y_lower = [_y.std() for _y in ys]
+        elif spread_measure == 'conf_int':
+            conf_int = [sms.DescrStatsW(_y.values).tconfint_mean() for _y in ys]
+            y_lower = y - np.array([ci[0] for ci in conf_int])
+            y_upper = np.array([ci[1] for ci in conf_int]) - y
+        elif spread_measure == 'std_err':
+            y_upper = y_lower = [sem(_y.values) for _y in ys]
+        else:
+            pass
 
         yerr = np.vstack((y_lower, y_upper))
 
-        plt.plot(x, y, label="n_hidden_units={}".format(k))
-        plt.gca().errorbar(x, y, yerr=yerr)
+        c = colours[i % len(colours)]
+        label = "n_hidden_units={}".format(k)
+        plt.semilogx(x, y, label=label, c=c, basex=2)
+        label_order.append(label)
+        plt.gca().errorbar(x, y, yerr=yerr, c=c)
 
-    plt.ylabel("test_error")
-    plt.xlabel("n_training_examples")
-    plt.legend()
+    ax = plt.gca()
+    legend_handles = {l: h for h, l in zip(*ax.get_legend_handles_labels())}
+    ordered_handles = [legend_handles[l] for l in label_order]
+    ax.legend(ordered_handles, label_order, loc='upper right', ncol=1)
+    plt.grid(True)
+
+    plt.ylim((0.0, 100.0))
+
+    plt.ylabel("% Incorrect on Test Set")
+    plt.xlabel("# Training Examples")
     plt.show()
     plt.savefig('cnn_results.png')
 
 
 if __name__ == "__main__":
-    _summarize_search()
+    plot('std_dev')
