@@ -15,6 +15,8 @@ import dill
 import sys
 import subprocess
 import matplotlib.pyplot as plt
+import statsmodels.stats.api as sms
+from scipy.stats import sem
 
 import clify
 
@@ -336,8 +338,15 @@ def _summarize_search(args):
 
 
 def _rl_plot(args):
-    path = args.path
-    print("Plotting search stored at {}.".format(Path(path).absolute()))
+    style = args.style
+    paths = args.paths
+    paths = [Path(p).absolute() for p in paths]
+    print("Plotting searches stored at {}.".format(paths))
+
+    if len(paths) > 1:
+        raise Exception("Not implemented")
+
+    path = paths[0]
 
     job = ReadOnlyJob(path)
     distributions = job.objects.load_object('metadata', 'distributions')
@@ -364,31 +373,143 @@ def _rl_plot(args):
     w = int(np.ceil(np.sqrt(n_plots)))
     h = int(np.ceil(n_plots / w))
 
-    fig, axes = plt.subplots(h, w, sharex=True, sharey=True, figsize=(15, 10))
-    final_ax = axes[-1, -1]
+    with plt.style.context(style):
+        fig, axes = plt.subplots(h, w, sharex=True, sharey=True, figsize=(15, 10))
+        final_ax = axes[-1, -1]
 
-    for n, key in enumerate(sorted(val_data)):
-        i = int(n / w)
-        j = n % w
-        ax = axes[i, j]
-        for vd in val_data[key]:
-            ax.plot(vd)
-        ax.set_title(key)
-        mean = pd.concat(val_data[key], axis=1).mean(axis=1)
-        final_ax.plot(mean, label=key)
+        for n, key in enumerate(sorted(val_data)):
+            i = int(n / w)
+            j = n % w
+            ax = axes[i, j]
+            for vd in val_data[key]:
+                ax.plot(vd)
+            ax.set_title(key)
+            mean = pd.concat(val_data[key], axis=1).mean(axis=1)
+            final_ax.plot(mean, label=key)
 
-    legend_handles = {l: h for h, l in zip(*final_ax.get_legend_handles_labels())}
-    ordered_labels = sorted(legend_handles.keys())
-    ordered_handles = [legend_handles[l] for l in ordered_labels]
+        legend_handles = {l: h for h, l in zip(*final_ax.get_legend_handles_labels())}
+        ordered_labels = sorted(legend_handles.keys())
+        ordered_handles = [legend_handles[l] for l in ordered_labels]
 
-    final_ax.legend(
-        ordered_handles, ordered_labels, loc='center left',
-        bbox_to_anchor=(1.05, 0.5), ncol=1)
+        final_ax.legend(
+            ordered_handles, ordered_labels, loc='center left',
+            bbox_to_anchor=(1.05, 0.5), ncol=1)
 
-    plt.subplots_adjust(
-        left=0.05, bottom=0.05, right=0.86, top=0.97, wspace=0.05, hspace=0.18)
+        plt.subplots_adjust(
+            left=0.05, bottom=0.05, right=0.86, top=0.97, wspace=0.05, hspace=0.18)
 
-    plt.show()
+        plt.show()
+
+
+def _sample_complexity_plot(args):
+    style = args.style
+    spread_measure = args.spread_measure
+
+    paths = args.paths
+    paths = [Path(p).absolute() for p in paths]
+    print("Plotting searches stored at {}.".format(paths))
+
+    if len(paths) > 1:
+        raise Exception("Not implemented")
+
+    path = paths[0]
+
+    job = ReadOnlyJob(path)
+    distributions = job.objects.load_object('metadata', 'distributions')
+    distributions = Config(distributions)
+    keys = list(distributions.keys())
+
+    records = []
+    for op in job.completed_ops():
+        if 'map' in op.name:
+            try:
+                r = op.get_outputs(job.objects)[0]
+            except BaseException as e:
+                print("Exception thrown when accessing output of op {}:\n    {}".format(op.name, e))
+
+        record = r['history'][-1].copy()
+        record['host'] = r['host']
+        record['op_name'] = op.name
+        del record['best_path']
+
+        if len(record['train_data']) > 0:
+            for k, v in record['train_data'].iloc[-1].items():
+                record[k + '_train'] = v
+        if len(record['update_data']) > 0:
+            for k, v in record['update_data'].iloc[-1].items():
+                record[k + '_update'] = v
+        if len(record['val_data']) > 0:
+            for k, v in record['val_data'].iloc[-1].items():
+                record[k + '_val'] = v
+
+        del record['train_data']
+        del record['update_data']
+        del record['val_data']
+
+        config = Config(r['config'])
+        for k in keys:
+            record[k] = config[k]
+
+        record.update(
+            latest_stage=r['history'][-1]['stage'],
+            total_steps=sum(s['n_steps'] for s in r['history']),
+        )
+
+        record['seed'] = r['config']['seed']
+        records.append(record)
+
+    df = pd.DataFrame.from_records(records)
+    for key in keys:
+        df[key] = df[key].fillna(-np.inf)
+
+    groups = df.groupby('n_controller_units')
+
+    field_to_plot = 'test_reward'
+    colours = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    groups = sorted(groups, key=lambda x: x[0])
+
+    label_order = []
+
+    with plt.style.context(style):
+        for i, (k, _df) in enumerate(groups):
+            _groups = _df.groupby('n_train')
+            values = list(_groups)
+            x = [v[0] for v in values]
+            ys = [-100 * v[1][field_to_plot] for v in values]
+
+            y = [_y.mean() for _y in ys]
+
+            if spread_measure == 'std_dev':
+                y_upper = y_lower = [_y.std() for _y in ys]
+            elif spread_measure == 'conf_int':
+                conf_int = [sms.DescrStatsW(_y.values).tconfint_mean() for _y in ys]
+                y_lower = y - np.array([ci[0] for ci in conf_int])
+                y_upper = np.array([ci[1] for ci in conf_int]) - y
+            elif spread_measure == 'std_err':
+                y_upper = y_lower = [sem(_y.values) for _y in ys]
+            else:
+                pass
+
+            yerr = np.vstack((y_lower, y_upper))
+
+            c = colours[i % len(colours)]
+            label = "n_hidden_units={}".format(k)
+            plt.semilogx(x, y, label=label, c=c, basex=2)
+            label_order.append(label)
+            plt.gca().errorbar(x, y, yerr=yerr, c=c)
+
+        ax = plt.gca()
+        legend_handles = {l: h for h, l in zip(*ax.get_legend_handles_labels())}
+        ordered_handles = [legend_handles[l] for l in label_order]
+        ax.legend(ordered_handles, label_order, loc='upper right', ncol=1)
+        plt.grid(True)
+
+        plt.ylim((0.0, 100.0))
+
+        plt.ylabel("% Incorrect on Test Set")
+        plt.xlabel("# Training Examples")
+        plt.show()
+        plt.savefig('cnn_results.png')
 
 
 def _zip_search(args):
@@ -397,16 +518,28 @@ def _zip_search(args):
     job.zip(archive_name, delete=args.delete)
 
 
-def hyper_search_cl():
+def dps_hyper_cl():
     from dps.parallel.base import parallel_cl
     summary_cmd = (
         'summary', 'Summarize results of a hyper-parameter search.', _summarize_search,
-        ('path', dict(help="Location of data store for job.", type=str)),
+        ('paths', dict(help="Location of data store for job.", type=str)),
     )
+
+    style_list = ['default', 'classic'] + sorted(style for style in plt.style.available if style != 'classic')
 
     rl_plot_cmd = (
         'rl_plot', 'Plot results of an RL hyper-parameter search.', _rl_plot,
-        ('path', dict(help="Location of data store for job.", type=str)),
+        ('paths', dict(help="Paths to locations of data stores.", type=str, default="results.zip", nargs='+')),
+        ('--style', dict(help="Style for plot.", choices=style_list, default="ggplot")),
+    )
+
+    sc_plot_cmd = (
+        'sc_plot', 'Plot sample complexity results.', _sample_complexity_plot,
+        ('paths', dict(help="Paths to locations of data stores.", type=str, default="results.zip", nargs='+')),
+        ('--style', dict(help="Style for plot.", choices=style_list, default="ggplot")),
+        ('--spread-measure', dict(
+            help="Measure of spread to use for error bars.", choices="std_dev conf_int std_err".split(),
+            default="std_dev")),
     )
 
     zip_cmd = (
@@ -416,7 +549,9 @@ def hyper_search_cl():
         ('--delete', dict(help="If True, delete the original.", action='store_true'))
     )
 
-    parallel_cl('Build, run and view hyper-parameter searches.', [summary_cmd, rl_plot_cmd, zip_cmd])
+    parallel_cl(
+        'Build, run, plot and view results of hyper-parameter searches.',
+        [summary_cmd, rl_plot_cmd, sc_plot_cmd, zip_cmd])
 
 
 def build_and_submit(

@@ -28,9 +28,9 @@ setup(
         "Pillow",
         "progressbar2",
         "mnist_arithmetic",
+        "statsmodels",
     ],
     entry_points={
-        'console_scripts': ['dps-hyper=dps.parallel:hyper_search_cl',
-                            'dps-submit=dps.parallel.submit_job:_submit_job',
+        'console_scripts': ['dps-hyper=dps.parallel:dps_hyper_cl',
                             'dps-run=dps.run:run']}
 )
