@@ -148,14 +148,6 @@ class RunTrainingLoop(object):
 
         config = copy.copy(self.base_config)
         config.update(new)
-        config.update(
-            start_tensorboard=False,
-            save_summaries=False,
-            update_latest=False,
-            display=False,
-            save_display=False,
-            max_experiments=np.inf,
-        )
 
         with config:
             cl_args = clify.wrap_object(cfg).parse()
@@ -225,9 +217,10 @@ def build_search(
 
     if do_local_test:
         print("\nStarting local test " + ("=" * 80))
-        test_config = new_configs[0].copy()
-        test_config['max_steps'] = 1000
-        test_config['render_hook'] = None
+        test_config = new_configs[0].copy(
+            max_steps=1000,
+            render_hook=None
+        )
         RunTrainingLoop(config)(test_config)
         print("Done local test " + ("=" * 80) + "\n")
 
@@ -315,7 +308,7 @@ def _summarize_search(args):
     remaining = [k for k in data[0]['data'].keys() if k not in column_order and k not in keys]
     column_order = column_order + sorted(remaining)
 
-    with pd.option_context('display.max_rows', None, 'display.max_columns', None):
+    with pd.option_context('show_plots.max_rows', None, 'show_plots.max_columns', None):
         print('\n' + '*' * 100)
         print("RESULTS GROUPED BY PARAM VALUES, WORST COMES FIRST: ")
         for i, d in enumerate(data):
@@ -559,6 +552,8 @@ def build_and_submit(
         n_param_settings=2, n_repeats=2, host_pool=None, n_retries=1, pmem=0, queue="", do_local_test=False,
         hpc=False, local_only=False):
 
+    os.nice(10)
+
     if local_only:
         with config:
             cl_args = clify.wrap_object(cfg).parse()
@@ -567,10 +562,21 @@ def build_and_submit(
             from dps.train import training_loop
             val = training_loop()
         return val
-    elif hpc:
-        return _build_and_submit_hpc(**locals())
     else:
-        return _build_and_submit(**locals())
+        config = config.copy(
+            start_tensorboard=False,
+            save_summaries=False,
+            update_latest=False,
+            show_plots=False,
+            max_experiments=np.inf,
+        )
+
+        kwargs = locals()
+
+        if hpc:
+            return _build_and_submit_hpc(**locals())
+        else:
+            return _build_and_submit(**locals())
 
 
 def _build_and_submit(

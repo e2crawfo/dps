@@ -10,7 +10,7 @@ from dps.vision.attention import DRAW_attention_2D, discrete_attention
 from dps.utils import DpsConfig
 
 
-def test_draw_mnist(display):
+def test_draw_mnist(show_plots):
     import pickle
     import gzip
 
@@ -52,13 +52,13 @@ def test_draw_mnist(display):
     sess.run(tf.global_variables_initializer())
     attended_images = sess.run(tf_attended_images)
 
-    if display:
+    if show_plots:
         f, ax = plt.subplots(figsize=(10, 10))
         ax.imshow(np.hstack(np.hstack(attended_images[:batch_size].reshape((4, 4, N, N))/255.)), cmap='gray')
         plt.show()
 
 
-def test_draw_parameter_effect(display):
+def test_draw_parameter_effect(show_plots):
     image_width = 28
     n_images = 2
     mnist = MnistArithmeticDataset(reductions=sum, image_width=image_width, n_examples=n_images, max_overlap=200)
@@ -92,7 +92,7 @@ def test_draw_parameter_effect(display):
     sess = tf.Session()
     glimpses = sess.run(tf_attended_images)
 
-    if display:
+    if show_plots:
         for i in range(n_images):
             fig, axes = plt.subplots(nrows=S, ncols=D, figsize=(10, 10))
 
@@ -107,7 +107,7 @@ def test_draw_parameter_effect(display):
         plt.show()
 
 
-def test_discrete_mnist(display):
+def test_discrete_mnist(show_plots):
     params = tf.constant([
         [0.0, 0.0, 1.0, 1, 1],
         [-1.0, 0.0, 1.0, 1, 1],
@@ -145,7 +145,7 @@ def test_discrete_mnist(display):
     sess.run(tf.global_variables_initializer())
     attended_images = sess.run(tf_attended_images)
 
-    if display:
+    if show_plots:
         f, ax = plt.subplots(figsize=(10, 10))
         ax.imshow(np.hstack(np.hstack(attended_images[:batch_size].reshape((4, 4, N, N))/255.)), cmap='gray')
         plt.show()

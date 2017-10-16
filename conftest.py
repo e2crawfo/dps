@@ -6,15 +6,15 @@ def pytest_configure(config):
     dc = DpsConfig
     dc.start_tensorboard = False
     dc.mpl_backend = 'Agg'
-    dc.display = False
-    dc.save_display = False
+    dc.show_plots = False
+    dc.save_plots = False
     dc.update_latest = False
     dc.use_gpu = False
 
 
 def pytest_addoption(parser):
     parser.addoption("--max-steps", default=None, help="Maximum number of steps to run.")
-    parser.addoption("--display", action='store_true', help="Display any graphs that are created.")
+    parser.addoption("--show_plots", action='store_true', help="Display any graphs that are created.")
     parser.addoption("--run-slow", action="store_true", help="run slow tests")
 
 
@@ -24,8 +24,8 @@ def max_steps(request):
 
 
 @pytest.fixture
-def display(request):
-    return request.config.getoption("--display")
+def show_plots(request):
+    return request.config.getoption("--show_plots")
 
 
 @pytest.fixture

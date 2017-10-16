@@ -470,15 +470,16 @@ class Categorical(TensorFlowSelection):
             sample = tf.one_hot(sample, depth=int(utils.shape[-1]), axis=-1)
         else:
             sample = sample[..., None]
-
-        return tf.cast(sample, tf.float32)
+        return sample
 
     def log_probs(self, utils, actions, exploration):
         dist = self._dist(utils, exploration)
         if self.one_hot:
             actions = tf.argmax(actions, axis=-1)
         else:
-            actions = tf.reshape(actions, tf.shape(dist.sample()))
+            sample = dist.sample()
+            actions = tf.reshape(actions, tf.shape(sample))
+            actions = tf.cast(actions, sample.dtype)
         return dist.log_prob(actions)[..., None]
 
     def log_probs_all(self, utils, exploration):
@@ -503,7 +504,6 @@ class Categorical(TensorFlowSelection):
 
     def _dist(self, utils, exploration):
         raise Exception("NotImplemented")
-        # return build_categorical_dist()
 
 
 class FixedCategorical(Categorical):

@@ -24,12 +24,14 @@ config = DEFAULT_CONFIG.copy(
     patience=np.inf,
     power_through=False,
     preserve_policy=True,
-    slim=True,
-    save_summaries=False,
-    start_tensorboard=False,
+
+    slim=False,
+    save_summaries=True,
+    start_tensorboard=True,
     verbose=False,
-    display=False,
-    save_display=False,
+    show_plots=True,
+    save_plots=True,
+
     use_gpu=False,
     threshold=0.01,
     render_hook=rl_render_hook,
@@ -73,6 +75,7 @@ alg_config = Config(
 
 env_config = Config(
     build_env=grid_arithmetic.build_env,
+
     # reductions="sum",
     # reductions="prod",
     # reductions="max",

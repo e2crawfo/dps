@@ -32,8 +32,8 @@ class Config(DpsConfig):
 
     noise_schedule = None
 
-    display = False
-    save_display = False
+    show_plots = False
+    save_plots = False
     verbose = False
     display_step = 1000
     eval_step = 100

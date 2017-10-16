@@ -248,10 +248,10 @@ def render_rollouts(env, rollouts):
 
     _animation = animation.FuncAnimation(fig, animate, n_timesteps, blit=True, interval=1000, repeat=True)
 
-    if cfg.save_display:
+    if cfg.save_plots:
         Writer = animation.writers['ffmpeg']
         writer = Writer(fps=15, metadata=dict(artist='Me'), bitrate=1800)
         _animation.save(str(Path(cfg.path) / 'animation.mp4'), writer=writer)
 
-    if cfg.display:
+    if cfg.show_plots:
         plt.show()

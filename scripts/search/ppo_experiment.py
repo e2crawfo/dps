@@ -24,8 +24,8 @@ config = DEFAULT_CONFIG.copy(
     save_summaries=False,
     start_tensorboard=False,
     verbose=False,
-    display=False,
-    save_display=False,
+    show_plots=False,
+    save_plots=False,
     use_gpu=False,
     threshold=0.05,
 )

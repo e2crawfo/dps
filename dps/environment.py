@@ -123,7 +123,7 @@ class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
     def visualize(self, render_rollouts=None, **rollout_kwargs):
         rollouts = self.do_rollouts(**rollout_kwargs)
         self._pprint_rollouts(rollouts)
-        if render_rollouts is not None and (cfg.save_display or cfg.display):
+        if render_rollouts is not None and (cfg.save_plots or cfg.show_plots):
             render_rollouts(self, rollouts)
 
 
