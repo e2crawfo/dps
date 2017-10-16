@@ -2,7 +2,6 @@ import numpy as np
 
 import clify
 
-from dps import cfg
 from dps.utils import Config
 from dps.envs import simple_grid_arithmetic
 from dps.rl.algorithms import a2c
@@ -105,20 +104,10 @@ env_config = Config(
 config.update(alg_config)
 config.update(env_config)
 
-grid = dict(entropy_weight=2**np.linspace(-4, 3, 8))
-# grid = dict(n_train=2**np.arange(10, 18))
+# grid = dict(entropy_weight=2**np.linspace(-4, 3, 8))
+grid = dict(n_train=2**np.arange(6, 18))
 
-from dps.parallel.hyper import build_and_submit_hpc
-clify.wrap_function(build_and_submit_hpc)(config=config, distributions=grid, n_param_settings=None)
-
-# from dps.parallel.hyper import build_and_submit
-# host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
-# clify.wrap_function(build_and_submit)(config, grid, n_param_settings=None, host_pool=host_pool)
-
-
-# with config:
-#     cl_args = clify.wrap_object(cfg).parse()
-#     config.update(cl_args)
-#
-#     from dps.train import training_loop
-#     val = training_loop()
+from dps.parallel.hyper import build_and_submit
+host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
+clify.wrap_function(build_and_submit)(
+    config=config, distributions=grid, n_param_settings=None, host_pool=host_pool)

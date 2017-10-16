@@ -2,7 +2,6 @@ import numpy as np
 
 import clify
 
-from dps import cfg
 from dps.utils import Config
 from dps.utils.tf import LeNet
 from dps.envs import grid_arithmetic
@@ -18,10 +17,10 @@ config = DEFAULT_CONFIG.copy(
     name="GridArithmeticExperiments",
 
     n_train=10000,
-    n_val=1000,
+    n_val=500,
     max_steps=1000000,
-    display_step=100,
-    eval_step=10,
+    display_step=1000,
+    eval_step=1000,
     patience=np.inf,
     power_through=False,
     preserve_policy=True,
@@ -32,9 +31,9 @@ config = DEFAULT_CONFIG.copy(
     display=False,
     save_display=False,
     use_gpu=False,
-    threshold=0.05,
+    threshold=0.01,
     render_hook=rl_render_hook,
-    memory_limit_mb=5*1024,
+    memory_limit_mb=12*1024,
 )
 
 
@@ -111,7 +110,7 @@ env_config = Config(
     mnist_config=MNIST_CONFIG.copy(
         eval_step=100,
         max_steps=100000,
-        patience=np.inf,
+        patience=5000,
         threshold=0.01,
         include_blank=True
     ),
@@ -119,7 +118,7 @@ env_config = Config(
     salience_config=MNIST_SALIENCE_CONFIG.copy(
         eval_step=100,
         max_steps=100000,
-        patience=np.inf,
+        patience=5000,
         threshold=0.001,
         render_hook=salience_render_hook(),
     ),
@@ -128,20 +127,10 @@ env_config = Config(
 config.update(alg_config)
 config.update(env_config)
 
-grid = dict(entropy_weight=2**np.linspace(-4, 3, 8))
-# grid = dict(n_train=2**np.arange(10, 18))
+# grid = dict(entropy_weight=2**np.linspace(-4, 3, 8))
+grid = dict(n_train=2**np.arange(6, 18))
 
-from dps.parallel.hyper import build_and_submit_hpc
-clify.wrap_function(build_and_submit_hpc)(config=config, distributions=grid, n_param_settings=None)
-
-# from dps.parallel.hyper import build_and_submit
-# host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
-# clify.wrap_function(build_and_submit)(config, grid, n_param_settings=None, host_pool=host_pool)
-
-
-# with config:
-#     cl_args = clify.wrap_object(cfg).parse()
-#     config.update(cl_args)
-#
-#     from dps.train import training_loop
-#     val = training_loop()
+from dps.parallel.hyper import build_and_submit
+host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
+clify.wrap_function(build_and_submit)(
+    config=config, distributions=grid, n_param_settings=None, host_pool=host_pool)

@@ -555,8 +555,27 @@ def dps_hyper_cl():
 
 
 def build_and_submit(
-        name, config, distributions, wall_time, cleanup_time, max_hosts=2, ppn=2,
-        n_param_settings=2, n_repeats=2, host_pool=None, n_retries=1, do_local_test=False):
+        name, config, distributions=None, wall_time="1year", cleanup_time="1day", max_hosts=2, ppn=2,
+        n_param_settings=2, n_repeats=2, host_pool=None, n_retries=1, pmem=0, queue="", do_local_test=False,
+        hpc=False, local_only=False):
+
+    if local_only:
+        with config:
+            cl_args = clify.wrap_object(cfg).parse()
+            config.update(cl_args)
+
+            from dps.train import training_loop
+            val = training_loop()
+        return val
+    elif hpc:
+        return _build_and_submit_hpc(**locals())
+    else:
+        return _build_and_submit(**locals())
+
+
+def _build_and_submit(
+        name, config, distributions=None, wall_time="1year", cleanup_time="1day", max_hosts=2, ppn=2,
+        n_param_settings=2, n_repeats=2, host_pool=None, n_retries=1, do_local_test=False, **kwargs):
 
     build_params = dict(n_param_settings=n_param_settings, n_repeats=n_repeats)
     run_params = dict(
@@ -580,9 +599,9 @@ def build_and_submit(
         session.run()
 
 
-def build_and_submit_hpc(
+def _build_and_submit_hpc(
         name, config, distributions, wall_time, cleanup_time, max_hosts=2, ppn=2,
-        n_param_settings=2, n_repeats=2, n_retries=0, do_local_test=False, pmem=0, queue=""):
+        n_param_settings=2, n_repeats=2, n_retries=0, do_local_test=False, pmem=0, queue="", **kwargs):
 
     build_params = dict(n_param_settings=n_param_settings, n_repeats=n_repeats)
     run_params = dict(
