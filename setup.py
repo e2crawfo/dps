@@ -19,7 +19,6 @@ setup(
         "scipy",
         "pytest",
         "future",
-        "six",
         # "tensorflow",
         "gym",
         "tabulate",

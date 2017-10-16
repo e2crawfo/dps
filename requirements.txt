@@ -1,6 +1,5 @@
-appdirs==1.4.3
 bleach==2.0.0
-clify==0.1
+-e git+git@github.com:e2crawfo/clify.git@master#egg=clify
 cycler==0.10.0
 decorator==4.0.11
 dill==0.2.6
@@ -31,7 +30,6 @@ nbformat==4.3.0
 networkx==1.11
 nltk==3.2.2
 notebook==5.0.0
-notetaker==0.0.1
 numpy==1.12.1
 packaging==16.8
 pandas==0.19.2
@@ -58,13 +56,10 @@ pyzmq==16.0.2
 qtconsole==4.3.0
 requests==2.13.0
 scikit-learn==0.18.1
-scikits.bootstrap==0.3.2
 scipy==0.19.0
-seaborn==0.7.1
 simplegeneric==0.8.1
-six==1.10.0
-sklearn==0.0
-tensorflow==1.1
+statsmodels==0.8.0
+# tensorflow==1.1
 terminado==0.6
 testpath==0.3
 tornado==4.4.3
