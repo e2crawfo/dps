@@ -14,7 +14,7 @@ config = DEFAULT_CONFIG.copy(
     name="SimpleGridArithmeticExperiment",
 
     n_train=10000,
-    n_val=500,
+    n_val=100,
     max_steps=1000000,
     display_step=1000,
     eval_step=1000,

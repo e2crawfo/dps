@@ -17,10 +17,10 @@ config = DEFAULT_CONFIG.copy(
     name="GridArithmeticExperiments",
 
     n_train=10000,
-    n_val=500,
+    n_val=100,
     max_steps=1000000,
-    display_step=1000,
-    eval_step=1000,
+    display_step=10,
+    eval_step=10,
     patience=np.inf,
     power_through=False,
     preserve_policy=True,
@@ -48,7 +48,7 @@ alg_config = Config(
     policy_weight=1.0,
     value_reg_weight=0.0,
     value_weight=32.0,
-    entropy_weight=0.5,  # use 2.0 if final_reward=False
+    entropy_weight=0.5,
 
     lr_schedule=1e-4,
     n_controller_units=128,

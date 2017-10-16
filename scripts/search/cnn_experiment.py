@@ -32,7 +32,7 @@ do_search = True
 config = DEFAULT_CONFIG.copy(
     name="CNNExperiment",
 
-    n_val=1000,
+    n_val=100,
 
     batch_size=64,
     n_controller_units=256 if not do_search else None,
