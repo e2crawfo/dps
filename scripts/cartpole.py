@@ -25,6 +25,8 @@ config.update(
     batch_size=3,
     render_hook=rl_render_hook,
     render_step=10,
+    eval_step=10,
+    display_step=10,
     seed=1,
     max_steps=100000,
 )

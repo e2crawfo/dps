@@ -1,11 +1,11 @@
-from dps.utils import DpsConfig
+from dps.config import SystemConfig
 from dps.vision import LeNet
 from dps.run import _run
 import tensorflow as tf
 import numpy as np
 
 
-class Config(DpsConfig):
+class Config(SystemConfig):
     curriculum = [
         dict(T=6, shape=(2, 2), min_digits=2, max_digits=3),
         dict(T=12, shape=(3, 3), min_digits=2, max_digits=3),

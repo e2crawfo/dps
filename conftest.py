@@ -1,15 +1,4 @@
 import pytest
-from dps.utils import DpsConfig
-
-
-def pytest_configure(config):
-    dc = DpsConfig
-    dc.start_tensorboard = False
-    dc.mpl_backend = 'Agg'
-    dc.show_plots = False
-    dc.save_plots = False
-    dc.update_latest = False
-    dc.use_gpu = False
 
 
 def pytest_addoption(parser):

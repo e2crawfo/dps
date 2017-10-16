@@ -1,9 +1,11 @@
-from .utils import ConfigStack, Config, DpsConfig
+from .utils import ConfigStack, Config
 
 cfg = ConfigStack()
 
+from .config import SystemConfig
+
 def reset_config():
-    cfg.clear_stack(DpsConfig())
+    cfg.clear_stack(SystemConfig())
 
 reset_config()
 

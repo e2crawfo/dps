@@ -7,7 +7,7 @@ import gzip
 
 from dps.vision import MnistArithmeticDataset
 from dps.vision.attention import DRAW_attention_2D, discrete_attention
-from dps.utils import DpsConfig
+from dps.config import SystemConfig
 
 
 def test_draw_mnist(show_plots):
@@ -37,7 +37,7 @@ def test_draw_mnist(show_plots):
     ], dtype=tf.float32)
     batch_size = int(params.shape[0])
 
-    config = DpsConfig()
+    config = SystemConfig()
     z = gzip.open(config.data_dir + '/mnist.pkl.gz', 'rb')
     (train, _), (dev, _), (test, _) = pickle.load(z, encoding='bytes')
     train = train[:batch_size, :]
@@ -131,7 +131,7 @@ def test_discrete_mnist(show_plots):
     ], dtype=tf.float32)
     batch_size = int(params.shape[0])
 
-    config = DpsConfig()
+    config = SystemConfig()
     z = gzip.open(config.data_dir + '/mnist.pkl.gz', 'rb')
     (train, _), (dev, _), (test, _) = pickle.load(z, encoding='bytes')
     train = train[:batch_size, :]

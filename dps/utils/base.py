@@ -4,8 +4,6 @@ import numpy as np
 from pathlib import Path
 import signal
 import time
-import configparser
-import socket
 import re
 import os
 import traceback
@@ -415,7 +413,7 @@ def camel_to_snake(name):
 
 
 def process_path(path):
-    return os.path.expandvars(os.path.expanduser(path))
+    return os.path.expandvars(os.path.expanduser(str(path)))
 
 
 @contextmanager
@@ -888,52 +886,6 @@ class ClearConfig(Config):
 
 
 Config._reserved_keys = dir(Config)
-
-
-class DpsConfig(Config):
-    def __init__(self, _d=None, **kwargs):
-        config = _parse_dps_config_from_file()
-        if _d:
-            config.update(_d)
-        config.update(kwargs)
-        super(DpsConfig, self).__init__(**config)
-
-
-def _parse_dps_config_from_file(key=None):
-    _config = configparser.ConfigParser()
-    location = Path(dps.__file__).parent
-    _config.read(str(location / 'config.ini'))
-
-    if not key:
-        key = socket.gethostname()
-
-    if key not in _config:
-        key = 'DEFAULT'
-
-    # Load default configuration from a file
-    config = Config(
-        hostname=socket.gethostname(),
-        start_tensorboard=_config.getboolean(key, 'start_tensorboard'),
-        reload_interval=_config.getint(key, 'reload_interval'),
-        update_latest=_config.getboolean(key, 'update_latest'),
-        save_summaries=_config.getboolean(key, 'save_summaries'),
-        data_dir=process_path(_config.get(key, 'data_dir')),
-        model_dir=process_path(_config.get(key, 'model_dir')),
-        log_root=process_path(_config.get(key, 'log_root')),
-        show_plots=_config.getboolean(key, 'show_plots'),
-        save_plots=_config.getboolean(key, 'save_plots'),
-        mpl_backend=_config.get(key, 'mpl_backend'),
-        use_gpu=_config.getboolean(key, 'use_gpu'),
-        tbport=_config.getint(key, 'tbport'),
-        verbose=_config.getboolean(key, 'verbose'),
-        per_process_gpu_memory_fraction=_config.getfloat(key, 'per_process_gpu_memory_fraction'),
-        gpu_allow_growth=_config.getboolean(key, 'gpu_allow_growth'),
-    )
-
-    config.max_experiments = _config.getint(key, 'max_experiments')
-    if config.max_experiments <= 0:
-        config.max_experiments = np.inf
-    return config
 
 
 class Singleton(type):

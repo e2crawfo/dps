@@ -99,7 +99,8 @@ class GymEnvWrapper(Env):
         return 0.0
 
     def visualize(self, render_rollouts=None, **rollout_kwargs):
-        self.do_rollouts(render_mode="human", **rollout_kwargs)
+        if cfg.show_plots or cfg.save_plots:
+            self.do_rollouts(render_mode="human", **rollout_kwargs)
 
     def do_rollouts(
             self, policy, n_rollouts=None, T=None, exploration=None,

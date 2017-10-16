@@ -1,4 +1,4 @@
-from dps.utils import DpsConfig
+from dps.config import SystemConfig
 from dps.utils.tf import MLP, CompositeCell
 from dps.envs.simple_arithmetic import render_rollouts_static
 from dps.vision import LeNet
@@ -9,7 +9,7 @@ import tensorflow as tf
 
 n_examples = 8
 
-config = DpsConfig()
+config = SystemConfig()
 config.update({
     'base': 10,
     'build_classifier': None,
