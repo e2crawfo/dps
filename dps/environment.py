@@ -4,7 +4,6 @@ from future.utils import with_metaclass
 import numpy as np
 import tensorflow as tf
 from tensorflow.python.ops.rnn import dynamic_rnn
-from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 import pandas as pd
 from tabulate import tabulate
 
@@ -16,6 +15,7 @@ from gym.spaces import prng
 from dps import cfg
 from dps.rl import RolloutBatch
 from dps.utils import Parameterized, Param, image_to_string
+from dps.utils.tf import RNNCell
 
 
 class BatchBox(gym.Space):
@@ -128,19 +128,18 @@ class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
 
 
 class RegressionDataset(Parameterized):
+    n_examples = Param()
+
     def __init__(self, x, y, shuffle=True, **kwargs):
         self.x = x
         self.y = y
+        self.n_examples = self.x.shape[0]
         self.shuffle = shuffle
 
         self._epochs_completed = 0
         self._index_in_epoch = 0
 
         super(RegressionDataset, self).__init__(**kwargs)
-
-    @property
-    def n_examples(self):
-        return self.x.shape[0]
 
     @property
     def obs_shape(self):

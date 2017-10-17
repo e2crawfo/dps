@@ -32,7 +32,6 @@ config = DEFAULT_CONFIG.copy(
     show_plots=True,
     save_plots=True,
 
-    use_gpu=False,
     threshold=0.01,
     render_hook=rl_render_hook,
     memory_limit_mb=12*1024,
@@ -129,6 +128,16 @@ env_config = Config(
 
 config.update(alg_config)
 config.update(env_config)
+
+
+# For oak experiment
+config.update(
+    reductions="sum",
+    use_gpu=True,
+    gpu_allow_growth=True,
+    per_process_gpu_memory_fraction=0.22,
+)
+
 
 # grid = dict(entropy_weight=2**np.linspace(-4, 3, 8))
 grid = dict(n_train=2**np.arange(6, 18))

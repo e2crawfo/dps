@@ -153,19 +153,15 @@ class TrainingLoop(object):
 
             with ExitStack() as stack:
                 session_config = tf.ConfigProto()
-                session_config.gpu_options.allow_growth = True
 
                 if cfg.use_gpu:
-
                     per_process_gpu_memory_fraction = getattr(cfg, 'per_process_gpu_memory_fraction', None)
                     if per_process_gpu_memory_fraction:
                         session_config.gpu_options.per_process_gpu_memory_fraction = per_process_gpu_memory_fraction
-                        print("Using {}% of GPU memory.".format(100 * per_process_gpu_memory_fraction))
 
                     gpu_allow_growth = getattr(cfg, 'gpu_allow_growth', None)
                     if gpu_allow_growth:
                         session_config.gpu_options.allow_growth = gpu_allow_growth
-                        print("Allowing growth of GPU memory: {}".format(gpu_allow_growth))
 
                 graph = tf.Graph()
                 sess = tf.Session(graph=graph, config=session_config)
@@ -179,6 +175,8 @@ class TrainingLoop(object):
                     stack.enter_context(graph.device("/cpu:0"))
                 else:
                     print("Using GPU if available.")
+                    print("Using {}% of GPU memory.".format(100 * session_config.gpu_options.per_process_gpu_memory_fraction))
+                    print("Allowing growth of GPU memory: {}".format(session_config.gpu_options.allow_growth))
 
                 if cfg.save_summaries:
                     self.train_writer = tf.summary.FileWriter(

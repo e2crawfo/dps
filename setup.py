@@ -24,10 +24,9 @@ setup(
         "tabulate",
         "psutil",
         "pyskiplist",
-        "Pillow",
         "progressbar2",
         "mnist_arithmetic",
-        "statsmodels",
+        # "statsmodels",
     ],
     entry_points={
         'console_scripts': ['dps-hyper=dps.parallel:dps_hyper_cl',

@@ -1,9 +1,8 @@
 import tensorflow as tf
 from tensorflow.python.ops.rnn import dynamic_rnn
-from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 
 from dps.rl import DiscretePolicy, AgentHead, RLObject
-from dps.utils.tf import masked_mean, tf_roll
+from dps.utils.tf import masked_mean, tf_roll, RNNCell
 
 
 class ValueFunction(AgentHead):

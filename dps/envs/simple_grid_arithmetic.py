@@ -65,7 +65,6 @@ class SimpleGridArithmeticDataset(RegressionDataset):
     min_digits = Param()
     max_digits = Param()
     base = Param()
-    n_examples = Param()
     op_loc = Param()
     loss_type = Param("2-norm")
     largest_digit = Param(9)

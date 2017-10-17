@@ -77,7 +77,7 @@ def generate_all(distributions):
     lists = OrderedDict()
     other = {}
 
-    for k, v in flat.items():
+    for k, v in sorted(flat.items()):
         try:
             v = list(v)
             lists[k] = v

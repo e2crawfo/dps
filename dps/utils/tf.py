@@ -8,12 +8,17 @@ import hashlib
 import tensorflow as tf
 from tensorflow.python.ops import random_ops
 from tensorflow.python.framework import ops
-from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from tensorflow.contrib.slim.python.slim.nets.vgg import vgg_a, vgg_16, vgg_19
 from tensorflow.contrib.slim import fully_connected
 
 import dps
 from dps.utils.base import Schedule, _bool, popleft, eval_schedule
+
+
+if tf.__version__ >= "1.2":
+    RNNCell = tf.nn.rnn_cell.RNNCell
+else:
+    from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 
 
 def resize_image_with_crop_or_pad(img, target_height, target_width):
