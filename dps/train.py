@@ -292,9 +292,9 @@ class TrainingLoop(object):
             memory_delta_mb=memory_after - memory_before
         )
 
-        self.latest['train_data'] = pd.DataFrame.from_records(self.latest['train_data'])
-        self.latest['update_data'] = pd.DataFrame.from_records(self.latest['update_data'])
-        self.latest['val_data'] = pd.DataFrame.from_records(self.latest['val_data'])
+        self.latest['train_data'] = pd.DataFrame.from_records(self.latest['train_data']).to_csv()
+        self.latest['update_data'] = pd.DataFrame.from_records(self.latest['update_data']).to_csv()
+        self.latest['val_data'] = pd.DataFrame.from_records(self.latest['val_data']).to_csv()
 
         if limiter.ran_out:
             reason = "Time limit reached"

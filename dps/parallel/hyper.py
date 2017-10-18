@@ -17,6 +17,7 @@ import subprocess
 import matplotlib.pyplot as plt
 import statsmodels.stats.api as sms
 from scipy.stats import sem
+from io import StringIO
 
 import clify
 
@@ -259,19 +260,26 @@ def _summarize_search(args):
         record['op_name'] = op.name
         del record['best_path']
 
-        if len(record['train_data']) > 0:
-            for k, v in record['train_data'].iloc[-1].items():
+        train_data = pd.read_csv(StringIO(record['train_data']))
+        update_data = pd.read_csv(StringIO(record['update_data']))
+        val_data = pd.read_csv(StringIO(record['val_data']))
+
+        if len(train_data) > 0:
+            for k, v in train_data.iloc[-1].items():
                 record[k + '_train'] = v
-        if len(record['update_data']) > 0:
-            for k, v in record['update_data'].iloc[-1].items():
+        if len(update_data) > 0:
+            for k, v in update_data.iloc[-1].items():
                 record[k + '_update'] = v
-        if len(record['val_data']) > 0:
-            for k, v in record['val_data'].iloc[-1].items():
+        if len(val_data) > 0:
+            for k, v in val_data.iloc[-1].items():
                 record[k + '_val'] = v
 
         del record['train_data']
+        del train_data
         del record['update_data']
+        del update_data
         del record['val_data']
+        del val_data
 
         config = Config(r['config'])
         for k in keys:
@@ -308,7 +316,7 @@ def _summarize_search(args):
     remaining = [k for k in data[0]['data'].keys() if k not in column_order and k not in keys]
     column_order = column_order + sorted(remaining)
 
-    with pd.option_context('show_plots.max_rows', None, 'show_plots.max_columns', None):
+    with pd.option_context('display.max_rows', None, 'display.max_columns', None):
         print('\n' + '*' * 100)
         print("RESULTS GROUPED BY PARAM VALUES, WORST COMES FIRST: ")
         for i, d in enumerate(data):
@@ -358,7 +366,15 @@ def _rl_plot(args):
         config = Config(r['config'])
         key = ",".join("{}={}".format(k, config[k]) for k in keys)
 
-        val_data[key].append(r['history'][-1]['val_data']['RLContext:loss'])
+        record = r['history'][-1].copy()
+
+        vd = pd.read_csv(StringIO(record['val_data']))
+        val_data[key].append(vd['loss'])
+
+        del record['train_data']
+        del record['update_data']
+        del record['val_data']
+        del vd
         del op
         del r
 
@@ -425,19 +441,26 @@ def _sample_complexity_plot(args):
         record['op_name'] = op.name
         del record['best_path']
 
-        if len(record['train_data']) > 0:
-            for k, v in record['train_data'].iloc[-1].items():
+        train_data = pd.read_csv(StringIO(record['train_data']))
+        update_data = pd.read_csv(StringIO(record['update_data']))
+        val_data = pd.read_csv(StringIO(record['val_data']))
+
+        if len(train_data) > 0:
+            for k, v in train_data.iloc[-1].items():
                 record[k + '_train'] = v
-        if len(record['update_data']) > 0:
-            for k, v in record['update_data'].iloc[-1].items():
+        if len(update_data) > 0:
+            for k, v in update_data.iloc[-1].items():
                 record[k + '_update'] = v
-        if len(record['val_data']) > 0:
-            for k, v in record['val_data'].iloc[-1].items():
+        if len(val_data) > 0:
+            for k, v in val_data.iloc[-1].items():
                 record[k + '_val'] = v
 
         del record['train_data']
+        del train_data
         del record['update_data']
+        del update_data
         del record['val_data']
+        del val_data
 
         config = Config(r['config'])
         for k in keys:
