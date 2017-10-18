@@ -515,7 +515,7 @@ def dps_hyper_cl():
     from dps.parallel.base import parallel_cl
     summary_cmd = (
         'summary', 'Summarize results of a hyper-parameter search.', _summarize_search,
-        ('paths', dict(help="Location of data store for job.", type=str)),
+        ('path', dict(help="Location of data store for job.", type=str)),
     )
 
     style_list = ['default', 'classic'] + sorted(style for style in plt.style.available if style != 'classic')
@@ -550,11 +550,17 @@ def dps_hyper_cl():
 def build_and_submit(
         name, config, distributions=None, wall_time="1year", cleanup_time="1day", max_hosts=2, ppn=2,
         n_param_settings=2, n_repeats=2, host_pool=None, n_retries=1, pmem=0, queue="", do_local_test=False,
-        hpc=False, local_only=False):
+        kind="local"):
+    """
+    Parameters
+    ----------
+    kind: str
 
+    """
     os.nice(10)
+    assert kind in "pbs slurm parallel local".split()
 
-    if local_only:
+    if kind == "local":
         with config:
             cl_args = clify.wrap_object(cfg).parse()
             config.update(cl_args)
@@ -570,10 +576,11 @@ def build_and_submit(
             show_plots=False,
             max_experiments=np.inf,
         )
+        del config['log_root']
+        del config['data_dir']
+        del config['model_dir']
 
-        kwargs = locals()
-
-        if hpc:
+        if kind in "pbs slurm".split():
             return _build_and_submit_hpc(**locals())
         else:
             return _build_and_submit(**locals())
@@ -610,7 +617,8 @@ def _build_and_submit(
 
 def _build_and_submit_hpc(
         name, config, distributions, wall_time, cleanup_time, max_hosts=2, ppn=2,
-        n_param_settings=2, n_repeats=2, n_retries=0, do_local_test=False, pmem=0, queue="", **kwargs):
+        n_param_settings=2, n_repeats=2, n_retries=0, do_local_test=False, pmem=0, queue="", kind="",
+        **kwargs):
 
     build_params = dict(n_param_settings=n_param_settings, n_repeats=n_repeats)
     run_params = dict(

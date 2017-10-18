@@ -341,7 +341,7 @@ class ParallelSession(object):
         return self.execute_command(
             "ssh -oPasswordAuthentication=no -oStrictHostKeyChecking=no "
             "-oConnectTimeout=5 -oServerAliveInterval=2 "
-            "-T -vvv {host} \"{command}\"".format(host=host, command=command), **kwargs)
+            "-T {host} \"{command}\"".format(host=host, command=command), **kwargs)
 
     def fetch(self):
         for i, host in enumerate(self.hosts):

@@ -34,7 +34,8 @@ class Operator(object):
     metadata: dict
 
     """
-    def __init__(self, idx, name, func_key, inp_keys, outp_keys, pass_store=False, metadata=None):
+    def __init__(
+            self, idx, name, func_key, inp_keys, outp_keys, pass_store=False, metadata=None):
         self.idx = idx
         self.name = name
         self.func_key = func_key
@@ -139,10 +140,14 @@ Operator(
             vprint("Function for op {} has returned".format(self.name), verbose)
             vprint("Saving output for op {}".format(self.name), verbose)
             if len(self.outp_keys) == 1:
-                store.save_object('data', self.outp_keys[0], outputs, force_unique=force_unique, clobber=True)
+                store.save_object(
+                    'data', self.outp_keys[0], outputs, force_unique=force_unique,
+                    clobber=True, recurse=False)
             else:
                 for o, ok in zip(outputs, self.outp_keys):
-                    store.save_object('data', ok, o, force_unique=force_unique, clobber=True)
+                    store.save_object(
+                        'data', ok, o, force_unique=force_unique,
+                        clobber=True, recurse=False)
 
             vprint("op {} complete.".format(self.name), verbose)
             vprint("\n\n" + ("*" * 80), verbose)
@@ -276,21 +281,21 @@ class Job(ReadOnlyJob):
         self.op_idx = 0
         self.n_signals = 0
 
-    def save_object(self, kind, key, obj, force_unique=True, clobber=False):
-        self.objects.save_object(kind, key, obj, force_unique, clobber)
+    def save_object(self, kind, key, obj, force_unique=True, clobber=False, recurse=True):
+        self.objects.save_object(kind, key, obj, force_unique, clobber, recurse=True)
 
     def add_op(self, name, func, inputs, n_outputs, pass_store):
         if not callable(func):
             func_key = func
         else:
             func_key = self.objects.get_unique_key('function')
-            self.save_object('function', func_key, func, force_unique=False)
+            self.save_object('function', func_key, func, force_unique=False, recurse=True)
 
         inp_keys = []
         for inp in inputs:
             if not isinstance(inp, Signal):
                 key = self.objects.get_unique_key('data')
-                self.save_object('data', key, inp, force_unique=True)
+                self.save_object('data', key, inp, force_unique=True, recurse=False)
             else:
                 key = inp.key
             inp_keys.append(key)
@@ -306,7 +311,7 @@ class Job(ReadOnlyJob):
             pass_store=pass_store)
         self.op_idx += 1
         op_key = self.objects.get_unique_key('operator')
-        self.save_object('operator', op_key, op, force_unique=True)
+        self.save_object('operator', op_key, op, force_unique=True, recurse=True)
 
         return outputs
 
@@ -316,7 +321,7 @@ class Job(ReadOnlyJob):
         results = []
 
         func_key = self.objects.get_unique_key('function')
-        self.save_object('function', func_key, func, force_unique=True)
+        self.save_object('function', func_key, func, force_unique=True, recurse=True)
 
         for idx, inp in enumerate(inputs):
             op_result = self.add_op(
@@ -403,7 +408,7 @@ class FileSystemObjectStore(ObjectStore):
     def object_exists(self, kind, key):
         return self.path_for(kind, key).exists()
 
-    def save_object(self, kind, key, obj, force_unique=True, clobber=False):
+    def save_object(self, kind, key, obj, force_unique=True, clobber=False, recurse=True):
         if self.object_exists(kind, key):
             if force_unique:
                 raise ValueError("Trying to save object {} with kind {} and key {}, "
@@ -416,7 +421,7 @@ class FileSystemObjectStore(ObjectStore):
         path.parent.mkdir(exist_ok=True, parents=True)
 
         with path.open('wb') as f:
-            dill.dump(obj, f, protocol=dill.HIGHEST_PROTOCOL, recurse=True)
+            dill.dump(obj, f, protocol=dill.HIGHEST_PROTOCOL, recurse=recurse)
 
     def delete_object(self, kind, key):
         path = self.path_for(kind, key)
