@@ -581,7 +581,10 @@ def build_and_submit(
 
 def _build_and_submit(
         name, config, distributions=None, wall_time="1year", cleanup_time="1day", max_hosts=2, ppn=2,
-        n_param_settings=2, n_repeats=2, host_pool=None, n_retries=1, do_local_test=False, **kwargs):
+        n_param_settings=2, n_repeats=2, host_pool="", n_retries=1, do_local_test=False, **kwargs):
+
+    if isinstance(host_pool, str):
+        host_pool = host_pool.split()
 
     build_params = dict(n_param_settings=n_param_settings, n_repeats=n_repeats)
     run_params = dict(

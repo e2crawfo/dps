@@ -19,8 +19,8 @@ config = DEFAULT_CONFIG.copy(
     n_train=10000,
     n_val=100,
     max_steps=1000000,
-    display_step=10,
-    eval_step=10,
+    display_step=100,
+    eval_step=100,
     patience=np.inf,
     power_through=False,
     preserve_policy=True,
@@ -139,8 +139,9 @@ config.update(
 )
 
 
-# grid = dict(entropy_weight=2**np.linspace(-4, 3, 8))
-grid = dict(n_train=2**np.arange(6, 18))
+grid = dict(entropy_weight=2**np.linspace(-4, 2, 6))
+# grid = dict(n_train=2**np.arange(6, 18))
+# grid = dict(n_train=2**np.arange(6, 18))
 
 from dps.parallel.hyper import build_and_submit
 host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
