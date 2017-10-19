@@ -626,11 +626,11 @@ def _build_and_submit(
 
     with config:
         job, archive_path = build_search(
-            '/tmp/dps/search', name, distributions, config,
+            cfg.experiments_dir, name, distributions, config,
             add_date=1, _zip=True, do_local_test=do_local_test, **build_params)
 
         session = ParallelSession(
-            name, archive_path, 'map', '/tmp/dps/search/execution/',
+            name, archive_path, 'map', cfg.experiments_dir + '/execution/',
             parallel_exe='$HOME/.local/bin/parallel', dry_run=False,
             env_vars=dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1'),
             redirect=True, **run_params)
@@ -654,11 +654,11 @@ def _build_and_submit_hpc(
 
     with config:
         job, archive_path = build_search(
-            '/tmp/dps/search', name, distributions, config,
+            cfg.experiments_dir, name, distributions, config,
             add_date=1, _zip=True, do_local_test=do_local_test, **build_params)
 
         session = ParallelSession(
-            name, archive_path, 'map', '$SCRATCH/experiments', local_scratch_prefix="\\$RAMDISK",
+            name, archive_path, 'map', cfg.experiments_dir + '/execution/', local_scratch_prefix="\\$RAMDISK",
             parallel_exe='$HOME/.local/bin/parallel', dry_run=False,
             env_vars=dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1'),
             redirect=True, **run_params)

@@ -228,12 +228,14 @@ class TrainingLoop(object):
                 print("Optimization complete. Reason: {}.".format(reason))
                 print("Best hypothesis for this stage was found on "
                       "step (g: {best_global_step}, l: {best_local_step}) "
-                      "with validation loss = {best_loss}.".format(**self.latest))
+                      "with stopping criteria of {best_stopping_criteria} and "
+                      "validation loss = {best_loss}.".format(**self.latest))
 
                 best_path = self.latest['best_path']
                 print("Loading best hypothesis for this stage "
                       "from file {}...".format(best_path))
                 updater.restore(sess, best_path)
+
                 test_loss, _, test_record = updater.evaluate(cfg.n_val, 'test')
                 print("Results on test dataset: ")
                 print("Test loss: {}".format(test_loss))
@@ -403,10 +405,10 @@ class EarlyStopHook(object):
         self.patience = patience
         self.reset()
 
-    def check(self, loss, step, record):
-        new_best = self._best_loss is None or loss < self._best_loss
+    def check(self, stopping_criteria, step, record):
+        new_best = self._best_stopping_criteria is None or stopping_criteria < self._best_stopping_criteria
         if new_best:
-            self._best_loss = loss
+            self._best_stopping_criteria = stopping_criteria
             self._best_step = step
             self._best_record = record.copy()
 
@@ -418,11 +420,11 @@ class EarlyStopHook(object):
     @property
     def best(self):
         best = self._best_record.copy()
-        best.update(loss=self._best_loss, local_step=self._best_step)
+        best.update(stopping_criteria=self._best_stopping_criteria, local_step=self._best_step)
         return best
 
     def reset(self):
-        self._best_loss = None
+        self._best_stopping_criteria = None
         self._best_record = None
         self._best_step = None
         self._early_stopped = 0

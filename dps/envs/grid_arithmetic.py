@@ -115,6 +115,7 @@ config = Config(
 
     n_train=10000,
     n_val=500,
+    use_gpu=False,
 
     show_op=True,
     reward_window=0.5,
@@ -133,17 +134,21 @@ config = Config(
     mnist_config=MNIST_CONFIG.copy(
         eval_step=100,
         max_steps=100000,
-        patience=np.inf,
-        threshold=0.01,
-        include_blank=True
+        patience=5000,
+        threshold=0.001,
+        include_blank=True,
+        use_gpu=True,
+        gpu_allow_growth=True,
     ),
 
     salience_config=MNIST_SALIENCE_CONFIG.copy(
         eval_step=100,
         max_steps=100000,
-        patience=np.inf,
+        patience=5000,
         threshold=0.001,
         render_hook=salience_render_hook(),
+        use_gpu=True,
+        gpu_allow_growth=True,
     ),
 
     log_name='grid_arithmetic',
@@ -308,7 +313,7 @@ class GridArithmetic(InternalEnv):
     salience_output_width = Param()
     initial_salience = Param()
 
-    op_classes = list('AMXNC')
+    op_classes = [chr(i + ord('A')) for i in range(26)]
 
     arithmetic_actions_dict = {
         '+': lambda acc, digit: acc + digit,
@@ -383,13 +388,14 @@ class GridArithmetic(InternalEnv):
         digit_config = cfg.mnist_config.copy(
             classes=list(range(self.base)),
             downsample_factor=self.downsample_factor,
-            build_function=cfg.build_digit_classifier
+            build_function=cfg.build_digit_classifier,
+            stopping_function=lambda val_record: -val_record['reward']
         )
 
         self.digit_classifier = cfg.build_digit_classifier()
         self.digit_classifier.set_pretraining_params(
             digit_config,
-            name_params='classes downsample_factor',
+            name_params='classes downsample_factor n_train threshold',
             directory=cfg.model_dir + '/mnist_pretrained/'
         )
 
@@ -397,14 +403,15 @@ class GridArithmetic(InternalEnv):
             classes=list(self.op_classes),
             downsample_factor=self.downsample_factor,
             build_function=cfg.build_op_classifier,
-            n_train=35000
+            n_train=60000,
+            stopping_function=lambda val_record: -val_record['reward']
         )
 
         self.op_classifier = cfg.build_op_classifier()
         self.op_classifier.set_pretraining_params(
             op_config,
-            name_params='classes downsample_factor',
-            directory=cfg.model_dir + '/mnist_pretrained/'
+            name_params='classes downsample_factor n_train threshold',
+            directory=cfg.model_dir + '/mnist_pretrained/',
         )
 
         self.classifier_head = classifier_head
