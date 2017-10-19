@@ -281,10 +281,11 @@ class GridArithmeticDataset(RegressionDataset):
         return new_X, new_Y
 
 
-def classifier_head(x):
+def classifier_head(x, base):
     x = tf.stop_gradient(x)
     x = tf.argmax(x, 1)
     x = tf.expand_dims(x, 1)
+    x = tf.where(tf.equal(x, base), -1*tf.ones_like(x), x)
     x = tf.cast(x, tf.float32)
     return x
 
@@ -462,10 +463,10 @@ class GridArithmetic(InternalEnv):
         return salience, salience_input
 
     def _build_update_storage(self, glimpse, prev_digit, classify_digit, prev_op, classify_op):
-        digit = self.classifier_head(self.digit_classifier(glimpse, self.base + 1, False))
+        digit = self.classifier_head(self.digit_classifier(glimpse, self.base + 1, False), self.base)
         new_digit = (1 - classify_digit) * prev_digit + classify_digit * digit
 
-        op = self.classifier_head(self.op_classifier(glimpse, len(self.op_classes) + 1, False))
+        op = self.classifier_head(self.op_classifier(glimpse, len(self.op_classes) + 1, False), len(self.op_classes))
         new_op = (1 - classify_op) * prev_op + classify_op * op
 
         return new_digit, new_op
@@ -591,14 +592,14 @@ class GridArithmeticEasy(GridArithmetic):
             salience, salience_input = self._build_update_salience(
                 update_salience, _salience, _salience_input, _fovea_y, _fovea_x)
 
-        op = self.classifier_head(self.op_classifier(_glimpse, len(self.op_classes) + 1, False))
+        op = self.classifier_head(self.op_classifier(_glimpse, len(self.op_classes) + 1, False), len(self.op_classes))
         op = (1 - classify_op) * _op + classify_op * op
 
         new_digit_factor = classify_digit
         for action in arithmetic_actions:
             new_digit_factor += action
 
-        digit = self.classifier_head(self.digit_classifier(_glimpse, self.base + 1, False))
+        digit = self.classifier_head(self.digit_classifier(_glimpse, self.base + 1, False), self.base)
         digit = (1 - new_digit_factor) * _digit + new_digit_factor * digit
 
         new_acc_factor = tf.zeros_like(right)
