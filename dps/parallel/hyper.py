@@ -600,6 +600,7 @@ def build_and_submit(
             max_experiments=np.inf,
         )
         del config['log_root']
+        del config['experiments_dir']
         del config['data_dir']
         del config['model_dir']
 

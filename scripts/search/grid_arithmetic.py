@@ -3,14 +3,11 @@ import numpy as np
 import clify
 
 from dps.utils import Config
-from dps.utils.tf import LeNet
 from dps.envs import grid_arithmetic
 from dps.rl.algorithms import a2c
 from dps.rl.policy import BuildEpsilonSoftmaxPolicy, BuildLstmController
 from dps.rl import rl_render_hook
 from dps.config import DEFAULT_CONFIG
-from dps.vision import MNIST_CONFIG, MNIST_SALIENCE_CONFIG
-from dps.test.test_mnist import salience_render_hook
 
 
 config = DEFAULT_CONFIG.copy(
@@ -71,21 +68,15 @@ alg_config = Config(
     updates_per_sample=1,
 )
 
-
-env_config = Config(
-    build_env=grid_arithmetic.build_env,
-
-    # reductions="sum",
-    # reductions="prod",
-    # reductions="max",
-    # reductions="min",
-    reductions="A:sum M:prod X:max N:min",
+env_config = grid_arithmetic.config.copy(
+    reductions="sum",
     arithmetic_actions='+ * max min +1',
+    ablation='easy',
+    render_rollouts=None,
 
     curriculum=[
         dict(T=30, min_digits=2, max_digits=3, shape=(2, 2)),
     ],
-    mnist=True,
     op_loc=(0, 0),
     start_loc=(0, 0),
     base=10,
@@ -97,33 +88,9 @@ env_config = Config(
     initial_salience=False,
     salience_input_width=3*14,
     salience_output_width=14,
-
-    reward_window=0.499,
-    final_reward=True,
     downsample_factor=2,
 
-    ablation='easy',
-    log_name='grid_arithmetic',
-    render_rollouts=None,
-
-    build_digit_classifier=lambda: LeNet(128, scope="digit_classifier"),
-    build_op_classifier=lambda: LeNet(128, scope="op_classifier"),
-
-    mnist_config=MNIST_CONFIG.copy(
-        eval_step=100,
-        max_steps=100000,
-        patience=5000,
-        threshold=0.01,
-        include_blank=True
-    ),
-
-    salience_config=MNIST_SALIENCE_CONFIG.copy(
-        eval_step=100,
-        max_steps=100000,
-        patience=5000,
-        threshold=0.001,
-        render_hook=salience_render_hook(),
-    ),
+    final_reward=True,
 )
 
 config.update(alg_config)
@@ -132,14 +99,13 @@ config.update(env_config)
 
 # For oak experiment
 config.update(
-    reductions="sum",
     use_gpu=True,
     gpu_allow_growth=True,
     per_process_gpu_memory_fraction=0.22,
 )
 
 
-grid = dict(entropy_weight=2**np.linspace(-4, 2, 6))
+grid = dict(entropy_weight=2**np.linspace(-4, -1, 6))
 # grid = dict(n_train=2**np.arange(6, 18))
 # grid = dict(n_train=2**np.arange(6, 18))
 

@@ -118,7 +118,7 @@ config = Config(
     use_gpu=False,
 
     show_op=True,
-    reward_window=0.5,
+    reward_window=0.4999,
     salience_action=True,
     salience_input_width=3*14,
     salience_output_width=14,
