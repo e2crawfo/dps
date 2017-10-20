@@ -5,8 +5,9 @@ from zipfile import ZipFile
 from collections import defaultdict
 import argparse
 import signal
+import numpy as np
 
-from dps.utils import SigTerm, KeywordMapping, pdb_postmortem, redirect_stream
+from dps.utils import SigTerm, KeywordMapping, pdb_postmortem, redirect_stream, modify_env
 
 
 def raise_sigterm(*args, **kwargs):
@@ -348,12 +349,15 @@ class Job(ReadOnlyJob):
         indices = set(indices)
 
         if idx_in_node != -1 and ppn != -1 and gpu_set:
+            # Note: idx_in_node starts from 1 because of gnu-parallel's convention.
+            idx_in_node -= 1
             gpus = [int(i) for i in gpu_set.split(',')]
             n_gpus = len(gpus)
             assert ppn % n_gpus == 0
             assert ppn >= n_gpus
             procs_per_gpu = ppn // n_gpus
-            gpu_to_use = gpus[int(np.floor(idx_in_node / procs_per_gpu))]
+            gpu_idx = int(np.floor(idx_in_node / procs_per_gpu))
+            gpu_to_use = gpus[gpu_idx]
 
             with modify_env(CUDA_VISIBLE_DEVICES=str(gpu_to_use)):
                 return [

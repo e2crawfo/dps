@@ -24,7 +24,7 @@ import clify
 import dps
 
 
-@contextlib.contextmanager
+@contextmanager
 def modify_env(*remove, **update):
     """
     Temporarily updates the ``os.environ`` dictionary in-place.
