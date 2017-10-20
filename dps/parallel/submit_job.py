@@ -64,13 +64,15 @@ class ParallelSession(object):
         If True, stderr and stdout of jobs is saved in files rather than being printed to screen.
     n_retries: int
         Number of retries per job.
+    gpu_set: string
+        Comma-separated list of indices of gpus to use.
 
     """
     def __init__(
             self, name, input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', ppn=12,
             wall_time="1hour", cleanup_time="15mins", time_slack=0, add_date=True, dry_run=0,
             parallel_exe="$HOME/.local/bin/parallel", hpc=False, host_pool=None, min_hosts=1, max_hosts=1,
-            env_vars=None, redirect=False, n_retries=0):
+            env_vars=None, redirect=False, n_retries=0, gpu_set=""):
 
         clean_pattern = pattern.replace(' ', '_')
 
@@ -373,16 +375,18 @@ class ParallelSession(object):
         parallel_command = (
             "cd {local_scratch} && "
             "dps-hyper run {archive_root} {pattern} {{}} --max-time {seconds_per_step} "
-            "--log-root {local_scratch} --log-name experiments {redirect}"
+            "--log-root {local_scratch} --log-name experiments "
+            "--idx-in-node={{%}} --gpu-set={gpu_set} --ppn={ppn} {redirect}"
         )
 
         command = (
-            '{parallel_exe} --timeout {abs_seconds_per_step} --no-notice -j {ppn} \\\n'
+            '{parallel_exe} --timeout {abs_seconds_per_step} --no-notice -j{ppn} \\\n'
             '    --joblog {job_directory}/job_log.txt {node_file} \\\n'
             '    --env PATH --env LD_LIBRARY_PATH {env_vars} -v \\\n'
             '    "' + parallel_command + '" \\\n'
             '    ::: {indices_for_step}'
         )
+
         command = command.format(
             indices_for_step=indices_for_step, **self.__dict__)
 

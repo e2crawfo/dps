@@ -339,7 +339,7 @@ class Job(ReadOnlyJob):
 
         return op_result
 
-    def run(self, pattern, indices, force, output_to_files, verbose):
+    def run(self, pattern, indices, force, output_to_files, verbose, idx_in_node, ppn, gpu_set):
         operators = self.get_ops(pattern)
 
         if not operators:
@@ -347,9 +347,22 @@ class Job(ReadOnlyJob):
 
         indices = set(indices)
 
-        return [
-            op.run(self.objects, force, output_to_files, verbose)
-            for op in operators if op.idx in indices]
+        if idx_in_node != -1 and ppn != -1 and gpu_set:
+            gpus = [int(i) for i in gpu_set.split(',')]
+            n_gpus = len(gpus)
+            assert ppn % n_gpus == 0
+            assert ppn >= n_gpus
+            procs_per_gpu = ppn // n_gpus
+            gpu_to_use = gpus[int(np.floor(idx_in_node / procs_per_gpu))]
+
+            with modify_env(CUDA_VISIBLE_DEVICES=str(gpu_to_use)):
+                return [
+                    op.run(self.objects, force, output_to_files, verbose)
+                    for op in operators if op.idx in indices]
+        else:
+            return [
+                op.run(self.objects, force, output_to_files, verbose)
+                for op in operators if op.idx in indices]
 
     def zip(self, archive_name=None, delete=False):
         return self.objects.zip(archive_name, delete=delete)
@@ -546,7 +559,9 @@ def zip_root(zipfile):
 
 def run_command(args):
     job = Job(args.path)
-    job.run(args.pattern, args.indices, args.force, args.redirect, args.verbose)
+    job.run(
+        args.pattern, args.indices, args.force, args.redirect, args.verbose,
+        args.idx_in_node, args.ppn, args.gpu_set)
 
 
 def view_command(args):
@@ -579,6 +594,9 @@ def parallel_cl(desc, additional_cmds=None):
     run_parser.add_argument('path', type=str)
     run_parser.add_argument('pattern', type=str)
     run_parser.add_argument('indices', nargs='*', type=int)
+    run_parser.add_argument('--idx-in-node', type=int, default=-1)
+    run_parser.add_argument('--ppn', type=int, default=-1)
+    run_parser.add_argument('--gpu-set', type=str, default="")
     run_parser.add_argument(
         '--force', action='store_true', help="If supplied, run the selected operators "
                                              "even if they've already been completed.")

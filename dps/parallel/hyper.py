@@ -573,7 +573,7 @@ def dps_hyper_cl():
 def build_and_submit(
         name, config, distributions=None, wall_time="1year", cleanup_time="1day", max_hosts=2, ppn=2,
         n_param_settings=2, n_repeats=2, host_pool=None, n_retries=1, pmem=0, queue="", do_local_test=False,
-        kind="local"):
+        kind="local", gpu_set=""):
     """
     Parameters
     ----------
@@ -611,7 +611,7 @@ def build_and_submit(
 
 def _build_and_submit(
         name, config, distributions=None, wall_time="1year", cleanup_time="1day", max_hosts=2, ppn=2,
-        n_param_settings=2, n_repeats=2, host_pool="", n_retries=1, do_local_test=False, **kwargs):
+        n_param_settings=2, n_repeats=2, host_pool="", n_retries=1, do_local_test=False, gpu_set="", **kwargs):
 
     if isinstance(host_pool, str):
         host_pool = host_pool.split()
@@ -620,7 +620,7 @@ def _build_and_submit(
     run_params = dict(
         wall_time=wall_time, cleanup_time=cleanup_time, time_slack=60,
         max_hosts=max_hosts, ppn=ppn, n_retries=n_retries, hpc=False,
-        host_pool=host_pool)
+        host_pool=host_pool, gpu_set=gpu_set)
 
     config.name = name
 
@@ -640,13 +640,14 @@ def _build_and_submit(
 
 def _build_and_submit_hpc(
         name, config, distributions, wall_time, cleanup_time, max_hosts=2, ppn=2,
-        n_param_settings=2, n_repeats=2, n_retries=0, do_local_test=False, pmem=0, queue="", kind="",
-        **kwargs):
+        n_param_settings=2, n_repeats=2, n_retries=0, do_local_test=False, pmem=0,
+        queue="", kind="", gpu_set="", **kwargs):
 
     build_params = dict(n_param_settings=n_param_settings, n_repeats=n_repeats)
+
     run_params = dict(
         wall_time=wall_time, cleanup_time=cleanup_time, time_slack=120,
-        max_hosts=max_hosts, ppn=ppn, n_retries=n_retries, hpc=True)
+        max_hosts=max_hosts, ppn=ppn, n_retries=n_retries, hpc=True, gpu_set=gpu_set)
 
     config.name = name
     if pmem:
@@ -680,21 +681,50 @@ session.run()
     with (job_dir / "session.pkl").open('wb') as f:
         dill.dump(session, f, protocol=dill.HIGHEST_PROTOCOL, recurse=True)
 
-    resources = "nodes={}:ppn={},walltime={}".format(session.n_nodes, session.ppn, session.wall_time_seconds)
-    if pmem:
-        resources = "{},pmem={}mb".format(resources, pmem)
+    if kind == "pbs":
+        resources = "nodes={}:ppn={},walltime={}".format(session.n_nodes, session.ppn, session.wall_time_seconds)
+        if pmem:
+            resources = "{},pmem={}mb".format(resources, pmem)
 
-    project = "jim-594-aa"
-    email = "eric.crawford@mail.mcgill.ca"
-    if queue:
-        queue = "-q " + queue
-    command = (
-        "qsub -N {name} -d {job_dir} -w {job_dir} -m abe -M {email} -A {project} {queue} -V "
-        "-l {resources} -e stderr.txt -o stdout.txt run.py".format(
-            name=name, job_dir=job_dir, email=email, project=project,
-            queue=queue, resources=resources
+        project = "jim-594-aa"
+        email = "eric.crawford@mail.mcgill.ca"
+        if queue:
+            queue = "-q " + queue
+        command = (
+            "qsub -N {name} -d {job_dir} -w {job_dir} -m abe -M {email} "
+            "-A {project} {queue} -V -l {resources} "
+            "-j oe output.txt run.py".format(
+                name=name, job_dir=job_dir, email=email, project=project,
+                queue=queue, resources=resources
+            )
         )
-    )
+
+    elif kind == "slurm":
+        wall_time_minutes = int(np.ceil(session.wall_time_seconds / 60))
+        resources = "--nodes={} --ntasks-per-node={} --time={}".format(
+            session.n_nodes, session.ppn, wall_time_minutes)
+
+        if pmem:
+            resources = "{} --mem-per-cpu={}mb".format(resources, pmem)
+
+        if gpu_set:
+            n_gpus = len([int(i) for i in gpu_set.split(',')])
+            resources = "{} --gres=gpu:{}".format(resources, n_gpus)
+
+        project = "jim-594-aa"
+        email = "eric.crawford@mail.mcgill.ca"
+        if queue:
+            queue = "-p " + queue
+            command = (
+                "sbatch --job-name {name} -D {job_dir} --mail-type=ALL --mail-user=e2crawfo "
+                "-A {project} {queue} --export=ALL {resources} "
+                "-o output.txt run.py".format(
+                    name=name, job_dir=job_dir, email=email, project=project,
+                    queue=queue, resources=resources
+                )
+            )
+    else:
+        raise Exception()
 
     with cd(job_dir):
         subprocess.run(command.split())
