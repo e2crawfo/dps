@@ -15,8 +15,7 @@ import dill
 import sys
 import subprocess
 import matplotlib.pyplot as plt
-import statsmodels.stats.api as sms
-from scipy.stats import sem
+import scipy
 from io import StringIO
 
 import clify
@@ -404,6 +403,9 @@ def _rl_plot(args):
 
         plt.show()
 
+def ci(data, coverage):
+    return scipy.stats.t.interval(coverage, len(data)-1, loc=np.mean(data), scale=scipy.stats.sem(data))
+
 
 def _sample_complexity_plot(args):
     style = args.style
@@ -476,7 +478,7 @@ def _sample_complexity_plot(args):
             if spread_measure == 'std_dev':
                 y_upper = y_lower = [_y.std() for _y in ys]
             elif spread_measure == 'conf_int':
-                conf_int = [sms.DescrStatsW(_y.values).tconfint_mean() for _y in ys]
+                conf_int = [ci(_y.values, 0.95) for _y in ys]
                 y_lower = y - np.array([ci[0] for ci in conf_int])
                 y_upper = np.array([ci[1] for ci in conf_int]) - y
             elif spread_measure == 'std_err':
@@ -575,6 +577,7 @@ def build_and_submit(
             save_summaries=False,
             update_latest=False,
             show_plots=False,
+            slim=True,
             max_experiments=np.inf,
         )
         del config['log_root']
@@ -598,8 +601,8 @@ def _build_and_submit(
     build_params = dict(n_param_settings=n_param_settings, n_repeats=n_repeats)
     run_params = dict(
         wall_time=wall_time, cleanup_time=cleanup_time, time_slack=60,
-        max_hosts=max_hosts, ppn=ppn, n_retries=n_retries, hpc=False,
-        host_pool=host_pool, gpu_set=gpu_set)
+        max_hosts=max_hosts, ppn=ppn, n_retries=n_retries,
+        host_pool=host_pool, gpu_set=gpu_set, kind="parallel")
 
     config.name = name
 
@@ -625,8 +628,8 @@ def _build_and_submit_hpc(
     build_params = dict(n_param_settings=n_param_settings, n_repeats=n_repeats)
 
     run_params = dict(
-        wall_time=wall_time, cleanup_time=cleanup_time, time_slack=120,
-        max_hosts=max_hosts, ppn=ppn, n_retries=n_retries, hpc=True, gpu_set=gpu_set)
+        wall_time=wall_time, cleanup_time=cleanup_time, time_slack=120, max_hosts=max_hosts,
+        ppn=ppn, n_retries=n_retries, kind=kind, gpu_set=gpu_set)
 
     config.name = name
     if pmem:
@@ -638,7 +641,7 @@ def _build_and_submit_hpc(
             add_date=1, _zip=True, do_local_test=do_local_test, **build_params)
 
         session = ParallelSession(
-            name, archive_path, 'map', cfg.experiments_dir + '/execution/', local_scratch_prefix="\\$RAMDISK",
+            name, archive_path, 'map', cfg.experiments_dir + '/execution/',
             parallel_exe='$HOME/.local/bin/parallel', dry_run=False,
             env_vars=dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1'),
             redirect=True, **run_params)
@@ -690,18 +693,18 @@ session.run()
             n_gpus = len([int(i) for i in gpu_set.split(',')])
             resources = "{} --gres=gpu:{}".format(resources, n_gpus)
 
-        project = "jim-594-aa"
+        project = "def-jpineau"
         email = "eric.crawford@mail.mcgill.ca"
         if queue:
             queue = "-p " + queue
-            command = (
-                "sbatch --job-name {name} -D {job_dir} --mail-type=ALL --mail-user=e2crawfo "
-                "-A {project} {queue} --export=ALL {resources} "
-                "-o output.txt run.py".format(
-                    name=name, job_dir=job_dir, email=email, project=project,
-                    queue=queue, resources=resources
-                )
+        command = (
+            "sbatch --job-name {name} -D {job_dir} --mail-type=ALL --mail-user=e2crawfo "
+            "-A {project} {queue} --export=ALL {resources} "
+            "-o output.txt run.py".format(
+                name=name, job_dir=job_dir, email=email, project=project,
+                queue=queue, resources=resources
             )
+        )
     else:
         raise Exception()
 

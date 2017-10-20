@@ -26,7 +26,6 @@ setup(
         "pyskiplist",
         "progressbar2",
         "mnist_arithmetic",
-        # "statsmodels",
     ],
     entry_points={
         'console_scripts': ['dps-hyper=dps.parallel:dps_hyper_cl',

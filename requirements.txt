@@ -55,7 +55,6 @@ qtconsole==4.3.0
 requests==2.13.0
 scipy==0.19.0
 simplegeneric==0.8.1
-statsmodels==0.8.0
 # tensorflow==1.1
 terminado==0.6
 testpath==0.3

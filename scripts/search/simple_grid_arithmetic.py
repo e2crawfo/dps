@@ -31,7 +31,8 @@ config = DEFAULT_CONFIG.copy(
 
     use_gpu=False,
     threshold=0.01,
-    render_hook=rl_render_hook,
+    # render_hook=rl_render_hook,
+    render_hook=None,
     memory_limit_mb=5*1024,
 )
 
@@ -106,8 +107,13 @@ env_config = Config(
 config.update(alg_config)
 config.update(env_config)
 
-# grid = dict(entropy_weight=2**np.linspace(-4, 3, 8))
-grid = dict(n_train=2**np.arange(6, 18))
+config.update(
+    use_gpu=True,
+    gpu_allow_growth=True,
+)
+
+grid = dict(entropy_weight=2**np.linspace(-4, 3, 8))
+# grid = dict(n_train=2**np.arange(6, 18))
 
 from dps.parallel.hyper import build_and_submit
 host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]

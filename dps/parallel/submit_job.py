@@ -71,9 +71,16 @@ class ParallelSession(object):
     def __init__(
             self, name, input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', ppn=12,
             wall_time="1hour", cleanup_time="15mins", time_slack=0, add_date=True, dry_run=0,
-            parallel_exe="$HOME/.local/bin/parallel", hpc=False, host_pool=None, min_hosts=1, max_hosts=1,
+            parallel_exe="$HOME/.local/bin/parallel", kind="parallel", host_pool=None, min_hosts=1, max_hosts=1,
             env_vars=None, redirect=False, n_retries=0, gpu_set=""):
 
+        if kind == "pbs":
+            local_scratch_prefix="\\$RAMDISK"
+        elif kind == "slurm":
+            local_scratch_prefix="/tmp/dps/hyper"
+
+        assert kind in "parallel pbs slurm".split()
+        hpc = kind in "pbs slurm".split()
         clean_pattern = pattern.replace(' ', '_')
 
         # Create directory to run the job from - should be on scratch.
@@ -219,19 +226,19 @@ class ParallelSession(object):
 
                 else:
                     command = "stat {local_scratch}"
-                    create_local_scratch = self.ssh_execute(command, host, robust=True)
+                    create_local_scratch = self.ssh_execute(command, host, robust=True, quiet=False)
 
                     if create_local_scratch:
                         print("Creating local scratch directory...")
                         command = "mkdir -p {local_scratch}"
-                        self.ssh_execute(command, host, robust=False)
+                        self.ssh_execute(command, host, robust=False, quiet=False)
 
                     command = "cd {local_scratch} && stat {archive_root}"
-                    missing_archive = self.ssh_execute(command, host, robust=True)
+                    missing_archive = self.ssh_execute(command, host, robust=True, quiet=False)
 
                     if missing_archive:
                         command = "cd {local_scratch} && stat {input_zip_base}"
-                        missing_zip = self.ssh_execute(command, host, robust=True)
+                        missing_zip = self.ssh_execute(command, host, robust=True, quiet=False)
 
                         if missing_zip:
                             print("Copying zip to local scratch...")
@@ -240,11 +247,11 @@ class ParallelSession(object):
                                 "-oConnectTimeout=5 -oServerAliveInterval=2 "
                                 "{input_zip_abs} {host}:{local_scratch}".format(host=host, **self.__dict__)
                             )
-                            self.execute_command(command, frmt=False, robust=False)
+                            self.execute_command(command, frmt=False, robust=False, quiet=False)
 
                         print("Unzipping...")
                         command = "cd {local_scratch} && unzip -ouq {input_zip_base}"
-                        self.ssh_execute(command, host, robust=False)
+                        self.ssh_execute(command, host, robust=False, quiet=False)
 
                 print("Host successfully prepared.")
                 hosts.append(host)
@@ -440,9 +447,16 @@ class ParallelSession(object):
                 print("{} ({} since start of job)".format(step_start, step_start - job_start))
 
                 if not self.host_pool:
-                    with open(os.path.expandvars("$PBS_NODEFILE"), 'r') as f:
-                        self.host_pool = list(set([s.strip() for s in iter(f.readline, '')]))
+                    if self.kind == "pbs":
+                        with open(os.path.expandvars("$PBS_NODEFILE"), 'r') as f:
+                            self.host_pool = list(set([s.strip() for s in iter(f.readline, '')]))
+                            print(self.host_pool)
+                    elif self.kind == "slurm":
+                        p = subprocess.run('scontrol show hostnames $SLURM_JOB_NODELIST', stdout=subprocess.PIPE, shell=True)
+                        self.host_pool = list(set([host.strip() for host in p.stdout.decode().split('\n') if host]))
                         print(self.host_pool)
+                    else:
+                        raise Exception("NotImplemented")
 
                 self.hosts, self.n_procs = self.recruit_hosts(
                     self.hpc, self.min_hosts, self.max_hosts, self.host_pool,
