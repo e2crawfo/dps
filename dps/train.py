@@ -13,6 +13,8 @@ import os
 import socket
 import pandas as pd
 from pathlib import Path
+import subprocess
+import sys
 
 from dps import cfg
 from dps.utils import (
@@ -294,9 +296,9 @@ class TrainingLoop(object):
             memory_delta_mb=memory_after - memory_before
         )
 
-        self.latest['train_data'] = pd.DataFrame.from_records(self.latest['train_data']).to_csv()
-        self.latest['update_data'] = pd.DataFrame.from_records(self.latest['update_data']).to_csv()
-        self.latest['val_data'] = pd.DataFrame.from_records(self.latest['val_data']).to_csv()
+        self.latest['train_data'] = pd.DataFrame.from_records(self.latest['train_data']).to_csv(index=False)
+        self.latest['update_data'] = pd.DataFrame.from_records(self.latest['update_data']).to_csv(index=False)
+        self.latest['val_data'] = pd.DataFrame.from_records(self.latest['val_data']).to_csv(index=False)
 
         if limiter.ran_out:
             reason = "Time limit reached"
@@ -393,6 +395,21 @@ class TrainingLoop(object):
             total_train_time += update_duration
             time_per_example = total_train_time / ((self.local_step+1) * cfg.batch_size)
             time_per_batch = total_train_time / (self.local_step+1)
+
+            if cfg.use_gpu and self.global_step % 100 == 0:
+                try:
+                    sys.stdout.flush()
+                    sys.stderr.flush()
+
+                    my_gpu = int(os.environ['CUDA_VISIBLE_DEVICES'])
+
+                    subprocess.run("nvidia-smi dmon -i {} -c 1".format(my_gpu).split(), stdout=sys.stdout, stderr=sys.stderr)
+                    subprocess.run("nvidia-smi pmon -i {} -c 1".format(my_gpu).split(), stdout=sys.stdout, stderr=sys.stderr)
+
+                    sys.stdout.flush()
+                    sys.stderr.flush()
+                except:
+                    print("Error while calling nvidia-smi")
 
             self.local_step += 1
             self.global_step += 1

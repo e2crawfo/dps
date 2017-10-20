@@ -238,6 +238,18 @@ def build_search(
     return job, path
 
 
+def process_detailed_data(record, kind):
+    try:
+        data = pd.read_csv(StringIO(record[kind + '_data']), index_col=False)
+        if len(data) > 0:
+            for k, v in data.iloc[-1].items():
+                record[k + '_' + kind] = v
+        del record[kind + '_data']
+        del data
+    except:
+        pass
+
+
 def _summarize_search(args):
     """ Get all completed jobs, get their outputs. Summarize em. """
     print("Summarizing search stored at {}.".format(Path(args.path).absolute()))
@@ -260,26 +272,9 @@ def _summarize_search(args):
         record['op_name'] = op.name
         del record['best_path']
 
-        train_data = pd.read_csv(StringIO(record['train_data']))
-        update_data = pd.read_csv(StringIO(record['update_data']))
-        val_data = pd.read_csv(StringIO(record['val_data']))
-
-        if len(train_data) > 0:
-            for k, v in train_data.iloc[-1].items():
-                record[k + '_train'] = v
-        if len(update_data) > 0:
-            for k, v in update_data.iloc[-1].items():
-                record[k + '_update'] = v
-        if len(val_data) > 0:
-            for k, v in val_data.iloc[-1].items():
-                record[k + '_val'] = v
-
-        del record['train_data']
-        del train_data
-        del record['update_data']
-        del update_data
-        del record['val_data']
-        del val_data
+        process_detailed_data(record, 'train')
+        process_detailed_data(record, 'update')
+        process_detailed_data(record, 'val')
 
         config = Config(r['config'])
         for k in keys:
@@ -368,7 +363,7 @@ def _rl_plot(args):
 
         record = r['history'][-1].copy()
 
-        vd = pd.read_csv(StringIO(record['val_data']))
+        vd = pd.read_csv(StringIO(record['val_data']), index_col=False)
         val_data[key].append(vd['loss'])
 
         del record['train_data']
@@ -441,26 +436,9 @@ def _sample_complexity_plot(args):
         record['op_name'] = op.name
         del record['best_path']
 
-        train_data = pd.read_csv(StringIO(record['train_data']))
-        update_data = pd.read_csv(StringIO(record['update_data']))
-        val_data = pd.read_csv(StringIO(record['val_data']))
-
-        if len(train_data) > 0:
-            for k, v in train_data.iloc[-1].items():
-                record[k + '_train'] = v
-        if len(update_data) > 0:
-            for k, v in update_data.iloc[-1].items():
-                record[k + '_update'] = v
-        if len(val_data) > 0:
-            for k, v in val_data.iloc[-1].items():
-                record[k + '_val'] = v
-
-        del record['train_data']
-        del train_data
-        del record['update_data']
-        del update_data
-        del record['val_data']
-        del val_data
+        process_detailed_data(record, 'train')
+        process_detailed_data(record, 'update')
+        process_detailed_data(record, 'val')
 
         config = Config(r['config'])
         for k in keys:
