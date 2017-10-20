@@ -226,19 +226,19 @@ class ParallelSession(object):
 
                 else:
                     command = "stat {local_scratch}"
-                    create_local_scratch = self.ssh_execute(command, host, robust=True, quiet=False)
+                    create_local_scratch = self.ssh_execute(command, host, robust=True)
 
                     if create_local_scratch:
                         print("Creating local scratch directory...")
                         command = "mkdir -p {local_scratch}"
-                        self.ssh_execute(command, host, robust=False, quiet=False)
+                        self.ssh_execute(command, host, robust=False)
 
                     command = "cd {local_scratch} && stat {archive_root}"
-                    missing_archive = self.ssh_execute(command, host, robust=True, quiet=False)
+                    missing_archive = self.ssh_execute(command, host, robust=True)
 
                     if missing_archive:
                         command = "cd {local_scratch} && stat {input_zip_base}"
-                        missing_zip = self.ssh_execute(command, host, robust=True, quiet=False)
+                        missing_zip = self.ssh_execute(command, host, robust=True)
 
                         if missing_zip:
                             print("Copying zip to local scratch...")
@@ -247,11 +247,11 @@ class ParallelSession(object):
                                 "-oConnectTimeout=5 -oServerAliveInterval=2 "
                                 "{input_zip_abs} {host}:{local_scratch}".format(host=host, **self.__dict__)
                             )
-                            self.execute_command(command, frmt=False, robust=False, quiet=False)
+                            self.execute_command(command, frmt=False, robust=False)
 
                         print("Unzipping...")
                         command = "cd {local_scratch} && unzip -ouq {input_zip_base}"
-                        self.ssh_execute(command, host, robust=False, quiet=False)
+                        self.ssh_execute(command, host, robust=False)
 
                 print("Host successfully prepared.")
                 hosts.append(host)
