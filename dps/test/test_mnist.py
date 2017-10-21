@@ -172,31 +172,34 @@ class salience_render_hook(object):
 
     def __call__(self, updater):
         print("Rendering...")
-        import matplotlib.pyplot as plt
-        n_train = n_val = 10
-        n_plots = n_train + n_val
-        train_x = updater.env.datasets['train'].x[:n_train, ...]
-        train_y = updater.env.datasets['train'].y[:n_train, ...]
-        val_x = updater.env.datasets['val'].x[:n_val, ...]
-        val_y = updater.env.datasets['val'].y[:n_val, ...]
+        if cfg.show_plots or cfg.save_plots:
+            import matplotlib.pyplot as plt
+            n_train = n_val = 10
+            n_plots = n_train + n_val
+            train_x = updater.env.datasets['train'].x[:n_train, ...]
+            train_y = updater.env.datasets['train'].y[:n_train, ...]
+            val_x = updater.env.datasets['val'].x[:n_val, ...]
+            val_y = updater.env.datasets['val'].y[:n_val, ...]
 
-        x = np.concatenate([train_x, val_x], axis=0)
-        y = np.concatenate([train_y, val_y], axis=0)
+            x = np.concatenate([train_x, val_x], axis=0)
+            y = np.concatenate([train_y, val_y], axis=0)
 
-        sess = tf.get_default_session()
-        _y = sess.run(updater.output, feed_dict={updater.x_ph: x})
+            sess = tf.get_default_session()
+            _y = sess.run(updater.output, feed_dict={updater.x_ph: x})
 
-        x = x.reshape(-1, cfg.image_width, cfg.image_width)
-        y = y.reshape(-1, cfg.output_width, cfg.output_width)
-        _y = _y.reshape(-2, cfg.output_width, cfg.output_width)
+            x = x.reshape(-1, cfg.image_width, cfg.image_width)
+            y = y.reshape(-1, cfg.output_width, cfg.output_width)
+            _y = _y.reshape(-2, cfg.output_width, cfg.output_width)
 
-        fig, self.axes = plt.subplots(3, n_plots)
+            fig, self.axes = plt.subplots(3, n_plots)
 
-        for i in range(n_plots):
-            self.axes[0, i].imshow(x[i])
-            self.axes[1, i].imshow(y[i])
-            self.axes[2, i].imshow(_y[i])
-        plt.show(block=True)
+            for i in range(n_plots):
+                self.axes[0, i].imshow(x[i])
+                self.axes[1, i].imshow(y[i])
+                self.axes[2, i].imshow(_y[i])
+
+            if cfg.show_plots:
+                plt.show(block=True)
 
 
 def test_mnist_salience_pretrained():

@@ -327,7 +327,7 @@ class TrainingLoop(object):
                 break
 
             evaluate = self.global_step % cfg.eval_step == 0
-            show_plots = self.global_step % cfg.display_step == 0
+            display = self.global_step % cfg.display_step == 0
             render = (self.global_step % cfg.render_step == 0) and self.global_step > 0
 
             start_time = time.time()
@@ -338,7 +338,7 @@ class TrainingLoop(object):
             self.latest['train_data'].append(train_record)
             self.latest['update_data'].append(update_record)
 
-            if evaluate or show_plots:
+            if evaluate or display:
                 val_loss, val_summaries, val_record = updater.evaluate(cfg.n_val, 'val')
 
                 self.latest['val_data'].append(val_record)
@@ -388,7 +388,7 @@ class TrainingLoop(object):
                     epoch=updater.env.completion
                 )
 
-                if show_plots:
+                if display:
                     print(self.summarize(latest=True))
 
             if render and cfg.render_hook is not None:
