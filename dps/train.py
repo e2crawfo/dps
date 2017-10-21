@@ -400,18 +400,26 @@ class TrainingLoop(object):
 
             if cfg.use_gpu and self.global_step % 100 == 0:
                 try:
-                    sys.stdout.flush()
-                    sys.stderr.flush()
-
                     my_gpu = int(os.environ['CUDA_VISIBLE_DEVICES'])
 
-                    subprocess.run("nvidia-smi dmon -i {} -c 1".format(my_gpu).split(), stdout=sys.stdout, stderr=sys.stderr)
-                    subprocess.run("nvidia-smi pmon -i {} -c 1".format(my_gpu).split(), stdout=sys.stdout, stderr=sys.stderr)
+                    if my_gpu >= 0:
+                        sys.stdout.flush()
+                        sys.stderr.flush()
 
-                    sys.stdout.flush()
-                    sys.stderr.flush()
+                        print("Attempting to show GPU usage statistics.")
+                        subprocess.run("nvidia-smi dmon -i {} -c 1".format(my_gpu).split(), stdout=sys.stdout, stderr=sys.stderr)
+                        subprocess.run("nvidia-smi pmon -i {} -c 1".format(my_gpu).split(), stdout=sys.stdout, stderr=sys.stderr)
+
+                        sys.stdout.flush()
+                        sys.stderr.flush()
+                except KeyError:
+                    pass
                 except:
                     print("Error while calling nvidia-smi")
+
+            if self.global_step % 100 == 0:
+                print("\nPhysical memory use: {}mb".format(memory_usage(physical=True)))
+                print("Virtual memory use: {}mb".format(memory_usage(physical=False)))
 
             self.local_step += 1
             self.global_step += 1
