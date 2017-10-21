@@ -75,9 +75,9 @@ class ParallelSession(object):
             env_vars=None, redirect=False, n_retries=0, gpu_set=""):
 
         if kind == "pbs":
-            local_scratch_prefix="\\$RAMDISK"
+            local_scratch_prefix = "\\$RAMDISK"
         elif kind == "slurm":
-            local_scratch_prefix="/tmp/dps/hyper"
+            local_scratch_prefix = "/tmp/dps/hyper"
 
         assert kind in "parallel pbs slurm".split()
         hpc = kind in "pbs slurm".split()

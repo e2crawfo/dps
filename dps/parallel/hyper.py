@@ -403,8 +403,10 @@ def _rl_plot(args):
 
         plt.show()
 
+
 def ci(data, coverage):
-    return scipy.stats.t.interval(coverage, len(data)-1, loc=np.mean(data), scale=scipy.stats.sem(data))
+    return scipy.stats.t.interval(
+        coverage, len(data)-1, loc=np.mean(data), scale=scipy.stats.sem(data))
 
 
 def _sample_complexity_plot(args):
@@ -482,7 +484,7 @@ def _sample_complexity_plot(args):
                 y_lower = y - np.array([ci[0] for ci in conf_int])
                 y_upper = np.array([ci[1] for ci in conf_int]) - y
             elif spread_measure == 'std_err':
-                y_upper = y_lower = [sem(_y.values) for _y in ys]
+                y_upper = y_lower = [scipy.stats.sem(_y.values) for _y in ys]
             else:
                 pass
 
@@ -551,8 +553,8 @@ def dps_hyper_cl():
 
 
 def build_and_submit(
-        name, config, distributions=None, wall_time="1year", cleanup_time="1day", max_hosts=2, ppn=2,
-        n_param_settings=2, n_repeats=2, host_pool=None, n_retries=1, pmem=0, queue="", do_local_test=False,
+        name, config, distributions=None, wall_time="1year", cleanup_time="1day", max_hosts=1, ppn=1,
+        n_param_settings=1, n_repeats=1, host_pool=None, n_retries=0, pmem=0, queue="", do_local_test=False,
         kind="local", gpu_set=""):
     """
     Parameters
@@ -592,8 +594,8 @@ def build_and_submit(
 
 
 def _build_and_submit(
-        name, config, distributions=None, wall_time="1year", cleanup_time="1day", max_hosts=2, ppn=2,
-        n_param_settings=2, n_repeats=2, host_pool="", n_retries=1, do_local_test=False, gpu_set="", **kwargs):
+        name, config, distributions, wall_time, cleanup_time, max_hosts, ppn,
+        n_param_settings, n_repeats, host_pool, n_retries, do_local_test, gpu_set, **kwargs):
 
     if isinstance(host_pool, str):
         host_pool = host_pool.split()
@@ -621,9 +623,9 @@ def _build_and_submit(
 
 
 def _build_and_submit_hpc(
-        name, config, distributions, wall_time, cleanup_time, max_hosts=2, ppn=2,
-        n_param_settings=2, n_repeats=2, n_retries=0, do_local_test=False, pmem=0,
-        queue="", kind="", gpu_set="", **kwargs):
+        name, config, distributions, wall_time, cleanup_time, max_hosts, ppn,
+        n_param_settings, n_repeats, n_retries, do_local_test, pmem,
+        queue, kind, gpu_set, **kwargs):
 
     build_params = dict(n_param_settings=n_param_settings, n_repeats=n_repeats)
 

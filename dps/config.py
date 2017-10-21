@@ -114,6 +114,7 @@ DEFAULT_CONFIG = SystemConfig(
     render_hook=rl_render_hook,
 
     get_experiment_name=get_experiment_name,
+    error_on_timeout=False,
 )
 
 

@@ -278,7 +278,7 @@ class TrainingLoop(object):
         print("{} seconds left "
               "at the beginning of stage {}.".format(time_remaining, stage))
 
-        memory_before = memory_usage()
+        phys_memory_before = memory_usage(physical=True)
 
         with time_limit(self.time_remaining, verbose=True) as limiter:
             try:
@@ -287,13 +287,13 @@ class TrainingLoop(object):
                 threshold_reached = False
                 reason = "User interrupt"
 
-        memory_after = memory_usage()
+        phys_memory_after = memory_usage(physical=True)
 
         self.record(
             stage_duration=limiter.elapsed_time,
-            memory_before_mb=memory_before,
-            memory_after_mb=memory_after,
-            memory_delta_mb=memory_after - memory_before
+            phys_memory_before_mb=phys_memory_before,
+            phys_memory_after_mb=phys_memory_after,
+            phys_memory_delta_mb=phys_memory_after - phys_memory_before
         )
 
         self.latest['train_data'] = pd.DataFrame.from_records(self.latest['train_data']).to_csv(index=False)
@@ -302,6 +302,8 @@ class TrainingLoop(object):
 
         if limiter.ran_out:
             reason = "Time limit reached"
+            if cfg.error_on_timeout:
+                raise Exception("Timed out.")
         return threshold_reached, reason
 
     def _run_stage(self, stage, updater, early_stop):

@@ -288,6 +288,7 @@ def cd(path):
 
 @contextmanager
 def memory_limit(mb):
+    """ Limit the physical memory available to the process. """
     rsrc = resource.RLIMIT_DATA
     prev_soft_limit, hard = resource.getrlimit(rsrc)
     resource.setrlimit(rsrc, (int(mb) * 1024**2, hard))
