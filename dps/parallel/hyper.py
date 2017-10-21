@@ -77,7 +77,10 @@ def generate_all(distributions):
     lists = OrderedDict()
     other = {}
 
-    for k, v in sorted(flat.items()):
+    key_order = sorted(flat.keys())
+
+    for k in key_order:
+        v = flat[k]
         try:
             v = list(v)
             lists[k] = v
@@ -88,11 +91,11 @@ def generate_all(distributions):
                     "with key {} is a continuous distribution.".format(v, k))
             other[k] = v
 
-    cartesian_product = product(*lists.values())
+    param_sets = product(*lists.values())
     samples = []
-    for p in cartesian_product:
+    for pset in param_sets:
         new = Config(deepcopy(other.copy()))
-        for k, item in zip(flat, p):
+        for k, item in zip(key_order, pset):
             new[k] = item
         samples.append(type(distributions)(new))
     return samples
@@ -115,7 +118,6 @@ def sample_configs(distributions, base_config, n_repeats, n_samples=None):
 
     """
     samples = []
-
     if n_samples is None:
         samples = generate_all(distributions)
     else:
