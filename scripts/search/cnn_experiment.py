@@ -26,16 +26,13 @@ def get_updater(env):
     return DifferentiableUpdater(env, build_model)
 
 
-do_search = True
-
-
 config = DEFAULT_CONFIG.copy(
     name="CNNExperiment",
 
     n_val=100,
 
     batch_size=64,
-    n_controller_units=256 if not do_search else None,
+    n_controller_units=256,
     log_name="cnn_grid_arithmetic",
     max_steps=1000000,
     display_step=100,
@@ -46,14 +43,16 @@ config = DEFAULT_CONFIG.copy(
     loss_type="xent",
     stopping_function=lambda val_record: -val_record['reward'],
     preserve_policy=True,
-    preserve_env=True,
-    slim=do_search,
-    save_summaries=not do_search,
-    start_tensorboard=not do_search,
+
+    slim=False,
+    save_summaries=True,
+    start_tensorboard=True,
     verbose=False,
-    show_plots=False,
-    save_plots=False,
+    show_plots=True,
+    save_plots=True,
+
     use_gpu=True,
+    gpu_allow_growth=True,
     threshold=0.01,
     memory_limit_mb=12*1024
 )
@@ -64,7 +63,7 @@ env_config = Config(
     mnist=True,
     min_digits=2,
     max_digits=3,
-    reductions=lambda x: np.product(x),
+    reductions="sum",
     op_loc=None,
     base=10,
     largest_digit=100,
@@ -85,19 +84,10 @@ alg_config = Config(
 config.update(alg_config)
 config.update(env_config)
 
+grid = dict(n_train=2**np.array([10, 17]), n_controller_units=2**np.array([5, 10]))
+# grid = dict(n_train=2**np.arange(10, 18), n_controller_units=2**np.arange(5, 11))
 
-if do_search:
-    from dps.parallel.hyper import build_and_submit
-    grid = dict(n_train=2**np.arange(10, 18), n_controller_units=2**np.arange(5, 11))
-    host_pool = [':']
-    clify.wrap_function(build_and_submit)(config=config, distributions=grid, n_param_settings=None, host_pool=host_pool)
-else:
-    start_time = time.time()
-    print("Starting new training run at: ")
-    print(datetime.datetime.now())
-
-    with config:
-        cl_args = clify.wrap_object(cfg).parse()
-        config.update(cl_args)
-
-        val = training_loop(start_time=start_time)
+from dps.parallel.hyper import build_and_submit
+host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
+clify.wrap_function(build_and_submit)(
+    config=config, distributions=grid, n_param_settings=None, host_pool=host_pool)
