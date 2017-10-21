@@ -301,7 +301,7 @@ class TrainingLoop(object):
         self.latest['val_data'] = pd.DataFrame.from_records(self.latest['val_data']).to_csv(index=False)
 
         if limiter.ran_out:
-            reason = "Time limit reached"
+            reason = "Time limit exceeded"
             if cfg.error_on_timeout:
                 raise Exception("Timed out.")
         return threshold_reached, reason

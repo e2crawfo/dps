@@ -106,7 +106,7 @@ config.update(
 
 
 # grid = dict(error_on_timeout=[False, True])
-grid = dict(entropy_weight=2**np.linspace(-4, -1, 6))
+grid = dict(entropy_weight=2**np.linspace(-4, -1, 8))
 # grid = dict(n_train=2**np.arange(6, 18))
 # grid = dict(n_train=2**np.arange(6, 18))
 

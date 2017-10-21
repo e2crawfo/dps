@@ -6,6 +6,7 @@ from collections import defaultdict
 import argparse
 import signal
 import numpy as np
+import os
 
 from dps.utils import SigTerm, KeywordMapping, pdb_postmortem, redirect_stream, modify_env
 
@@ -340,17 +341,47 @@ class Job(ReadOnlyJob):
 
         return op_result
 
-    def run(self, pattern, indices, force, output_to_files, verbose, idx_in_node, ppn, gpu_set):
+    def run(
+            self, pattern, indices, force, output_to_files, verbose,
+            idx_in_node, ppn, gpu_set, ignore_gpu):
+
         operators = self.get_ops(pattern)
 
         if not operators:
             return False
 
-        indices = set(indices)
-
-        if idx_in_node != -1 and ppn != -1 and gpu_set:
-            # Note: idx_in_node starts from 1 because of gnu-parallel's convention.
+        if int(idx_in_node) == -1:
+            idx_in_node = int(os.environ.get("SLURM_LOCALID", -1))
+        else:
+            # When getting idx_in_node from gnu-parallel, it starts from 1 instead of 0.
             idx_in_node -= 1
+
+        # When using SLURM, not sure how to pass different arguments to different tasks. So instead, we
+        # pass ALL arguments to all tasks, and then let each task select the argument we intend for it
+        # by using SLURM_PROCID, which is basically gives the ID of the task within the job.
+        idx_in_job = int(os.environ.get("SLURM_PROCID", -1))
+        if idx_in_job != -1:
+            indices = [indices[idx_in_job]]
+            print("My idx in the job is {}, the idx of the task I'm running is {}".format(idx_in_job, indices[0]))
+            print("My value of CUDA_VISIBLE_DEVICES is {}".format(os.environ.get('CUDA_VISIBLE_DEVICES', None)))
+            print("My value of GPU_DEVICE_ORDINAL is {}".format(os.environ.get('GPU_DEVICE_ORDINAL', None)))
+
+        print("Ignoring GPU: {}".format(ignore_gpu))
+
+        try:
+            print("Attempting to run `nvidia-smi`...")
+            import subprocess
+            import sys
+            subprocess.run("nvidia-smi", stdout=sys.stdout, stderr=sys.stderr)
+        except subprocess.CalledProcessError:
+            print("Failed running nvidia-smi")
+
+        if ignore_gpu:
+            env = dict(CUDA_VISIBLE_DEVICES="-1")
+        elif idx_in_node != -1 and gpu_set:
+            # Manually choose GPU to use based on our index in the node, the number of GPUs available on the node,
+            # and the number of processors running on the node.
+            assert ppn > 0
             gpus = [int(i) for i in gpu_set.split(',')]
             n_gpus = len(gpus)
             assert ppn % n_gpus == 0
@@ -359,11 +390,11 @@ class Job(ReadOnlyJob):
             gpu_idx = int(np.floor(idx_in_node / procs_per_gpu))
             gpu_to_use = gpus[gpu_idx]
 
-            with modify_env(CUDA_VISIBLE_DEVICES=str(gpu_to_use)):
-                return [
-                    op.run(self.objects, force, output_to_files, verbose)
-                    for op in operators if op.idx in indices]
+            env = dict(CUDA_VISIBLE_DEVICES=str(gpu_to_use))
         else:
+            env = {}
+
+        with modify_env(**env):
             return [
                 op.run(self.objects, force, output_to_files, verbose)
                 for op in operators if op.idx in indices]
@@ -565,7 +596,7 @@ def run_command(args):
     job = Job(args.path)
     job.run(
         args.pattern, args.indices, args.force, args.redirect, args.verbose,
-        args.idx_in_node, args.ppn, args.gpu_set)
+        args.idx_in_node, args.ppn, args.gpu_set, args.ignore_gpu)
 
 
 def view_command(args):
@@ -599,8 +630,10 @@ def parallel_cl(desc, additional_cmds=None):
     run_parser.add_argument('pattern', type=str)
     run_parser.add_argument('indices', nargs='*', type=int)
     run_parser.add_argument('--idx-in-node', type=int, default=-1)
+    run_parser.add_argument('--idx-in-job', type=int, default=-1)
     run_parser.add_argument('--ppn', type=int, default=-1)
     run_parser.add_argument('--gpu-set', type=str, default="")
+    run_parser.add_argument('--ignore-gpu', action="store_true")
     run_parser.add_argument(
         '--force', action='store_true', help="If supplied, run the selected operators "
                                              "even if they've already been completed.")

@@ -70,6 +70,8 @@ class ParallelSession(object):
         String specifying time limit for each step. If not supplied, a time limit is inferred
         automatically based on wall_time and number of steps (giving each step an equal amount
         of time).
+    ignore_gpu: bool
+        If True, GPUs will be requested by as part of the job, but will not be used at run time.
 
     """
     def __init__(
@@ -77,7 +79,7 @@ class ParallelSession(object):
             wall_time="1hour", cleanup_time="15mins", time_slack=0, add_date=True, dry_run=0,
             parallel_exe="$HOME/.local/bin/parallel", kind="parallel", host_pool=None,
             min_hosts=1, max_hosts=1, env_vars=None, redirect=False, n_retries=0, gpu_set="",
-            step_time_limit=""):
+            step_time_limit="", ignore_gpu=False):
 
         if kind == "pbs":
             local_scratch_prefix = "\\$RAMDISK"
@@ -384,25 +386,36 @@ class ParallelSession(object):
             print("No jobs left to run on step {}.".format(i))
             return
 
+        _ignore_gpu = "--ignore-gpu" if self.ignore_gpu else ""
+
         indices_for_step = ' '.join(str(i) for i in indices_for_step)
 
-        parallel_command = (
-            "cd {local_scratch} && "
-            "dps-hyper run {archive_root} {pattern} {{}} --max-time {seconds_per_step} "
-            "--log-root {local_scratch} --log-name experiments "
-            "--idx-in-node={{%}} --gpu-set={gpu_set} --ppn={ppn} {redirect}"
-        )
+        if self.kind == "slurm":
+            parallel_command = (
+                "cd {local_scratch} && "
+                "dps-hyper run {archive_root} {pattern} {indices_for_step} --max-time {seconds_per_step} "
+                "--log-root {local_scratch} --log-name experiments --gpu-set={gpu_set} --ppn={ppn} {_ignore_gpu} {redirect}"
+            )
 
-        command = (
-            '{parallel_exe} --timeout {abs_seconds_per_step} --no-notice -j{ppn} \\\n'
-            '    --joblog {job_directory}/job_log.txt {node_file} \\\n'
-            '    --env PATH --env LD_LIBRARY_PATH {env_vars} -v \\\n'
-            '    "' + parallel_command + '" \\\n'
-            '    ::: {indices_for_step}'
-        )
+            command = 'srun -vv --accel-bind=g --no-kill sh -c "' + parallel_command + '"'
+        else:
+            parallel_command = (
+                "cd {local_scratch} && "
+                "dps-hyper run {archive_root} {pattern} {{}} --max-time {seconds_per_step} "
+                "--log-root {local_scratch} --log-name experiments "
+                "--idx-in-node={{%}} --gpu-set={gpu_set} --ppn={ppn} {_ignore_gpu} {redirect}"
+            )
+
+            command = (
+                '{parallel_exe} --timeout {abs_seconds_per_step} --no-notice -j{ppn} \\\n'
+                '    --joblog {job_directory}/job_log.txt {node_file} \\\n'
+                '    --env PATH --env LD_LIBRARY_PATH {env_vars} -v \\\n'
+                '    "' + parallel_command + '" \\\n'
+                '    ::: {indices_for_step}'
+            )
 
         command = command.format(
-            indices_for_step=indices_for_step, **self.__dict__)
+            indices_for_step=indices_for_step, _ignore_gpu=_ignore_gpu, **self.__dict__)
 
         self.execute_command(
             command, frmt=False, robust=True,
