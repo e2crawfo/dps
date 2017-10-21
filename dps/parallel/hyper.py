@@ -5,7 +5,7 @@ import pandas as pd
 from pprint import pprint
 import time
 import datetime
-from collections import OrderedDict, defaultdict
+from collections import defaultdict
 from itertools import product
 from copy import deepcopy
 import os
@@ -26,41 +26,6 @@ from dps.parallel.submit_job import ParallelSession
 from dps.parallel.base import Job, ReadOnlyJob
 
 
-def nested_sample(distributions, n_samples=1):
-    assert isinstance(distributions, dict)
-    config = Config(distributions)
-    flat = config.flatten()
-    dists = OrderedDict()
-    other = {}
-
-    for k, v in flat.items():
-        try:
-            v = list(v)
-            dists[k] = v
-        except (TypeError, ValueError):
-            if hasattr(v, 'rvs'):
-                dists[k] = v
-            else:
-                other[k] = v
-
-    samples = []
-    for k, v in dists.items():
-        if hasattr(v, 'rvs'):
-            samples.append(v.rvs(n_samples))
-        else:
-            samples.append(np.random.choice(v, size=n_samples))
-
-    samples = zip(*samples)
-
-    _samples = []
-    for s in samples:
-        new = Config(deepcopy(other.copy()))
-        for k, item in zip(flat, s):
-            new[k] = item
-        _samples.append(type(distributions)(new))
-    return _samples
-
-
 def nested_map(d, f):
     if isinstance(d, dict):
         _d = d.copy()
@@ -70,35 +35,70 @@ def nested_map(d, f):
         return f(d)
 
 
+def nested_sample(distributions, n_samples=1):
+    assert isinstance(distributions, dict)
+    config = Config(distributions)
+    flat = config.flatten()
+    other = {}
+    samples = []
+
+    sampled_keys = []
+
+    for k in sorted(flat.keys()):
+        v = flat[k]
+        try:
+            samples.append(list(np.random.choice(list(v), size=n_samples)))
+        except (TypeError, ValueError):
+            if hasattr(v, 'rvs'):
+                samples.append(v.rvs(n_samples))
+                sampled_keys.append(k)
+            else:
+                other[k] = v
+        else:
+            sampled_keys.append(k)
+
+    samples = sorted(zip(*samples))
+
+    configs = []
+    for sample in samples:
+        new = Config(deepcopy(other.copy()))
+        for k, s in zip(sampled_keys, sample):
+            new[k] = s
+        configs.append(type(distributions)(new))
+    return configs
+
+
 def generate_all(distributions):
     assert isinstance(distributions, dict)
     config = Config(distributions)
     flat = config.flatten()
-    lists = OrderedDict()
     other = {}
 
-    key_order = sorted(flat.keys())
+    sampled_keys = []
+    lists = []
 
-    for k in key_order:
+    for k in sorted(flat.keys()):
         v = flat[k]
         try:
-            v = list(v)
-            lists[k] = v
+            lists.append(list(v))
         except (TypeError, ValueError):
             if hasattr(v, 'rvs'):
                 raise Exception(
                     "Attempting to generate all samples, but element {} "
                     "with key {} is a continuous distribution.".format(v, k))
             other[k] = v
+        else:
+            sampled_keys.append(k)
 
-    param_sets = product(*lists.values())
-    samples = []
+    param_sets = sorted(product(*lists))
+
+    configs = []
     for pset in param_sets:
         new = Config(deepcopy(other.copy()))
-        for k, item in zip(key_order, pset):
-            new[k] = item
-        samples.append(type(distributions)(new))
-    return samples
+        for k, p in zip(sampled_keys, pset):
+            new[k] = p
+        configs.append(type(distributions)(new))
+    return configs
 
 
 def sample_configs(distributions, base_config, n_repeats, n_samples=None):
@@ -557,7 +557,7 @@ def dps_hyper_cl():
 def build_and_submit(
         name, config, distributions=None, wall_time="1year", cleanup_time="1day", max_hosts=1, ppn=1,
         n_param_settings=1, n_repeats=1, host_pool=None, n_retries=0, pmem=0, queue="", do_local_test=False,
-        kind="local", gpu_set=""):
+        kind="local", gpu_set="", enforce_time_limit=True):
     """
     Parameters
     ----------
@@ -597,7 +597,8 @@ def build_and_submit(
 
 def _build_and_submit(
         name, config, distributions, wall_time, cleanup_time, max_hosts, ppn,
-        n_param_settings, n_repeats, host_pool, n_retries, do_local_test, gpu_set, **kwargs):
+        n_param_settings, n_repeats, host_pool, n_retries, do_local_test, gpu_set,
+        enforce_time_limit, **kwargs):
 
     if isinstance(host_pool, str):
         host_pool = host_pool.split()
@@ -606,7 +607,8 @@ def _build_and_submit(
     run_params = dict(
         wall_time=wall_time, cleanup_time=cleanup_time, time_slack=60,
         max_hosts=max_hosts, ppn=ppn, n_retries=n_retries,
-        host_pool=host_pool, gpu_set=gpu_set, kind="parallel")
+        host_pool=host_pool, gpu_set=gpu_set, kind="parallel",
+        enforce_time_limit=enforce_time_limit)
 
     config.name = name
 
@@ -627,13 +629,13 @@ def _build_and_submit(
 def _build_and_submit_hpc(
         name, config, distributions, wall_time, cleanup_time, max_hosts, ppn,
         n_param_settings, n_repeats, n_retries, do_local_test, pmem,
-        queue, kind, gpu_set, **kwargs):
+        queue, kind, gpu_set, enforce_time_limit, **kwargs):
 
     build_params = dict(n_param_settings=n_param_settings, n_repeats=n_repeats)
 
     run_params = dict(
         wall_time=wall_time, cleanup_time=cleanup_time, time_slack=120, max_hosts=max_hosts,
-        ppn=ppn, n_retries=n_retries, kind=kind, gpu_set=gpu_set)
+        ppn=ppn, n_retries=n_retries, kind=kind, gpu_set=gpu_set, enforce_time_limit=enforce_time_limit)
 
     config.name = name
     if pmem:

@@ -84,8 +84,9 @@ alg_config = Config(
 config.update(alg_config)
 config.update(env_config)
 
-grid = dict(n_train=2**np.array([10, 17]), n_controller_units=2**np.array([5, 10]))
-# grid = dict(n_train=2**np.arange(10, 18), n_controller_units=2**np.arange(5, 11))
+# grid = dict(n_train=2**np.array([6, 17]), n_controller_units=2**np.array([5, 10]))
+
+grid = dict(n_train=2**np.arange(6, 18), n_controller_units=2**np.arange(5, 11))
 
 from dps.parallel.hyper import build_and_submit
 host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]

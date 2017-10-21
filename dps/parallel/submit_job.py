@@ -66,13 +66,19 @@ class ParallelSession(object):
         Number of retries per job.
     gpu_set: string
         Comma-separated list of indices of gpus to use.
+    enforce_time_limit: bool
+        If True, each step has a limited amount of time to finish execution. It is halted if it
+        doesn't finish in time. Otherwise, each step just runs until it is finished. Not
+        enforcing the time limit can be useful if different tasks/steps will take different amounts of time
+        to complete.
 
     """
     def __init__(
             self, name, input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', ppn=12,
             wall_time="1hour", cleanup_time="15mins", time_slack=0, add_date=True, dry_run=0,
-            parallel_exe="$HOME/.local/bin/parallel", kind="parallel", host_pool=None, min_hosts=1, max_hosts=1,
-            env_vars=None, redirect=False, n_retries=0, gpu_set=""):
+            parallel_exe="$HOME/.local/bin/parallel", kind="parallel", host_pool=None,
+            min_hosts=1, max_hosts=1, env_vars=None, redirect=False, n_retries=0, gpu_set="",
+            enforce_time_limit=True):
 
         if kind == "pbs":
             local_scratch_prefix = "\\$RAMDISK"
@@ -379,15 +385,22 @@ class ParallelSession(object):
 
         indices_for_step = ' '.join(str(i) for i in indices_for_step)
 
+        if self.enforce_time_limit:
+            dps_hyper_timeout = " --max-time {} ".format(self.seconds_per_step)
+            parallel_timeout = " --timeout {} ".format(self.abs_seconds_per_step)
+        else:
+            dps_hyper_timeout = ""
+            parallel_timeout = ""
+
         parallel_command = (
             "cd {local_scratch} && "
-            "dps-hyper run {archive_root} {pattern} {{}} --max-time {seconds_per_step} "
+            "dps-hyper run {archive_root} {pattern} {{}} " + dps_hyper_timeout +
             "--log-root {local_scratch} --log-name experiments "
             "--idx-in-node={{%}} --gpu-set={gpu_set} --ppn={ppn} {redirect}"
         )
 
         command = (
-            '{parallel_exe} --timeout {abs_seconds_per_step} --no-notice -j{ppn} \\\n'
+            '{parallel_exe} ' + parallel_timeout + ' --no-notice -j{ppn} \\\n'
             '    --joblog {job_directory}/job_log.txt {node_file} \\\n'
             '    --env PATH --env LD_LIBRARY_PATH {env_vars} -v \\\n'
             '    "' + parallel_command + '" \\\n'
