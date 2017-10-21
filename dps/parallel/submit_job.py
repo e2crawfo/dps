@@ -143,7 +143,10 @@ class ParallelSession(object):
             n_steps = int(np.ceil(n_jobs_to_run / n_procs))
         else:
             self.__dict__.update(locals())
+
             host_pool = host_pool or DEFAULT_HOST_POOL
+            if isinstance(host_pool, str):
+                host_pool = host_pool.split()
 
             # Get an estimate of the number of hosts we'll have available.
             with cd(job_directory):

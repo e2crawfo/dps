@@ -556,15 +556,15 @@ def dps_hyper_cl():
 
 def build_and_submit(
         name, config, distributions=None, wall_time="1year", cleanup_time="1day", max_hosts=1, ppn=1,
-        n_param_settings=1, n_repeats=1, host_pool=None, n_retries=0, pmem=0, queue="", do_local_test=False,
+        n_param_settings=1, n_repeats=1, n_retries=0, host_pool=None, pmem=0, queue="", do_local_test=False,
         kind="local", gpu_set="", step_time_limit="", ignore_gpu=False):
-    """
+    """ Meant to be called from within a script.
+
     Parameters
     ----------
     kind: str
 
     """
-    os.nice(10)
     assert kind in "pbs slurm parallel local".split()
     assert 'build_command' not in config
     config['build_command'] = ' '.join(sys.argv)
@@ -579,6 +579,8 @@ def build_and_submit(
             val = training_loop()
         return val
     else:
+        config.name = name
+
         config = config.copy(
             start_tensorboard=False,
             save_summaries=False,
@@ -592,72 +594,45 @@ def build_and_submit(
         del config['data_dir']
         del config['model_dir']
 
-        if kind in "pbs slurm".split():
-            return _build_and_submit_hpc(**locals())
-        else:
-            return _build_and_submit(**locals())
+        with config:
+            job, archive_path = build_search(
+                cfg.experiments_dir, name, distributions, config,
+                add_date=1, _zip=True, do_local_test=do_local_test,
+                n_param_settings=n_param_settings, n_repeats=n_repeats)
+
+        submit_job(archive_path=archive_path, **locals())
+
+        os.remove(str(archive_path))
+        shutil.rmtree(str(archive_path).split('.')[0])
 
 
-def _build_and_submit(
-        name, config, distributions, wall_time, cleanup_time, max_hosts, ppn,
-        n_param_settings, n_repeats, host_pool, n_retries, do_local_test, gpu_set,
-        step_time_limit, ignore_gpu, **kwargs):
+def dps_submit_cl():
+    clify.wrap_function(submit_job)()
 
-    if isinstance(host_pool, str):
-        host_pool = host_pool.split()
 
-    build_params = dict(n_param_settings=n_param_settings, n_repeats=n_repeats)
+def submit_job(
+        name, archive_path, wall_time="1year", cleanup_time="1day", max_hosts=1, ppn=1,
+        n_param_settings=1, n_repeats=1, n_retries=0, host_pool=None, pmem=0, queue="",
+        kind="local", gpu_set="", step_time_limit="", ignore_gpu=False):
+
+    os.nice(10)
+
+    assert kind in "pbs slurm parallel".split()
+
     run_params = dict(
         wall_time=wall_time, cleanup_time=cleanup_time, time_slack=60,
         max_hosts=max_hosts, ppn=ppn, n_retries=n_retries,
-        host_pool=host_pool, gpu_set=gpu_set, kind="parallel",
-        step_time_limit=step_time_limit, ignore_gpu=ignore_gpu)
+        host_pool=host_pool, gpu_set=gpu_set, ignore_gpu=ignore_gpu)
 
-    config.name = name
+    session = ParallelSession(
+        name, archive_path, 'map', cfg.experiments_dir + '/execution/',
+        parallel_exe='$HOME/.local/bin/parallel', dry_run=False,
+        env_vars=dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1'),
+        redirect=True, **run_params)
 
-    with config:
-        job, archive_path = build_search(
-            cfg.experiments_dir, name, distributions, config,
-            add_date=1, _zip=True, do_local_test=do_local_test, **build_params)
-
-        session = ParallelSession(
-            name, archive_path, 'map', cfg.experiments_dir + '/execution/',
-            parallel_exe='$HOME/.local/bin/parallel', dry_run=False,
-            env_vars=dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1'),
-            redirect=True, **run_params)
-
+    if kind == "parallel":
         session.run()
-
-
-def _build_and_submit_hpc(
-        name, config, distributions, wall_time, cleanup_time, max_hosts, ppn,
-        n_param_settings, n_repeats, n_retries, do_local_test, pmem,
-        queue, kind, gpu_set, step_time_limit, ignore_gpu, **kwargs):
-
-    build_params = dict(n_param_settings=n_param_settings, n_repeats=n_repeats)
-
-    run_params = dict(
-        wall_time=wall_time, cleanup_time=cleanup_time, time_slack=120,
-        max_hosts=max_hosts, ppn=ppn, n_retries=n_retries, kind=kind,
-        gpu_set=gpu_set, step_time_limit=step_time_limit, ignore_gpu=ignore_gpu)
-
-    config.name = name
-    if pmem:
-        config.memory_limit_mb = int(pmem)
-
-    with config:
-        job, archive_path = build_search(
-            cfg.experiments_dir, name, distributions, config,
-            add_date=1, _zip=True, do_local_test=do_local_test, **build_params)
-
-        session = ParallelSession(
-            name, archive_path, 'map', cfg.experiments_dir + '/execution/',
-            parallel_exe='$HOME/.local/bin/parallel', dry_run=False,
-            env_vars=dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1'),
-            redirect=True, **run_params)
-
-    os.remove(str(archive_path))
-    shutil.rmtree(str(archive_path).split('.')[0])
+        return
 
     job_dir = Path(session.job_directory)
 
