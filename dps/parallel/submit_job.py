@@ -98,13 +98,12 @@ class ParallelSession(object):
             add_date=add_date)
         os.makedirs(os.path.realpath(job_directory + "/results"))
 
-        if hpc:
-            input_zip = shutil.copy(input_zip, job_directory)
-
+        input_zip_stem = Path(input_zip).stem
+        output_zip_base = Path(input_zip).name
+        input_zip = shutil.copy(str(input_zip), os.path.join(job_directory, "orig.zip"))
         input_zip = Path(input_zip)
         input_zip_abs = input_zip.resolve()
         input_zip_base = input_zip.name
-        input_zip_stem = input_zip.stem
         archive_root = zip_root(input_zip)
 
         # storage local to each node, from the perspective of that node
@@ -387,7 +386,7 @@ class ParallelSession(object):
                 )
                 self.execute_command(command, frmt=False, robust=True)
 
-    def step(self, i, indices_for_step):
+    def _step(self, i, indices_for_step):
         if not indices_for_step:
             print("No jobs left to run on step {}.".format(i))
             return
@@ -428,7 +427,7 @@ class ParallelSession(object):
             max_seconds=self.abs_seconds_per_step, progress=not self.hpc,
             quiet=False, verbose=True)
 
-    def checkpoint(self, i):
+    def _checkpoint(self, i):
         print("Fetching results of step {} at: ".format(i))
         print(datetime.datetime.now())
 
@@ -444,10 +443,10 @@ class ParallelSession(object):
             self.execute_command("rm -rf {}".format(f), robust=True)
 
         with cd('results'):
-            self.execute_command("zip -rq ../results.zip {archive_root}", robust=True)
+            self.execute_command("zip -rq ../{output_zip_base} {archive_root}", robust=True)
 
-        self.execute_command("dps-hyper summary results.zip", robust=True, quiet=False)
-        self.execute_command("dps-hyper view results.zip", robust=True, quiet=False)
+        self.execute_command("dps-hyper summary {output_zip_base}", robust=True, quiet=False)
+        self.execute_command("dps-hyper view {output_zip_base}", robust=True, quiet=False)
 
     def run(self):
         if self.dry_run:
@@ -491,10 +490,10 @@ class ParallelSession(object):
                     self.ppn, max_procs=len(subjobs_remaining))
 
                 indices_for_step = subjobs_remaining[:self.n_procs]
-                self.step(i, indices_for_step)
-                self.checkpoint(i)
+                self._step(i, indices_for_step)
+                self._checkpoint(i)
 
-                job = ReadOnlyJob('results.zip')
+                job = ReadOnlyJob(self.output_zip_base)
 
                 subjobs_remaining = set([op.idx for op in job.ready_incomplete_ops(sort=False)])
 
