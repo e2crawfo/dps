@@ -135,6 +135,8 @@ class ParallelSession(object):
             print("All jobs are finished! Exiting.")
             return
 
+        dirty_hosts = set()
+
         if hpc:
             host_pool = []
             n_nodes = max_hosts
@@ -219,6 +221,7 @@ class ParallelSession(object):
 
                     if create_local_scratch:
                         print("Creating local scratch directory...")
+                        self.dirty_hosts.add(host)
                         command = "mkdir -p {local_scratch}"
                         self.execute_command(command, robust=False)
 
@@ -245,6 +248,7 @@ class ParallelSession(object):
                     if create_local_scratch:
                         print("Creating local scratch directory...")
                         command = "mkdir -p {local_scratch}"
+                        self.dirty_hosts.add(host)
                         self.ssh_execute(command, host, robust=False)
 
                     command = "cd {local_scratch} && stat {archive_root}"
@@ -456,58 +460,71 @@ class ParallelSession(object):
         self.print_time_limits()
 
         with cd(self.job_directory):
-            print("\n" + ("=" * 80))
-            job_start = datetime.datetime.now()
-            print("Starting job at {}".format(job_start))
+            try:
+                print("\n" + ("=" * 80))
+                job_start = datetime.datetime.now()
+                print("Starting job at {}".format(job_start))
 
-            job = ReadOnlyJob(self.input_zip)
-            subjobs_remaining = sorted([op.idx for op in job.ready_incomplete_ops(sort=False)])
+                job = ReadOnlyJob(self.input_zip)
+                subjobs_remaining = sorted([op.idx for op in job.ready_incomplete_ops(sort=False)])
 
-            n_failures = defaultdict(int)
-            dead_jobs = set()
+                n_failures = defaultdict(int)
+                dead_jobs = set()
 
-            i = 0
-            while subjobs_remaining:
-                step_start = datetime.datetime.now()
+                i = 0
+                while subjobs_remaining:
+                    step_start = datetime.datetime.now()
 
-                print("Starting step {} at: ".format(i) + "=" * 90)
-                print("{} ({} since start of job)".format(step_start, step_start - job_start))
+                    print("Starting step {} at: ".format(i) + "=" * 90)
+                    print("{} ({} since start of job)".format(step_start, step_start - job_start))
 
-                if not self.host_pool:
-                    if self.kind == "pbs":
-                        with open(os.path.expandvars("$PBS_NODEFILE"), 'r') as f:
-                            self.host_pool = list(set([s.strip() for s in iter(f.readline, '')]))
+                    if not self.host_pool:
+                        if self.kind == "pbs":
+                            with open(os.path.expandvars("$PBS_NODEFILE"), 'r') as f:
+                                self.host_pool = list(set([s.strip() for s in iter(f.readline, '')]))
+                                print(self.host_pool)
+                        elif self.kind == "slurm":
+                            p = subprocess.run('scontrol show hostnames $SLURM_JOB_NODELIST', stdout=subprocess.PIPE, shell=True)
+                            self.host_pool = list(set([host.strip() for host in p.stdout.decode().split('\n') if host]))
                             print(self.host_pool)
-                    elif self.kind == "slurm":
-                        p = subprocess.run('scontrol show hostnames $SLURM_JOB_NODELIST', stdout=subprocess.PIPE, shell=True)
-                        self.host_pool = list(set([host.strip() for host in p.stdout.decode().split('\n') if host]))
-                        print(self.host_pool)
+                        else:
+                            raise Exception("NotImplemented")
+
+                    self.hosts, self.n_procs = self.recruit_hosts(
+                        self.hpc, self.min_hosts, self.max_hosts, self.host_pool,
+                        self.ppn, max_procs=len(subjobs_remaining))
+
+                    indices_for_step = subjobs_remaining[:self.n_procs]
+                    self._step(i, indices_for_step)
+                    self._checkpoint(i)
+
+                    job = ReadOnlyJob(self.output_zip_base)
+
+                    subjobs_remaining = set([op.idx for op in job.ready_incomplete_ops(sort=False)])
+
+                    for j in indices_for_step:
+                        if j in subjobs_remaining:
+                            n_failures[j] += 1
+                            if n_failures[j] > self.n_retries:
+                                print("All {} attempts at completing job with index {} have failed, "
+                                      "permanently removing it from set of eligible jobs.".format(n_failures[j], j))
+                                dead_jobs.add(j)
+
+                    subjobs_remaining = [idx for idx in subjobs_remaining if idx not in dead_jobs]
+                    subjobs_remaining = sorted(subjobs_remaining)
+
+                    i += 1
+
+                    print("Step duration: {}.".format(datetime.datetime.now() - step_start))
+            finally:
+                print("Cleaning up dirty hosts...")
+
+                # Attempt cleanup of hosts.
+                for host in self.dirty_hosts:
+                    print("Cleaning host {}...".format(host))
+                    if host is ':':
+                        command = "rm -rf {local_scratch}"
+                        self.execute_command(command, robust=True)
                     else:
-                        raise Exception("NotImplemented")
-
-                self.hosts, self.n_procs = self.recruit_hosts(
-                    self.hpc, self.min_hosts, self.max_hosts, self.host_pool,
-                    self.ppn, max_procs=len(subjobs_remaining))
-
-                indices_for_step = subjobs_remaining[:self.n_procs]
-                self._step(i, indices_for_step)
-                self._checkpoint(i)
-
-                job = ReadOnlyJob(self.output_zip_base)
-
-                subjobs_remaining = set([op.idx for op in job.ready_incomplete_ops(sort=False)])
-
-                for j in indices_for_step:
-                    if j in subjobs_remaining:
-                        n_failures[j] += 1
-                        if n_failures[j] > self.n_retries:
-                            print("All {} attempts at completing job with index {} have failed, "
-                                  "permanently removing it from set of eligible jobs.".format(n_failures[j], j))
-                            dead_jobs.add(j)
-
-                subjobs_remaining = [idx for idx in subjobs_remaining if idx not in dead_jobs]
-                subjobs_remaining = sorted(subjobs_remaining)
-
-                i += 1
-
-                print("Step duration: {}.".format(datetime.datetime.now() - step_start))
+                        command = "rm -rf {local_scratch}"
+                        self.ssh_execute(command, host, robust=True)
