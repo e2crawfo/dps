@@ -177,8 +177,6 @@ class ParallelSession(object):
 
         self.print_time_limits()
 
-        import pdb; pdb.set_trace()
-
         assert execution_time > 0
         assert abs_seconds_per_step > 0
         assert seconds_per_step > 0
