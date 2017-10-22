@@ -64,13 +64,12 @@ class ParallelSession(object):
         If True, stderr and stdout of jobs is saved in files rather than being printed to screen.
     n_retries: int
         Number of retries per job.
-    gpu_set: string
+    gpu_set: str
         Comma-separated list of indices of gpus to use.
-    enforce_time_limit: bool
-        If True, each step has a limited amount of time to finish execution. It is halted if it
-        doesn't finish in time. Otherwise, each step just runs until it is finished. Not
-        enforcing the time limit can be useful if different tasks/steps will take different amounts of time
-        to complete.
+    step_time_limit: str
+        String specifying time limit for each step. If not supplied, a time limit is inferred
+        automatically based on wall_time and number of steps (giving each step an equal amount
+        of time).
 
     """
     def __init__(
@@ -78,7 +77,7 @@ class ParallelSession(object):
             wall_time="1hour", cleanup_time="15mins", time_slack=0, add_date=True, dry_run=0,
             parallel_exe="$HOME/.local/bin/parallel", kind="parallel", host_pool=None,
             min_hosts=1, max_hosts=1, env_vars=None, redirect=False, n_retries=0, gpu_set="",
-            enforce_time_limit=True):
+            step_time_limit=""):
 
         if kind == "pbs":
             local_scratch_prefix = "\\$RAMDISK"
@@ -162,19 +161,14 @@ class ParallelSession(object):
         node_file = " --sshloginfile nodefile.txt "
 
         execution_time = int((wall_time - cleanup_time).total_seconds())
-        abs_seconds_per_step = int(np.floor(execution_time / n_steps))
+
+        if step_time_limit:
+            abs_seconds_per_step = int(parse_timedelta(step_time_limit).total_seconds())
+        else:
+            abs_seconds_per_step = int(np.floor(execution_time / n_steps))
         seconds_per_step = abs_seconds_per_step - time_slack
 
-        assert execution_time > 0
-        assert abs_seconds_per_step > 0
-        assert seconds_per_step > 0
-
-        staged_hosts = set()
-
         self.__dict__.update(locals())
-
-        # Create convenience `latest` symlinks
-        make_symlink(job_directory, os.path.join(scratch, 'latest'))
 
         print("We have {wall_time_seconds} seconds to complete {n_jobs_to_run} "
               "sub-jobs (grouped into {n_steps} steps) using {n_procs} processors.".format(**self.__dict__))
@@ -182,6 +176,13 @@ class ParallelSession(object):
               "and {cleanup_time_seconds} seconds have been reserved for cleanup.".format(**self.__dict__))
         print("Each step has been allotted {abs_seconds_per_step} seconds, "
               "{seconds_per_step} seconds of which is pure computation time.\n".format(**self.__dict__))
+
+        assert execution_time > 0
+        assert abs_seconds_per_step > 0
+        assert seconds_per_step > 0
+
+        # Create convenience `latest` symlinks
+        make_symlink(job_directory, os.path.join(scratch, 'latest'))
 
     def recruit_hosts(self, hpc, min_hosts, max_hosts, host_pool, ppn, max_procs):
         hosts = []
@@ -385,22 +386,15 @@ class ParallelSession(object):
 
         indices_for_step = ' '.join(str(i) for i in indices_for_step)
 
-        if self.enforce_time_limit:
-            dps_hyper_timeout = " --max-time {} ".format(self.seconds_per_step)
-            parallel_timeout = " --timeout {} ".format(self.abs_seconds_per_step)
-        else:
-            dps_hyper_timeout = ""
-            parallel_timeout = ""
-
         parallel_command = (
             "cd {local_scratch} && "
-            "dps-hyper run {archive_root} {pattern} {{}} " + dps_hyper_timeout +
+            "dps-hyper run {archive_root} {pattern} {{}} --max-time {seconds_per_step} "
             "--log-root {local_scratch} --log-name experiments "
             "--idx-in-node={{%}} --gpu-set={gpu_set} --ppn={ppn} {redirect}"
         )
 
         command = (
-            '{parallel_exe} ' + parallel_timeout + ' --no-notice -j{ppn} \\\n'
+            '{parallel_exe} --timeout {abs_seconds_per_step} --no-notice -j{ppn} \\\n'
             '    --joblog {job_directory}/job_log.txt {node_file} \\\n'
             '    --env PATH --env LD_LIBRARY_PATH {env_vars} -v \\\n'
             '    "' + parallel_command + '" \\\n'

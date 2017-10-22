@@ -557,7 +557,7 @@ def dps_hyper_cl():
 def build_and_submit(
         name, config, distributions=None, wall_time="1year", cleanup_time="1day", max_hosts=1, ppn=1,
         n_param_settings=1, n_repeats=1, host_pool=None, n_retries=0, pmem=0, queue="", do_local_test=False,
-        kind="local", gpu_set="", enforce_time_limit=True):
+        kind="local", gpu_set="", step_time_limit=""):
     """
     Parameters
     ----------
@@ -566,6 +566,9 @@ def build_and_submit(
     """
     os.nice(10)
     assert kind in "pbs slurm parallel local".split()
+    assert 'build_command' not in config
+    config['build_command'] = ' '.join(sys.argv)
+    print(config['build_command'])
 
     if kind == "local":
         with config:
@@ -598,7 +601,7 @@ def build_and_submit(
 def _build_and_submit(
         name, config, distributions, wall_time, cleanup_time, max_hosts, ppn,
         n_param_settings, n_repeats, host_pool, n_retries, do_local_test, gpu_set,
-        enforce_time_limit, **kwargs):
+        step_time_limit, **kwargs):
 
     if isinstance(host_pool, str):
         host_pool = host_pool.split()
@@ -608,7 +611,7 @@ def _build_and_submit(
         wall_time=wall_time, cleanup_time=cleanup_time, time_slack=60,
         max_hosts=max_hosts, ppn=ppn, n_retries=n_retries,
         host_pool=host_pool, gpu_set=gpu_set, kind="parallel",
-        enforce_time_limit=enforce_time_limit)
+        step_time_limit=step_time_limit)
 
     config.name = name
 
@@ -629,13 +632,13 @@ def _build_and_submit(
 def _build_and_submit_hpc(
         name, config, distributions, wall_time, cleanup_time, max_hosts, ppn,
         n_param_settings, n_repeats, n_retries, do_local_test, pmem,
-        queue, kind, gpu_set, enforce_time_limit, **kwargs):
+        queue, kind, gpu_set, step_time_limit, **kwargs):
 
     build_params = dict(n_param_settings=n_param_settings, n_repeats=n_repeats)
 
     run_params = dict(
         wall_time=wall_time, cleanup_time=cleanup_time, time_slack=120, max_hosts=max_hosts,
-        ppn=ppn, n_retries=n_retries, kind=kind, gpu_set=gpu_set, enforce_time_limit=enforce_time_limit)
+        ppn=ppn, n_retries=n_retries, kind=kind, gpu_set=gpu_set, step_time_limit=step_time_limit)
 
     config.name = name
     if pmem:
