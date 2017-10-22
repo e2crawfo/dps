@@ -603,7 +603,7 @@ def build_and_submit(
                 add_date=1, _zip=True, do_local_test=do_local_test,
                 n_param_settings=n_param_settings, n_repeats=n_repeats)
 
-        submit_job(archive_path, **locals())
+        submit_job(**locals())
 
         os.remove(str(archive_path))
         shutil.rmtree(str(archive_path).split('.')[0])
