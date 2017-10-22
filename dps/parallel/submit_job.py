@@ -175,12 +175,9 @@ class ParallelSession(object):
 
         self.__dict__.update(locals())
 
-        print("We have {wall_time_seconds} seconds to complete {n_jobs_to_run} "
-              "sub-jobs (grouped into {n_steps} steps) using {n_procs} processors.".format(**self.__dict__))
-        print("{execution_time} seconds have been reserved for job execution, "
-              "and {cleanup_time_seconds} seconds have been reserved for cleanup.".format(**self.__dict__))
-        print("Each step has been allotted {abs_seconds_per_step} seconds, "
-              "{seconds_per_step} seconds of which is pure computation time.\n".format(**self.__dict__))
+        self.print_time_limits()
+
+        import pdb; pdb.set_trace()
 
         assert execution_time > 0
         assert abs_seconds_per_step > 0
@@ -188,6 +185,14 @@ class ParallelSession(object):
 
         # Create convenience `latest` symlinks
         make_symlink(job_directory, os.path.join(scratch, 'latest'))
+
+    def print_time_limits(self):
+        print("We have {wall_time_seconds} seconds to complete {n_jobs_to_run} "
+              "sub-jobs (grouped into {n_steps} steps) using {n_procs} processors.".format(**self.__dict__))
+        print("{execution_time} seconds have been reserved for job execution, "
+              "and {cleanup_time_seconds} seconds have been reserved for cleanup.".format(**self.__dict__))
+        print("Each step has been allotted {abs_seconds_per_step} seconds, "
+              "{seconds_per_step} seconds of which is pure computation time.\n".format(**self.__dict__))
 
     def recruit_hosts(self, hpc, min_hosts, max_hosts, host_pool, ppn, max_procs):
         hosts = []
@@ -450,6 +455,8 @@ class ParallelSession(object):
         if self.dry_run:
             print("Dry run, so not running.")
             return
+
+        self.print_time_limits()
 
         with cd(self.job_directory):
             print("\n" + ("=" * 80))

@@ -118,7 +118,7 @@ def sample_configs(distributions, base_config, n_repeats, n_samples=None):
 
     """
     samples = []
-    if n_samples is None:
+    if not n_samples:
         samples = generate_all(distributions)
     else:
         samples = nested_sample(distributions, n_samples)
@@ -556,7 +556,7 @@ def dps_hyper_cl():
 
 def build_and_submit(
         name, config, distributions=None, wall_time="1year", cleanup_time="1day", max_hosts=1, ppn=1,
-        n_param_settings=1, n_repeats=1, n_retries=0, host_pool=None, pmem=0, queue="", do_local_test=False,
+        n_param_settings=0, n_repeats=1, n_retries=0, host_pool=None, pmem=0, queue="", do_local_test=False,
         kind="local", gpu_set="", step_time_limit="", ignore_gpu=False):
     """ Meant to be called from within a script.
 
@@ -600,7 +600,7 @@ def build_and_submit(
                 add_date=1, _zip=True, do_local_test=do_local_test,
                 n_param_settings=n_param_settings, n_repeats=n_repeats)
 
-        submit_job(archive_path=archive_path, **locals())
+        submit_job(archive_path, **locals())
 
         os.remove(str(archive_path))
         shutil.rmtree(str(archive_path).split('.')[0])
@@ -611,18 +611,20 @@ def dps_submit_cl():
 
 
 def submit_job(
-        name, archive_path, wall_time="1year", cleanup_time="1day", max_hosts=1, ppn=1,
-        n_param_settings=1, n_repeats=1, n_retries=0, host_pool=None, pmem=0, queue="",
-        kind="local", gpu_set="", step_time_limit="", ignore_gpu=False):
+        archive_path, name, wall_time="1year", cleanup_time="1day", max_hosts=1, ppn=1,
+        n_retries=0, host_pool=None, pmem=0, queue="", kind="local", gpu_set="",
+        step_time_limit="", ignore_gpu=False, **kwargs):
 
     os.nice(10)
 
     assert kind in "pbs slurm parallel".split()
 
+    hpc = kind in "pbs slurm".split()
+
     run_params = dict(
-        wall_time=wall_time, cleanup_time=cleanup_time, time_slack=60,
-        max_hosts=max_hosts, ppn=ppn, n_retries=n_retries,
-        host_pool=host_pool, gpu_set=gpu_set, ignore_gpu=ignore_gpu)
+        wall_time=wall_time, cleanup_time=cleanup_time, time_slack=120 if hpc else 60,
+        max_hosts=max_hosts, ppn=ppn, n_retries=n_retries, host_pool=host_pool, kind=kind,
+        gpu_set=gpu_set, step_time_limit=step_time_limit, ignore_gpu=ignore_gpu)
 
     session = ParallelSession(
         name, archive_path, 'map', cfg.experiments_dir + '/execution/',
