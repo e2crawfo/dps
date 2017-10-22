@@ -123,6 +123,9 @@ def sample_configs(distributions, base_config, n_repeats, n_samples=None):
     else:
         samples = nested_sample(distributions, n_samples)
 
+    print("Sampled configs:")
+    print(samples)
+
     configs = []
     for i, s in enumerate(samples):
         s['idx'] = i
