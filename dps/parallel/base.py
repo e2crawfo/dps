@@ -373,7 +373,7 @@ class Job(ReadOnlyJob):
             import subprocess
             import sys
             subprocess.run("nvidia-smi", stdout=sys.stdout, stderr=sys.stderr)
-        except subprocess.CalledProcessError:
+        except:
             print("Failed running nvidia-smi")
 
         if ignore_gpu:
