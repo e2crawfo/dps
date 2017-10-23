@@ -258,6 +258,19 @@ def process_detailed_data(record, kind):
         pass
 
 
+def _print_config(args):
+    job = ReadOnlyJob(args.path)
+    distributions = job.objects.load_object('metadata', 'distributions')
+    distributions = Config(distributions)
+
+    print("BASE CONFIG")
+    print(job.objects.load_object('metadata', 'config'))
+
+    print('\n' + '*' * 100)
+    print("DISTRIBUTIONS")
+    pprint(distributions)
+
+
 def _summarize_search(args):
     """ Get all completed jobs, get their outputs. Summarize em. """
     print("Summarizing search stored at {}.".format(Path(args.path).absolute()))
@@ -527,6 +540,11 @@ def _zip_search(args):
 
 def dps_hyper_cl():
     from dps.parallel.base import parallel_cl
+    config_cmd = (
+        'config', 'Print config of a hyper-parameter search.', _print_config,
+        ('path', dict(help="Location of data store for job.", type=str)),
+    )
+
     summary_cmd = (
         'summary', 'Summarize results of a hyper-parameter search.', _summarize_search,
         ('path', dict(help="Location of data store for job.", type=str)),
@@ -558,7 +576,7 @@ def dps_hyper_cl():
 
     parallel_cl(
         'Build, run, plot and view results of hyper-parameter searches.',
-        [summary_cmd, rl_plot_cmd, sc_plot_cmd, zip_cmd])
+        [config_cmd, summary_cmd, rl_plot_cmd, sc_plot_cmd, zip_cmd])
 
 
 def build_and_submit(
