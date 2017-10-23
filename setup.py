@@ -29,5 +29,6 @@ setup(
     ],
     entry_points={
         'console_scripts': ['dps-hyper=dps.parallel:dps_hyper_cl',
-                            'dps-submit=dps.parallel:dps_submit_cl']}
+                            'dps-submit=dps.parallel:dps_submit_cl',
+                            'dps-run=dps.run:run',]}
 )

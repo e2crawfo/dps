@@ -118,10 +118,14 @@ def sample_configs(distributions, base_config, n_repeats, n_samples=None):
 
     """
     samples = []
-    if not n_samples:
-        samples = generate_all(distributions)
+
+    if isinstance(distributions, list):
+        samples = distributions + []
     else:
-        samples = nested_sample(distributions, n_samples)
+        if not n_samples:
+            samples = generate_all(distributions)
+        else:
+            samples = nested_sample(distributions, n_samples)
 
     print("Sampled configs:")
     print(samples)
@@ -176,7 +180,7 @@ def build_search(
     name: str
         Name for the search.
     distributions: dict (str -> distribution)
-        Distributions to sample from.
+        Distributions to sample from. Can also be a list of samples.
     config: Config instance
         The base configuration.
     n_repeats: int
