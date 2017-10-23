@@ -3,10 +3,9 @@ import numpy as np
 import clify
 
 from dps.utils import Config
-from dps.envs import simple_grid_arithmetic
+from dps.envs import simple_addition
 from dps.rl.algorithms import a2c
 from dps.rl.policy import BuildEpsilonSoftmaxPolicy, BuildLstmController
-from dps.rl import rl_render_hook
 from dps.config import DEFAULT_CONFIG
 
 
@@ -16,8 +15,8 @@ config = DEFAULT_CONFIG.copy(
     n_train=10000,
     n_val=100,
     max_steps=1000000,
-    display_step=100,
-    eval_step=100,
+    display_step=10,
+    eval_step=10,
     patience=np.inf,
     power_through=False,
     preserve_policy=True,
@@ -71,37 +70,8 @@ alg_config = Config(
 )
 
 
-env_config = Config(
-    build_env=simple_grid_arithmetic.build_env,
-
-    # reductions="sum",
-    # reductions="prod",
-    # reductions="max",
-    # reductions="min",
-    reductions="A:sum M:prod X:max N:min",
-    arithmetic_actions='+ * max min +1',
-
-    curriculum=[
-        dict(T=30, min_digits=2, max_digits=3, shape=(2, 2)),
-    ],
-    mnist=True,
-    op_loc=(0, 0),
-    start_loc=(0, 0),
-    base=10,
-    threshold=0.01,
-
-    salience_shape=(2, 2),
-    salience_action=True,
-    visible_glimpse=False,
-    initial_salience=True,
-
-    reward_window=0.499,
-    final_reward=True,
-    downsample_factor=2,
-
-    ablation='easy',
-    log_name='simple_grid_arithmetic',
-    render_rollouts=None,
+env_config = simple_addition.config.copy(
+    curriculum=[dict(width=1)],
 )
 
 config.update(alg_config)

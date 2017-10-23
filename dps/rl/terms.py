@@ -77,7 +77,8 @@ class PolicyGradient(ObjectiveFunctionTerm):
 
     def build_graph(self, context):
         adv_times_ratio = context.get_signal("adv_times_ratio", self, gradient=True)
-        objective = tf.reduce_mean(tf.reduce_sum(adv_times_ratio, axis=0))
+        mask = context.get_signal("mask")
+        objective = masked_mean(adv_times_ratio, mask)
 
         label = "{}-policy_gradient_objective".format(self.policy.display_name)
         context.add_summary(tf.summary.scalar(label, objective))

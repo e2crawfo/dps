@@ -105,9 +105,9 @@ config = Config(
     val_exploration_schedule="0.0",
 
     policy_weight=1.0,
-    value_weight=32.0,
+    value_weight=1.0,
     value_reg_weight=0.0,
-    entropy_weight=2.0,
+    entropy_weight=0.01,
 
     split=False,
     q_lmbda=1.0,

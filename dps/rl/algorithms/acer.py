@@ -119,7 +119,7 @@ config = Config(
     policy_weight=1.0,
     value_weight=1.0,
     value_reg_weight=0.0,
-    entropy_weight=0.0,
+    entropy_weight=0.01,
 
     split=True,
     q_lmbda=1.0,

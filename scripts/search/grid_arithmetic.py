@@ -43,14 +43,14 @@ alg_config = Config(
 
     policy_weight=1.0,
     value_reg_weight=0.0,
-    value_weight=32.0,
-    entropy_weight=0.5,
+    value_weight=1.0,
+    entropy_weight=0.01,
 
     lr_schedule=1e-4,
     n_controller_units=128,
     batch_size=16,
     gamma=0.98,
-    opt_steps_per_update=10,
+    opt_steps_per_update=1,
     epsilon=0.2,
     split=False,
 
@@ -97,7 +97,6 @@ config.update(alg_config)
 config.update(env_config)
 
 
-# For oak experiment
 config.update(
     use_gpu=True,
     gpu_allow_growth=True,
@@ -105,10 +104,8 @@ config.update(
 )
 
 
-# grid = dict(error_on_timeout=[False, True])
-grid = dict(entropy_weight=2**np.linspace(-4, -1, 8))
-# grid = dict(n_train=2**np.arange(6, 18))
-# grid = dict(n_train=2**np.arange(6, 18))
+grid = dict(n_train=2**np.arange(6, 18))
+
 
 from dps.parallel.hyper import build_and_submit
 host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
