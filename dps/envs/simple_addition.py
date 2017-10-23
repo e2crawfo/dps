@@ -27,6 +27,7 @@ config = Config(
         dict(width=3),
     ],
     base=10,
+    final_reward=True,
     n_controller_units=32,
     log_name='simple_addition',
 )

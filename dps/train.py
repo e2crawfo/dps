@@ -73,9 +73,18 @@ class TrainingLoop(object):
 
             items = sorted(d.items(), key=lambda x: x[0])
             for k, v in items:
-                if k in 'train_data update_data val_data'.split() and len(v) > 0:
+                if k in 'train_data update_data val_data test_data'.split() and len(v) > 0:
                     if isinstance(v, pd.DataFrame):
                         s += "* {} (final_step): {}\n".format(k, v.iloc[-1].to_dict())
+                    elif isinstance(v, str):
+                        try:
+                            lines = [l for l in v.split('\n') if l]
+                            keys = lines[0].split(',')
+                            values = lines[-1].split(',')
+                            d = {_k: _v for _k, _v in zip(keys, values)}
+                            s += "* {} (final_step): {}\n".format(k, d)
+                        except IndexError:
+                            pass
                     else:
                         s += "* {} (final_step): {}\n".format(k, v[-1])
                 else:
@@ -151,7 +160,7 @@ class TrainingLoop(object):
 
             stage_start = time.time()
 
-            self.history.append(dict(stage=stage, train_data=[], val_data=[], update_data=[]))
+            self.history.append(dict(stage=stage, train_data=[], update_data=[], val_data=[], test_data=[]))
 
             with ExitStack() as stack:
                 session_config = tf.ConfigProto()
@@ -185,10 +194,11 @@ class TrainingLoop(object):
                         exp_dir.path_for('train'), graph,
                         flush_secs=cfg.reload_interval)
                     self.update_writer = tf.summary.FileWriter(
-                        exp_dir.path_for('update'), graph,
-                        flush_secs=cfg.reload_interval)
+                        exp_dir.path_for('update'), flush_secs=cfg.reload_interval)
                     self.val_writer = tf.summary.FileWriter(
                         exp_dir.path_for('val'), flush_secs=cfg.reload_interval)
+                    self.test_writer = tf.summary.FileWriter(
+                        exp_dir.path_for('test'), flush_secs=cfg.reload_interval)
 
                     print("Writing summaries to {}.".format(exp_dir.path))
 
@@ -299,6 +309,7 @@ class TrainingLoop(object):
         self.latest['train_data'] = pd.DataFrame.from_records(self.latest['train_data']).to_csv(index=False)
         self.latest['update_data'] = pd.DataFrame.from_records(self.latest['update_data']).to_csv(index=False)
         self.latest['val_data'] = pd.DataFrame.from_records(self.latest['val_data']).to_csv(index=False)
+        self.latest['test_data'] = pd.DataFrame.from_records(self.latest['test_data']).to_csv(index=False)
 
         if limiter.ran_out:
             reason = "Time limit exceeded"
@@ -340,18 +351,22 @@ class TrainingLoop(object):
 
             if evaluate or display:
                 val_loss, val_summaries, val_record = updater.evaluate(cfg.n_val, 'val')
-
                 self.latest['val_data'].append(val_record)
+
+                test_loss, test_summaries, test_record = updater.evaluate(cfg.n_val, 'test')
+                self.latest['test_data'].append(test_record)
 
                 if evaluate and cfg.save_summaries:
                     self.train_writer.add_summary(train_summaries, (self.global_step + 1) * cfg.batch_size)
                     self.update_writer.add_summary(update_summaries, (self.global_step + 1) * cfg.batch_size)
                     self.val_writer.add_summary(val_summaries, (self.global_step + 1) * cfg.batch_size)
+                    self.test_writer.add_summary(test_summaries, (self.global_step + 1) * cfg.batch_size)
 
                 if cfg.stopping_function is not None:
                     stopping_criteria = cfg.stopping_function(val_record)
                 else:
                     stopping_criteria = val_loss
+
                 new_best, stop = early_stop.check(stopping_criteria, self.local_step, val_record)
 
                 if new_best:
