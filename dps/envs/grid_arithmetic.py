@@ -99,8 +99,8 @@ def build_policy(env, **kwargs):
 config = Config(
     build_env=build_env,
 
-    reductions="A:sum M:prod X:max N:min",
-    arithmetic_actions="+ * max min +1",
+    reductions="A:sum,M:prod,X:max,N:min",
+    arithmetic_actions="+,*,max,min,+1",
 
     curriculum=[dict()],
     op_loc=(0, 0),
@@ -114,7 +114,7 @@ config = Config(
     final_reward=True,
 
     n_train=10000,
-    n_val=500,
+    n_val=100,
     use_gpu=False,
 
     show_op=True,
@@ -189,7 +189,7 @@ class GridArithmeticDataset(RegressionDataset):
             self.show_op = False
         else:
             _reductions = {}
-            for pair in self.reductions.split():
+            for pair in self.reductions.split(','):
                 char, key = pair.split(':')
                 _reductions[char] = self.reductions_dict[key]
             self.reductions = _reductions
@@ -330,7 +330,8 @@ class GridArithmetic(InternalEnv):
         self.image_width = int(28 / self.downsample_factor)
 
         _arithmetic_actions = {}
-        for key in self.arithmetic_actions.split():
+        delim = ',' if ',' in self.arithmetic_actions else ' '
+        for key in self.arithmetic_actions.split(delim):
             _arithmetic_actions[key] = self.arithmetic_actions_dict[key]
         self.arithmetic_actions = _arithmetic_actions
 

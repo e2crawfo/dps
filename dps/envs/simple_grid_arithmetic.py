@@ -28,8 +28,8 @@ def build_env():
 config = Config(
     build_env=build_env,
 
-    reductions="A:sum M:prod X:max N:min",
-    arithmetic_actions="+ * max min +1",
+    reductions="A:sum,M:prod,X:max,N:min",
+    arithmetic_actions="+,*,max,min,+1",
 
     curriculum=[{}],
     op_loc=(0, 0),
@@ -143,7 +143,8 @@ class SimpleGridArithmetic(InternalEnv):
 
     def __init__(self, **kwargs):
         _arithmetic_actions = {}
-        for key in self.arithmetic_actions.split():
+        delim = ',' if ',' in self.arithmetic_actions else ' '
+        for key in self.arithmetic_actions.split(delim):
             _arithmetic_actions[key] = self.arithmetic_actions_dict[key]
         self.arithmetic_actions = _arithmetic_actions
 

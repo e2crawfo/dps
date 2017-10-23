@@ -69,8 +69,8 @@ alg_config = Config(
 )
 
 env_config = grid_arithmetic.config.copy(
-    reductions="sum",
-    arithmetic_actions='+ * max min +1',
+    reductions="A:sum,M:prod,X:max,N:min",
+    arithmetic_actions='+,*,max,min,+1',
     ablation='easy',
     render_rollouts=None,
 

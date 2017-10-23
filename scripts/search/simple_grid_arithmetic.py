@@ -78,8 +78,8 @@ env_config = Config(
     # reductions="prod",
     # reductions="max",
     # reductions="min",
-    reductions="A:sum M:prod X:max N:min",
-    arithmetic_actions='+ * max min +1',
+    reductions="A:sum,M:prod,X:max,N:min",
+    arithmetic_actions='+,*,max,min,+1',
 
     curriculum=[
         dict(T=30, min_digits=2, max_digits=3, shape=(2, 2)),
