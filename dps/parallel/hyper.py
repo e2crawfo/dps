@@ -628,6 +628,9 @@ def submit_job(
 
     hpc = kind in "pbs slurm".split()
 
+    if kind == "slurm" and not pmem:
+        raise Exception("Must supply a value for pmem (per-process-memory in mb) when using SLURM")
+
     run_params = dict(
         wall_time=wall_time, cleanup_time=cleanup_time, time_slack=120 if hpc else 60,
         max_hosts=max_hosts, ppn=ppn, n_retries=n_retries, host_pool=host_pool, kind=kind,
