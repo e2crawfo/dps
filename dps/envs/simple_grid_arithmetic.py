@@ -88,7 +88,8 @@ class SimpleGridArithmeticDataset(RegressionDataset):
             self.show_op = False
         else:
             _reductions = {}
-            for pair in self.reductions.split():
+            delim = ',' if ',' in self.reductions else ' '
+            for pair in self.reductions.split(delim):
                 char, key = pair.split(':')
                 _reductions[char] = self.reductions_dict[key]
             self.reductions = _reductions
