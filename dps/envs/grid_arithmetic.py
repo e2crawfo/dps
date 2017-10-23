@@ -111,6 +111,7 @@ config = Config(
     min_digits=2,
     max_digits=3,
     shape=(2, 2),
+    padded_shape=None,
     final_reward=True,
 
     n_train=10000,
@@ -159,6 +160,7 @@ config = Config(
 class GridArithmeticDataset(RegressionDataset):
     reductions = Param()
     shape = Param()
+    padded_shape = Param(None)
     min_digits = Param()
     max_digits = Param()
     base = Param()
@@ -219,7 +221,8 @@ class GridArithmeticDataset(RegressionDataset):
             self.shape, self.min_digits, self.max_digits, self.base,
             blank_element, digit_reps, symbol_reps,
             reductions, self.n_examples, self.op_loc, self.show_op,
-            one_hot_output=self.loss_type == "xent", largest_digit=self.largest_digit)
+            one_hot_output=self.loss_type == "xent", largest_digit=self.largest_digit,
+            padded_shape=self.padded_shape)
 
         super(GridArithmeticDataset, self).__init__(x, y)
 
@@ -227,7 +230,7 @@ class GridArithmeticDataset(RegressionDataset):
     def make_dataset(
             shape, min_digits, max_digits, base, blank_element,
             digit_reps, symbol_reps, functions, n_examples, op_loc, show_op,
-            one_hot_output, largest_digit):
+            one_hot_output, largest_digit, padded_shape):
 
         new_X, new_Y = [], []
 
@@ -263,6 +266,15 @@ class GridArithmeticDataset(RegressionDataset):
                 x, y = digit_reps.get_random()
                 ys.append(y)
                 env[loc] = x
+
+            if padded_shape:
+                padded_env = np.tile(blank_element, padded_shape)
+                padded_env[:env.shape[0], :env.shape[1]] = env
+                env = padded_env
+
+            if j % 10000 == 0:
+                print(image_to_string(env))
+                print("\n")
 
             new_X.append(env)
             y = func(ys)

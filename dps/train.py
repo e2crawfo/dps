@@ -337,13 +337,18 @@ class TrainingLoop(object):
                 reason = "Maximum number of experiences reached"
                 break
 
-            evaluate = self.global_step % cfg.eval_step == 0
-            display = self.global_step % cfg.display_step == 0
-            render = (self.global_step % cfg.render_step == 0) and self.global_step > 0
+            evaluate = self.local_step % cfg.eval_step == 0
+            display = self.local_step % cfg.display_step == 0
+            render = (self.local_step % cfg.render_step == 0) and self.local_step > 0
 
             start_time = time.time()
-            train_summaries, update_summaries, train_record, update_record = updater.update(
-                cfg.batch_size, collect_summaries=evaluate and cfg.save_summaries)
+            train_summaries = b""
+            update_summaries = b""
+            train_record = {}
+            update_record = {}
+            if cfg.do_train:
+                train_summaries, update_summaries, train_record, update_record = updater.update(
+                    cfg.batch_size, collect_summaries=evaluate and cfg.save_summaries)
             update_duration = time.time() - start_time
 
             self.latest['train_data'].append(train_record)
@@ -408,6 +413,10 @@ class TrainingLoop(object):
 
             if render and cfg.render_hook is not None:
                 cfg.render_hook(updater)
+
+            if not cfg.do_train:
+                reason = "`do_train` set to False"
+                break
 
             total_train_time += update_duration
             time_per_example = total_train_time / ((self.local_step+1) * cfg.batch_size)

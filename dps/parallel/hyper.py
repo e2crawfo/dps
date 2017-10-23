@@ -222,11 +222,13 @@ def build_search(
 
     print("{} configs were sampled for parameter search.".format(len(new_configs)))
 
-    new_configs = [Config(c).flatten() for c in new_configs]
+    # Can't remember why I thought I needed this...
+    # new_configs = [Config(c).flatten() for c in new_configs]
 
     if do_local_test:
         print("\nStarting local test " + ("=" * 80))
-        test_config = new_configs[0].copy(
+        test_config = new_configs[0].copy()
+        test_config.update(
             max_steps=1000,
             render_hook=None
         )
@@ -276,9 +278,17 @@ def _summarize_search(args):
     print("Summarizing search stored at {}.".format(Path(args.path).absolute()))
 
     job = ReadOnlyJob(args.path)
+
     distributions = job.objects.load_object('metadata', 'distributions')
-    distributions = Config(distributions)
-    keys = list(distributions.keys())
+
+    if isinstance(distributions, list):
+        keys = set()
+        for d in distributions:
+            keys |= set(d.keys())
+        keys = list(keys)
+    else:
+        distributions = Config(distributions)
+        keys = list(distributions.keys())
 
     records = []
     for op in job.completed_ops():
@@ -300,7 +310,10 @@ def _summarize_search(args):
 
         config = Config(r['config'])
         for k in keys:
-            record[k] = config[k]
+            try:
+                record[k] = config[k]
+            except KeyError:
+                record[k] = None
 
         record.update(
             latest_stage=r['history'][-1]['stage'],

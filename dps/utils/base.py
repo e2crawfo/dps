@@ -835,8 +835,12 @@ class Config(dict, MutableMapping):
             for k in keys:
                 try:
                     value = value[k]
-                except KeyError:
-                    raise KeyError("Calling __getitem__ with key {} failed at component {}.".format(key, k))
+                except:
+                    try:
+                        value = value[int(k)]
+                    except:
+                        raise KeyError(
+                            "Calling __getitem__ with key {} failed at component {}.".format(key, k))
             return value
         else:
             return super(Config, self).__getitem__(key)
@@ -849,10 +853,16 @@ class Config(dict, MutableMapping):
             for k in keys[:-1]:
                 try:
                     to_set = to_set[k]
-                except KeyError:
-                    to_set[k] = self.__class__()
-                    to_set = to_set[k]
-            to_set[keys[-1]] = value
+                except:
+                    try:
+                        to_set = to_set[int(k)]
+                    except:
+                        to_set[k] = self.__class__()
+                        to_set = to_set[k]
+            try:
+                to_set[keys[-1]] = value
+            except:
+                to_set[int(keys[-1])] = value
         else:
             self._validate_key(key)
             return super(Config, self).__setitem__(key, value)
@@ -865,12 +875,18 @@ class Config(dict, MutableMapping):
             for k in keys[:-1]:
                 try:
                     to_del = to_del[k]
-                except KeyError:
-                    raise KeyError("Calling __getitem__ with key {} failed at component {}.".format(key, k))
+                except:
+                    try:
+                        to_del = to_del[int(k)]
+                    except:
+                        raise KeyError("Calling __getitem__ with key {} failed at component {}.".format(key, k))
             try:
                 del to_del[keys[-1]]
-            except KeyError:
-                raise KeyError("Calling __getitem__ with key {} failed at component {}.".format(key, keys[-1]))
+            except:
+                try:
+                    to_del = to_del[int(k)]
+                except:
+                    raise KeyError("Calling __getitem__ with key {} failed at component {}.".format(key, k))
         else:
             return super(Config, self).__delitem__(key)
 
