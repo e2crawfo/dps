@@ -296,6 +296,7 @@ def _summarize_search(args):
         process_detailed_data(record, 'train')
         process_detailed_data(record, 'update')
         process_detailed_data(record, 'val')
+        process_detailed_data(record, 'test')
 
         config = Config(r['config'])
         for k in keys:
@@ -390,6 +391,10 @@ def _rl_plot(args):
         del record['train_data']
         del record['update_data']
         del record['val_data']
+        try:
+            del record['test_data']
+        except KeyError:
+            pass
         del vd
         del op
         del r
@@ -465,6 +470,7 @@ def _sample_complexity_plot(args):
         process_detailed_data(record, 'train')
         process_detailed_data(record, 'update')
         process_detailed_data(record, 'val')
+        process_detailed_data(record, 'test')
 
         config = Config(r['config'])
         for k in keys:
