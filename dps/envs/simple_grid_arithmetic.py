@@ -110,7 +110,8 @@ class SimpleGridArithmeticDataset(RegressionDataset):
             self.shape, self.min_digits, self.max_digits, self.base,
             blank_element, digit_reps, symbol_reps,
             reductions, self.n_examples, self.op_loc, self.show_op,
-            one_hot_output=self.loss_type == "xent", largest_digit=self.largest_digit)
+            one_hot_output=self.loss_type == "xent", largest_digit=self.largest_digit,
+            padded_shape=self.shape)
 
         super(SimpleGridArithmeticDataset, self).__init__(x, y)
 

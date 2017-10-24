@@ -222,7 +222,17 @@ class TrainingLoop(object):
                 updater = cfg.get_updater(self.env)
                 updater.build_graph()
 
-                if stage > 0 and cfg.preserve_policy:
+                if cfg.load_path:
+                    if isinstance(cfg.load_path, list):
+                        repeat = getattr(cfg, 'repeat', 0)
+                        path = cfg.load_path[repeat % len(cfg.load_path)]
+                    else:
+                        path = cfg.load_path
+                    path = os.path.realpath(path)
+                    assert isinstance(path, str)
+                    print("Loading hypothesis from {}.".format(path))
+                    updater.restore(sess, path)
+                elif stage > 0 and cfg.preserve_policy:
                     updater.restore(sess, self.history[-2]['best_path'])
 
                 tf_seed = gen_seed()

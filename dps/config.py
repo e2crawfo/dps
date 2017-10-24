@@ -76,6 +76,7 @@ DEFAULT_CONFIG = SystemConfig(
     name="Default",
     seed=None,
 
+    load_path="",  # Path to load variables from.
     do_train=True,
     preserve_policy=True,  # Whether to use the policy learned on the last stage of the curriculum for each new stage.
     preserve_env=False,
