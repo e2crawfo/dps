@@ -113,6 +113,7 @@ config = Config(
     shape=(2, 2),
     padded_shape=None,
     final_reward=True,
+    parity='both',
 
     n_train=10000,
     n_val=100,
@@ -169,6 +170,7 @@ class GridArithmeticDataset(RegressionDataset):
     largest_digit = Param(9)
     downsample_factor = Param(2)
     show_op = Param(True)
+    parity = Param('both')
 
     reductions_dict = {
         "sum": sum,
@@ -208,8 +210,18 @@ class GridArithmeticDataset(RegressionDataset):
 
         symbol_reps = DataContainer(emnist_x, emnist_y)
 
+        mnist_classes = list(range(self.base))
+        if self.parity == 'even':
+            mnist_classes = [c for c in mnist_classes if c % 2 == 0]
+        elif self.parity == 'odd':
+            mnist_classes = [c for c in mnist_classes if c % 2 == 1]
+        elif self.parity == 'both':
+            pass
+        else:
+            raise Exception("NotImplemented")
+
         mnist_x, mnist_y, _ = load_emnist(
-            cfg.data_dir, list(range(self.base)), balance=True,
+            cfg.data_dir, mnist_classes, balance=True,
             downsample_factor=self.downsample_factor)
         mnist_x = mnist_x.reshape(-1, s, s)
         mnist_y = np.squeeze(mnist_y, 1)
