@@ -70,20 +70,20 @@ env_config = Config(
 alg_config = Config(
     get_updater=get_updater,
     optimizer_spec="adam",
-    # curriculum=[dict(shape=(3, 3))],
-    curriculum=[dict(shape=(2, 2), n_train=2**17), dict(shape=(3, 3))],
-    # curriculum=[
-    #     dict(shape=(3, 3), min_digits=4, max_digits=4)],
-    # curriculum=[
-    #     dict(shape=(2, 2), n_train=2**17),
-    #     dict(shape=(3, 3), min_digits=4, max_digits=4)],
-    # curriculum=[
-    #     dict(shape=(3, 3), n_train=2**17),
-    #     dict(shape=(3, 3), min_digits=4, max_digits=4)],
+    curriculum=[dict(shape=(2, 2), n_train=2**17), dict(shape=(3, 3))],  # A
+    # curriculum=[dict(shape=(3, 3))],  # B
     # curriculum=[
     #     dict(shape=(2, 2), n_train=2**17),
     #     dict(shape=(3, 3), n_train=2**17),
-    #     dict(shape=(3, 3), min_digits=4, max_digits=4)],
+    #     dict(shape=(3, 3), min_digits=4, max_digits=4)],  # C
+    # curriculum=[
+    #     dict(shape=(2, 2), n_train=2**17),
+    #     dict(shape=(3, 3), min_digits=4, max_digits=4)],  # D
+    # curriculum=[
+    #     dict(shape=(3, 3), n_train=2**17),
+    #     dict(shape=(3, 3), min_digits=4, max_digits=4)],  # E
+    # curriculum=[
+    #     dict(shape=(3, 3), min_digits=4, max_digits=4)],  # F
     lr_schedule=1e-4,
     power_through=True,
     noise_schedule=0.0,
@@ -96,7 +96,7 @@ config.update(alg_config)
 config.update(env_config)
 
 grid = [
-    {'curriculum:-1:n_train': n} for n in np.arange(6, 18)
+    {'curriculum:-1:n_train': n} for n in 2**np.arange(6, 18)
 ]
 grid.append(
     {'curriculum:-1:n_train': 1, 'curriculum:-1:do_train': False},

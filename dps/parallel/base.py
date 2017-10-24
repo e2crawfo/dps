@@ -368,14 +368,6 @@ class Job(ReadOnlyJob):
 
         print("Ignoring GPU: {}".format(ignore_gpu))
 
-        try:
-            print("Attempting to run `nvidia-smi`...")
-            import subprocess
-            import sys
-            subprocess.run("nvidia-smi", stdout=sys.stdout, stderr=sys.stderr)
-        except:
-            print("Failed running nvidia-smi")
-
         if ignore_gpu:
             env = dict(CUDA_VISIBLE_DEVICES="-1")
         elif idx_in_node != -1 and gpu_set:

@@ -432,25 +432,6 @@ class TrainingLoop(object):
             time_per_example = total_train_time / ((self.local_step+1) * cfg.batch_size)
             time_per_batch = total_train_time / (self.local_step+1)
 
-            if cfg.use_gpu and self.global_step % 100 == 0:
-                try:
-                    my_gpu = int(os.environ['CUDA_VISIBLE_DEVICES'])
-
-                    if my_gpu >= 0:
-                        sys.stdout.flush()
-                        sys.stderr.flush()
-
-                        print("Attempting to show GPU usage statistics.")
-                        subprocess.run("nvidia-smi dmon -i {} -c 1".format(my_gpu).split(), stdout=sys.stdout, stderr=sys.stderr)
-                        subprocess.run("nvidia-smi pmon -i {} -c 1".format(my_gpu).split(), stdout=sys.stdout, stderr=sys.stderr)
-
-                        sys.stdout.flush()
-                        sys.stderr.flush()
-                except KeyError:
-                    pass
-                except:
-                    print("Error while calling nvidia-smi")
-
             if self.global_step % 100 == 0:
                 print("\nPhysical memory use: {}mb".format(memory_usage(physical=True)))
                 print("Virtual memory use: {}mb".format(memory_usage(physical=False)))
