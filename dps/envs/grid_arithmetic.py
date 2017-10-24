@@ -456,7 +456,8 @@ class GridArithmetic(InternalEnv):
                 image_width=self.salience_input_width,
                 downsample_factor=cfg.downsample_factor,
                 min_digits=1,
-                max_digits=cfg.max_digits+1,
+                max_digits=4,
+                # max_digits=cfg.max_digits+1,
                 build_function=build_salience_detector,
                 n_units=101
             )
