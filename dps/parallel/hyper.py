@@ -601,7 +601,7 @@ def dps_hyper_cl():
 def build_and_submit(
         name, config, distributions=None, wall_time="1year", cleanup_time="1day", max_hosts=1, ppn=1,
         n_param_settings=0, n_repeats=1, n_retries=0, host_pool=None, pmem=0, queue="", do_local_test=False,
-        kind="local", gpu_set="", step_time_limit="", ignore_gpu=False):
+        kind="local", gpu_set="", step_time_limit="", ignore_gpu=False, do_cleanup=False):
     """ Meant to be called from within a script.
 
     Parameters
@@ -657,7 +657,7 @@ def dps_submit_cl():
 def submit_job(
         archive_path, name, wall_time="1year", cleanup_time="1day", max_hosts=1, ppn=1,
         n_retries=0, host_pool=None, pmem=0, queue="", kind="local", gpu_set="",
-        step_time_limit="", ignore_gpu=False, **kwargs):
+        step_time_limit="", ignore_gpu=False, do_cleanup=False, **kwargs):
 
     os.nice(10)
 
@@ -671,7 +671,7 @@ def submit_job(
     run_params = dict(
         wall_time=wall_time, cleanup_time=cleanup_time, time_slack=120 if hpc else 60,
         max_hosts=max_hosts, ppn=ppn, n_retries=n_retries, host_pool=host_pool, kind=kind,
-        gpu_set=gpu_set, step_time_limit=step_time_limit, ignore_gpu=ignore_gpu)
+        gpu_set=gpu_set, step_time_limit=step_time_limit, ignore_gpu=ignore_gpu, do_cleanup=do_cleanup)
 
     session = ParallelSession(
         name, archive_path, 'map', cfg.experiments_dir + '/execution/',

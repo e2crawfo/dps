@@ -72,6 +72,8 @@ class ParallelSession(object):
         of time).
     ignore_gpu: bool
         If True, GPUs will be requested by as part of the job, but will not be used at run time.
+    do_cleanup: bool
+        If True, at the end of the job we delete temporary local scratch directories that we created.
 
     """
     def __init__(
@@ -79,7 +81,7 @@ class ParallelSession(object):
             wall_time="1hour", cleanup_time="15mins", time_slack=0, add_date=True, dry_run=0,
             parallel_exe="$HOME/.local/bin/parallel", kind="parallel", host_pool=None,
             min_hosts=1, max_hosts=1, env_vars=None, redirect=False, n_retries=0, gpu_set="",
-            step_time_limit="", ignore_gpu=False):
+            step_time_limit="", ignore_gpu=False, do_cleanup=False):
 
         if kind == "pbs":
             local_scratch_prefix = "\\$RAMDISK"
@@ -517,14 +519,15 @@ class ParallelSession(object):
 
                     print("Step duration: {}.".format(datetime.datetime.now() - step_start))
             finally:
-                print("Cleaning up dirty hosts...")
+                if self.do_cleanup:
+                    print("Cleaning up dirty hosts...")
 
-                # Attempt cleanup of hosts.
-                for host in self.dirty_hosts:
-                    print("Cleaning host {}...".format(host))
-                    if host is ':':
-                        command = "rm -rf {local_scratch}"
-                        self.execute_command(command, robust=True)
-                    else:
-                        command = "rm -rf {local_scratch}"
-                        self.ssh_execute(command, host, robust=True)
+                    # Attempt cleanup of hosts.
+                    for host in self.dirty_hosts:
+                        print("Cleaning host {}...".format(host))
+                        if host is ':':
+                            command = "rm -rf {local_scratch}"
+                            self.execute_command(command, robust=True)
+                        else:
+                            command = "rm -rf {local_scratch}"
+                            self.ssh_execute(command, host, robust=True)
