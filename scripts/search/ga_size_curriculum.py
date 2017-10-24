@@ -19,7 +19,7 @@ config = DEFAULT_CONFIG.copy(
     display_step=100,
     eval_step=100,
     patience=np.inf,
-    power_through=False,
+    power_through=True,
     preserve_policy=True,
 
     slim=False,
@@ -69,30 +69,10 @@ alg_config = Config(
 )
 
 env_config = grid_arithmetic.config.copy(
-    reductions="A:sum,M:prod,X:max,N:min",
+    reductions="sum",
     arithmetic_actions='+,*,max,min,+1',
     ablation='easy',
     render_rollouts=None,
-
-    # curriculum=[
-    #     dict(shape=(3, 3)),
-    # ],
-    curriculum=[
-        dict(shape=(2, 2), n_train=2**17),
-        dict(shape=(3, 3)),
-    ],
-    # curriculum=[
-    #     dict(shape=(3, 3), min_digits=4, max_digits=4)],
-    # curriculum=[
-    #     dict(shape=(2, 2), n_train=2**17),
-    #     dict(shape=(3, 3), min_digits=4, max_digits=4)],
-    # curriculum=[
-    #     dict(shape=(3, 3), n_train=2**17),
-    #     dict(shape=(3, 3), min_digits=4, max_digits=4)],
-    # curriculum=[
-    #     dict(shape=(2, 2), n_train=2**17),
-    #     dict(shape=(3, 3), n_train=2**17),
-    #     dict(shape=(3, 3), min_digits=4, max_digits=4)],
 
     T=30,
     min_digits=2,
@@ -121,7 +101,12 @@ config.update(
     use_gpu=True,
     gpu_allow_growth=True,
     per_process_gpu_memory_fraction=0.22,
-    load_path=[""]
+    load_path="",
+
+    # curriculum=[dict(shape=(3, 3), load_path="")],  # A -> 0
+    curriculum=[dict(shape=(3, 3))],  # C
+    # curriculum=[dict(shape=(3, 3), min_digits=4, max_digits=4, load_path="")],  # B -> A
+    # curriculum=[dict(shape=(3, 3), min_digits=4, max_digits=4)],  # F
 )
 
 grid = dict(n_train=2**np.arange(6, 18))
