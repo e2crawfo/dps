@@ -15,7 +15,7 @@ import dill
 import sys
 import subprocess
 import matplotlib.pyplot as plt
-import scipy
+from scipy import stats
 from io import StringIO
 
 import clify
@@ -280,7 +280,6 @@ def _summarize_search(args):
     job = ReadOnlyJob(args.path)
 
     distributions = job.objects.load_object('metadata', 'distributions')
-
     if isinstance(distributions, list):
         keys = set()
         for d in distributions:
@@ -289,6 +288,7 @@ def _summarize_search(args):
     else:
         distributions = Config(distributions)
         keys = list(distributions.keys())
+    keys = sorted(keys)
 
     records = []
     for op in job.completed_ops():
@@ -442,25 +442,49 @@ def _rl_plot(args):
             left=0.05, bottom=0.05, right=0.86, top=0.97, wspace=0.05, hspace=0.18)
 
         plt.show()
+        plt.savefig('rl_plot.pdf')
 
 
 def ci(data, coverage):
-    return scipy.stats.t.interval(
-        coverage, len(data)-1, loc=np.mean(data), scale=scipy.stats.sem(data))
+    return stats.t.interval(
+        coverage, len(data)-1, loc=np.mean(data), scale=stats.sem(data))
 
 
 def _sample_complexity_plot(args):
     style = args.style
     spread_measure = args.spread_measure
-
     paths = args.paths
     paths = [Path(p).absolute() for p in paths]
-    print("Plotting searches stored at {}.".format(paths))
 
-    if len(paths) > 1:
-        raise Exception("Not implemented")
+    plt.figure(figsize=(10, 5))
 
-    path = paths[0]
+    plt.title(args.title)
+
+    label_order = []
+    for p in paths:
+        lo = _sample_complexity_plot_core(p, style, spread_measure)
+        label_order.extend(lo)
+
+    ax = plt.gca()
+    legend_handles = {l: h for h, l in zip(*ax.get_legend_handles_labels())}
+    ordered_handles = [legend_handles[l] for l in label_order]
+    ax.legend(
+        ordered_handles, label_order, loc='center left',
+        bbox_to_anchor=(1.05, 0.5), ncol=1)
+    plt.grid(True)
+
+    plt.ylim((0.0, 100.0))
+
+    plt.ylabel("% Incorrect on Test Set")
+    plt.xlabel("# Training Examples")
+    plt.subplots_adjust(
+        left=0.09, bottom=0.13, right=0.7, top=0.93, wspace=0.05, hspace=0.18)
+    plt.show()
+    plt.savefig('{}.pdf'.format(args.title))
+
+
+def _sample_complexity_plot_core(path, style, spread_measure):
+    print("Plotting searches stored at {}.".format(path))
 
     job = ReadOnlyJob(path)
     distributions = job.objects.load_object('metadata', 'distributions')
@@ -501,9 +525,15 @@ def _sample_complexity_plot(args):
     for key in keys:
         df[key] = df[key].fillna(-np.inf)
 
-    groups = df.groupby('n_controller_units')
+    rl = 'n_controller_units' not in df
 
-    field_to_plot = 'test_reward'
+    if not rl:
+        groups = df.groupby('n_controller_units')
+        field_to_plot = 'test_reward'
+    else:
+        groups = [(128, df)]
+        field_to_plot = 'test_loss'
+
     colours = plt.rcParams['axes.prop_cycle'].by_key()['color']
     groups = sorted(groups, key=lambda x: x[0])
 
@@ -514,7 +544,10 @@ def _sample_complexity_plot(args):
             _groups = _df.groupby('n_train')
             values = list(_groups)
             x = [v[0] for v in values]
-            ys = [-100 * v[1][field_to_plot] for v in values]
+            if rl:
+                ys = [100 * v[1][field_to_plot] for v in values]
+            else:
+                ys = [-100 * v[1][field_to_plot] for v in values]
 
             y = [_y.mean() for _y in ys]
 
@@ -525,30 +558,22 @@ def _sample_complexity_plot(args):
                 y_lower = y - np.array([ci[0] for ci in conf_int])
                 y_upper = np.array([ci[1] for ci in conf_int]) - y
             elif spread_measure == 'std_err':
-                y_upper = y_lower = [scipy.stats.sem(_y.values) for _y in ys]
+                y_upper = y_lower = [stats.sem(_y.values) for _y in ys]
             else:
                 pass
 
             yerr = np.vstack((y_lower, y_upper))
 
-            c = colours[i % len(colours)]
-            label = "n_hidden_units={}".format(k)
+            if rl:
+                label = "RL - n_hidden_units={}".format(k)
+                c = 'k'
+            else:
+                label = "CNN - n_hidden_units={}".format(k)
+                c = colours[i % len(colours)]
             plt.semilogx(x, y, label=label, c=c, basex=2)
             label_order.append(label)
             plt.gca().errorbar(x, y, yerr=yerr, c=c)
-
-        ax = plt.gca()
-        legend_handles = {l: h for h, l in zip(*ax.get_legend_handles_labels())}
-        ordered_handles = [legend_handles[l] for l in label_order]
-        ax.legend(ordered_handles, label_order, loc='upper right', ncol=1)
-        plt.grid(True)
-
-        plt.ylim((0.0, 100.0))
-
-        plt.ylabel("% Incorrect on Test Set")
-        plt.xlabel("# Training Examples")
-        plt.show()
-        plt.savefig('cnn_results.png')
+    return label_order
 
 
 def _zip_search(args):
@@ -579,11 +604,12 @@ def dps_hyper_cl():
 
     sc_plot_cmd = (
         'sc_plot', 'Plot sample complexity results.', _sample_complexity_plot,
+        ('title', dict(help="Plot title.", type=str)),
         ('paths', dict(help="Paths to locations of data stores.", type=str, default="results.zip", nargs='+')),
         ('--style', dict(help="Style for plot.", choices=style_list, default="ggplot")),
         ('--spread-measure', dict(
             help="Measure of spread to use for error bars.", choices="std_dev conf_int std_err".split(),
-            default="std_dev")),
+            default="std_err")),
     )
 
     zip_cmd = (

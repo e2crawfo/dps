@@ -50,7 +50,7 @@ alg_config = Config(
     n_controller_units=128,
     batch_size=16,
     gamma=0.98,
-    opt_steps_per_update=1,
+    opt_steps_per_update=10,
     epsilon=0.2,
     split=False,
 
@@ -104,7 +104,8 @@ config.update(
 )
 
 
-grid = dict(n_train=2**np.arange(6, 18))
+grid = dict(value_reg_weight=np.linspace(0.0, 2.0, 10))
+# grid = dict(n_train=2**np.arange(6, 18))
 
 
 from dps.parallel.hyper import build_and_submit
