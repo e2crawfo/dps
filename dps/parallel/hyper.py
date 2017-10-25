@@ -381,8 +381,15 @@ def _rl_plot(args):
 
     job = ReadOnlyJob(path)
     distributions = job.objects.load_object('metadata', 'distributions')
-    distributions = Config(distributions)
-    keys = sorted(list(distributions.keys()))
+    if isinstance(distributions, list):
+        keys = set()
+        for d in distributions:
+            keys |= set(d.keys())
+        keys = list(keys)
+    else:
+        distributions = Config(distributions)
+        keys = list(distributions.keys())
+    keys = sorted(keys)
 
     val_data = defaultdict(list)
 
@@ -456,8 +463,6 @@ def _sample_complexity_plot(args):
     paths = args.paths
     paths = [Path(p).absolute() for p in paths]
 
-    plt.figure(figsize=(10, 5))
-
     plt.title(args.title)
 
     label_order = []
@@ -468,19 +473,22 @@ def _sample_complexity_plot(args):
     ax = plt.gca()
     legend_handles = {l: h for h, l in zip(*ax.get_legend_handles_labels())}
     ordered_handles = [legend_handles[l] for l in label_order]
-    ax.legend(
-        ordered_handles, label_order, loc='center left',
-        bbox_to_anchor=(1.05, 0.5), ncol=1)
+
+    if getattr(args, 'do_legend', False):
+        ax.legend(
+            ordered_handles, label_order, loc='center left',
+            bbox_to_anchor=(1.05, 0.5), ncol=1)
     plt.grid(True)
 
     plt.ylim((0.0, 100.0))
 
-    plt.ylabel("% Incorrect on Test Set")
-    plt.xlabel("# Training Examples")
-    plt.subplots_adjust(
-        left=0.09, bottom=0.13, right=0.7, top=0.93, wspace=0.05, hspace=0.18)
-    plt.show()
-    plt.savefig('{}.pdf'.format(args.title))
+    # plt.ylabel("% Incorrect on Test Set")
+    # plt.xlabel("# Training Examples")
+    # plt.subplots_adjust(
+    #     left=0.09, bottom=0.13, right=0.7, top=0.93, wspace=0.05, hspace=0.18)
+    # plt.show()
+    if args.filename:
+        plt.savefig('{}.pdf'.format(args.filename))
 
 
 def _sample_complexity_plot_core(path, style, spread_measure):
@@ -488,8 +496,15 @@ def _sample_complexity_plot_core(path, style, spread_measure):
 
     job = ReadOnlyJob(path)
     distributions = job.objects.load_object('metadata', 'distributions')
-    distributions = Config(distributions)
-    keys = list(distributions.keys())
+    if isinstance(distributions, list):
+        keys = set()
+        for d in distributions:
+            keys |= set(d.keys())
+        keys = list(keys)
+    else:
+        distributions = Config(distributions)
+        keys = list(distributions.keys())
+    keys = sorted(keys)
 
     records = []
     for op in job.completed_ops():
@@ -511,7 +526,10 @@ def _sample_complexity_plot_core(path, style, spread_measure):
 
         config = Config(r['config'])
         for k in keys:
-            record[k] = config[k]
+            try:
+                record[k] = config[k]
+            except KeyError:
+                record[k] = None
 
         record.update(
             latest_stage=r['history'][-1]['stage'],
@@ -539,9 +557,12 @@ def _sample_complexity_plot_core(path, style, spread_measure):
 
     label_order = []
 
+    group_by_key = [k for k in keys if k.endswith('n_train')][0]
+    import pdb; pdb.set_trace()
+
     with plt.style.context(style):
         for i, (k, _df) in enumerate(groups):
-            _groups = _df.groupby('n_train')
+            _groups = _df.groupby(group_by_key)
             values = list(_groups)
             x = [v[0] for v in values]
             if rl:
@@ -560,7 +581,7 @@ def _sample_complexity_plot_core(path, style, spread_measure):
             elif spread_measure == 'std_err':
                 y_upper = y_lower = [stats.sem(_y.values) for _y in ys]
             else:
-                pass
+                raise Exception("NotImplemented")
 
             yerr = np.vstack((y_lower, y_upper))
 
@@ -605,6 +626,7 @@ def dps_hyper_cl():
     sc_plot_cmd = (
         'sc_plot', 'Plot sample complexity results.', _sample_complexity_plot,
         ('title', dict(help="Plot title.", type=str)),
+        ('filename', dict(help="Plot filename.", type=str)),
         ('paths', dict(help="Paths to locations of data stores.", type=str, default="results.zip", nargs='+')),
         ('--style', dict(help="Style for plot.", choices=style_list, default="ggplot")),
         ('--spread-measure', dict(
