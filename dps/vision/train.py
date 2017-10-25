@@ -6,7 +6,7 @@ from dps.environment import RegressionEnv, RegressionDataset
 from dps.utils import Param
 from dps.config import DEFAULT_CONFIG
 
-from mnist_arithmetic import load_emnist
+from mnist_arithmetic import load_emnist, load_omniglot, omniglot_classes
 from mnist_arithmetic import MnistArithmeticDataset as _MnistArithmeticDataset
 from mnist_arithmetic import MnistSalienceDataset as _MnistSalienceDataset
 
@@ -32,7 +32,6 @@ class EmnistDataset(RegressionDataset):
         [chr(i + ord('A')) for i in range(26)] +
         [chr(i + ord('a')) for i in range(26)]
     )
-    n_examples = Param()
 
     @staticmethod
     def sample_classes(n_classes):
@@ -46,6 +45,19 @@ class EmnistDataset(RegressionDataset):
                 "Too few datapoints. Requested {}, "
                 "only {} are available.".format(n_examples, x.shape[0]))
         super(EmnistDataset, self).__init__(x, y)
+
+
+class OmniglotDataset(RegressionDataset):
+
+    @staticmethod
+    def sample_classes(n_classes):
+        class_pool = omniglot_classes(cfg.data_dir)
+        classes = np.random.choice(len(class_pool), n_classes, replace=False)
+        return [class_pool[i] for i in classes]
+
+    def __init__(self, indices, classes, **kwargs):
+        x, y, class_map = load_omniglot(cfg.data_dir, classes, indices=indices, **kwargs)
+        super(OmniglotDataset, self).__init__(x, y)
 
 
 class MnistSalienceDataset(RegressionDataset):
@@ -106,6 +118,48 @@ MNIST_CONFIG = DEFAULT_CONFIG.copy(
     downsample_factor=1,
     loss_type='xent',
     classes=list(range(10)),
+    gpu_allow_growth=True,
+    n_controller_units=100,
+)
+
+
+def build_omniglot_env():
+    train_dataset = OmniglotDataset(
+        classes=cfg.classes, one_hot=True, include_blank=cfg.include_blank,
+        indices=cfg.train_indices, size=cfg.size
+    )
+    val_dataset = OmniglotDataset(
+        classes=cfg.classes, one_hot=True, include_blank=cfg.include_blank,
+        indices=cfg.val_indices, size=cfg.size
+    )
+    test_dataset = OmniglotDataset(
+        classes=cfg.classes, one_hot=True, include_blank=cfg.include_blank,
+        indices=cfg.test_indices, size=cfg.size
+    )
+    return RegressionEnv(train_dataset, val_dataset, test_dataset)
+
+
+OMNIGLOT_CONFIG = DEFAULT_CONFIG.copy(
+    get_updater=get_updater,
+    build_env=build_omniglot_env,
+    batch_size=16,
+    eval_step=100,
+    max_steps=100000,
+    patience=10000,
+    size=(14, 14),
+    lr_schedule="Exp(0.001, 0, 10000, 0.9)",
+    optimizer_spec="adam",
+    threshold=-np.inf,
+    train_indices=list(range(15)),
+    val_indices=list(range(15, 17)),
+    test_indices=list(range(17, 20)),
+    include_blank=True,
+    log_name='omniglot_pretrained',
+    loss_type='xent',
+    classes=["Latin,1", "Latin,2"],
+    n_examples=None,
+    gpu_allow_growth=True,
+    n_controller_units=100,
 )
 
 
@@ -144,4 +198,5 @@ MNIST_SALIENCE_CONFIG = DEFAULT_CONFIG.copy(
     output_width=14,
     image_width=3*14,
     flatten_output=True,
+    gpu_allow_growth=True
 )

@@ -7,16 +7,34 @@ from contextlib import ExitStack
 
 from dps import cfg
 from dps.utils import NumpySeed
-from dps.utils.tf import MLP, LeNet, FullyConvolutional, SalienceMap
-from dps.vision import MNIST_CONFIG, MNIST_SALIENCE_CONFIG, EmnistDataset
+from dps.utils.tf import MLP, LeNet, SalienceMap
+from dps.vision import MNIST_CONFIG, OMNIGLOT_CONFIG, MNIST_SALIENCE_CONFIG, EmnistDataset, OmniglotDataset
 from dps.train import load_or_train
 
 
-def _eval_model(inference, x_ph):
+def _eval_mnist_model(inference, x_ph):
     test_dataset = EmnistDataset(
         n_examples=100, classes=cfg.classes, one_hot=True,
         include_blank=cfg.include_blank,
         downsample_factor=cfg.downsample_factor)
+
+    x, y = test_dataset.next_batch(advance=False)
+
+    loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y, logits=inference))
+    correct_prediction = tf.equal(tf.argmax(inference, 1), tf.argmax(y, 1))
+    accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+
+    sess = tf.get_default_session()
+    _loss, _accuracy = sess.run([loss, accuracy], feed_dict={x_ph: x})
+    print("Loss: {}, accuracy: {}".format(_loss, _accuracy))
+    assert _accuracy > 0.7
+
+
+def _eval_omniglot_model(inference, x_ph):
+    test_dataset = OmniglotDataset(
+        classes=cfg.classes, one_hot=True, include_blank=cfg.include_blank,
+        indices=cfg.test_indices, size=cfg.size
+    )
 
     x, y = test_dataset.next_batch(advance=False)
 
@@ -57,6 +75,7 @@ def test_mnist_load_or_train():
             image_width=14,
             downsample_factor=2,
             threshold=0.2,
+            n_controller_units=100
         )
 
         checkpoint_dir = make_checkpoint_dir(config, 'test_mnist')
@@ -78,7 +97,7 @@ def test_mnist_load_or_train():
             assert not loaded
 
             with config:
-                _eval_model(inference, x_ph)
+                _eval_mnist_model(inference, x_ph)
 
         g = tf.Graph()
         sess = tf.Session(graph=g)
@@ -96,15 +115,15 @@ def test_mnist_load_or_train():
             assert loaded
 
             with config:
-                _eval_model(inference, x_ph)
+                _eval_mnist_model(inference, x_ph)
 
 
 def build_mlp():
-    return MLP([100, 100])
+    return MLP([cfg.n_controller_units, cfg.n_controller_units])
 
 
 def build_lenet():
-    return LeNet(100)
+    return LeNet(cfg.n_controller_units)
 
 
 @pytest.mark.parametrize("build_function", [build_mlp, build_lenet])
@@ -122,6 +141,7 @@ def test_mnist_pretrained(build_function):
             image_width=14,
             downsample_factor=2,
             threshold=0.2,
+            n_controller_units=100
         )
 
         checkpoint_dir = make_checkpoint_dir(config, 'test_mnist')
@@ -145,7 +165,7 @@ def test_mnist_pretrained(build_function):
             assert f.was_loaded is False
 
             with config:
-                _eval_model(inference, x_ph)
+                _eval_mnist_model(inference, x_ph)
 
         g = tf.Graph()
         sess = tf.Session(graph=g)
@@ -163,7 +183,66 @@ def test_mnist_pretrained(build_function):
             assert f.was_loaded is True
 
             with config:
-                _eval_model(inference, x_ph)
+                _eval_mnist_model(inference, x_ph)
+
+
+@pytest.mark.parametrize("build_function", [build_lenet])
+def test_omniglot(build_function):
+    with NumpySeed(83849):
+        n_classes = 10
+        classes = OmniglotDataset.sample_classes(n_classes)
+
+        config = OMNIGLOT_CONFIG.copy(
+            build_function=build_function,
+            patience=np.inf,
+            classes=classes,
+            include_blank=True,
+            threshold=0.001,
+        )
+
+        checkpoint_dir = make_checkpoint_dir(config, 'test_omni')
+        output_size = n_classes + 1
+
+        name_params = ['classes', 'include_blank']
+
+        g = tf.Graph()
+        sess = tf.Session(graph=g)
+        with ExitStack() as stack:
+            stack.enter_context(g.device("/cpu:0"))
+            stack.enter_context(g.as_default())
+            stack.enter_context(sess)
+            stack.enter_context(sess.as_default())
+
+            with config:
+                f = build_function()
+                f.set_pretraining_params(config, name_params, checkpoint_dir)
+                x_ph = tf.placeholder(tf.float32, (None, np.product(config.size)))
+
+                inference = f(x_ph, output_size, False)
+
+            assert f.was_loaded is False
+
+            with config:
+                _eval_omniglot_model(inference, x_ph)
+
+        g = tf.Graph()
+        sess = tf.Session(graph=g)
+        with ExitStack() as stack:
+            stack.enter_context(g.device("/cpu:0"))
+            stack.enter_context(g.as_default())
+            stack.enter_context(sess)
+            stack.enter_context(sess.as_default())
+
+            with config:
+                f = build_function()
+                f.set_pretraining_params(config, name_params, checkpoint_dir)
+                x_ph = tf.placeholder(tf.float32, (None, np.product(config.size)))
+                inference = f(x_ph, output_size, False)
+
+            assert f.was_loaded is True
+
+            with config:
+                _eval_omniglot_model(inference, x_ph)
 
 
 class salience_render_hook(object):

@@ -558,7 +558,6 @@ def _sample_complexity_plot_core(path, style, spread_measure):
     label_order = []
 
     group_by_key = [k for k in keys if k.endswith('n_train')][0]
-    import pdb; pdb.set_trace()
 
     with plt.style.context(style):
         for i, (k, _df) in enumerate(groups):

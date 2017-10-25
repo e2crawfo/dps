@@ -93,14 +93,15 @@ config = Config(
     n_controller_units=64,
     batch_size=16,
     optimizer_spec="adam",
-    opt_steps_per_update=10,
+    opt_steps_per_update=1,
     lr_schedule="1e-4",
     epsilon=0.2,
 
     build_policy=BuildEpsilonSoftmaxPolicy(),
     build_controller=BuildLstmController(),
 
-    exploration_schedule="0.1",
+    exploration_schedule="Poly(1.0, 0.1, 8192)",
+    # exploration_schedule="0.1",
     actor_exploration_schedule=None,
     val_exploration_schedule="0.0",
 

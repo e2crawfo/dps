@@ -351,6 +351,20 @@ class DataContainer(object):
         idx = np.random.randint(len(self.X))
         return self.X[idx], self.Y[idx]
 
+    def get_random_with_label(self, label):
+        valid = self.Y == label
+        X = self.X[valid.flatten(), :]
+        Y = self.Y[valid]
+        idx = np.random.randint(len(X))
+        return X[idx], Y[idx]
+
+    def get_random_without_label(self, label):
+        valid = self.Y != label
+        X = self.X[valid.flatten(), :]
+        Y = self.Y[valid]
+        idx = np.random.randint(len(X))
+        return X[idx], Y[idx]
+
 
 def digits_to_numbers(digits, base=10, axis=-1, keepdims=False):
     """ Convert array of digits to number, assumes little-endian (least-significant first). """
