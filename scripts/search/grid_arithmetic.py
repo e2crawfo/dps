@@ -82,7 +82,6 @@ env_config = grid_arithmetic.config.copy(
     base=10,
     threshold=0.01,
 
-    salience_shape=(2, 2),
     salience_action=True,
     visible_glimpse=False,
     initial_salience=False,

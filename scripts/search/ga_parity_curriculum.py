@@ -106,27 +106,19 @@ A_load_paths = [
 ]
 
 
-B_load_paths = [
-    "/home/e2crawfo/checkpoints/checkpoints_3x3/0/best_of_stage_0",
-    "/home/e2crawfo/checkpoints/checkpoints_3x3/1/best_of_stage_0",
-    "/home/e2crawfo/checkpoints/checkpoints_3x3/2/best_of_stage_0",
-    "/home/e2crawfo/checkpoints/checkpoints_3x3/3/best_of_stage_0",
-]
-
-
 config.update(
     use_gpu=True,
     gpu_allow_growth=True,
     per_process_gpu_memory_fraction=0.22,
     load_path="",
 
-    # curriculum=[dict(shape=(3, 3), load_path=A_load_paths)],  # A -> 0
+    # curriculum=[dict(parity='even')],  # A
+    curriculum=[dict(parity='odd')],  # C
     # curriculum=[dict(shape=(3, 3))],  # C
-    curriculum=[dict(shape=(3, 3), min_digits=4, max_digits=4, load_path=B_load_paths)],  # B -> A
+    # curriculum=[dict(shape=(3, 3), min_digits=4, max_digits=4, load_path="")],  # B -> A
     # curriculum=[dict(shape=(3, 3), min_digits=4, max_digits=4)],  # F
 )
 
-# grid = dict(n_train=[2**16])
 grid = dict(n_train=2**np.arange(6, 18, 2))
 
 
