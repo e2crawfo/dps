@@ -688,7 +688,6 @@ def build_and_submit(
             save_summaries=False,
             update_latest=False,
             show_plots=False,
-            slim=True,
             max_experiments=np.inf,
         )
         del config['log_root']
