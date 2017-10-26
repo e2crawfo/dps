@@ -244,11 +244,13 @@ class GridArithmeticDataset(RegressionDataset):
         else:
             raise Exception("NotImplemented")
 
-        mnist_x, mnist_y, _ = load_emnist(
+        mnist_x, mnist_y, classmap = load_emnist(
             cfg.data_dir, mnist_classes, balance=True,
             downsample_factor=self.downsample_factor)
         mnist_x = mnist_x.reshape(-1, self.image_width, self.image_width)
         mnist_y = np.squeeze(mnist_y, 1)
+        inverted_classmap = {v: k for k, v in classmap.items()}
+        mnist_y = np.array([inverted_classmap[y] for y in mnist_y])
 
         digit_reps = DataContainer(mnist_x, mnist_y)
         blank_element = np.zeros((self.image_width, self.image_width))
@@ -308,10 +310,6 @@ class GridArithmeticDataset(RegressionDataset):
                 padded_env[:env.shape[0], :env.shape[1]] = env
                 env = padded_env
 
-            if j % 10000 == 0:
-                print(image_to_string(env))
-                print("\n")
-
             new_X.append(env)
             y = func(ys)
 
@@ -322,6 +320,11 @@ class GridArithmeticDataset(RegressionDataset):
                 else:
                     _y[int(y)] = 1.0
                 y = _y
+
+            if j % 10000 == 0:
+                print(y)
+                print(image_to_string(env))
+                print("\n")
 
             new_Y.append(y)
 
