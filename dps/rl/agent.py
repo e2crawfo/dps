@@ -69,7 +69,7 @@ class Agent(RLObject):
             self._head_offsets[k] = (start, end)
 
         self.size = offset
-        self.controller = controller_func(offset, self.name)
+        self.controller = controller_func(self.size, self.name)
         assert isinstance(self.controller, ScopedCell)
 
         self.set_params_op = None

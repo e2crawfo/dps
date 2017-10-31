@@ -40,6 +40,7 @@ config = Config(
     min_digits=2,
     max_digits=3,
     shape=(2, 2),
+    parity='both',
 
     n_train=10000,
     n_val=500,
@@ -69,6 +70,7 @@ class SimpleGridArithmeticDataset(RegressionDataset):
     loss_type = Param("2-norm")
     largest_digit = Param(9)
     show_op = Param(True)
+    parity = Param('both')
 
     reductions_dict = {
         "sum": sum,
@@ -93,6 +95,16 @@ class SimpleGridArithmeticDataset(RegressionDataset):
                 char, key = pair.split(':')
                 _reductions[char] = self.reductions_dict[key]
             self.reductions = _reductions
+
+        digits = list(range(self.base))
+        if self.parity == 'even':
+            digits = [c for c in digits if c % 2 == 0]
+        elif self.parity == 'odd':
+            digits = [c for c in digits if c % 2 == 1]
+        elif self.parity == 'both':
+            pass
+        else:
+            raise Exception("NotImplemented")
 
         digits = list(range(self.base))
         digit_reps = DataContainer(digits, digits)

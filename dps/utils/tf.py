@@ -516,15 +516,24 @@ class CompositeCell(ScopedCell):
         Maps from an input tensor and an output size to an output tensor.
     output_size: int
         The size of the output, passed as the second argument when calling ``output``.
+    inp: callable (Tensor, int) -> Tensor
+        Maps from an input tensor and an output size to a new input tensor for cell.
+    inp_size: int
+        Size of the vector that `input` maps to
+        Maps from an input tensor and an output size to a new input tensor for cell.
 
     """
-    def __init__(self, cell, output, output_size, name="composite_cell"):
+    def __init__(self, cell, output, output_size, inp=None, name="composite_cell"):
         self.cell = cell
         self.output = output
         self._output_size = output_size
+        self.inp = inp
+
         super(CompositeCell, self).__init__(name)
 
     def _call(self, inp, state):
+        if self.inp is not None:
+            inp = self.inp(inp)
         output, new_state = self.cell(inp, state)
         return self.output(output, self._output_size, False), new_state
 

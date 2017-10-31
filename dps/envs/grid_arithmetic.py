@@ -99,7 +99,7 @@ def build_policy(env, **kwargs):
     elif cfg.ablation == 'no_ops':
         action_selection = ProductDist(Softmax(11), Normal(), Normal(), Normal())
     elif cfg.ablation == 'no_modules':
-        action_selection = ProductDist(Softmax(11), Normal(), Normal(), Normal())
+        action_selection = ProductDist(Softmax(5), Normal())
     else:
         action_selection = Softmax(env.actions_dim)
         return DiscretePolicy(action_selection, env.obs_shape, **kwargs)
@@ -588,7 +588,7 @@ class GridArithmetic(InternalEnv):
                 min_digits=1,
                 max_digits=4,
                 build_function=build_salience_detector,
-                n_units=101
+                n_units=100
             )
 
             with salience_config:
@@ -948,6 +948,7 @@ class OmniglotCounting(GridArithmeticEasy):
 
 
 class GridArithmeticBadWiring(GridArithmetic):
+    """ The network has to directly output values to be fed into the operators, but still has access to all the modules. """
     action_names = [
         '>', '<', 'v', '^', 'classify_digit', 'classify_op',
         '+', '+1', '*', '=', '+ arg', '* arg', '= arg']
@@ -969,13 +970,14 @@ class GridArithmeticBadWiring(GridArithmetic):
         digit, op = self.build_update_storage(
             glimpse, _digit, classify_digit, _op, classify_op)
 
-        fovea_y, fovea_x = self.build_update_fovea(
-            right, left, down, up, _fovea_y, _fovea_x)
+        fovea_y, fovea_x = self.build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
 
         return self.build_return(digit, op, acc, fovea_x, fovea_y, glimpse)
 
 
 class GridArithmeticNoClassifiers(GridArithmetic):
+    """ The network has no classifiers; instead it has to learn a map from the glimpse to arguments for the arithmetic modules. """
+
     action_names = ['>', '<', 'v', '^', '+', '+1', '*', '=', '+ arg', '* arg', '= arg']
 
     def init_networks(self):
@@ -1002,6 +1004,11 @@ class GridArithmeticNoClassifiers(GridArithmetic):
 
 
 class GridArithmeticNoOps(GridArithmetic):
+    """ The network has no operators, but does have classifiers. Has a register, which is its output...
+        also has registers storing results of classify_digit, classify_op. Should the output always get
+        stored in the register? No, just have an output, doesn't need a register. Or could have a register,
+        but have it always been updated. """
+
     action_names = ['>', '<', 'v', '^', 'classify_digit', 'classify_op', '=', '= arg']
 
     def build_step(self, t, r, a):
@@ -1024,20 +1031,137 @@ class GridArithmeticNoOps(GridArithmetic):
 
 
 class GridArithmeticNoModules(GridArithmetic):
-    action_names = ['>', '<', 'v', '^', '=', '= arg']
+    _action_names = ['>', '<', 'v', '^', 'output']
 
-    def init_networks(self):
-        return
+    def __init__(self, **kwargs):
+        super(GridArithmeticNoModules, self).__init__()
+
+        self.image_width = int(28 / self.downsample_factor)
+
+        if self.salience_action:
+            self.action_names = ['>', '<', 'v', '^', 'update_salience', 'output']
+            self.n_discrete = 5
+        else:
+            self.action_names = ['>', '<', 'v', '^', 'output']
+            self.n_discrete = 4
+        self.actions_dim = len(self.action_names)
+
+        self.salience_input_shape = (self.salience_input_width,) * 2
+        self.salience_output_shape = (self.salience_output_width,) * 2
+
+        self._init_networks()
+        self._init_rb()
+
+    def build_init(self, r):
+        self.build_placeholders(r)
+
+        self.pad_offset = (int(self.salience_input_width/2 - self.image_width/2),) * 2
+        target_height = int(self.input_ph.shape[1]) + 2 * self.pad_offset[0]
+        target_width = int(self.input_ph.shape[2]) + 2 * self.pad_offset[1]
+        inp = self.input_ph[..., None]
+        self.padded_input = resize_image_with_crop_or_pad(inp, target_height, target_width)
+
+        _output, _fovea_x, _fovea_y, _prev_action, _salience, _glimpse, _salience_input = self.rb.as_tuple(r)
+
+        batch_size = tf.shape(self.input_ph)[0]
+
+        # init fovea
+        if self.start_loc is not None:
+            fovea_y = tf.fill((batch_size, 1), self.start_loc[0])
+            fovea_x = tf.fill((batch_size, 1), self.start_loc[1])
+        else:
+            fovea_y = tf.random_uniform(
+                tf.shape(fovea_y), 0, self.shape[0], dtype=tf.int32)
+            fovea_x = tf.random_uniform(
+                tf.shape(fovea_x), 0, self.shape[1], dtype=tf.int32)
+
+        fovea_y = tf.cast(fovea_y, tf.float32)
+        fovea_x = tf.cast(fovea_x, tf.float32)
+
+        glimpse = self._build_update_glimpse(fovea_y, fovea_x)
+
+        salience = _salience
+        salience_input = _salience_input
+        if self.initial_salience:
+            salience, salience_input = self._build_update_salience(
+                1.0, _salience, _salience_input, _fovea_y, _fovea_x)
+
+        _output = tf.zeros((batch_size, 1), dtype=tf.float32)
+
+        _, _, new_r = self._build_return(
+            output=_output, fovea_x=fovea_x, fovea_y=fovea_y, prev_action=_prev_action,
+            salience=salience, glimpse=glimpse, salience_input=salience_input)
+        return new_r
+
+    def _init_networks(self):
+        if self.salience_action:
+            def build_salience_detector(output_width=self.salience_output_width):
+                return SalienceMap(
+                    cfg.max_digits, MLP([cfg.n_units, cfg.n_units, cfg.n_units], scope="salience_detector"),
+                    (output_width, output_width),
+                    std=cfg.std, flatten_output=True
+                )
+
+            salience_config = cfg.salience_config.copy(
+                std=0.1,
+                output_width=self.salience_output_width,
+                image_width=self.salience_input_width,
+                downsample_factor=cfg.downsample_factor,
+                min_digits=1,
+                max_digits=4,
+                build_function=build_salience_detector,
+                n_units=101
+            )
+
+            with salience_config:
+                self.salience_detector = build_salience_detector()
+
+            self.salience_detector.set_pretraining_params(
+                salience_config,
+                name_params='min_digits max_digits image_width n_units '
+                            'downsample_factor output_width',
+                directory=cfg.model_dir + '/mnist_salience_pretrained'
+            )
+        else:
+            self.salience_detector = None
+
+    def _init_rb(self):
+        values = (
+            [-1., 0., 0., -1.] +
+            [np.zeros(self.salience_output_width**2, dtype='f')] +
+            [np.zeros(self.image_width**2, dtype='f')] +
+            [np.zeros(self.salience_input_width**2, dtype='f')]
+        )
+
+        self.rb = RegisterBank(
+            'GridArithmeticRB',
+            'output fovea_x fovea_y prev_action salience glimpse', 'salience_input', values=values,
+            output_names='output', no_display='glimpse salience salience_input',
+        )
 
     def build_step(self, t, r, a):
-        _digit, _op, _acc, _fovea_x, _fovea_y, _glimpse = self.rb.as_tuple(r)
-        right, left, down, up, store, store_arg = self.unpack_actions(a)
+        _output, _fovea_x, _fovea_y, _prev_action, _salience, _glimpse, _salience_input = self.rb.as_tuple(r)
+        right, left, down, up, update_salience, output = self.unpack_actions(a)
+        prev_action = tf.argmax(a[..., :self.n_discrete], axis=-1)
 
-        acc = (1 - store) * _acc + store * store_arg
+        fovea_y, fovea_x = self._build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
+        glimpse = self._build_update_glimpse(_fovea_y, _fovea_x)
 
-        glimpse = self.build_update_glimpse(_fovea_y, _fovea_x)
+        salience, salience_input = self._build_update_salience(
+            update_salience, _salience, _salience_input, fovea_y, fovea_x)
+        prev_action = tf.cast(tf.reshape(tf.argmax(a[..., :self.n_discrete], axis=1), (-1, 1)), tf.float32)
 
-        fovea_y, fovea_x = self.build_update_fovea(
-            right, left, down, up, _fovea_y, _fovea_x)
+        return self._build_return(
+            output=_output, fovea_x=fovea_x, fovea_y=fovea_y, prev_action=prev_action,
+            salience=salience, glimpse=glimpse, salience_input=salience_input)
 
-        return self.build_return(_digit, _op, acc, fovea_x, fovea_y, glimpse)
+    def _build_return(self, **kwargs):
+        with tf.name_scope(self.__class__.__name__):
+            kwargs = {k: tf.identity(v, k) for k, v in kwargs.items()}
+            new_registers = self.rb.wrap(**kwargs)
+        rewards = self.build_rewards(new_registers)
+
+        return (
+            tf.fill((tf.shape(new_registers)[0], 1), 0.0),
+            rewards,
+            new_registers)
