@@ -457,6 +457,54 @@ def ci(data, coverage):
         coverage, len(data)-1, loc=np.mean(data), scale=stats.sem(data))
 
 
+def extract_dataframe_from_job(job, data_keys=None):
+    if isinstance(job, str) or isinstance(job, Path):
+        job = ReadOnlyJob(str(job))
+
+    if not data_keys:
+        data_keys = []
+    elif isinstance(data_keys, str):
+        data_keys = data_keys.split()
+
+    records = []
+    for op in job.completed_ops():
+        if 'map' in op.name:
+            try:
+                r = op.get_outputs(job.objects)[0]
+            except BaseException as e:
+                print("Exception thrown when accessing output of op {}:\n    {}".format(op.name, e))
+
+        record = r['history'][-1].copy()
+        record['host'] = r['host']
+        record['op_name'] = op.name
+        del record['best_path']
+
+        process_detailed_data(record, 'train')
+        process_detailed_data(record, 'update')
+        process_detailed_data(record, 'val')
+        process_detailed_data(record, 'test')
+
+        config = Config(r['config'])
+        for k in data_keys:
+            try:
+                record[k] = config[k]
+            except KeyError:
+                record[k] = None
+
+        record.update(
+            latest_stage=r['history'][-1]['stage'],
+            total_steps=sum(s['n_steps'] for s in r['history']),
+        )
+
+        record['seed'] = r['config']['seed']
+        records.append(record)
+
+    df = pd.DataFrame.from_records(records)
+    for key in data_keys:
+        df[key] = df[key].fillna(-np.inf)
+    return df
+
+
 def _sample_complexity_plot(args):
     style = args.style
     spread_measure = args.spread_measure
@@ -471,15 +519,13 @@ def _sample_complexity_plot(args):
         label_order.extend(lo)
 
     ax = plt.gca()
-    legend_handles = {l: h for h, l in zip(*ax.get_legend_handles_labels())}
-    ordered_handles = [legend_handles[l] for l in label_order]
 
     if getattr(args, 'do_legend', False):
+        legend_handles = {l: h for h, l in zip(*ax.get_legend_handles_labels())}
+        ordered_handles = [legend_handles[l] for l in label_order]
         ax.legend(
             ordered_handles, label_order, loc='center left',
             bbox_to_anchor=(1.05, 0.5), ncol=1)
-    plt.grid(True)
-
     plt.ylim((0.0, 100.0))
 
     # plt.ylabel("% Incorrect on Test Set")
@@ -506,42 +552,7 @@ def _sample_complexity_plot_core(path, style, spread_measure):
         keys = list(distributions.keys())
     keys = sorted(keys)
 
-    records = []
-    for op in job.completed_ops():
-        if 'map' in op.name:
-            try:
-                r = op.get_outputs(job.objects)[0]
-            except BaseException as e:
-                print("Exception thrown when accessing output of op {}:\n    {}".format(op.name, e))
-
-        record = r['history'][-1].copy()
-        record['host'] = r['host']
-        record['op_name'] = op.name
-        del record['best_path']
-
-        process_detailed_data(record, 'train')
-        process_detailed_data(record, 'update')
-        process_detailed_data(record, 'val')
-        process_detailed_data(record, 'test')
-
-        config = Config(r['config'])
-        for k in keys:
-            try:
-                record[k] = config[k]
-            except KeyError:
-                record[k] = None
-
-        record.update(
-            latest_stage=r['history'][-1]['stage'],
-            total_steps=sum(s['n_steps'] for s in r['history']),
-        )
-
-        record['seed'] = r['config']['seed']
-        records.append(record)
-
-    df = pd.DataFrame.from_records(records)
-    for key in keys:
-        df[key] = df[key].fillna(-np.inf)
+    df = extract_dataframe_from_job(job, keys)
 
     rl = 'n_controller_units' not in df
 
