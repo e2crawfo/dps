@@ -332,7 +332,7 @@ class SalienceMap(ScopedFunction):
                 try:
                     std_y = float(self.std)
                     std_x = float(self.std)
-                except:
+                except (TypeError, ValueError):
                     std_y, std_x = self.std
 
             weight = weight[:, None, None]
@@ -369,7 +369,7 @@ class ScopedCell(RNNCell):
     """
     def __init__(self, name):
         self.scope = None
-        self.name = name or self.__class__.__name__
+        super(ScopedCell, self).__init__(name=name or self.__class__.__name__)
 
     def resolve_scope(self):
         reuse = self.scope is not None
@@ -512,7 +512,7 @@ class CompositeCell(ScopedCell):
     ----------
     cell: instance of RNNCell
         The cell to wrap.
-    output: callable (Tensor, int) -> Tensor
+    outp: callable (Tensor, int) -> Tensor
         Maps from an input tensor and an output size to an output tensor.
     output_size: int
         The size of the output, passed as the second argument when calling ``output``.
@@ -523,9 +523,9 @@ class CompositeCell(ScopedCell):
         Maps from an input tensor and an output size to a new input tensor for cell.
 
     """
-    def __init__(self, cell, output, output_size, inp=None, name="composite_cell"):
+    def __init__(self, cell, outp, output_size, inp=None, name="composite_cell"):
         self.cell = cell
-        self.output = output
+        self.outp = outp
         self._output_size = output_size
         self.inp = inp
 
@@ -535,7 +535,7 @@ class CompositeCell(ScopedCell):
         if self.inp is not None:
             inp = self.inp(inp)
         output, new_state = self.cell(inp, state)
-        return self.output(output, self._output_size, False), new_state
+        return self.outp(output, self._output_size, False), new_state
 
     @property
     def state_size(self):
