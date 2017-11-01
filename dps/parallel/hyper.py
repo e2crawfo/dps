@@ -785,6 +785,7 @@ session.run()
             resources = "{} --gres=gpu:{}".format(resources, n_gpus)
 
         project = "def-jpineau"
+        # project = "rpp-bengioy"
         email = "eric.crawford@mail.mcgill.ca"
         if queue:
             queue = "-p " + queue

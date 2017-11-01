@@ -54,7 +54,7 @@ alg_config = Config(
     epsilon=0.2,
     split=False,
 
-    exploration_schedule="Poly(1.0, 0.1, 8192)",
+    exploration_schedule="Poly(0.2, 0.1, 8192)",
     actor_exploration_schedule=None,
     val_exploration_schedule="0.0",
 
@@ -98,11 +98,11 @@ config.update(env_config)
 
 
 A_load_paths = [
-    "/home/e2crawfo/checkpoints/latest_checkpoints/sum_checkpoints/networks/0/best_of_stage_0",
-    "/home/e2crawfo/checkpoints/latest_checkpoints/sum_checkpoints/networks/1/best_of_stage_0",
-    "/home/e2crawfo/checkpoints/latest_checkpoints/sum_checkpoints/networks/2/best_of_stage_0",
-    "/home/e2crawfo/checkpoints/latest_checkpoints/sum_checkpoints/networks/3/best_of_stage_0",
-    "/home/e2crawfo/checkpoints/latest_checkpoints/sum_checkpoints/networks/4/best_of_stage_0",
+    "/home/e2crawfo/checkpoints/grid_parity_checkpoints/0/best_of_stage_0",
+    "/home/e2crawfo/checkpoints/grid_parity_checkpoints/1/best_of_stage_0",
+    "/home/e2crawfo/checkpoints/grid_parity_checkpoints/2/best_of_stage_0",
+    "/home/e2crawfo/checkpoints/grid_parity_checkpoints/3/best_of_stage_0",
+    "/home/e2crawfo/checkpoints/grid_parity_checkpoints/4/best_of_stage_0",
 ]
 
 
@@ -113,12 +113,14 @@ config.update(
     load_path="",
 
     # curriculum=[dict(parity='even')],  # A
-    curriculum=[dict(parity='odd')],  # C
+    curriculum=[dict(parity='odd', load_path=A_load_paths)],  # C, B
     # curriculum=[dict(shape=(3, 3))],  # C
     # curriculum=[dict(shape=(3, 3), min_digits=4, max_digits=4, load_path="")],  # B -> A
     # curriculum=[dict(shape=(3, 3), min_digits=4, max_digits=4)],  # F
 )
 
+
+# grid = dict(n_train=2**np.arange(14, 18, 2)) # Base
 grid = dict(n_train=2**np.arange(6, 18, 2))
 
 

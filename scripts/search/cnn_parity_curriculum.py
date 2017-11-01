@@ -70,38 +70,22 @@ env_config = Config(
 alg_config = Config(
     get_updater=get_updater,
     optimizer_spec="adam",
-    # curriculum=[dict(parity='even', n_train=2**17), dict(parity='odd')],  # A
-    curriculum=[dict(parity='odd')],  # B
-    # curriculum=[dict(shape=(3, 3))],  # B
-    # curriculum=[
-    #     dict(shape=(2, 2), n_train=2**17),
-    #     dict(shape=(3, 3), n_train=2**17),
-    #     dict(shape=(3, 3), min_digits=4, max_digits=4)],  # C
-    # curriculum=[
-    #     dict(shape=(2, 2), n_train=2**17),
-    #     dict(shape=(3, 3), min_digits=4, max_digits=4)],  # D
-    # curriculum=[
-    #     dict(shape=(3, 3), n_train=2**17),
-    #     dict(shape=(3, 3), min_digits=4, max_digits=4)],  # E
-    # curriculum=[
-    #     dict(shape=(3, 3), min_digits=4, max_digits=4)],  # F
+    curriculum=[dict(parity='even', n_train=2**17), dict(parity='odd')],  # A
+    # curriculum=[dict(parity='odd')],  # B
     lr_schedule=1e-4,
     power_through=True,
     noise_schedule=0.0,
     max_grad_norm=None,
     l2_weight=0.0,
-    n_controller_units=1024,
+    n_controller_units=512,
 )
 
 config.update(alg_config)
 config.update(env_config)
 
 grid = [
-    {'curriculum:-1:n_train': n} for n in 2**np.arange(6, 18)
+    {'curriculum:-1:n_train': n} for n in 2**np.arange(6, 18, 2)
 ]
-grid.append(
-    {'curriculum:-1:n_train': 1, 'curriculum:-1:do_train': False},
-)
 
 from dps.parallel.hyper import build_and_submit
 host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
