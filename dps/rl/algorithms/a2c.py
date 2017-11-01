@@ -5,7 +5,7 @@ from dps.rl import (
     BuildEpsilonSoftmaxPolicy, BuildLstmController,
     PolicyGradient, RLUpdater, AdvantageEstimator, PolicyEntropyBonus,
     ValueFunction, PolicyEvaluation_State, Retrace, ValueFunctionRegularization,
-    BasicAdvantageEstimator,
+    BasicAdvantageEstimator, ConstrainedPolicyEvaluation_State
 )
 
 
@@ -49,8 +49,15 @@ def A2C(env):
                 name="RetraceV"
             )
 
-            policy_eval = PolicyEvaluation_State(value_function, values_from_returns, weight=cfg.value_weight)
-            ValueFunctionRegularization(policy_eval, weight=cfg.value_reg_weight)
+            if cfg.value_epsilon:
+                ConstrainedPolicyEvaluation_State(
+                    value_function, values_from_returns,
+                    epsilon=cfg.value_epsilon, weight=cfg.value_weight,
+                    n_samples=cfg.value_n_samples, direct=cfg.value_direct
+                )
+            else:
+                policy_eval = PolicyEvaluation_State(value_function, values_from_returns, weight=cfg.value_weight)
+                ValueFunctionRegularization(policy_eval, weight=cfg.value_reg_weight)
 
             action_values_from_returns = Retrace(
                 actor, value_function, lmbda=cfg.q_lmbda, importance_c=cfg.q_importance_c,
@@ -93,6 +100,11 @@ config = Config(
     epsilon=0.2,
     lr_schedule="1e-4",
 
+    value_weight=1.0,
+    value_epsilon=0.2,
+    value_n_samples=0,
+    value_direct=False,
+
     build_policy=BuildEpsilonSoftmaxPolicy(),
     build_controller=BuildLstmController(),
 
@@ -101,7 +113,6 @@ config = Config(
     val_exploration_schedule="0.0",
 
     policy_weight=1.0,
-    value_weight=1.0,
     value_reg_weight=0.0,
     entropy_weight=0.01,
 
