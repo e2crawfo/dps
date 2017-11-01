@@ -93,7 +93,6 @@ class RLContext(Parameterized):
     active_context = None
 
     replay_updates_per_sample = Param(1)
-    opt_steps_per_update = Param(1)
     on_policy_updates = Param(True)
 
     def __init__(self, gamma, truncated_rollouts=False, name=""):
@@ -370,8 +369,7 @@ class RLContext(Parameterized):
                 obj.pre_eval(feed_dict, self)
 
         if do_update:
-            for k in range(self.opt_steps_per_update):
-                self.optimizer.update(feed_dict)
+            self.optimizer.update(rollouts.batch_size, feed_dict)
 
         summaries = b""
         if collect_summaries:

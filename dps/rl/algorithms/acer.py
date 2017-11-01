@@ -85,12 +85,7 @@ def ACER(env):
             agents[0].add_head(mu, existing_head=actor)
         context.set_replay_buffer(cfg.update_batch_size, replay_buffer)
 
-        optimizer = StochasticGradientDescent(
-            agents=agents, alg=cfg.optimizer_spec,
-            lr_schedule=cfg.lr_schedule,
-            max_grad_norm=cfg.max_grad_norm,
-            noise_schedule=cfg.noise_schedule
-        )
+        optimizer = StochasticGradientDescent(agents=agents, alg=cfg.optimizer_spec)
         context.set_optimizer(optimizer)
 
     return RLUpdater(env, context)
@@ -103,7 +98,8 @@ config = Config(
     update_batch_size=8,
     n_controller_units=64,
     optimizer_spec="adam",
-    opt_steps_per_update=1,
+    opt_steps_per_update=10,
+    sub_batch_size=0,
     replay_updates_per_sample=4,
     on_policy_updates=True,
     lr_schedule="1e-4",

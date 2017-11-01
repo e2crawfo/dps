@@ -76,12 +76,7 @@ def A2C(env):
         if cfg.actor_exploration_schedule is not None:
             agents[0].add_head(mu, existing_head=actor)
 
-        optimizer = StochasticGradientDescent(
-            agents=agents, alg=cfg.optimizer_spec,
-            lr_schedule=cfg.lr_schedule,
-            max_grad_norm=cfg.max_grad_norm,
-            noise_schedule=cfg.noise_schedule
-        )
+        optimizer = StochasticGradientDescent(agents=agents, alg=cfg.optimizer_spec)
         context.set_optimizer(optimizer)
 
     return RLUpdater(env, context)
@@ -94,14 +89,14 @@ config = Config(
     batch_size=16,
     optimizer_spec="adam",
     opt_steps_per_update=1,
-    lr_schedule="1e-4",
+    sub_batch_size=0,
     epsilon=0.2,
+    lr_schedule="1e-4",
 
     build_policy=BuildEpsilonSoftmaxPolicy(),
     build_controller=BuildLstmController(),
 
-    exploration_schedule="Poly(1.0, 0.1, 8192)",
-    # exploration_schedule="0.1",
+    exploration_schedule="0.1",
     actor_exploration_schedule=None,
     val_exploration_schedule="0.0",
 
@@ -124,4 +119,20 @@ config = Config(
 actor_critic_config = config.copy(
     name="ActorCritic",
     split=True
+)
+
+
+ppo_config = config.copy(
+    name="PPO",
+    opt_steps_per_update=10,
+    sub_batch_size=2,
+    epsilon=0.2,
+)
+
+
+reinforce_config = config.copy(
+    name="REINFORCE",
+    epsilon=None,
+    opt_steps_per_update=1,
+    value_weight=0.0,
 )

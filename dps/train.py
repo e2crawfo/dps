@@ -13,8 +13,6 @@ import os
 import socket
 import pandas as pd
 from pathlib import Path
-import subprocess
-import sys
 
 from dps import cfg
 from dps.utils import (
@@ -103,7 +101,7 @@ class TrainingLoop(object):
         try:
             deadline = parse_date(cfg.deadline)
             return (deadline - datetime.datetime.now()).total_seconds()
-        except:
+        except Exception:
             if cfg.max_time is None or cfg.max_time <= 0:
                 return np.inf
             else:
@@ -239,7 +237,7 @@ class TrainingLoop(object):
                 tf.set_random_seed(tf_seed)
 
                 self.summary_op = tf.summary.merge_all()
-                tf.contrib.framework.get_or_create_global_step()
+                tf.train.get_or_create_global_step()
                 sess.run(uninitialized_variables_initializer())
                 sess.run(tf.assert_variables_initialized())
 

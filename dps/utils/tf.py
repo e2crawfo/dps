@@ -681,7 +681,7 @@ def build_scheduled_value(schedule, name=None, global_step=None, dtype=None):
     assert isinstance(schedule, Schedule), "{} is not a schedule instance.".format(schedule)
 
     signal = schedule.build(np.arange(dps.cfg.max_steps+1).astype('f'))
-    global_step = tf.contrib.framework.get_or_create_global_step() if global_step is None else global_step
+    global_step = tf.train.get_or_create_global_step() if global_step is None else global_step
 
     scheduled_value = tf.cast(tf.gather(signal, global_step), tf.float32)
 
