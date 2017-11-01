@@ -2,6 +2,7 @@ import numpy as np
 import tensorflow as tf
 import abc
 from contextlib import ExitStack
+import time
 
 from dps import cfg
 from dps.utils import Param, Parameterized, shift_fill
@@ -396,11 +397,14 @@ class RLContext(Parameterized):
         assert self.optimizer is not None, "An optimizer must be set using `set_optimizer` before calling `update`."
 
         with self:
+            start = time.time()
             rollouts = self.env.do_rollouts(self.mu, batch_size, mode='train')
+            train_rollout_duration = time.time() - start
 
             train_summaries = b""
             train_record = {}
 
+            start = time.time()
             if self.replay_buffer is None or self.on_policy_updates:
                 train_summaries, train_record = self._run_and_record(
                     rollouts, mode='update', weights=None, do_update=True,
@@ -410,13 +414,17 @@ class RLContext(Parameterized):
                 train_summaries, train_record = self._run_and_record(
                     rollouts, mode='train', weights=None, do_update=False,
                     summary_op=self.summary_op, collect_summaries=True)
+            train_duration = time.time() - start
+            train_record.update(
+                duration=train_duration, rollout_duration=train_rollout_duration)
 
             update_summaries = b""
             update_record = {}
 
             if self.replay_buffer is not None:
-                self.replay_buffer.add_rollouts(rollouts)
+                start = time.time()
 
+                self.replay_buffer.add_rollouts(rollouts)
                 for i in range(self.replay_updates_per_sample):
                     off_policy_rollouts, weights = self.replay_buffer.get_batch(self.update_batch_size)
                     if off_policy_rollouts is None:
@@ -434,18 +442,28 @@ class RLContext(Parameterized):
                         summary_op=self.train_summary_op,
                         collect_summaries=_collect_summaries)
 
+                update_duration = time.time() - start
+                update_record['duration'] = update_duration
+
             return train_summaries, update_summaries, train_record, update_record
 
     def evaluate(self, batch_size, mode):
         assert self.pi is not None, "A validation policy must be set using `set_validation_policy` before calling `evaluate`."
 
         with self:
+            start = time.time()
             rollouts = self.env.do_rollouts(self.pi, batch_size, mode=mode)
+            eval_rollout_duration = time.time() - start
 
+            start = time.time()
             eval_summaries, eval_record = self._run_and_record(
                 rollouts, mode=mode, weights=None, do_update=False,
                 summary_op=self.summary_op,
                 collect_summaries=True)
+            eval_duration = time.time() - start
+
+            eval_record.update(
+                duration=eval_duration, rollout_duration=eval_rollout_duration)
 
         return eval_summaries, eval_record
 
@@ -471,7 +489,7 @@ class RLUpdater(Updater):
         learners = learners or []
         try:
             self.learners = list(learners)
-        except:
+        except (TypeError, ValueError):
             self.learners = [learners]
 
         learner_names = [l.name for l in self.learners]
