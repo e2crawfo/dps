@@ -1,6 +1,6 @@
 import subprocess as sp
 import numpy as np
-from collections import deque
+from collections import deque, OrderedDict
 import os
 from pathlib import Path
 import hashlib
@@ -147,6 +147,12 @@ class ScopedFunction(object):
         self.train_config = train_config
         self.do_pretraining = True
 
+        param_path = os.path.join(self.directory, "{}_{}.params".format(self.scope_name, param_hash))
+        if not os.path.exists(param_path):
+            d = OrderedDict((key, train_config[key]) for key in name_params)
+            with open(param_path, 'w') as f:
+                f.write(str(d))
+
         self._maybe_initialize()
 
 
@@ -156,7 +162,7 @@ def get_param_hash(train_config, name_params):
         value = train_config[name]
         try:
             value = sorted(value)
-        except:
+        except (TypeError, ValueError):
             pass
         param_str.append("{}={}".format(name, value))
     param_str = "_".join(param_str)

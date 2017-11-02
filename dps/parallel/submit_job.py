@@ -72,8 +72,11 @@ class ParallelSession(object):
         of time).
     ignore_gpu: bool
         If True, GPUs will be requested by as part of the job, but will not be used at run time.
-    do_cleanup: bool
-        If True, at the end of the job we delete temporary local scratch directories that we created.
+    store_experiments: bool
+        If True, after each step we fetch experiment data from each of the nodes and store it locally
+        along with the results. Either way, experiment data is deleted from nodes after each step.
+    ssh_options: string
+        String of options to pass to ssh.
 
     """
     def __init__(
@@ -81,7 +84,15 @@ class ParallelSession(object):
             wall_time="1hour", cleanup_time="15mins", time_slack=0, add_date=True, dry_run=0,
             parallel_exe="$HOME/.local/bin/parallel", kind="parallel", host_pool=None,
             min_hosts=1, max_hosts=1, env_vars=None, redirect=False, n_retries=0, gpu_set="",
-            step_time_limit="", ignore_gpu=False, do_cleanup=False):
+            step_time_limit="", ignore_gpu=False, store_experiments=True, ssh_options=None):
+
+        if ssh_options is None:
+            ssh_options = (
+                "-oPasswordAuthentication=no "
+                "-oStrictHostKeyChecking=no "
+                "-oConnectTimeout=5 "
+                "-oServerAliveInterval=2"
+            )
 
         if kind == "pbs":
             local_scratch_prefix = "\\$RAMDISK"
@@ -99,6 +110,7 @@ class ParallelSession(object):
             directory=scratch,
             add_date=add_date)
         os.makedirs(os.path.realpath(job_directory + "/results"))
+        os.makedirs(os.path.realpath(job_directory + "/experiments"))
 
         input_zip_stem = Path(input_zip).stem
         output_zip_base = Path(input_zip).name
@@ -263,8 +275,7 @@ class ParallelSession(object):
                         if missing_zip:
                             print("Copying zip to local scratch...")
                             command = (
-                                "scp -q -oPasswordAuthentication=no -oStrictHostKeyChecking=no "
-                                "-oConnectTimeout=5 -oServerAliveInterval=2 "
+                                "rsync -av -e \"ssh {ssh_options}\" "
                                 "{input_zip_abs} {host}:{local_scratch}".format(host=host, **self.__dict__)
                             )
                             self.execute_command(command, frmt=False, robust=False)
@@ -367,30 +378,43 @@ class ParallelSession(object):
             raise_with_traceback(e)
 
     def ssh_execute(self, command, host, **kwargs):
-        return self.execute_command(
-            "ssh -oPasswordAuthentication=no -oStrictHostKeyChecking=no "
-            "-oConnectTimeout=5 -oServerAliveInterval=2 "
-            "-T {host} \"{command}\"".format(host=host, command=command), **kwargs)
+        cmd = "ssh {ssh_options} -T {host} \"{command}\"".format(
+            ssh_options=self.ssh_options, host=host, command=command)
+        return self.execute_command(cmd, **kwargs)
 
     def fetch(self):
         for i, host in enumerate(self.hosts):
             if host is ':':
-                command = "cd {local_scratch} && zip -rq results {archive_root}"
+                if self.store_experiments:
+                    command = "mv {local_scratch}/experiments/* ./experiments"
+                    self.execute_command(command, robust=True)
+
+                command = "rm -rf {local_scratch}/experiments"
                 self.execute_command(command, robust=True)
 
-                command = "cp {local_scratch}/results.zip ./results/{i}.zip".format(i=i, **self.__dict__)
-                self.execute_command(command, frmt=False, robust=True)
+                command = "cp -r {local_scratch}/{archive_root} ./results"
+                self.execute_command(command, robust=True)
             else:
-                command = "cd {local_scratch} && zip -rq results {archive_root}"
+                if self.store_experiments:
+                    command = (
+                        "rsync -avz -e \"ssh {ssh_options}\" "
+                        "{host}:{local_scratch}/experiments/ ./experiments".format(
+                            host=host, **self.__dict__)
+                    )
+                    self.execute_command(command, frmt=False, robust=True)
+
+                command = "rm -rf {local_scratch}/experiments"
                 self.ssh_execute(command, host, robust=True)
 
                 command = (
-                    "scp -q -oPasswordAuthentication=no -oStrictHostKeyChecking=no "
-                    "-oConnectTimeout=5 -oServerAliveInterval=2 "
-                    "{host}:{local_scratch}/results.zip ./results/{i}.zip".format(
-                        host=host, i=i, **self.__dict__)
+                    "rsync -avz -e \"ssh {ssh_options}\" "
+                    "{host}:{local_scratch}/{archive_root} ./results".format(
+                        host=host, **self.__dict__)
                 )
                 self.execute_command(command, frmt=False, robust=True)
+
+        with cd('results'):
+            self.execute_command("zip -rq ../output {archive_root}", robust=True)
 
     def _step(self, i, indices_for_step):
         if not indices_for_step:
@@ -439,20 +463,8 @@ class ParallelSession(object):
 
         self.fetch()
 
-        print("Unzipping results from nodes...")
-        results_files = glob.glob("results/*.zip")
-
-        for f in results_files:
-            self.execute_command("unzip -nuq {} -d results".format(f), robust=True)
-
-        for f in results_files:
-            self.execute_command("rm -rf {}".format(f), robust=True)
-
-        with cd('results'):
-            self.execute_command("zip -rq ../{output_zip_base} {archive_root}", robust=True)
-
-        self.execute_command("dps-hyper summary {output_zip_base}", robust=True, quiet=False)
-        self.execute_command("dps-hyper view {output_zip_base}", robust=True, quiet=False)
+        self.execute_command("dps-hyper summary output.zip", robust=True, quiet=False)
+        self.execute_command("dps-hyper view output.zip", robust=True, quiet=False)
 
     def run(self):
         if self.dry_run:
@@ -462,72 +474,68 @@ class ParallelSession(object):
         self.print_time_limits()
 
         with cd(self.job_directory):
-            try:
-                print("\n" + ("=" * 80))
-                job_start = datetime.datetime.now()
-                print("Starting job at {}".format(job_start))
+            print("\n" + ("=" * 80))
+            job_start = datetime.datetime.now()
+            print("Starting job at {}".format(job_start))
 
-                job = ReadOnlyJob(self.input_zip)
-                subjobs_remaining = sorted([op.idx for op in job.ready_incomplete_ops(sort=False)])
+            job = ReadOnlyJob(self.input_zip)
+            subjobs_remaining = sorted([op.idx for op in job.ready_incomplete_ops(sort=False)])
 
-                n_failures = defaultdict(int)
-                dead_jobs = set()
+            n_failures = defaultdict(int)
+            dead_jobs = set()
 
-                i = 0
-                while subjobs_remaining:
-                    step_start = datetime.datetime.now()
+            i = 0
+            while subjobs_remaining:
+                step_start = datetime.datetime.now()
 
-                    print("Starting step {} at: ".format(i) + "=" * 90)
-                    print("{} ({} since start of job)".format(step_start, step_start - job_start))
+                print("Starting step {} at: ".format(i) + "=" * 90)
+                print("{} ({} since start of job)".format(step_start, step_start - job_start))
 
-                    if not self.host_pool:
-                        if self.kind == "pbs":
-                            with open(os.path.expandvars("$PBS_NODEFILE"), 'r') as f:
-                                self.host_pool = list(set([s.strip() for s in iter(f.readline, '')]))
-                                print(self.host_pool)
-                        elif self.kind == "slurm":
-                            p = subprocess.run('scontrol show hostnames $SLURM_JOB_NODELIST', stdout=subprocess.PIPE, shell=True)
-                            self.host_pool = list(set([host.strip() for host in p.stdout.decode().split('\n') if host]))
+                if not self.host_pool:
+                    if self.kind == "pbs":
+                        with open(os.path.expandvars("$PBS_NODEFILE"), 'r') as f:
+                            self.host_pool = list(set([s.strip() for s in iter(f.readline, '')]))
                             print(self.host_pool)
-                        else:
-                            raise Exception("NotImplemented")
+                    elif self.kind == "slurm":
+                        p = subprocess.run(
+                            'scontrol show hostnames $SLURM_JOB_NODELIST', stdout=subprocess.PIPE, shell=True)
+                        self.host_pool = list(set([host.strip() for host in p.stdout.decode().split('\n') if host]))
+                        print(self.host_pool)
+                    else:
+                        raise Exception("NotImplemented")
 
-                    self.hosts, self.n_procs = self.recruit_hosts(
-                        self.hpc, self.min_hosts, self.max_hosts, self.host_pool,
-                        self.ppn, max_procs=len(subjobs_remaining))
+                self.hosts, self.n_procs = self.recruit_hosts(
+                    self.hpc, self.min_hosts, self.max_hosts, self.host_pool,
+                    self.ppn, max_procs=len(subjobs_remaining))
 
-                    indices_for_step = subjobs_remaining[:self.n_procs]
-                    self._step(i, indices_for_step)
-                    self._checkpoint(i)
+                indices_for_step = subjobs_remaining[:self.n_procs]
+                self._step(i, indices_for_step)
+                self._checkpoint(i)
 
-                    job = ReadOnlyJob(self.output_zip_base)
+                job = ReadOnlyJob(self.output_zip_base)
 
-                    subjobs_remaining = set([op.idx for op in job.ready_incomplete_ops(sort=False)])
+                subjobs_remaining = set([op.idx for op in job.ready_incomplete_ops(sort=False)])
 
-                    for j in indices_for_step:
-                        if j in subjobs_remaining:
-                            n_failures[j] += 1
-                            if n_failures[j] > self.n_retries:
-                                print("All {} attempts at completing job with index {} have failed, "
-                                      "permanently removing it from set of eligible jobs.".format(n_failures[j], j))
-                                dead_jobs.add(j)
+                for j in indices_for_step:
+                    if j in subjobs_remaining:
+                        n_failures[j] += 1
+                        if n_failures[j] > self.n_retries:
+                            print("All {} attempts at completing job with index {} have failed, "
+                                  "permanently removing it from set of eligible jobs.".format(n_failures[j], j))
+                            dead_jobs.add(j)
 
-                    subjobs_remaining = [idx for idx in subjobs_remaining if idx not in dead_jobs]
-                    subjobs_remaining = sorted(subjobs_remaining)
+                subjobs_remaining = [idx for idx in subjobs_remaining if idx not in dead_jobs]
+                subjobs_remaining = sorted(subjobs_remaining)
 
-                    i += 1
+                i += 1
 
-                    print("Step duration: {}.".format(datetime.datetime.now() - step_start))
-            finally:
-                if self.do_cleanup:
-                    print("Cleaning up dirty hosts...")
+                print("Step duration: {}.".format(datetime.datetime.now() - step_start))
 
-                    # Attempt cleanup of hosts.
-                    for host in self.dirty_hosts:
-                        print("Cleaning host {}...".format(host))
-                        if host is ':':
-                            command = "rm -rf {local_scratch}"
-                            self.execute_command(command, robust=True)
-                        else:
-                            command = "rm -rf {local_scratch}"
-                            self.ssh_execute(command, host, robust=True)
+        print("Cleaning up dirty hosts...")
+        command = "rm -rf {local_scratch}"
+        for host in self.dirty_hosts:
+            print("Cleaning host {}...".format(host))
+            if host is ':':
+                self.execute_command(command, robust=True)
+            else:
+                self.ssh_execute(command, host, robust=True)

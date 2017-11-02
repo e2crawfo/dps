@@ -131,13 +131,6 @@ RL_EXPERIMENT_CONFIG = DEFAULT_CONFIG.copy(
     preserve_policy=True,
 
     error_on_timeout=False,
-
-    slim=False,
-    save_summaries=False,
-    start_tensorboard=False,
-    verbose=False,
-    show_plots=False,
-    save_plots=True,
 )
 
 
