@@ -120,4 +120,32 @@ DEFAULT_CONFIG = SystemConfig(
 )
 
 
+RL_EXPERIMENT_CONFIG = DEFAULT_CONFIG.copy(
+    name="RLExperiment",
+
+    display_step=100,
+    eval_step=100,
+    patience=np.inf,
+    max_steps=1000000,
+    power_through=False,
+    preserve_policy=True,
+
+    error_on_timeout=False,
+
+    slim=False,
+    save_summaries=False,
+    start_tensorboard=False,
+    verbose=False,
+    show_plots=False,
+    save_plots=True,
+)
+
+
+SL_EXPERIMENT_CONFIG = RL_EXPERIMENT_CONFIG.copy(
+    name="SLExperiment",
+    error_on_timeout=True,
+    patience=5000,
+)
+
+
 cfg._stack.append(DEFAULT_CONFIG)

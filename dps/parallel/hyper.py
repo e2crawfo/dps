@@ -25,6 +25,8 @@ from dps.utils.base import gen_seed, Config, cd, ExperimentStore
 from dps.parallel.submit_job import ParallelSession
 from dps.parallel.base import Job, ReadOnlyJob
 
+default_host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
+
 
 def nested_map(d, f):
     if isinstance(d, dict):

@@ -19,7 +19,7 @@ config = DEFAULT_CONFIG.copy(
     display_step=100,
     eval_step=100,
     patience=np.inf,
-    power_through=True,
+    power_through=False,
     preserve_policy=True,
 
     slim=False,
@@ -47,14 +47,19 @@ alg_config = Config(
     entropy_weight=0.01,
 
     lr_schedule=1e-4,
-    n_controller_units=128,
+    n_controller_units=256,
     batch_size=16,
     gamma=0.98,
     opt_steps_per_update=1,
     epsilon=0.2,
     split=False,
 
-    exploration_schedule="Poly(1.0, 0.1, 8192)",
+    sub_batch_size=0,
+    value_epsilon=0,
+    value_n_samples=0,
+    value_direct=False,
+
+    exploration_schedule="Poly(0.2, 0.05, 8192)",
     actor_exploration_schedule=None,
     val_exploration_schedule="0.0",
 
@@ -69,20 +74,19 @@ alg_config = Config(
 )
 
 env_config = grid_arithmetic.config.copy(
-    reductions="sum",
+    reductions="A:sum,M:prod,X:max,N:min",
     arithmetic_actions='+,*,max,min,+1',
     ablation='easy',
     render_rollouts=None,
 
-    T=30,
-    min_digits=2,
-    max_digits=3,
+    curriculum=[
+        dict(T=30, min_digits=2, max_digits=3, shape=(2, 2)),
+    ],
     op_loc=(0, 0),
     start_loc=(0, 0),
     base=10,
     threshold=0.01,
 
-    salience_shape=(2, 2),
     salience_action=True,
     visible_glimpse=False,
     initial_salience=False,
@@ -97,37 +101,23 @@ config.update(alg_config)
 config.update(env_config)
 
 
-A_load_paths = [
-    "/home/e2crawfo/checkpoints/latest_checkpoints/sum_checkpoints/networks/0/best_of_stage_0",
-    "/home/e2crawfo/checkpoints/latest_checkpoints/sum_checkpoints/networks/1/best_of_stage_0",
-    "/home/e2crawfo/checkpoints/latest_checkpoints/sum_checkpoints/networks/2/best_of_stage_0",
-    "/home/e2crawfo/checkpoints/latest_checkpoints/sum_checkpoints/networks/3/best_of_stage_0",
-    "/home/e2crawfo/checkpoints/latest_checkpoints/sum_checkpoints/networks/4/best_of_stage_0",
-]
-
-
-B_load_paths = [
-    "/home/e2crawfo/checkpoints/checkpoints_3x3/0/best_of_stage_0",
-    "/home/e2crawfo/checkpoints/checkpoints_3x3/1/best_of_stage_0",
-    "/home/e2crawfo/checkpoints/checkpoints_3x3/2/best_of_stage_0",
-    "/home/e2crawfo/checkpoints/checkpoints_3x3/3/best_of_stage_0",
-]
-
-
 config.update(
     use_gpu=True,
     gpu_allow_growth=True,
     per_process_gpu_memory_fraction=0.22,
-    load_path="",
-
-    # curriculum=[dict(shape=(3, 3), load_path=A_load_paths)],  # A -> 0
-    # curriculum=[dict(shape=(3, 3))],  # C
-    curriculum=[dict(shape=(3, 3), min_digits=4, max_digits=4, load_path=B_load_paths)],  # B -> A
-    # curriculum=[dict(shape=(3, 3), min_digits=4, max_digits=4)],  # F
 )
 
-# grid = dict(n_train=[2**16])
-grid = dict(n_train=2**np.arange(6, 18, 2))
+
+grid = [
+    dict(opt_steps_per_update=10, value_weight=0.0),
+]
+grid.extend([
+    dict(opt_steps_per_update=10, value_weight=1.0, value_epsilon=x)
+    for x in np.linspace(0.0, 0.3, 5)
+])
+
+# grid = dict(value_reg_weight=np.linspace(0.0, 2.0, 10))
+# grid = dict(n_train=2**np.arange(6, 18))
 
 
 from dps.parallel.hyper import build_and_submit
