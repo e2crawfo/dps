@@ -5,7 +5,6 @@ import subprocess
 from future.utils import raise_with_traceback
 from pathlib import Path
 import numpy as np
-import glob
 import time
 import progressbar
 import shutil
@@ -109,11 +108,9 @@ class ParallelSession(object):
             '{}_{}'.format(name, clean_pattern),
             directory=scratch,
             add_date=add_date)
-        os.makedirs(os.path.realpath(job_directory + "/results"))
         os.makedirs(os.path.realpath(job_directory + "/experiments"))
 
         input_zip_stem = Path(input_zip).stem
-        output_zip_base = Path(input_zip).name
         input_zip = shutil.copy(str(input_zip), os.path.join(job_directory, "orig.zip"))
         input_zip = Path(input_zip)
         input_zip_abs = input_zip.resolve()
@@ -392,7 +389,7 @@ class ParallelSession(object):
                 command = "rm -rf {local_scratch}/experiments"
                 self.execute_command(command, robust=True)
 
-                command = "cp -r {local_scratch}/{archive_root} ./results"
+                command = "cp -ru {local_scratch}/{archive_root} ."
                 self.execute_command(command, robust=True)
             else:
                 if self.store_experiments:
@@ -408,13 +405,12 @@ class ParallelSession(object):
 
                 command = (
                     "rsync -avz -e \"ssh {ssh_options}\" "
-                    "{host}:{local_scratch}/{archive_root} ./results".format(
+                    "{host}:{local_scratch}/{archive_root} .".format(
                         host=host, **self.__dict__)
                 )
                 self.execute_command(command, frmt=False, robust=True)
 
-        with cd('results'):
-            self.execute_command("zip -rq ../output {archive_root}", robust=True)
+        self.execute_command("zip -rq results {archive_root}", robust=True)
 
     def _step(self, i, indices_for_step):
         if not indices_for_step:
@@ -463,8 +459,8 @@ class ParallelSession(object):
 
         self.fetch()
 
-        self.execute_command("dps-hyper summary output.zip", robust=True, quiet=False)
-        self.execute_command("dps-hyper view output.zip", robust=True, quiet=False)
+        self.execute_command("dps-hyper summary results.zip", robust=True, quiet=False)
+        self.execute_command("dps-hyper view results.zip", robust=True, quiet=False)
 
     def run(self):
         if self.dry_run:
@@ -512,7 +508,7 @@ class ParallelSession(object):
                 self._step(i, indices_for_step)
                 self._checkpoint(i)
 
-                job = ReadOnlyJob(self.output_zip_base)
+                job = ReadOnlyJob(self.archive_root)
 
                 subjobs_remaining = set([op.idx for op in job.ready_incomplete_ops(sort=False)])
 
@@ -530,6 +526,8 @@ class ParallelSession(object):
                 i += 1
 
                 print("Step duration: {}.".format(datetime.datetime.now() - step_start))
+
+            self.execute_command("rm -rf {archive_root}", robust=True)
 
         print("Cleaning up dirty hosts...")
         command = "rm -rf {local_scratch}"

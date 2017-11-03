@@ -43,9 +43,13 @@ alg_config = Config(
     optimizer_spec="adam",
 
     policy_weight=1.0,
-    value_reg_weight=0.0,
-    value_weight=1.0,
     entropy_weight=0.01,
+
+    value_weight=1.0,
+    value_reg_weight=0.0,
+    value_epsilon=0,
+    value_n_samples=0,
+    value_direct=False,
 
     lr_schedule=1e-4,
     n_controller_units=128,
@@ -85,6 +89,6 @@ config.update(
 grid = dict(n_train=2**np.arange(6, 18))
 
 from dps.parallel.hyper import build_and_submit
-host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
+host_pool = [':'] + ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
 clify.wrap_function(build_and_submit)(
     config=config, distributions=grid, n_param_settings=None, host_pool=host_pool)

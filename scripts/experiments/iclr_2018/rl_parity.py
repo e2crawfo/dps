@@ -22,8 +22,8 @@ config.update(
 )
 
 
-# grid = dict(n_train=2**np.arange(14, 18, 2)) # Base
-grid = dict(n_train=2**np.arange(6, 18, 2))
+grid = dict(n_train=2**np.arange(14, 18, 2))
+# grid = dict(n_train=2**np.arange(6, 18, 2))
 
 
 from dps.parallel.hyper import build_and_submit, default_host_pool

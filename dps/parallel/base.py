@@ -581,6 +581,8 @@ def zip_root(zipfile):
     zip_root = min(
         [z.filename for z in zipfile.infolist()],
         key=lambda s: len(s))
+    if zip_root[-1] == '/':
+        zip_root = zip_root[:-1]
     return zip_root
 
 

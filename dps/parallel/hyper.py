@@ -292,42 +292,7 @@ def _summarize_search(args):
         keys = list(distributions.keys())
     keys = sorted(keys)
 
-    records = []
-    for op in job.completed_ops():
-        if 'map' in op.name:
-            try:
-                r = op.get_outputs(job.objects)[0]
-            except BaseException as e:
-                print("Exception thrown when accessing output of op {}:\n    {}".format(op.name, e))
-
-        record = r['history'][-1].copy()
-        record['host'] = r['host']
-        record['op_name'] = op.name
-        del record['best_path']
-
-        process_detailed_data(record, 'train')
-        process_detailed_data(record, 'update')
-        process_detailed_data(record, 'val')
-        process_detailed_data(record, 'test')
-
-        config = Config(r['config'])
-        for k in keys:
-            try:
-                record[k] = config[k]
-            except KeyError:
-                record[k] = None
-
-        record.update(
-            latest_stage=r['history'][-1]['stage'],
-            total_steps=sum(s['n_steps'] for s in r['history']),
-        )
-
-        record['seed'] = r['config']['seed']
-        records.append(record)
-
-    df = pd.DataFrame.from_records(records)
-    for key in keys:
-        df[key] = df[key].fillna(-np.inf)
+    df = extract_dataframe_from_job(job, keys)
 
     groups = df.groupby(keys)
 
