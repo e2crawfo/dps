@@ -135,23 +135,24 @@ class ScopedFunction(object):
             self.was_loaded = load_or_train(self.train_config, self.scope, self.path)
             self.initialized = True
 
+            param_path = os.path.join(
+                self.directory, "{}_{}.params".format(self.scope_name, self.param_hash))
+            if not os.path.exists(param_path):
+                with open(param_path, 'w') as f:
+                    f.write(str(self.param_dict))
+
     def set_pretraining_params(self, train_config, name_params=None, directory=None):
         assert train_config is not None
         self.directory = str(directory or Path(dps.cfg.log_dir))
         if isinstance(name_params, str):
             name_params = name_params.split()
         name_params = sorted(name_params or [])
-        param_hash = get_param_hash(train_config, name_params)
-        filename = "{}_{}.chk".format(self.scope_name, param_hash)
+        self.param_hash = get_param_hash(train_config, name_params)
+        filename = "{}_{}.chk".format(self.scope_name, self.param_hash)
         self.path = os.path.join(self.directory, filename)
         self.train_config = train_config
         self.do_pretraining = True
-
-        param_path = os.path.join(self.directory, "{}_{}.params".format(self.scope_name, param_hash))
-        if not os.path.exists(param_path):
-            d = OrderedDict((key, train_config[key]) for key in name_params)
-            with open(param_path, 'w') as f:
-                f.write(str(d))
+        self.param_dict = OrderedDict((key, train_config[key]) for key in name_params)
 
         self._maybe_initialize()
 
