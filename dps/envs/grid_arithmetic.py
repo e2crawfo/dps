@@ -122,12 +122,11 @@ config = Config(
     final_reward=True,
     parity='both',
 
-    op_loc=(0, 0), # With respect to draw_shape
-    start_loc=(1, 1), # With respect to env_shape
+    op_loc=(0, 0),  # With respect to draw_shape
+    start_loc=(1, 1),  # With respect to env_shape
     env_shape=(4, 4),
     draw_offset=(1, 1),
     draw_shape=(2, 2),
-    full_image=True,
 
     n_train=10000,
     n_val=100,
@@ -194,7 +193,6 @@ class GridArithmeticDataset(RegressionDataset):
     env_shape = Param()
     draw_offset = Param(None)
     draw_shape = Param(None)
-    full_image = Param(False)
 
     min_digits = Param()
     max_digits = Param()
@@ -265,13 +263,8 @@ class GridArithmeticDataset(RegressionDataset):
         digit_reps = DataContainer(mnist_x, mnist_y)
         blank_element = np.zeros((self.image_width, self.image_width))
 
-        if self.full_image:
-            env_shape = self.env_shape
-        else:
-            env_shape = self.draw_shape
-
         x, y = self.make_dataset(
-            env_shape, self.min_digits, self.max_digits, self.base,
+            self.env_shape, self.min_digits, self.max_digits, self.base,
             blank_element, digit_reps, symbol_reps,
             reductions, self.n_examples, self.op_loc, self.show_op,
             one_hot_output=self.loss_type == "xent", largest_digit=self.largest_digit,
@@ -366,7 +359,6 @@ class GridOmniglotDataset(RegressionDataset):
     env_shape = Param()
     draw_offset = Param(None)
     draw_shape = Param(None)
-    full_image = Param(False)
 
     def __init__(self, **kwargs):
         if not self.draw_shape:
@@ -385,13 +377,8 @@ class GridOmniglotDataset(RegressionDataset):
 
         blank_element = np.zeros((self.image_width, self.image_width))
 
-        if self.full_image:
-            env_shape = self.env_shape
-        else:
-            env_shape = self.draw_shape
-
         x, y = self.make_dataset(
-            env_shape, self.min_digits, self.max_digits,
+            self.env_shape, self.min_digits, self.max_digits,
             blank_element, symbol_reps,
             self.n_examples, self.target_loc,
             one_hot_output=self.loss_type == "xent",
