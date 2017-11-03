@@ -8,6 +8,3 @@ def reset_config():
     cfg.clear_stack(SystemConfig())
 
 reset_config()
-
-import matplotlib
-matplotlib.use(cfg.mpl_backend)

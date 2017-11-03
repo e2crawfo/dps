@@ -42,7 +42,6 @@ def _load_system_config(key=None):
         log_root=process_path(_config.get(key, 'log_root')),
         show_plots=_config.getboolean(key, 'show_plots'),
         save_plots=_config.getboolean(key, 'save_plots'),
-        mpl_backend=_config.get(key, 'mpl_backend'),
         use_gpu=_config.getboolean(key, 'use_gpu'),
         tbport=_config.getint(key, 'tbport'),
         verbose=_config.getboolean(key, 'verbose'),

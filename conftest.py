@@ -3,7 +3,7 @@ import pytest
 
 def pytest_addoption(parser):
     parser.addoption("--max-steps", default=None, help="Maximum number of steps to run.")
-    parser.addoption("--show_plots", action='store_true', help="Display any graphs that are created.")
+    parser.addoption("--show-plots", action='store_true', help="Display any graphs that are created.")
     parser.addoption("--run-slow", action="store_true", help="run slow tests")
 
 
@@ -14,7 +14,7 @@ def max_steps(request):
 
 @pytest.fixture
 def show_plots(request):
-    return request.config.getoption("--show_plots")
+    return request.config.getoption("--show-plots")
 
 
 @pytest.fixture
