@@ -7,9 +7,8 @@ from config import rl_config as config
 A_dir = "/home/e2crawfo/checkpoints/grid_parity_checkpoints/"
 
 A_load_paths = [
-    os.path.join(A_dir, i, 'best_of_stage_0') for i in range(5)
+    os.path.join(A_dir, str(i), 'best_of_stage_0') for i in range(5)
 ]
-
 
 A_curric = [dict(parity='even')]
 B_curric = [dict(parity='odd', load_path=A_load_paths)]

@@ -7,12 +7,12 @@ from config import rl_config as config
 A_dir = "/home/e2crawfo/checkpoints/latest_checkpoints/sum_checkpoints/networks/"
 
 A_load_paths = [
-    os.path.join(A_dir, i, 'best_of_stage_0') for i in range(5)
+    os.path.join(A_dir, str(i), 'best_of_stage_0') for i in range(5)
 ]
 
 B_dir = "/home/e2crawfo/checkpoints/checkpoints_3x3/"
 B_load_paths = [
-    os.path.join(B_dir, i, 'best_of_stage_0') for i in range(4)
+    os.path.join(B_dir, str(i), 'best_of_stage_0') for i in range(4)
 ]
 
 A_curric = [dict(shape=(3, 3), load_path=A_load_paths)]

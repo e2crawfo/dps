@@ -6,7 +6,7 @@ from dps.register import RegisterBank
 from dps.environment import (
     RegressionDataset, RegressionEnv, CompositeEnv, InternalEnv)
 from dps.vision import MNIST_CONFIG, OmniglotDataset, OMNIGLOT_CONFIG, MNIST_SALIENCE_CONFIG
-from dps.utils.tf import LeNet, MLP, SalienceMap, extract_glimpse_numpy_like, resize_image_with_crop_or_pad
+from dps.utils.tf import LeNet, MLP, SalienceMap, extract_glimpse_numpy_like
 from dps.utils import DataContainer, Param, Config, image_to_string
 from dps.rl.policy import Softmax, Normal, ProductDist, Policy, DiscretePolicy
 from dps.test.test_mnist import salience_render_hook
@@ -42,9 +42,8 @@ def grid_arithmetic_render_rollouts(env, rollouts):
 
         print("Start of rollout {}.".format(i))
         for t in range(rollouts.T):
-            print("t={}".format(t))
+            print("t={}".format(t) + " * " * 20)
             action_idx = int(np.argmax(actions[t, :]))
-            print("action={}".format(internal.action_names[action_idx]))
             print("digit: ", digit[t])
             print("op: ", op[t])
             print("acc: ", acc[t])
@@ -54,6 +53,8 @@ def grid_arithmetic_render_rollouts(env, rollouts):
             print("\n")
             print(image_to_string(salience[t]))
             print("\n")
+
+            print("\naction={}".format(internal.action_names[action_idx]))
 
 
 def build_env():
@@ -113,17 +114,20 @@ config = Config(
     arithmetic_actions="+,*,max,min,+1",
 
     curriculum=[dict()],
-    op_loc=(0, 0),
-    start_loc=(0, 0),
     base=10,
     threshold=0.04,
     T=30,
     min_digits=2,
     max_digits=3,
-    shape=(2, 2),
-    padded_shape=None,
     final_reward=True,
     parity='both',
+
+    op_loc=(0, 0), # With respect to draw_shape
+    start_loc=(1, 1), # With respect to env_shape
+    env_shape=(4, 4),
+    draw_offset=(1, 1),
+    draw_shape=(2, 2),
+    full_image=True,
 
     n_train=10000,
     n_val=100,
@@ -186,8 +190,12 @@ config = Config(
 
 class GridArithmeticDataset(RegressionDataset):
     reductions = Param()
-    shape = Param()
-    padded_shape = Param(None)
+
+    env_shape = Param()
+    draw_offset = Param(None)
+    draw_shape = Param(None)
+    full_image = Param(False)
+
     min_digits = Param()
     max_digits = Param()
     base = Param()
@@ -207,10 +215,12 @@ class GridArithmeticDataset(RegressionDataset):
     }
 
     def __init__(self, **kwargs):
+        if not self.draw_shape:
+            self.draw_shape = self.env_shape
         self.image_width = int(28 / self.downsample_factor)
         assert 1 <= self.base <= 10
         assert self.min_digits <= self.max_digits
-        assert np.product(self.shape) >= self.max_digits + 1
+        assert np.product(self.draw_shape) >= self.max_digits + 1
 
         if ":" not in self.reductions:
             self.reductions = {'A': self.reductions_dict[self.reductions.strip()]}
@@ -255,28 +265,33 @@ class GridArithmeticDataset(RegressionDataset):
         digit_reps = DataContainer(mnist_x, mnist_y)
         blank_element = np.zeros((self.image_width, self.image_width))
 
+        if self.full_image:
+            env_shape = self.env_shape
+        else:
+            env_shape = self.draw_shape
+
         x, y = self.make_dataset(
-            self.shape, self.min_digits, self.max_digits, self.base,
+            env_shape, self.min_digits, self.max_digits, self.base,
             blank_element, digit_reps, symbol_reps,
             reductions, self.n_examples, self.op_loc, self.show_op,
             one_hot_output=self.loss_type == "xent", largest_digit=self.largest_digit,
-            padded_shape=self.padded_shape)
+            draw_offset=self.draw_offset, draw_shape=self.draw_shape)
 
         super(GridArithmeticDataset, self).__init__(x, y)
 
     @staticmethod
     def make_dataset(
-            shape, min_digits, max_digits, base, blank_element,
+            env_shape, min_digits, max_digits, base, blank_element,
             digit_reps, symbol_reps, functions, n_examples, op_loc, show_op,
-            one_hot_output, largest_digit, padded_shape):
+            one_hot_output, largest_digit, draw_offset, draw_shape):
 
         new_X, new_Y = [], []
 
-        size = np.product(shape)
+        size = np.product(draw_shape)
 
         m, n = blank_element.shape
         if op_loc is not None:
-            _op_loc = np.ravel_multi_index(op_loc, shape)
+            _op_loc = np.ravel_multi_index(op_loc, draw_shape)
 
         for j in range(n_examples):
             nd = np.random.randint(min_digits, max_digits+1)
@@ -287,8 +302,8 @@ class GridArithmeticDataset(RegressionDataset):
                 indices[indices == _op_loc] = indices[0]
                 indices[0] = _op_loc
 
-            env = np.tile(blank_element, shape)
-            locs = zip(*np.unravel_index(indices, shape))
+            env = np.tile(blank_element, draw_shape)
+            locs = zip(*np.unravel_index(indices, draw_shape))
             locs = [(slice(i*m, (i+1)*m), slice(j*n, (j+1)*n)) for i, j in locs]
             op_loc, *digit_locs = locs
 
@@ -305,10 +320,12 @@ class GridArithmeticDataset(RegressionDataset):
                 ys.append(y)
                 env[loc] = x
 
-            if padded_shape:
-                padded_env = np.tile(blank_element, padded_shape)
-                padded_env[:env.shape[0], :env.shape[1]] = env
-                env = padded_env
+            if draw_shape != env_shape:
+                full_env = np.tile(blank_element, env_shape)
+                start_y = draw_offset[0] * blank_element.shape[0]
+                start_x = draw_offset[1] * blank_element.shape[1]
+                full_env[start_y:start_y+env.shape[0], start_x:start_x+env.shape[1]] = env
+                env = full_env
 
             new_X.append(env)
             y = func(ys)
@@ -339,8 +356,6 @@ class GridArithmeticDataset(RegressionDataset):
 
 
 class GridOmniglotDataset(RegressionDataset):
-    shape = Param()
-    padded_shape = Param(None)
     min_digits = Param()
     max_digits = Param()
     classes = Param()
@@ -348,10 +363,17 @@ class GridOmniglotDataset(RegressionDataset):
     target_loc = Param()
     loss_type = Param("2-norm")
 
+    env_shape = Param()
+    draw_offset = Param(None)
+    draw_shape = Param(None)
+    full_image = Param(False)
+
     def __init__(self, **kwargs):
+        if not self.draw_shape:
+            self.draw_shape = self.env_shape
         self.image_width = 14
         assert self.min_digits <= self.max_digits
-        assert np.product(self.shape) >= self.max_digits + 1
+        assert np.product(self.draw_shape) >= self.max_digits + 1
 
         omniglot_x, omniglot_y, symbol_map = load_omniglot(
             cfg.data_dir, self.classes, size=(14, 14),
@@ -363,27 +385,32 @@ class GridOmniglotDataset(RegressionDataset):
 
         blank_element = np.zeros((self.image_width, self.image_width))
 
+        if self.full_image:
+            env_shape = self.env_shape
+        else:
+            env_shape = self.draw_shape
+
         x, y = self.make_dataset(
-            self.shape, self.min_digits, self.max_digits,
+            env_shape, self.min_digits, self.max_digits,
             blank_element, symbol_reps,
             self.n_examples, self.target_loc,
             one_hot_output=self.loss_type == "xent",
-            padded_shape=self.padded_shape)
+            draw_offset=self.draw_offset, draw_shape=self.draw_shape)
 
         super(GridOmniglotDataset, self).__init__(x, y)
 
     @staticmethod
     def make_dataset(
-            shape, min_digits, max_digits, blank_element,
+            env_shape, min_digits, max_digits, blank_element,
             symbol_reps, n_examples, target_loc,
-            one_hot_output, padded_shape):
+            one_hot_output, draw_offset, draw_shape):
 
         new_X, new_Y = [], []
 
-        size = np.product(shape)
+        size = np.product(draw_shape)
 
-        m, n = blank_element.shape
-        _target_loc = np.ravel_multi_index(target_loc, shape)
+        m, n = blank_element.draw_shape
+        _target_loc = np.ravel_multi_index(target_loc, draw_shape)
 
         # min_digits, max_digits do NOT include target digit.
         for j in range(n_examples):
@@ -394,8 +421,8 @@ class GridOmniglotDataset(RegressionDataset):
             indices[indices == _target_loc] = indices[0]
             indices[0] = _target_loc
 
-            env = np.tile(blank_element, shape)
-            locs = zip(*np.unravel_index(indices, shape))
+            env = np.tile(blank_element, draw_shape)
+            locs = zip(*np.unravel_index(indices, draw_shape))
             target_loc, *other_locs = [(slice(i*m, (i+1)*m), slice(j*n, (j+1)*n)) for i, j in locs]
 
             target_x, target_y = symbol_reps.get_random()
@@ -410,10 +437,12 @@ class GridOmniglotDataset(RegressionDataset):
                     _x, _y = symbol_reps.get_random_without_label(target_y)
                 env[other_locs[k]] = _x
 
-            if padded_shape:
-                padded_env = np.tile(blank_element, padded_shape)
-                padded_env[:env.shape[0], :env.shape[1]] = env
-                env = padded_env
+            if draw_shape != env_shape:
+                full_env = np.tile(blank_element, env_shape)
+                start_y = draw_offset[0] * blank_element.shape[0]
+                start_x = draw_offset[1] * blank_element.shape[1]
+                full_env[start_y:start_y+env.shape[0], start_x:start_x+env.shape[1]] = env
+                env = full_env
 
             new_X.append(env)
             y = n_target_repeats + 1
@@ -455,10 +484,10 @@ class GridArithmetic(InternalEnv):
 
     @property
     def input_shape(self):
-        return tuple(s*self.image_width for s in self.shape)
+        return tuple(s*self.image_width for s in self.env_shape)
 
     arithmetic_actions = Param()
-    shape = Param()
+    env_shape = Param()
     base = Param()
     start_loc = Param()
     downsample_factor = Param()
@@ -518,7 +547,7 @@ class GridArithmetic(InternalEnv):
 
         min_values = [0, 10, 0, 0, 0, 0] + [0.] * (self.salience_output_width**2)
         max_values = (
-            [9, 12, 999, self.shape[1], self.shape[0], self.actions_dim] +
+            [9, 12, 999, self.env_shape[1], self.env_shape[0], self.actions_dim] +
             [1.] * (self.salience_output_width**2)
         )
 
@@ -607,14 +636,16 @@ class GridArithmetic(InternalEnv):
         top_left = tf.concat([fovea_y, fovea_x], axis=-1) * self.image_width
         inp = self.input_ph[..., None]
         glimpse = extract_glimpse_numpy_like(
-            inp, (self.image_width, self.image_width), top_left)
+            inp, (self.image_width, self.image_width), top_left, fill_value=0.0)
         glimpse = tf.reshape(glimpse, (-1, self.image_width**2), name="glimpse")
         return glimpse
 
     def _build_update_salience(self, update_salience, salience, salience_input, fovea_y, fovea_x):
         top_left = tf.concat([fovea_y, fovea_x], axis=-1) * self.image_width
+        top_left -= (self.salience_input_width - self.image_width) / 2.0
+        inp = tf.expand_dims(self.input_ph, -1)
         glimpse = extract_glimpse_numpy_like(
-            self.padded_input, (self.salience_input_width, self.salience_input_width), top_left)
+            inp, (self.salience_input_width, self.salience_input_width), top_left, fill_value=0.0)
 
         new_salience = self.salience_detector(glimpse, self.salience_output_shape, False)
         new_salience = tf.reshape(new_salience, (-1, self.salience_output_width**2))
@@ -641,8 +672,8 @@ class GridArithmetic(InternalEnv):
         fovea_y = (1 - down - up) * fovea_y + \
             down * (fovea_y + 1) + \
             up * (fovea_y - 1)
-        fovea_y = tf.clip_by_value(fovea_y, 0, self.shape[0]-1)
-        fovea_x = tf.clip_by_value(fovea_x, 0, self.shape[1]-1)
+        fovea_y = tf.clip_by_value(fovea_y, 0, self.env_shape[0]-1)
+        fovea_x = tf.clip_by_value(fovea_x, 0, self.env_shape[1]-1)
         return fovea_y, fovea_x
 
     def _build_return(
@@ -670,15 +701,7 @@ class GridArithmetic(InternalEnv):
 
     def build_init(self, r):
         self.build_placeholders(r)
-
-        self.pad_offset = (int(self.salience_input_width/2 - self.image_width/2),) * 2
-        target_height = int(self.input_ph.shape[1]) + 2 * self.pad_offset[0]
-        target_width = int(self.input_ph.shape[2]) + 2 * self.pad_offset[1]
-        inp = self.input_ph[..., None]
-        self.padded_input = resize_image_with_crop_or_pad(inp, target_height, target_width)
-
         _digit, _op, _acc, _fovea_x, _fovea_y, _prev_action, _salience, _glimpse, _salience_input = self.rb.as_tuple(r)
-
         batch_size = tf.shape(self.input_ph)[0]
 
         # init fovea
@@ -687,9 +710,9 @@ class GridArithmetic(InternalEnv):
             fovea_x = tf.fill((batch_size, 1), self.start_loc[1])
         else:
             fovea_y = tf.random_uniform(
-                tf.shape(fovea_y), 0, self.shape[0], dtype=tf.int32)
+                tf.shape(fovea_y), 0, self.env_shape[0], dtype=tf.int32)
             fovea_x = tf.random_uniform(
-                tf.shape(fovea_x), 0, self.shape[1], dtype=tf.int32)
+                tf.shape(fovea_x), 0, self.env_shape[1], dtype=tf.int32)
 
         fovea_y = tf.cast(fovea_y, tf.float32)
         fovea_x = tf.cast(fovea_x, tf.float32)
@@ -798,7 +821,7 @@ class OmniglotCounting(GridArithmeticEasy):
 
         min_values = [0, 0, 10, 0, 0, 0, 0] + [0.] * (self.salience_output_width**2)
         max_values = (
-            [len(self.omniglot_classes), 9, 12, 999, self.shape[1], self.shape[0], self.actions_dim] +
+            [len(self.omniglot_classes), 9, 12, 999, self.env_shape[1], self.env_shape[0], self.actions_dim] +
             [1.] * (self.salience_output_width**2)
         )
 
@@ -906,12 +929,6 @@ class OmniglotCounting(GridArithmeticEasy):
     def build_init(self, r):
         self.build_placeholders(r)
 
-        self.pad_offset = (int(self.salience_input_width/2 - self.image_width/2),) * 2
-        target_height = int(self.input_ph.shape[1]) + 2 * self.pad_offset[0]
-        target_width = int(self.input_ph.shape[2]) + 2 * self.pad_offset[1]
-        inp = self.input_ph[..., None]
-        self.padded_input = resize_image_with_crop_or_pad(inp, target_height, target_width)
-
         _omniglot, _digit, _op, _acc, _fovea_x, _fovea_y, _prev_action, _salience, _glimpse, _salience_input = self.rb.as_tuple(r)
 
         batch_size = tf.shape(self.input_ph)[0]
@@ -922,9 +939,9 @@ class OmniglotCounting(GridArithmeticEasy):
             fovea_x = tf.fill((batch_size, 1), self.start_loc[1])
         else:
             fovea_y = tf.random_uniform(
-                tf.shape(fovea_y), 0, self.shape[0], dtype=tf.int32)
+                tf.shape(fovea_y), 0, self.env_shape[0], dtype=tf.int32)
             fovea_x = tf.random_uniform(
-                tf.shape(fovea_x), 0, self.shape[1], dtype=tf.int32)
+                tf.shape(fovea_x), 0, self.env_shape[1], dtype=tf.int32)
 
         fovea_y = tf.cast(fovea_y, tf.float32)
         fovea_x = tf.cast(fovea_x, tf.float32)
@@ -1055,12 +1072,6 @@ class GridArithmeticNoModules(GridArithmetic):
     def build_init(self, r):
         self.build_placeholders(r)
 
-        self.pad_offset = (int(self.salience_input_width/2 - self.image_width/2),) * 2
-        target_height = int(self.input_ph.shape[1]) + 2 * self.pad_offset[0]
-        target_width = int(self.input_ph.shape[2]) + 2 * self.pad_offset[1]
-        inp = self.input_ph[..., None]
-        self.padded_input = resize_image_with_crop_or_pad(inp, target_height, target_width)
-
         _output, _fovea_x, _fovea_y, _prev_action, _salience, _glimpse, _salience_input = self.rb.as_tuple(r)
 
         batch_size = tf.shape(self.input_ph)[0]
@@ -1071,9 +1082,9 @@ class GridArithmeticNoModules(GridArithmetic):
             fovea_x = tf.fill((batch_size, 1), self.start_loc[1])
         else:
             fovea_y = tf.random_uniform(
-                tf.shape(fovea_y), 0, self.shape[0], dtype=tf.int32)
+                tf.shape(fovea_y), 0, self.env_shape[0], dtype=tf.int32)
             fovea_x = tf.random_uniform(
-                tf.shape(fovea_x), 0, self.shape[1], dtype=tf.int32)
+                tf.shape(fovea_x), 0, self.env_shape[1], dtype=tf.int32)
 
         fovea_y = tf.cast(fovea_y, tf.float32)
         fovea_x = tf.cast(fovea_x, tf.float32)

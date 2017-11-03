@@ -49,7 +49,7 @@ def resize_image_with_crop_or_pad(img, target_height, target_width):
         return img
 
 
-def extract_glimpse_numpy_like(inp, glimpse_shape, glimpse_offsets, name=None, uniform_noise=None):
+def extract_glimpse_numpy_like(inp, glimpse_shape, glimpse_offsets, name=None, uniform_noise=None, fill_value=None):
     """ Taken from: https://github.com/tensorflow/tensorflow/issues/2134#issuecomment-262525617
 
     Works like numpy with pixel coordinates starting at (0, 0), returns:
@@ -60,9 +60,31 @@ def extract_glimpse_numpy_like(inp, glimpse_shape, glimpse_offsets, name=None, u
     assert(len(glimpse_shape) == 2)
     inp_shape = tuple(inp.get_shape().as_list())  # includes batch and number of channels
     corrected_offsets = 2 * glimpse_offsets - np.array(inp_shape[1:3]) + np.array(glimpse_shape)
-    return tf.image.extract_glimpse(
+    glimpses = tf.image.extract_glimpse(
         inp, glimpse_shape, corrected_offsets, centered=True, normalized=False,
         uniform_noise=uniform_noise, name=name)
+
+    if fill_value is not None:
+        glimpse_offsets = tf.cast(glimpse_offsets, tf.int32)
+        y_indices = tf.range(glimpse_shape[0])
+        y_indices = tf.reshape(y_indices, (1, -1))
+        y_indices += glimpse_offsets[:, 0:1]
+        valid_y = tf.cast(tf.logical_and(0 <= y_indices, y_indices < tf.shape(inp)[1]), tf.float32)
+        valid_y = tf.expand_dims(valid_y, axis=-1)
+        valid_y = tf.expand_dims(valid_y, axis=-1)
+
+        glimpses = valid_y * glimpses + (1 - valid_y) * fill_value
+
+        x_indices = tf.range(glimpse_shape[1])
+        x_indices = tf.reshape(x_indices, (1, -1))
+        x_indices += glimpse_offsets[:, 1:2]
+        valid_x = tf.cast(tf.logical_and(0 <= x_indices, x_indices < tf.shape(inp)[2]), tf.float32)
+        valid_x = tf.expand_dims(valid_x, axis=1)
+        valid_x = tf.expand_dims(valid_x, axis=-1)
+
+        glimpses = valid_x * glimpses + (1 - valid_x) * fill_value
+
+    return glimpses
 
 
 def uninitialized_variables_initializer():
