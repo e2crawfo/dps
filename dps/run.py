@@ -55,7 +55,9 @@ def _run(env_config, alg_config, _config=None, **kwargs):
     config.update(kwargs)
 
     with config:
-        cl_args = clify.wrap_object(cfg).parse()
-        cfg.update(cl_args)
+        cfg.update_from_command_line()
 
-        training_loop()
+        # Force generator evaluation.
+        for o in training_loop():
+            print("^" * 40)
+            print(o)

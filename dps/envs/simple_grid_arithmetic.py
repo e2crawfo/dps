@@ -32,8 +32,6 @@ config = Config(
     arithmetic_actions="+,*,max,min,+1",
 
     curriculum=[{}],
-    op_loc=(0, 0),
-    start_loc=(0, 0),
     base=10,
     threshold=0.04,
     T=30,
@@ -41,6 +39,12 @@ config = Config(
     max_digits=3,
     shape=(2, 2),
     parity='both',
+
+    op_loc=(0, 0),  # With respect to draw_shape
+    start_loc=(0, 0),  # With respect to env_shape
+    env_shape=(2, 2),
+    draw_offset=(0, 0),
+    draw_shape=(2, 2),
 
     n_train=10000,
     n_val=500,
@@ -62,7 +66,11 @@ config = Config(
 
 class SimpleGridArithmeticDataset(RegressionDataset):
     reductions = Param()
-    shape = Param()
+
+    env_shape = Param()
+    draw_offset = Param(None)
+    draw_shape = Param(None)
+
     min_digits = Param()
     max_digits = Param()
     base = Param()
@@ -81,9 +89,12 @@ class SimpleGridArithmeticDataset(RegressionDataset):
     }
 
     def __init__(self, **kwargs):
+        if not self.draw_shape:
+            self.draw_shape = self.env_shape
+
         assert 1 <= self.base <= 10
         assert self.min_digits <= self.max_digits
-        assert np.product(self.shape) >= self.max_digits + 1
+        assert np.product(self.draw_shape) >= self.max_digits + 1
 
         if ":" not in self.reductions:
             self.reductions = {'A': self.reductions_dict[self.reductions.strip()]}
@@ -119,11 +130,11 @@ class SimpleGridArithmeticDataset(RegressionDataset):
         blank_element = -1 * np.ones((1, 1))
 
         x, y = GridArithmeticDataset.make_dataset(
-            self.shape, self.min_digits, self.max_digits, self.base,
+            self.env_shape, self.min_digits, self.max_digits, self.base,
             blank_element, digit_reps, symbol_reps,
             reductions, self.n_examples, self.op_loc, self.show_op,
             one_hot_output=self.loss_type == "xent", largest_digit=self.largest_digit,
-            padded_shape=self.shape)
+            draw_offset=self.draw_offset, draw_shape=self.draw_shape)
 
         super(SimpleGridArithmeticDataset, self).__init__(x, y)
 
@@ -133,10 +144,10 @@ class SimpleGridArithmetic(InternalEnv):
 
     @property
     def input_shape(self):
-        return self.shape
+        return self.env_shape
 
     arithmetic_actions = Param()
-    shape = Param()
+    env_shape = Param()
     base = Param()
     start_loc = Param()
     visible_glimpse = Param()
@@ -185,7 +196,7 @@ class SimpleGridArithmetic(InternalEnv):
 
         min_values = [0, 10, 0, 0, 0, 0] + [-1.] * np.product(self.salience_shape)
         max_values = (
-            [9, 12, 999, self.shape[1], self.shape[0], self.actions_dim] +
+            [9, 12, 999, self.env_shape[1], self.env_shape[0], self.actions_dim] +
             [1.] * np.product(self.salience_shape)
         )
 
@@ -244,8 +255,8 @@ class SimpleGridArithmetic(InternalEnv):
         fovea_y = (1 - down - up) * fovea_y + \
             down * (fovea_y + 1) + \
             up * (fovea_y - 1)
-        fovea_y = tf.clip_by_value(fovea_y, 0, self.shape[0]-1)
-        fovea_x = tf.clip_by_value(fovea_x, 0, self.shape[1]-1)
+        fovea_y = tf.clip_by_value(fovea_y, 0, self.env_shape[0]-1)
+        fovea_x = tf.clip_by_value(fovea_x, 0, self.env_shape[1]-1)
         return fovea_y, fovea_x
 
     def _build_return(
@@ -291,9 +302,9 @@ class SimpleGridArithmetic(InternalEnv):
             fovea_x = tf.fill((batch_size, 1), self.start_loc[1])
         else:
             fovea_y = tf.random_uniform(
-                tf.shape(fovea_y), 0, self.shape[0], dtype=tf.int32)
+                tf.shape(fovea_y), 0, self.env_shape[0], dtype=tf.int32)
             fovea_x = tf.random_uniform(
-                tf.shape(fovea_x), 0, self.shape[1], dtype=tf.int32)
+                tf.shape(fovea_x), 0, self.env_shape[1], dtype=tf.int32)
 
         fovea_y = tf.cast(fovea_y, tf.float32)
         fovea_x = tf.cast(fovea_x, tf.float32)

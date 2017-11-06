@@ -38,7 +38,5 @@ config = DEFAULT_CONFIG.copy(
 
 
 with config:
-    cl_args = clify.wrap_object(cfg).parse()
-    cfg.update(cl_args)
-
-    training_loop()
+    cfg.update_from_command_line()
+    list(training_loop())

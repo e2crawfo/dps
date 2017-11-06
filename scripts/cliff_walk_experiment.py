@@ -34,4 +34,4 @@ np.random.seed()
 
 
 with config:
-    training_loop()
+    list(training_loop())

@@ -87,6 +87,7 @@ DEFAULT_CONFIG = SystemConfig(
     render_step=np.inf,
     display_step=100,
     eval_step=100,
+    checkpoint_step=5000,
 
     n_train=10000,
     n_val=500,

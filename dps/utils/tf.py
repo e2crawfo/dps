@@ -379,7 +379,7 @@ class SalienceMap(ScopedFunction):
             if output is None:
                 output = new
             else:
-                output += new
+                output = tf.maximum(new, output)
 
         if self.flatten_output:
             output = tf.reshape(

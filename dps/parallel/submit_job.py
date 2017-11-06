@@ -46,8 +46,8 @@ class ParallelSession(object):
         results computed so far will be collected.
     add_date: bool
         Whether to add current date/time to the name of the directory where results are stored.
-    time_slack: int
-        Number of extra seconds to allow per job.
+    time_slack_pct: float
+        Percent of wall time to allow as slack, per step.
     dry_run: bool
         If True, control script will be generated but not executed/submitted.
     parallel_exe: str
@@ -80,7 +80,7 @@ class ParallelSession(object):
     """
     def __init__(
             self, name, input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', ppn=12,
-            wall_time="1hour", cleanup_time="15mins", time_slack=0, add_date=True, dry_run=0,
+            wall_time="1hour", cleanup_time="1mins", time_slack_pct=0, add_date=True, dry_run=0,
             parallel_exe="$HOME/.local/bin/parallel", kind="parallel", host_pool=None,
             min_hosts=1, max_hosts=1, env_vars=None, redirect=False, n_retries=0, gpu_set="",
             step_time_limit="", ignore_gpu=False, store_experiments=True, ssh_options=None):
@@ -183,7 +183,7 @@ class ParallelSession(object):
             abs_seconds_per_step = int(parse_timedelta(step_time_limit).total_seconds())
         else:
             abs_seconds_per_step = int(np.floor(execution_time / n_steps))
-        seconds_per_step = abs_seconds_per_step - time_slack
+        seconds_per_step = int((1 - time_slack_pct) * abs_seconds_per_step)
 
         self.__dict__.update(locals())
 
@@ -379,39 +379,6 @@ class ParallelSession(object):
             ssh_options=self.ssh_options, host=host, command=command)
         return self.execute_command(cmd, **kwargs)
 
-    def fetch(self):
-        for i, host in enumerate(self.hosts):
-            if host is ':':
-                if self.store_experiments:
-                    command = "mv {local_scratch}/experiments/* ./experiments"
-                    self.execute_command(command, robust=True)
-
-                command = "rm -rf {local_scratch}/experiments"
-                self.execute_command(command, robust=True)
-
-                command = "cp -ru {local_scratch}/{archive_root} ."
-                self.execute_command(command, robust=True)
-            else:
-                if self.store_experiments:
-                    command = (
-                        "rsync -avz -e \"ssh {ssh_options}\" "
-                        "{host}:{local_scratch}/experiments/ ./experiments".format(
-                            host=host, **self.__dict__)
-                    )
-                    self.execute_command(command, frmt=False, robust=True)
-
-                command = "rm -rf {local_scratch}/experiments"
-                self.ssh_execute(command, host, robust=True)
-
-                command = (
-                    "rsync -avz -e \"ssh {ssh_options}\" "
-                    "{host}:{local_scratch}/{archive_root} .".format(
-                        host=host, **self.__dict__)
-                )
-                self.execute_command(command, frmt=False, robust=True)
-
-        self.execute_command("zip -rq results {archive_root}", robust=True)
-
     def _step(self, i, indices_for_step):
         if not indices_for_step:
             print("No jobs left to run on step {}.".format(i))
@@ -457,8 +424,37 @@ class ParallelSession(object):
         print("Fetching results of step {} at: ".format(i))
         print(datetime.datetime.now())
 
-        self.fetch()
+        for i, host in enumerate(self.hosts):
+            if host is ':':
+                if self.store_experiments:
+                    command = "mv {local_scratch}/experiments/* ./experiments"
+                    self.execute_command(command, robust=True)
 
+                command = "rm -rf {local_scratch}/experiments"
+                self.execute_command(command, robust=True)
+
+                command = "cp -ru {local_scratch}/{archive_root} ."
+                self.execute_command(command, robust=True)
+            else:
+                if self.store_experiments:
+                    command = (
+                        "rsync -avz -e \"ssh {ssh_options}\" "
+                        "{host}:{local_scratch}/experiments/ ./experiments".format(
+                            host=host, **self.__dict__)
+                    )
+                    self.execute_command(command, frmt=False, robust=True)
+
+                command = "rm -rf {local_scratch}/experiments"
+                self.ssh_execute(command, host, robust=True)
+
+                command = (
+                    "rsync -avz -e \"ssh {ssh_options}\" "
+                    "{host}:{local_scratch}/{archive_root} .".format(
+                        host=host, **self.__dict__)
+                )
+                self.execute_command(command, frmt=False, robust=True)
+
+        self.execute_command("zip -rq results {archive_root}", robust=True)
         self.execute_command("dps-hyper summary results.zip", robust=True, quiet=False)
         self.execute_command("dps-hyper view results.zip", robust=True, quiet=False)
 

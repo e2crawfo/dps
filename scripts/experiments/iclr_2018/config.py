@@ -41,15 +41,6 @@ env_config = grid_arithmetic.config.copy(
     n_val=100,
 )
 
-rl_config = RL_EXPERIMENT_CONFIG.copy(
-    name="GridArithmeticRL",
-
-    memory_limit_mb=12*1024,
-    use_gpu=True,
-    gpu_allow_growth=True,
-    per_process_gpu_memory_fraction=0.22,
-)
-
 alg_config = Config(
     get_updater=a2c.A2C,
     build_policy=BuildEpsilonSoftmaxPolicy(),
@@ -85,6 +76,15 @@ alg_config = Config(
     max_grad_norm=None,
 
     updates_per_sample=1,
+)
+
+rl_config = RL_EXPERIMENT_CONFIG.copy(
+    name="GridArithmeticRL",
+
+    memory_limit_mb=12*1024,
+    use_gpu=True,
+    gpu_allow_growth=True,
+    per_process_gpu_memory_fraction=0.22,
 )
 
 rl_config.update(alg_config)

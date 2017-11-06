@@ -5,7 +5,7 @@ from dps.envs.gym_env import GymEnvWrapper
 from dps.train import training_loop
 from dps.config import DEFAULT_CONFIG
 from dps.rl import rl_render_hook, BuildSoftmaxPolicy
-from dps.rl.algorithms import ppo
+from dps.rl.algorithms.a2c import ppo_config
 
 
 def build_env():
@@ -15,7 +15,7 @@ def build_env():
 config = DEFAULT_CONFIG.copy()
 
 config.update(
-    ppo.config,
+    ppo_config,
     build_env=build_env,
     build_policy=BuildSoftmaxPolicy(one_hot=False),
     log_name="cartpole",
@@ -34,4 +34,4 @@ config.update(
 
 with config:
     cfg.update_from_command_line()
-    training_loop()
+    list(training_loop())

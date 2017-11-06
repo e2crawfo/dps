@@ -1,6 +1,6 @@
 import time
 
-from dps.rl.algorithms.ppo import reinforce_config
+from dps.rl.algorithms.a2c import reinforce_config
 from dps.train import training_loop
 from dps.envs import simple_addition
 from dps.config import DEFAULT_CONFIG
@@ -14,6 +14,6 @@ def test_time_limit():
 
     start = time.time()
     with config:
-        training_loop()
+        list(training_loop())
     elapsed = start - time.time()
     assert elapsed < config.max_time + 1

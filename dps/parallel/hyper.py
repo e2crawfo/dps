@@ -161,13 +161,10 @@ class RunTrainingLoop(object):
         config.update(new)
 
         with config:
-            cl_args = clify.wrap_object(cfg).parse()
-            config.update(cl_args)
+            cfg.update_from_command_line()
 
             from dps.train import training_loop
-            val = training_loop(start_time=start_time)
-
-        return val
+            yield from training_loop(start_time=start_time)
 
 
 def build_search(
@@ -200,8 +197,7 @@ def build_search(
 
     """
     with config:
-        cl_args = clify.wrap_object(cfg).parse()
-        config.update(cl_args)
+        cfg.update_from_command_line()
 
     es = ExperimentStore(str(path), max_experiments=10, delete_old=1)
     count = 0
@@ -641,12 +637,10 @@ def build_and_submit(
 
     if kind == "local":
         with config:
-            cl_args = clify.wrap_object(cfg).parse()
-            config.update(cl_args)
-
+            cfg.update_from_command_line()
             from dps.train import training_loop
-            val = training_loop()
-        return val
+            outputs = list(training_loop())
+        return outputs[-1]
     else:
         config.name = name
 

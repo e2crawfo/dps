@@ -6,36 +6,40 @@ from dps.utils import Config
 from dps.envs import simple_grid_arithmetic
 from dps.rl.algorithms import a2c
 from dps.rl.policy import BuildEpsilonSoftmaxPolicy, BuildLstmController
-from dps.rl import rl_render_hook
-from dps.config import DEFAULT_CONFIG
+from dps.config import RL_EXPERIMENT_CONFIG
 
 
-config = DEFAULT_CONFIG.copy(
-    name="SimpleGridArithmeticExperiment",
+env_config = simple_grid_arithmetic.config.copy(
+    reductions="A:sum,M:prod,X:max,N:min",
+    arithmetic_actions='+,*,max,min,+1',
+    ablation='easy',
+    render_rollouts=None,
+
+    curriculum=[
+        dict(),
+    ],
+    T=30,
+    min_digits=2,
+    max_digits=3,
+    shape=(2, 2),
+    op_loc=(0, 0),
+    start_loc=(0, 0),
+    base=10,
+    threshold=0.01,
+    largest_digit=100,
+
+    salience_action=True,
+    visible_glimpse=False,
+    initial_salience=False,
+    salience_input_width=3*14,
+    salience_output_width=14,
+    downsample_factor=2,
+
+    final_reward=True,
 
     n_train=10000,
     n_val=100,
-    max_steps=1000000,
-    display_step=100,
-    eval_step=100,
-    patience=np.inf,
-    power_through=False,
-    preserve_policy=True,
-
-    slim=False,
-    save_summaries=True,
-    start_tensorboard=True,
-    verbose=False,
-    show_plots=True,
-    save_plots=True,
-
-    use_gpu=False,
-    threshold=0.01,
-    # render_hook=rl_render_hook,
-    render_hook=None,
-    memory_limit_mb=5*1024,
 )
-
 
 alg_config = Config(
     get_updater=a2c.A2C,
@@ -44,15 +48,19 @@ alg_config = Config(
     optimizer_spec="adam",
 
     policy_weight=1.0,
-    value_reg_weight=0.0,
-    value_weight=1.0,
     entropy_weight=0.01,
+
+    value_weight=1.0,
+    value_reg_weight=0.0,
+    value_epsilon=0,
+    value_n_samples=0,
+    value_direct=False,
 
     lr_schedule=1e-4,
     n_controller_units=128,
     batch_size=16,
     gamma=0.98,
-    opt_steps_per_update=1,
+    opt_steps_per_update=10,
     epsilon=0.2,
     split=False,
 
@@ -70,47 +78,17 @@ alg_config = Config(
     updates_per_sample=1,
 )
 
+config = RL_EXPERIMENT_CONFIG.copy(
+    name="SimpleGridArithmeticRL",
 
-env_config = Config(
-    build_env=simple_grid_arithmetic.build_env,
-
-    # reductions="sum",
-    # reductions="prod",
-    # reductions="max",
-    # reductions="min",
-    reductions="A:sum,M:prod,X:max,N:min",
-    arithmetic_actions='+,*,max,min,+1',
-
-    curriculum=[
-        dict(T=30, min_digits=2, max_digits=3, shape=(2, 2)),
-    ],
-    mnist=True,
-    op_loc=(0, 0),
-    start_loc=(0, 0),
-    base=10,
-    threshold=0.01,
-
-    salience_shape=(2, 2),
-    salience_action=True,
-    visible_glimpse=False,
-    initial_salience=True,
-
-    reward_window=0.499,
-    final_reward=True,
-    downsample_factor=2,
-
-    ablation='easy',
-    log_name='simple_grid_arithmetic',
-    render_rollouts=None,
+    memory_limit_mb=12*1024,
+    use_gpu=True,
+    gpu_allow_growth=True,
+    per_process_gpu_memory_fraction=0.22,
 )
 
 config.update(alg_config)
 config.update(env_config)
-
-config.update(
-    use_gpu=True,
-    gpu_allow_growth=True,
-)
 
 grid = dict(n_train=2**np.arange(6, 18))
 

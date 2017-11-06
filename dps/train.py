@@ -13,6 +13,7 @@ import os
 import socket
 import pandas as pd
 from pathlib import Path
+import copy
 
 from dps import cfg
 from dps.utils import (
@@ -35,7 +36,7 @@ def training_loop(exp_name='', start_time=None):
         curriculum = [{}]
 
     loop = TrainingLoop(curriculum, exp_name, start_time)
-    return loop.run()
+    yield from loop.run()
 
 
 class TrainingLoop(object):
@@ -107,26 +108,25 @@ class TrainingLoop(object):
             else:
                 return cfg.max_time - self.elapsed_time
 
+    def _build_return_value(self):
+        history = copy.deepcopy(self.history)
+        for kind in 'train update val test'.split():
+            key = kind + '_data'
+            if key in self.latest:
+                history[-1][key] = pd.DataFrame.from_records(self.latest[key]).to_csv(index=False)
+
+        result = dict(
+            config=cfg.freeze(remove_callable=True),
+            history=history,
+            host=socket.gethostname()
+        )
+        return result
+
     def run(self):
         print("CUDA_VISIBLE_DEVICES: ", os.getenv("CUDA_VISIBLE_DEVICES"))
 
         if cfg.start_tensorboard:
             restart_tensorboard(str(cfg.log_dir), cfg.tbport, cfg.reload_interval)
-
-        value = self._run_core()
-
-        if cfg.slim:
-            print("`slim` is True, so deleting experiment directory {}.".format(self.exp_dir.path))
-            print("Size of {} before delete: {}.".format(cfg.log_dir, du(cfg.log_dir)))
-            try:
-                shutil.rmtree(self.exp_dir.path)
-            except FileNotFoundError:
-                pass
-            print("Size of {} after delete: {}.".format(cfg.log_dir, du(cfg.log_dir)))
-
-        return value
-
-    def _run_core(self):
         if self.start_time is None:
             self.start_time = time.time()
         print("Starting training {} seconds after given start time.".format(time.time() - self.start_time))
@@ -241,7 +241,8 @@ class TrainingLoop(object):
                 sess.run(uninitialized_variables_initializer())
                 sess.run(tf.assert_variables_initialized())
 
-                threshold_reached, reason = self.run_stage(stage, updater)
+                yield from self.run_stage(stage, updater)
+                threshold_reached, reason = self.threshold_reached, self.reason
 
                 self.record(reason=reason)
 
@@ -279,17 +280,21 @@ class TrainingLoop(object):
                 self.record(stage_duration=time.time()-stage_start)
 
         print(self.summarize(latest=False))
-        result = dict(
-            config=cfg.freeze(remove_callable=True),
-            history=self.history,
-            host=socket.gethostname()
-        )
 
-        return result
+        if cfg.slim:
+            print("`slim` is True, so deleting experiment directory {}.".format(self.exp_dir.path))
+            print("Size of {} before delete: {}.".format(cfg.log_dir, du(cfg.log_dir)))
+            try:
+                shutil.rmtree(self.exp_dir.path)
+            except FileNotFoundError:
+                pass
+            print("Size of {} after delete: {}.".format(cfg.log_dir, du(cfg.log_dir)))
+
+        yield self._build_return_value()
 
     def run_stage(self, stage, updater):
-        threshold_reached = False
-        reason = ""
+        self.threshold_reached = False
+        self.reason = ""
         early_stop = EarlyStopHook(patience=cfg.patience)
         time_remaining = self.time_remaining
 
@@ -300,10 +305,10 @@ class TrainingLoop(object):
 
         with time_limit(self.time_remaining, verbose=True) as limiter:
             try:
-                threshold_reached, reason = self._run_stage(stage, updater, early_stop)
+                yield from self._run_stage(stage, updater, early_stop)
             except KeyboardInterrupt:
-                threshold_reached = False
-                reason = "User interrupt"
+                self.threshold_reached = False
+                self.reason = "User interrupt"
 
         phys_memory_after = memory_usage(physical=True)
 
@@ -314,16 +319,10 @@ class TrainingLoop(object):
             phys_memory_delta_mb=phys_memory_after - phys_memory_before
         )
 
-        self.latest['train_data'] = pd.DataFrame.from_records(self.latest['train_data']).to_csv(index=False)
-        self.latest['update_data'] = pd.DataFrame.from_records(self.latest['update_data']).to_csv(index=False)
-        self.latest['val_data'] = pd.DataFrame.from_records(self.latest['val_data']).to_csv(index=False)
-        self.latest['test_data'] = pd.DataFrame.from_records(self.latest['test_data']).to_csv(index=False)
-
         if limiter.ran_out:
-            reason = "Time limit exceeded"
+            self.reason = "Time limit exceeded"
             if cfg.error_on_timeout:
                 raise Exception("Timed out.")
-        return threshold_reached, reason
 
     def _run_stage(self, stage, updater, early_stop):
         """ Run a stage of a curriculum. """
@@ -344,6 +343,9 @@ class TrainingLoop(object):
             if updater.n_experiences >= cfg.max_experiences:
                 reason = "Maximum number of experiences reached"
                 break
+
+            if self.local_step % cfg.checkpoint_step == 0:
+                yield self._build_return_value()
 
             evaluate = self.local_step % cfg.eval_step == 0
             display = self.local_step % cfg.display_step == 0
@@ -437,7 +439,8 @@ class TrainingLoop(object):
             self.local_step += 1
             self.global_step += 1
 
-        return threshold_reached, reason
+        self.threshold_reached = threshold_reached
+        self.reason = reason
 
 
 class EarlyStopHook(object):
@@ -498,7 +501,7 @@ def load_or_train(train_config, var_scope, path, sess=None):
         print("Loading failed, training a model...")
         with ClearConfig():
             with train_config.copy(save_path=path):
-                training_loop(var_scope.name)
+                list(training_loop(var_scope.name))
         saver.restore(sess, path)
         print("Training successful.")
     return success

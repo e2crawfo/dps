@@ -6,6 +6,7 @@ from collections import defaultdict
 import argparse
 import signal
 import numpy as np
+import inspect
 import os
 
 from dps.utils import SigTerm, KeywordMapping, pdb_postmortem, redirect_stream, modify_env
@@ -83,11 +84,35 @@ Operator(
                 s.append(str(outp))
         return '\n'.join(s)
 
-    def is_complete(self, store):
-        return all([store.object_exists('data', ok) for ok in self.outp_keys])
+    def is_complete(self, store, partial=False):
+        complete = store.object_exists('complete', self.idx)
+        part_complete = all([store.object_exists('data', ok) for ok in self.outp_keys])
+        return complete or (part_complete and partial)
 
     def is_ready(self, store):
         return all([store.object_exists('data', ik) for ik in self.inp_keys])
+
+    def call_function(self, func, store, inputs, force_unique, verbose):
+        is_generator_func = inspect.isgeneratorfunction(func)
+
+        outputs = func(*inputs)
+
+        if not is_generator_func:
+            outputs = [outputs]
+
+        for outp in outputs:
+            vprint("\n\n" + ("-" * 40), verbose)
+            vprint("Function for op {} has returned".format(self.name), verbose)
+            vprint("Saving output for op {}".format(self.name), verbose)
+            if len(self.outp_keys) == 1:
+                store.save_object(
+                    'data', self.outp_keys[0], outputs, force_unique=force_unique,
+                    clobber=True, recurse=False)
+            else:
+                for o, ok in zip(outp, self.outp_keys):
+                    store.save_object(
+                        'data', ok, o, force_unique=force_unique,
+                        clobber=True, recurse=False)
 
     def run(self, store, force, output_to_files=True, verbose=False):
         vprint("\n\n" + ("*" * 80), verbose)
@@ -96,7 +121,7 @@ Operator(
 
         try:
             force_unique = True
-            if self.is_complete(store):
+            if self.is_complete(store, partial=False):
                 if force:
                     force_unique = False
                     vprint("Op {} is already complete, but ``force`` is True, "
@@ -135,21 +160,11 @@ Operator(
                 stderr.mkdir(parents=True, exist_ok=True)
                 with redirect_stream('stdout', stdout / self.name):
                     with redirect_stream('stderr', stderr / self.name):
-                        outputs = func(*inputs)
+                        self.call_function(func, store, inputs, force_unique, verbose)
             else:
-                outputs = func(*inputs)
-            vprint("\n\n" + ("-" * 40), verbose)
-            vprint("Function for op {} has returned".format(self.name), verbose)
-            vprint("Saving output for op {}".format(self.name), verbose)
-            if len(self.outp_keys) == 1:
-                store.save_object(
-                    'data', self.outp_keys[0], outputs, force_unique=force_unique,
-                    clobber=True, recurse=False)
-            else:
-                for o, ok in zip(outputs, self.outp_keys):
-                    store.save_object(
-                        'data', ok, o, force_unique=force_unique,
-                        clobber=True, recurse=False)
+                self.call_function(func, store, inputs, force_unique, verbose)
+
+            store.save_object('complete', self.idx, self.idx, force_unique=False)
 
             vprint("op {} complete.".format(self.name), verbose)
             vprint("\n\n" + ("*" * 80), verbose)
@@ -164,7 +179,7 @@ Operator(
         return [store.load_object('data', ik) for ik in self.inp_keys]
 
     def get_outputs(self, store):
-        if not self.is_complete(store):
+        if not self.is_complete(store, partial=True):
             raise Exception("Cannot get outputs, op is not complete.")
         return [store.load_object('data', ok) for ok in self.outp_keys]
 
@@ -190,7 +205,7 @@ class ReadOnlyJob(object):
         else:
             self.objects = FileSystemObjectStore(path)
 
-    def get_ops(self, pattern=None, sort=True, ready=None, complete=None):
+    def get_ops(self, pattern=None, sort=True, ready=None, complete=None, partial=False):
         operators = list(self.objects.load_objects('operator').values())
         if pattern is not None:
             selected = KeywordMapping.batch([op.name for op in operators], pattern)
@@ -204,9 +219,9 @@ class ReadOnlyJob(object):
 
         if complete is not None:
             if complete:
-                operators = [op for op in operators if op.is_complete(self.objects)]
+                operators = [op for op in operators if op.is_complete(self.objects, partial=partial)]
             else:
-                operators = [op for op in operators if not op.is_complete(self.objects)]
+                operators = [op for op in operators if not op.is_complete(self.objects, partial=partial)]
 
         if sort:
             operators = sorted(operators, key=lambda op: op.idx)

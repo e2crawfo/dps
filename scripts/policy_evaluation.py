@@ -15,7 +15,7 @@ from dps.rl.value import (
     PolicyEvaluation, ProximalPolicyEvaluation, TrustRegionPolicyEvaluation,
     NeuralValueEstimator)
 from dps.rl.policy import Policy, Deterministic
-from dps.utils.tf import FeedforwardCell, MLP
+from dps.utils.tf import FeedforwardCell
 
 
 def build_env():
@@ -109,7 +109,5 @@ else:
 
 
 with config:
-    cl_args = clify.wrap_object(cfg).parse()
-    config.update(cl_args)
-
-    val = training_loop()
+    cfg.update_from_command_line()
+    list(training_loop())

@@ -273,41 +273,18 @@ class salience_render_hook(object):
             fig, self.axes = plt.subplots(3, n_plots)
 
             for i in range(n_plots):
-                self.axes[0, i].imshow(x[i])
-                self.axes[1, i].imshow(y[i])
-                self.axes[2, i].imshow(_y[i])
+                self.axes[0, i].imshow(x[i], vmin=0, vmax=255.0)
+                self.axes[1, i].imshow(y[i], vmin=0, vmax=1.0)
+                self.axes[2, i].imshow(_y[i], vmin=0, vmax=1.0)
 
             if cfg.show_plots:
                 plt.show(block=True)
 
 
-def test_mnist_salience_pretrained():
+def test_mnist_salience_pretrained(show_plots):
     with NumpySeed(83849):
-        # def build_function():
-        #     return FullyConvolutional(
-        #         [
-        #             dict(num_outputs=16, kernel_size=10, activation_fn=tf.nn.relu, padding='valid'),
-        #             dict(num_outputs=16, kernel_size=10, activation_fn=tf.nn.relu, padding='valid'),
-        #             dict(num_outputs=1, kernel_size=11, activation_fn=None, padding='valid'),
-        #         ],
-        #         pool=False,
-        #         flatten_output=True
-        #     )
-        # def build_function():
-        #     return FullyConvolutional(
-        #         [
-        #             dict(num_outputs=16, kernel_size=5, activation_fn=tf.nn.relu, padding='valid'),
-        #             dict(num_outputs=16, kernel_size=5, activation_fn=tf.nn.relu, padding='valid'),
-        #             dict(num_outputs=16, kernel_size=5, activation_fn=tf.nn.relu, padding='valid'),
-        #             dict(num_outputs=16, kernel_size=5, activation_fn=tf.nn.relu, padding='valid'),
-        #             dict(num_outputs=1, kernel_size=11, activation_fn=None, padding='valid'),
-        #         ],
-        #         pool=False,
-        #         flatten_output=True
-        #     )
-
         config = MNIST_SALIENCE_CONFIG.copy(
-            min_digits=1,
+            min_digits=0,
             max_digits=4,
             patience=np.inf,
             max_steps=10000000,
@@ -317,12 +294,13 @@ def test_mnist_salience_pretrained():
             threshold=0.,
             render_hook=salience_render_hook(),
             render_step=100000,
-            std=0.05
+            std=0.05,
+            show_plots=show_plots,
         )
 
         def build_function():
             return SalienceMap(
-                5, MLP([100, 100]),  # LeNet(100),
+                5, MLP([100, 100, 100]),
                 (config.output_width, config.output_width),
                 std=config.std, flatten_output=True)
         config.build_function = build_function

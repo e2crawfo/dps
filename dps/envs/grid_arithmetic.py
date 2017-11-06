@@ -123,9 +123,9 @@ config = Config(
     parity='both',
 
     op_loc=(0, 0),  # With respect to draw_shape
-    start_loc=(1, 1),  # With respect to env_shape
-    env_shape=(4, 4),
-    draw_offset=(1, 1),
+    start_loc=(0, 0),  # With respect to env_shape
+    env_shape=(2, 2),
+    draw_offset=(0, 0),
     draw_shape=(2, 2),
 
     n_train=10000,
@@ -215,6 +215,7 @@ class GridArithmeticDataset(RegressionDataset):
     def __init__(self, **kwargs):
         if not self.draw_shape:
             self.draw_shape = self.env_shape
+
         self.image_width = int(28 / self.downsample_factor)
         assert 1 <= self.base <= 10
         assert self.min_digits <= self.max_digits
