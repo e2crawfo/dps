@@ -106,7 +106,7 @@ Operator(
             vprint("Saving output for op {}".format(self.name), verbose)
             if len(self.outp_keys) == 1:
                 store.save_object(
-                    'data', self.outp_keys[0], outputs, force_unique=force_unique,
+                    'data', self.outp_keys[0], outp, force_unique=force_unique,
                     clobber=True, recurse=False)
             else:
                 for o, ok in zip(outp, self.outp_keys):

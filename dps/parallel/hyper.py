@@ -620,9 +620,9 @@ def dps_hyper_cl():
 
 
 def build_and_submit(
-        name, config, distributions=None, wall_time="1year", cleanup_time="1day", max_hosts=1, ppn=1,
+        name, config, distributions=None, wall_time="1year", cleanup_time="1min", max_hosts=1, ppn=1,
         n_param_settings=0, n_repeats=1, n_retries=0, host_pool=None, pmem=0, queue="", do_local_test=False,
-        kind="local", gpu_set="", step_time_limit="", ignore_gpu=False, store_experiments=True):
+        kind="local", gpu_set="", step_time_limit="", ignore_gpu=False, store_experiments=True, time_slack_pct=0.0):
     """ Meant to be called from within a script.
 
     Parameters
@@ -674,23 +674,22 @@ def dps_submit_cl():
 
 
 def submit_job(
-        archive_path, name, wall_time="1year", cleanup_time="1day", max_hosts=1, ppn=1,
+        archive_path, name, wall_time="1year", cleanup_time="1min", max_hosts=1, ppn=1,
         n_retries=0, host_pool=None, pmem=0, queue="", kind="local", gpu_set="",
-        step_time_limit="", ignore_gpu=False, store_experiments=True, **kwargs):
+        step_time_limit="", ignore_gpu=False, store_experiments=True, time_slack_pct=0.0, **kwargs):
 
     os.nice(10)
 
     assert kind in "pbs slurm parallel".split()
 
-    hpc = kind in "pbs slurm".split()
-
     if kind == "slurm" and not pmem:
         raise Exception("Must supply a value for pmem (per-process-memory in mb) when using SLURM")
 
     run_params = dict(
-        wall_time=wall_time, cleanup_time=cleanup_time, time_slack=120 if hpc else 60,
-        max_hosts=max_hosts, ppn=ppn, n_retries=n_retries, host_pool=host_pool, kind=kind,
-        gpu_set=gpu_set, step_time_limit=step_time_limit, ignore_gpu=ignore_gpu, store_experiments=store_experiments)
+        wall_time=wall_time, cleanup_time=cleanup_time, max_hosts=max_hosts, ppn=ppn,
+        n_retries=n_retries, host_pool=host_pool, kind=kind, gpu_set=gpu_set,
+        step_time_limit=step_time_limit, ignore_gpu=ignore_gpu,
+        store_experiments=store_experiments, time_slack_pct=time_slack_pct)
 
     session = ParallelSession(
         name, archive_path, 'map', cfg.experiments_dir + '/execution/',
