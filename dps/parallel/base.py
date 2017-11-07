@@ -250,11 +250,16 @@ class ReadOnlyJob(object):
         s.append("\nn_ops: {}".format(len(operators)))
 
         is_complete = [op.is_complete(self.objects) for op in operators]
+        is_partially_complete = [op.is_complete(self.objects, partial=True) for op in operators]
         completed_ops = [op for i, op in enumerate(operators) if is_complete[i]]
+        partially_completed_ops = [op for i, op in enumerate(operators) if is_partially_complete[i] and not is_complete[i]]
         incomplete_ops = [op for i, op in enumerate(operators) if not is_complete[i]]
 
         s.append("\nn_completed_ops: {}".format(len(completed_ops)))
         s.append(self._print_ops(completed_ops, verbose))
+
+        s.append("n_partially_completed_ops: {}".format(len(partially_completed_ops)))
+        s.append(self._print_ops(partially_completed_ops, verbose))
 
         is_ready = [op.is_ready(self.objects) for op in operators]
         ready_incomplete_ops = [op for i, op in enumerate(incomplete_ops) if is_ready[i]]
