@@ -304,8 +304,8 @@ def _summarize_search(args):
 
     data = sorted(data, reverse=False, key=lambda x: (x['latest_stage'], -x['best_loss'], x['stage_sum']))
 
-    column_order = [
-        'latest_stage', 'best_loss', 'seed', 'reason', 'total_steps', 'n_steps', 'host']
+    column_order = [c for c in [
+        'latest_stage', 'best_loss', 'seed', 'reason', 'total_steps', 'n_steps', 'host'] if c in data]
     remaining = [k for k in data[0]['data'].keys() if k not in column_order and k not in keys]
     column_order = column_order + sorted(remaining)
 
@@ -356,7 +356,7 @@ def _rl_plot(args):
 
     val_data = defaultdict(list)
 
-    for op in job.completed_ops():
+    for op in job.completed_ops(partial=True):
         if 'map' in op.name:
             try:
                 r = op.get_outputs(job.objects)[0]
@@ -420,9 +420,13 @@ def ci(data, coverage):
         coverage, len(data)-1, loc=np.mean(data), scale=stats.sem(data))
 
 
-def extract_dataframe_from_job(job, data_keys=None):
+def extract_dataframe_from_job(job, data_keys=None, kinds=None):
     if isinstance(job, str) or isinstance(job, Path):
         job = ReadOnlyJob(str(job))
+
+    kinds = kinds or 'train update val test'
+    if isinstance(kinds, str):
+        kinds = kinds.split()
 
     if not data_keys:
         data_keys = []
@@ -430,7 +434,7 @@ def extract_dataframe_from_job(job, data_keys=None):
         data_keys = data_keys.split()
 
     records = []
-    for op in job.completed_ops():
+    for op in job.completed_ops(partial=True):
         if 'map' in op.name:
             try:
                 r = op.get_outputs(job.objects)[0]
@@ -442,10 +446,8 @@ def extract_dataframe_from_job(job, data_keys=None):
         record['op_name'] = op.name
         del record['best_path']
 
-        process_detailed_data(record, 'train')
-        process_detailed_data(record, 'update')
-        process_detailed_data(record, 'val')
-        process_detailed_data(record, 'test')
+        for k in kinds:
+            process_detailed_data(record, k)
 
         config = Config(r['config'])
         for k in data_keys:

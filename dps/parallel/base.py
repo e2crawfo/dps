@@ -6,8 +6,8 @@ from collections import defaultdict
 import argparse
 import signal
 import numpy as np
-import inspect
 import os
+import types
 
 from dps.utils import SigTerm, KeywordMapping, pdb_postmortem, redirect_stream, modify_env
 
@@ -93,26 +93,29 @@ Operator(
         return all([store.object_exists('data', ik) for ik in self.inp_keys])
 
     def call_function(self, func, store, inputs, force_unique, verbose):
-        is_generator_func = inspect.isgeneratorfunction(func)
-
         outputs = func(*inputs)
 
-        if not is_generator_func:
+        if not isinstance(outputs, types.GeneratorType):
             outputs = [outputs]
 
+        first_yield = True
+
         for outp in outputs:
+            print("Checkpointing...")
             vprint("\n\n" + ("-" * 40), verbose)
             vprint("Function for op {} has returned".format(self.name), verbose)
             vprint("Saving output for op {}".format(self.name), verbose)
+            _force_unique = first_yield and force_unique
             if len(self.outp_keys) == 1:
                 store.save_object(
-                    'data', self.outp_keys[0], outp, force_unique=force_unique,
+                    'data', self.outp_keys[0], outp, force_unique=_force_unique,
                     clobber=True, recurse=False)
             else:
                 for o, ok in zip(outp, self.outp_keys):
                     store.save_object(
-                        'data', ok, o, force_unique=force_unique,
+                        'data', ok, o, force_unique=_force_unique,
                         clobber=True, recurse=False)
+            first_yield = False
 
     def run(self, store, force, output_to_files=True, verbose=False):
         vprint("\n\n" + ("*" * 80), verbose)
@@ -286,8 +289,8 @@ class ReadOnlyJob(object):
     def ready_incomplete_ops(self, sort=False):
         return list(self.get_ops(None, sort=sort, complete=False, ready=True))
 
-    def completed_ops(self, sort=False):
-        return list(self.get_ops(None, sort=sort, complete=True))
+    def completed_ops(self, sort=False, partial=False):
+        return list(self.get_ops(None, sort=sort, complete=True, partial=partial))
 
 
 class Job(ReadOnlyJob):
@@ -448,9 +451,9 @@ class FileSystemObjectStore(ObjectStore):
 
     def path_for(self, kind=None, key=None):
         path = self.directory
-        if kind:
+        if kind is not None:
             path /= kind
-        if key:
+        if key is not None:
             path /= '{}.key'.format(key)
         return path
 
@@ -546,9 +549,9 @@ class ZipObjectStore(ObjectStore):
 
     def path_for(self, kind=None, key=None):
         path = self._zip_root
-        if kind:
+        if kind is not None:
             path /= kind
-        if key:
+        if key is not None:
             path /= '{}.key'.format(key)
         return path
 
