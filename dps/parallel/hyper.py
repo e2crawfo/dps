@@ -138,8 +138,7 @@ def sample_configs(distributions, base_config, n_repeats, n_samples=None):
         for r in range(n_repeats):
             _new = copy.deepcopy(s)
             _new['repeat'] = r
-            # _new['seed'] = gen_seed()
-            _new['seed'] = 1000
+            _new['seed'] = gen_seed()
             configs.append(_new)
 
     return configs
