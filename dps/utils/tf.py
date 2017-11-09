@@ -348,7 +348,7 @@ class SalienceMap(ScopedFunction):
         xx = xx[None, ...]
         output = None
 
-        params = tf.nn.sigmoid(func_output/100.)
+        params = tf.nn.sigmoid(func_output/10.)
 
         per_loc_params = tf.split(params, self.n_locs, axis=1)
         for p in per_loc_params:

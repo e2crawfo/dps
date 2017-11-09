@@ -318,6 +318,16 @@ def memory_limit(mb):
     resource.setrlimit(rsrc, (prev_soft_limit, hard))
 
 
+def memory_usage(physical=False):
+    """ return the memory usage in MB """
+    process = psutil.Process(os.getpid())
+    info = process.memory_info()
+    if physical:
+        return info.rss / float(2 ** 20)
+    else:
+        return info.vms / float(2 ** 20)
+
+
 # Character used for ascii art, sorted in order of increasing sparsity
 ascii_art_chars = \
     "$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\|()1{}[]?-_+~<>i!lI;:,\"^`'. "
@@ -352,16 +362,6 @@ def shift_fill(a, n, axis=0, fill=0.0, reverse=False):
 
 def gen_seed():
     return np.random.randint(np.iinfo(np.int32).max)
-
-
-def memory_usage(physical=False):
-    """ return the memory usage in MB """
-    process = psutil.Process(os.getpid())
-    info = process.memory_info()
-    if physical:
-        return info.rss / float(2 ** 20)
-    else:
-        return info.vms / float(2 ** 20)
 
 
 class DataContainer(object):

@@ -548,7 +548,7 @@ class GridArithmetic(InternalEnv):
         if self.salience_action:
             def _build_salience_detector(output_shape=self.salience_output_shape):
                 return SalienceMap(
-                    cfg.max_digits, MLP([cfg.n_units, cfg.n_units, cfg.n_units], scope="salience_detector"),
+                    2 * cfg.max_digits, MLP([cfg.n_units, cfg.n_units, cfg.n_units], scope="salience_detector"),
                     output_shape, std=cfg.std, flatten_output=True
                 )
 
