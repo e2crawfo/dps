@@ -5,11 +5,10 @@ from dps import cfg
 from dps.register import RegisterBank
 from dps.environment import (
     RegressionDataset, RegressionEnv, CompositeEnv, InternalEnv)
-from dps.vision import MNIST_CONFIG, OmniglotDataset, OMNIGLOT_CONFIG, MNIST_SALIENCE_CONFIG
+from dps.vision import EMNIST_CONFIG, SALIENCE_CONFIG, OMNIGLOT_CONFIG, OmniglotDataset
 from dps.utils.tf import LeNet, MLP, SalienceMap, extract_glimpse_numpy_like
 from dps.utils import DataContainer, Param, Config, image_to_string
 from dps.rl.policy import Softmax, Normal, ProductDist, Policy, DiscretePolicy
-from dps.test.test_mnist import salience_render_hook
 
 from mnist_arithmetic import load_emnist, load_omniglot
 
@@ -24,7 +23,7 @@ def grid_arithmetic_render_rollouts(env, rollouts):
 
     for i in range(registers.shape[1]):
         glimpse = internal.rb.get("glimpse", registers[:, i, :])
-        glimpse = glimpse.reshape((glimpse.shape[0],) + (internal.image_width, internal.image_width))
+        glimpse = glimpse.reshape((glimpse.shape[0],) + internal.image_shape)
 
         salience_input = internal.rb.get("salience_input", registers[:, i, :])
         salience_input = salience_input.reshape(
@@ -108,6 +107,8 @@ def build_policy(env, **kwargs):
 
 
 config = Config(
+    log_name='grid_arithmetic',
+    render_rollouts=grid_arithmetic_render_rollouts,
     build_env=build_env,
 
     reductions="A:sum,M:prod,X:max,N:min",
@@ -127,6 +128,7 @@ config = Config(
     env_shape=(2, 2),
     draw_offset=(0, 0),
     draw_shape=(2, 2),
+    image_shape=(14, 14),
 
     n_train=10000,
     n_val=100,
@@ -135,11 +137,10 @@ config = Config(
     show_op=True,
     reward_window=0.4999,
     salience_action=True,
-    salience_input_width=3*14,
-    salience_output_width=14,
+    salience_input_shape=(3*14, 3*14),
+    salience_output_shape=(14, 14),
     initial_salience=False,
     visible_glimpse=False,
-    downsample_factor=2,
 
     ablation='easy',
 
@@ -147,43 +148,18 @@ config = Config(
     build_op_classifier=lambda: LeNet(128, scope="op_classifier"),
     build_omniglot_classifier=lambda: LeNet(128, scope="omniglot_classifier"),
 
-    mnist_config=MNIST_CONFIG.copy(
-        eval_step=100,
-        max_steps=100000,
-        patience=5000,
-        threshold=0.001,
-        include_blank=True,
-        use_gpu=True,
-        gpu_allow_growth=True,
+    emnist_config=EMNIST_CONFIG.copy(),
+    salience_config=SALIENCE_CONFIG.copy(
+        min_digits=0,
+        max_digits=4,
+        std=0.05,
+        n_units=100
     ),
-
+    omniglot_config=OMNIGLOT_CONFIG.copy(),
     omniglot_classes=[
         'Cyrillic,17', 'Mkhedruli_(Georgian),5', 'Bengali,23', 'Mongolian,19',
         'Malayalam,3', 'Ge_ez,15', 'Glagolitic,33', 'Tagalog,11', 'Gujarati,23',
         'Old_Church_Slavonic_(Cyrillic),7'],  # Chosen randomly from set of all omniglot symbols.
-
-    omniglot_config=OMNIGLOT_CONFIG.copy(
-        eval_step=100,
-        max_steps=100000,
-        patience=5000,
-        threshold=0.001,
-        include_blank=True,
-        use_gpu=True,
-        gpu_allow_growth=True,
-    ),
-
-    salience_config=MNIST_SALIENCE_CONFIG.copy(
-        eval_step=100,
-        max_steps=100000,
-        patience=5000,
-        threshold=0.001,
-        render_hook=salience_render_hook(),
-        use_gpu=True,
-        gpu_allow_growth=True,
-    ),
-
-    log_name='grid_arithmetic',
-    render_rollouts=grid_arithmetic_render_rollouts,
 )
 
 
@@ -200,7 +176,7 @@ class GridArithmeticDataset(RegressionDataset):
     op_loc = Param()
     loss_type = Param("2-norm")
     largest_digit = Param(9)
-    downsample_factor = Param(2)
+    image_shape = Param((14, 14))
     show_op = Param(True)
     parity = Param('both')
 
@@ -216,7 +192,6 @@ class GridArithmeticDataset(RegressionDataset):
         if not self.draw_shape:
             self.draw_shape = self.env_shape
 
-        self.image_width = int(28 / self.downsample_factor)
         assert 1 <= self.base <= 10
         assert self.min_digits <= self.max_digits
         assert np.product(self.draw_shape) >= self.max_digits + 1
@@ -234,9 +209,7 @@ class GridArithmeticDataset(RegressionDataset):
 
         op_symbols = sorted(self.reductions)
         emnist_x, emnist_y, symbol_map = load_emnist(
-            cfg.data_dir, op_symbols, balance=True,
-            downsample_factor=self.downsample_factor)
-        emnist_x = emnist_x.reshape(-1, self.image_width, self.image_width)
+            cfg.data_dir, op_symbols, balance=True, shape=self.image_shape)
         emnist_y = np.squeeze(emnist_y, 1)
 
         reductions = {symbol_map[k]: v for k, v in self.reductions.items()}
@@ -254,15 +227,13 @@ class GridArithmeticDataset(RegressionDataset):
             raise Exception("NotImplemented")
 
         mnist_x, mnist_y, classmap = load_emnist(
-            cfg.data_dir, mnist_classes, balance=True,
-            downsample_factor=self.downsample_factor)
-        mnist_x = mnist_x.reshape(-1, self.image_width, self.image_width)
+            cfg.data_dir, mnist_classes, balance=True, shape=self.image_shape)
         mnist_y = np.squeeze(mnist_y, 1)
         inverted_classmap = {v: k for k, v in classmap.items()}
         mnist_y = np.array([inverted_classmap[y] for y in mnist_y])
 
         digit_reps = DataContainer(mnist_x, mnist_y)
-        blank_element = np.zeros((self.image_width, self.image_width))
+        blank_element = np.zeros(self.image_shape)
 
         x, y = self.make_dataset(
             self.env_shape, self.min_digits, self.max_digits, self.base,
@@ -356,6 +327,7 @@ class GridOmniglotDataset(RegressionDataset):
     indices = Param()
     target_loc = Param()
     loss_type = Param("2-norm")
+    image_shape = Param((14, 14))
 
     env_shape = Param()
     draw_offset = Param(None)
@@ -364,19 +336,17 @@ class GridOmniglotDataset(RegressionDataset):
     def __init__(self, **kwargs):
         if not self.draw_shape:
             self.draw_shape = self.env_shape
-        self.image_width = 14
         assert self.min_digits <= self.max_digits
         assert np.product(self.draw_shape) >= self.max_digits + 1
 
         omniglot_x, omniglot_y, symbol_map = load_omniglot(
-            cfg.data_dir, self.classes, size=(14, 14),
-            one_hot=False, indices=list(range(17, 20)),
+            cfg.data_dir, self.classes, one_hot=False,
+            indices=list(range(17, 20)), shape=self.image_shape
         )
-        omniglot_x = omniglot_x.reshape(-1, self.image_width, self.image_width)
         omniglot_y = np.squeeze(omniglot_y, 1)
         symbol_reps = DataContainer(omniglot_x, omniglot_y)
 
-        blank_element = np.zeros((self.image_width, self.image_width))
+        blank_element = np.zeros(self.image_shape)
 
         x, y = self.make_dataset(
             self.env_shape, self.min_digits, self.max_digits,
@@ -472,17 +442,17 @@ class GridArithmetic(InternalEnv):
 
     @property
     def input_shape(self):
-        return tuple(s*self.image_width for s in self.env_shape)
+        return tuple(es*s for es, s in zip(self.env_shape, self.image_shape))
 
     arithmetic_actions = Param()
     env_shape = Param()
     base = Param()
     start_loc = Param()
-    downsample_factor = Param()
+    image_shape = Param()
     visible_glimpse = Param()
     salience_action = Param()
-    salience_input_width = Param()
-    salience_output_width = Param()
+    salience_input_shape = Param()
+    salience_output_shape = Param()
     initial_salience = Param()
 
     op_classes = [chr(i + ord('A')) for i in range(26)]
@@ -499,7 +469,9 @@ class GridArithmetic(InternalEnv):
     }
 
     def __init__(self, **kwargs):
-        self.image_width = int(28 / self.downsample_factor)
+        self.image_size = np.product(self.image_shape)
+        self.salience_input_size = np.product(self.salience_input_shape)
+        self.salience_output_size = np.product(self.salience_output_shape)
 
         _arithmetic_actions = {}
         delim = ',' if ',' in self.arithmetic_actions else ' '
@@ -516,9 +488,6 @@ class GridArithmetic(InternalEnv):
         else:
             self.action_names = self._action_names + sorted(self.arithmetic_actions.keys())
 
-        self.salience_input_shape = (self.salience_input_width,) * 2
-        self.salience_output_shape = (self.salience_output_width,) * 2
-
         self.actions_dim = len(self.action_names)
         self._init_networks()
         self._init_rb()
@@ -528,117 +497,96 @@ class GridArithmetic(InternalEnv):
     def _init_rb(self):
         values = (
             [0., 0., -1., 0., 0., -1.] +
-            [np.zeros(self.salience_output_width**2, dtype='f')] +
-            [np.zeros(self.image_width**2, dtype='f')] +
-            [np.zeros(self.salience_input_width**2, dtype='f')]
-        )
-
-        min_values = [0, 10, 0, 0, 0, 0] + [0.] * (self.salience_output_width**2)
-        max_values = (
-            [9, 12, 999, self.env_shape[1], self.env_shape[0], self.actions_dim] +
-            [1.] * (self.salience_output_width**2)
+            [np.zeros(self.salience_output_size, dtype='f')] +
+            [np.zeros(self.image_size, dtype='f')] +
+            [np.zeros(self.salience_input_size, dtype='f')]
         )
 
         if self.visible_glimpse:
-            min_values.extend([0] * self.image_width**2)
-            max_values.extend([1] * self.image_width**2)
-
             self.rb = RegisterBank(
                 'GridArithmeticRB',
                 'digit op acc fovea_x fovea_y prev_action salience glimpse', 'salience_input', values=values,
                 output_names='acc', no_display='glimpse salience salience_input',
-                min_values=min_values, max_values=max_values
             )
         else:
             self.rb = RegisterBank(
                 'GridArithmeticRB',
                 'digit op acc fovea_x fovea_y prev_action salience', 'glimpse salience_input', values=values,
                 output_names='acc', no_display='glimpse salience salience_input',
-                min_values=min_values, max_values=max_values
             )
 
     def _init_networks(self):
-        digit_config = cfg.mnist_config.copy(
+        digit_config = cfg.emnist_config.copy(
             classes=list(range(self.base)),
-            downsample_factor=self.downsample_factor,
             build_function=cfg.build_digit_classifier,
             stopping_function=lambda val_record: -val_record['reward']
         )
 
         self.digit_classifier = cfg.build_digit_classifier()
         self.digit_classifier.set_pretraining_params(
-            digit_config,
-            name_params='classes downsample_factor n_train threshold',
-            directory=cfg.model_dir + '/mnist_pretrained/'
+            digit_config, name_params='classes include_blank shape n_controller_units',
+            directory=cfg.model_dir + '/emnist_pretrained'
         )
 
-        op_config = cfg.mnist_config.copy(
+        op_config = cfg.emnist_config.copy(
             classes=list(self.op_classes),
-            downsample_factor=self.downsample_factor,
             build_function=cfg.build_op_classifier,
-            n_train=60000,
             stopping_function=lambda val_record: -val_record['reward']
         )
 
         self.op_classifier = cfg.build_op_classifier()
         self.op_classifier.set_pretraining_params(
-            op_config,
-            name_params='classes downsample_factor n_train threshold',
-            directory=cfg.model_dir + '/mnist_pretrained/',
+            op_config, name_params='classes include_blank shape n_controller_units',
+            directory=cfg.model_dir + '/emnist_pretrained',
         )
 
         self.classifier_head = classifier_head
 
+        self.maybe_build_salience_detector()
+
+    def maybe_build_salience_detector(self):
         if self.salience_action:
-            def build_salience_detector(output_width=self.salience_output_width):
+            def _build_salience_detector(output_shape=self.salience_output_shape):
                 return SalienceMap(
                     cfg.max_digits, MLP([cfg.n_units, cfg.n_units, cfg.n_units], scope="salience_detector"),
-                    (output_width, output_width),
-                    std=cfg.std, flatten_output=True
+                    output_shape, std=cfg.std, flatten_output=True
                 )
 
             salience_config = cfg.salience_config.copy(
-                std=0.1,
-                output_width=self.salience_output_width,
-                image_width=self.salience_input_width,
-                downsample_factor=cfg.downsample_factor,
-                min_digits=1,
-                max_digits=4,
-                build_function=build_salience_detector,
-                n_units=100
+                output_shape=self.salience_output_shape,
+                image_shape=self.salience_input_shape,
+                build_function=_build_salience_detector,
             )
 
             with salience_config:
-                self.salience_detector = build_salience_detector()
+                self.salience_detector = _build_salience_detector()
 
             self.salience_detector.set_pretraining_params(
                 salience_config,
-                name_params='min_digits max_digits image_width n_units '
-                            'downsample_factor output_width',
-                directory=cfg.model_dir + '/mnist_salience_pretrained'
+                name_params='classes std min_digits max_digits n_units sub_image_shape image_shape output_shape',
+                directory=cfg.model_dir + '/salience_pretrained'
             )
         else:
             self.salience_detector = None
 
     def _build_update_glimpse(self, fovea_y, fovea_x):
-        top_left = tf.concat([fovea_y, fovea_x], axis=-1) * self.image_width
+        top_left = tf.concat([fovea_y, fovea_x], axis=-1) * self.image_shape
         inp = self.input_ph[..., None]
         glimpse = extract_glimpse_numpy_like(
-            inp, (self.image_width, self.image_width), top_left, fill_value=0.0)
-        glimpse = tf.reshape(glimpse, (-1, self.image_width**2), name="glimpse")
+            inp, self.image_shape, top_left, fill_value=0.0)
+        glimpse = tf.reshape(glimpse, (-1, self.image_size), name="glimpse")
         return glimpse
 
     def _build_update_salience(self, update_salience, salience, salience_input, fovea_y, fovea_x):
-        top_left = tf.concat([fovea_y, fovea_x], axis=-1) * self.image_width
-        top_left -= (self.salience_input_width - self.image_width) / 2.0
+        top_left = tf.concat([fovea_y, fovea_x], axis=-1) * self.image_shape
+        top_left -= (np.array(self.salience_input_shape) - np.array(self.image_shape)) / 2.0
         inp = tf.expand_dims(self.input_ph, -1)
-        glimpse = extract_glimpse_numpy_like(
-            inp, (self.salience_input_width, self.salience_input_width), top_left, fill_value=0.0)
+        glimpse = extract_glimpse_numpy_like(inp, self.salience_input_shape, top_left, fill_value=0.0)
 
         new_salience = self.salience_detector(glimpse, self.salience_output_shape, False)
-        new_salience = tf.reshape(new_salience, (-1, self.salience_output_width**2))
+        new_salience = tf.reshape(new_salience, (-1, self.salience_output_size))
 
-        new_salience_input = tf.reshape(glimpse, (-1, self.salience_input_width**2))
+        new_salience_input = tf.reshape(glimpse, (-1, self.salience_input_size))
 
         salience = (1 - update_salience) * salience + update_salience * new_salience
         salience_input = (1 - update_salience) * salience_input + update_salience * new_salience_input
@@ -802,33 +750,22 @@ class OmniglotCounting(GridArithmeticEasy):
     def _init_rb(self):
         values = (
             [0., 0., 0., -1., 0., 0., -1.] +
-            [np.zeros(self.salience_output_width**2, dtype='f')] +
-            [np.zeros(self.image_width**2, dtype='f')] +
-            [np.zeros(self.salience_input_width**2, dtype='f')]
-        )
-
-        min_values = [0, 0, 10, 0, 0, 0, 0] + [0.] * (self.salience_output_width**2)
-        max_values = (
-            [len(self.omniglot_classes), 9, 12, 999, self.env_shape[1], self.env_shape[0], self.actions_dim] +
-            [1.] * (self.salience_output_width**2)
+            [np.zeros(self.salience_output_size, dtype='f')] +
+            [np.zeros(self.image_size, dtype='f')] +
+            [np.zeros(self.salience_input_size, dtype='f')]
         )
 
         if self.visible_glimpse:
-            min_values.extend([0] * self.image_width**2)
-            max_values.extend([1] * self.image_width**2)
-
             self.rb = RegisterBank(
                 'GridArithmeticRB',
                 'omniglot digit op acc fovea_x fovea_y prev_action salience glimpse', 'salience_input', values=values,
                 output_names='acc', no_display='glimpse salience salience_input',
-                min_values=min_values, max_values=max_values
             )
         else:
             self.rb = RegisterBank(
                 'GridArithmeticRB',
                 'omniglot digit op acc fovea_x fovea_y prev_action salience', 'glimpse salience_input', values=values,
                 output_names='acc', no_display='glimpse salience salience_input',
-                min_values=min_values, max_values=max_values
             )
 
     def build_step(self, t, r, a):
@@ -899,19 +836,17 @@ class OmniglotCounting(GridArithmeticEasy):
 
     def _init_networks(self):
         super(OmniglotCounting, self)._init_networks()
-        assert self.downsample_factor == 2
         omniglot_config = cfg.omniglot_config.copy(
             classes=self.omniglot_classes,
             build_function=cfg.build_omniglot_classifier,
             stopping_function=lambda val_record: -val_record['reward'],
-            size=(14, 14),
         )
 
         self.omniglot_classifier = cfg.build_omniglot_classifier()
         self.omniglot_classifier.set_pretraining_params(
             omniglot_config,
-            name_params='classes threshold',
-            directory=cfg.model_dir + '/omniglot_pretrained/',
+            name_params='classes include_blank shape n_controller_units',
+            directory=cfg.model_dir + '/omniglot_pretrained',
         )
 
     def build_init(self, r):
@@ -1041,8 +976,6 @@ class GridArithmeticNoModules(GridArithmetic):
     def __init__(self, **kwargs):
         super(GridArithmeticNoModules, self).__init__()
 
-        self.image_width = int(28 / self.downsample_factor)
-
         if self.salience_action:
             self.action_names = ['>', '<', 'v', '^', 'update_salience', 'output']
             self.n_discrete = 5
@@ -1050,9 +983,6 @@ class GridArithmeticNoModules(GridArithmetic):
             self.action_names = ['>', '<', 'v', '^', 'output']
             self.n_discrete = 4
         self.actions_dim = len(self.action_names)
-
-        self.salience_input_shape = (self.salience_input_width,) * 2
-        self.salience_output_shape = (self.salience_output_width,) * 2
 
         self._init_networks()
         self._init_rb()
@@ -1093,43 +1023,14 @@ class GridArithmeticNoModules(GridArithmetic):
         return new_r
 
     def _init_networks(self):
-        if self.salience_action:
-            def build_salience_detector(output_width=self.salience_output_width):
-                return SalienceMap(
-                    cfg.max_digits, MLP([cfg.n_units, cfg.n_units, cfg.n_units], scope="salience_detector"),
-                    (output_width, output_width),
-                    std=cfg.std, flatten_output=True
-                )
-
-            salience_config = cfg.salience_config.copy(
-                std=0.1,
-                output_width=self.salience_output_width,
-                image_width=self.salience_input_width,
-                downsample_factor=cfg.downsample_factor,
-                min_digits=1,
-                max_digits=4,
-                build_function=build_salience_detector,
-                n_units=101
-            )
-
-            with salience_config:
-                self.salience_detector = build_salience_detector()
-
-            self.salience_detector.set_pretraining_params(
-                salience_config,
-                name_params='min_digits max_digits image_width n_units '
-                            'downsample_factor output_width',
-                directory=cfg.model_dir + '/mnist_salience_pretrained'
-            )
-        else:
-            self.salience_detector = None
+        self.maybe_build_salience_detector()
 
     def _init_rb(self):
         values = (
             [-1., 0., 0., -1.] +
-            [np.zeros(self.salience_output_width**2, dtype='f')] +
-            [np.zeros(self.image_width**2, dtype='f')] +
-            [np.zeros(self.salience_input_width**2, dtype='f')]
+            [np.zeros(self.salience_output_size, dtype='f')] +
+            [np.zeros(self.image_size, dtype='f')] +
+            [np.zeros(self.salience_input_size, dtype='f')]
         )
 
         self.rb = RegisterBank(

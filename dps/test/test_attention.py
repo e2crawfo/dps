@@ -2,18 +2,19 @@ import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
 from itertools import product
-import pickle
-import gzip
 
-from dps.vision import MnistArithmeticDataset
+from dps.vision import EmnistDataset
 from dps.vision.attention import DRAW_attention_2D, discrete_attention
-from dps.config import SystemConfig
+
+
+def get_images(n_images, classes):
+    shape = (28, 28)
+    mnist = EmnistDataset(n_examples=n_images, shape=shape, include_blank=False, classes=list(range(10)))
+    images, _ = mnist.next_batch(n_images)
+    return images
 
 
 def test_draw_mnist(show_plots):
-    import pickle
-    import gzip
-
     params = tf.constant([
         [0.0, 0.0, 1.0, 1, 1],
         [-1.0, 0.0, 1.0, 1, 1],
@@ -35,18 +36,14 @@ def test_draw_mnist(show_plots):
         [0, 0, 0.1, 0.3, 1],
         [0, 0, 0.1, 0.4, 1],
     ], dtype=tf.float32)
-    batch_size = int(params.shape[0])
 
-    config = SystemConfig()
-    z = gzip.open(config.data_dir + '/mnist.pkl.gz', 'rb')
-    (train, _), (dev, _), (test, _) = pickle.load(z, encoding='bytes')
-    train = train[:batch_size, :]
-    image_width = int(np.sqrt(train[0].shape[0]))
-    train = tf.constant(train.reshape(-1, image_width, image_width))
+    batch_size = int(params.shape[0])
+    images = get_images(1, list(range(10)))
+    images = tf.tile(images, (batch_size, 1, 1))
 
     N = 20
     tf_attended_images = DRAW_attention_2D(
-        train, params[:, 0:1], params[:, 1:2], params[:, 2:3], params[:, 3:4], N, normalize=0)
+        images, params[:, 0:1], params[:, 1:2], params[:, 2:3], params[:, 3:4], N, normalize=0)
 
     sess = tf.Session()
     sess.run(tf.global_variables_initializer())
@@ -59,12 +56,8 @@ def test_draw_mnist(show_plots):
 
 
 def test_draw_parameter_effect(show_plots):
-    image_width = 28
     n_images = 2
-    mnist = MnistArithmeticDataset(reductions=sum, image_width=image_width, n_examples=n_images, max_overlap=200)
-
-    images, _ = mnist.next_batch(2)
-    images = np.reshape(images, (-1, image_width, image_width))
+    images = get_images(n_images, list(range(10)))
 
     N = 14
 
@@ -129,17 +122,13 @@ def test_discrete_mnist(show_plots):
         [0, 0, 0.1, 0.3, 1],
         [0, 0, 0.1, 0.4, 1],
     ], dtype=tf.float32)
+
     batch_size = int(params.shape[0])
+    images = get_images(1, list(range(10)))
+    images = tf.tile(images, (batch_size, 1, 1))
 
-    config = SystemConfig()
-    z = gzip.open(config.data_dir + '/mnist.pkl.gz', 'rb')
-    (train, _), (dev, _), (test, _) = pickle.load(z, encoding='bytes')
-    train = train[:batch_size, :]
-    image_width = int(np.sqrt(train[0].shape[0]))
-    train = tf.constant(train.reshape(-1, image_width, image_width))
-
-    N = 10
-    tf_attended_images = discrete_attention(train, params[:, 0:1], params[:, 1:2], params[:, 2:3], N)
+    N = 14
+    tf_attended_images = discrete_attention(images, params[:, 0:1], params[:, 1:2], params[:, 2:3], N)
 
     sess = tf.Session()
     sess.run(tf.global_variables_initializer())

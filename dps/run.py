@@ -58,6 +58,4 @@ def _run(env_config, alg_config, _config=None, **kwargs):
         cfg.update_from_command_line()
 
         # Force generator evaluation.
-        for o in training_loop():
-            print("^" * 40)
-            print(o)
+        list(training_loop())

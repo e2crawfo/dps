@@ -31,9 +31,9 @@ env_config = grid_arithmetic.config.copy(
     salience_action=True,
     visible_glimpse=False,
     initial_salience=False,
-    salience_input_width=3*14,
-    salience_output_width=14,
-    downsample_factor=2,
+    salience_input_shape=(3*14, 3*14),
+    salience_output_shape=(14, 14),
+    image_shape=(14, 14),
 
     final_reward=True,
 
@@ -60,7 +60,7 @@ alg_config = Config(
     n_controller_units=128,
     batch_size=16,
     gamma=0.98,
-    opt_steps_per_update=10,
+    opt_steps_per_update=1,
     epsilon=0.2,
     split=False,
 

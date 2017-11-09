@@ -7,9 +7,8 @@ from pathlib import Path
 
 from dps import cfg
 from dps.register import RegisterBank
-from dps.environment import (
-    RegressionEnv, CompositeEnv, InternalEnv)
-from dps.vision import MnistArithmeticDataset, DRAW, MNIST_CONFIG
+from dps.environment import RegressionEnv, CompositeEnv, InternalEnv
+from dps.vision import MnistArithmeticDataset, DRAW
 from dps.utils import Param, Config
 from dps.utils.tf import MLP
 

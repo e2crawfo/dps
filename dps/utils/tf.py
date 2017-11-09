@@ -326,11 +326,11 @@ class FullyConvolutional(ScopedFunction):
 
 class SalienceMap(ScopedFunction):
     def __init__(
-            self, n_locs, func, output_dims, std=None,
+            self, n_locs, func, output_shape, std=None,
             flatten_output=False, scope=None):
         self.n_locs = n_locs
         self.func = func
-        self.output_dims = output_dims
+        self.output_shape = output_shape
         self.std = std
         self.flatten_output = flatten_output
         super(SalienceMap, self).__init__(scope)
@@ -341,8 +341,8 @@ class SalienceMap(ScopedFunction):
         else:
             func_output = self.func(inp, self.n_locs*3, is_training)
 
-        y = (np.arange(self.output_dims[0]).astype('f') + 0.5) / self.output_dims[0]
-        x = (np.arange(self.output_dims[1]).astype('f') + 0.5) / self.output_dims[1]
+        y = (np.arange(self.output_shape[0]).astype('f') + 0.5) / self.output_shape[0]
+        x = (np.arange(self.output_shape[1]).astype('f') + 0.5) / self.output_shape[1]
         yy, xx = tf.meshgrid(y, x, indexing='ij')
         yy = yy[None, ...]
         xx = xx[None, ...]

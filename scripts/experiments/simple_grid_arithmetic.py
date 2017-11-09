@@ -29,11 +29,9 @@ env_config = simple_grid_arithmetic.config.copy(
     largest_digit=100,
 
     salience_action=True,
+    salience_shape=(2, 2),
     visible_glimpse=False,
     initial_salience=False,
-    salience_input_width=3*14,
-    salience_output_width=14,
-    downsample_factor=2,
 
     final_reward=True,
 

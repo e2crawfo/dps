@@ -138,7 +138,8 @@ def sample_configs(distributions, base_config, n_repeats, n_samples=None):
         for r in range(n_repeats):
             _new = copy.deepcopy(s)
             _new['repeat'] = r
-            _new['seed'] = gen_seed()
+            # _new['seed'] = gen_seed()
+            _new['seed'] = 1000
             configs.append(_new)
 
     return configs
@@ -388,6 +389,7 @@ def _rl_plot(args):
 
     with plt.style.context(style):
         fig, axes = plt.subplots(h, w, sharex=True, sharey=True, figsize=(15, 10))
+        axes = np.atleast_2d(axes)
         final_ax = axes[-1, -1]
 
         for n, key in enumerate(sorted(val_data)):
