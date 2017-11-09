@@ -154,7 +154,7 @@ class ScopedFunction(object):
     def _maybe_initialize(self):
         if not self.initialized and (self.n_builds > 0 and self.do_pretraining):
             from dps.train import load_or_train
-            self.was_loaded = load_or_train(self.train_config, self.scope, self.path)
+            self.was_loaded = load_or_train(self.train_config, self.scope, self.path, redirect=True)
             self.initialized = True
 
             param_path = os.path.join(

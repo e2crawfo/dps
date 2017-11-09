@@ -181,12 +181,34 @@ class ExperimentDirectory(object):
         return full_path
 
 
+class Tee(object):
+    """ A stream that outputs to multiple streams.
+
+    Does not close its streams; leaves responsibility for that with the caller.
+
+    """
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data):
+        for s in self.streams:
+            s.write(data)
+
+    def flush(self):
+        for s in self.streams:
+            s.flush()
+
+
 @contextmanager
-def redirect_stream(stream, filename, mode='w', **kwargs):
+def redirect_stream(stream, filename, mode='w', tee=False, **kwargs):
     assert stream in ['stdout', 'stderr']
     with open(str(filename), mode=mode, **kwargs) as f:
         old = getattr(sys, stream)
-        setattr(sys, stream, f)
+
+        new = f
+        if tee:
+            new = Tee(f, old)
+        setattr(sys, stream, new)
 
         try:
             yield

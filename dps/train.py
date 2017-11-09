@@ -18,7 +18,7 @@ import copy
 from dps import cfg
 from dps.utils import (
     gen_seed, time_limit, memory_usage, ExperimentStore,
-    memory_limit, du, Config, ClearConfig, parse_date
+    memory_limit, du, Config, ClearConfig, parse_date, redirect_stream
 )
 from dps.utils.tf import (
     restart_tensorboard, uninitialized_variables_initializer,
@@ -473,7 +473,7 @@ class EarlyStopHook(object):
         self._early_stopped = 0
 
 
-def load_or_train(train_config, var_scope, path, sess=None):
+def load_or_train(train_config, var_scope, path, sess=None, redirect=False):
     """ Attempts to load variables into ``var_scope`` from checkpoint stored at ``path``.
 
     If said checkpoint is not found, trains a model using the function
@@ -499,9 +499,18 @@ def load_or_train(train_config, var_scope, path, sess=None):
         print("Load successful.")
     except tf.errors.NotFoundError:
         print("Loading failed, training a model...")
-        with ClearConfig():
-            with train_config.copy(save_path=path):
-                list(training_loop(var_scope.name))
+
+        with ExitStack() as stack:
+            if redirect:
+                stem = os.path.splitext(str(path))[0]
+                stack.enter_context(redirect_stream('stdout', stem + '.stdout', tee=True))
+                stack.enter_context(redirect_stream('stderr', stem + '.stderr', tee=True))
+
+            stack.enter_context(ClearConfig())
+            stack.enter_context(train_config.copy(save_path=path))
+
+            list(training_loop(var_scope.name))
+
         saver.restore(sess, path)
         print("Training successful.")
     return success
