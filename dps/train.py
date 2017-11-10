@@ -451,13 +451,16 @@ class EarlyStopHook(object):
         self.reset()
 
     def _check_trigger(self, sc):
+        if self._best_stopping_criteria is None:
+            return True
+
         if self.maximize:
             return sc > self._best_stopping_criteria
         else:
             return sc < self._best_stopping_criteria
 
     def check(self, stopping_criteria, step, record):
-        new_best = self._best_stopping_criteria is None or self._check_trigger(stopping_criteria)
+        new_best = self._check_trigger(stopping_criteria)
         if new_best:
             self._best_stopping_criteria = stopping_criteria
             self._best_step = step

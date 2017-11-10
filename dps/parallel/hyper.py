@@ -286,24 +286,24 @@ def _summarize_search(args):
 
     data = []
     for k, _df in groups:
-        _df = _df.sort_values(['latest_stage', 'best_loss'])
+        _df = _df.sort_values(['latest_stage', 'best_stopping_criteria'])
         data.append(dict(
             data=_df,
             keys=[k] if len(distributions) == 1 else k,
             latest_stage=_df.latest_stage.max(),
             stage_sum=_df.latest_stage.sum(),
-            best_loss=_df.best_loss.mean()))
+            best_stopping_criteria=_df.best_stopping_criteria.mean()))
 
-    data = sorted(data, reverse=False, key=lambda x: (x['latest_stage'], -x['best_loss'], x['stage_sum']))
+    data = sorted(data, reverse=False, key=lambda x: (x['latest_stage'], x['best_stopping_criteria'], x['stage_sum']))
 
     column_order = [c for c in [
-        'latest_stage', 'best_loss', 'seed', 'reason', 'total_steps', 'n_steps', 'host'] if c in data]
+        'latest_stage', 'best_stopping_criteria', 'seed', 'reason', 'total_steps', 'n_steps', 'host'] if c in data]
     remaining = [k for k in data[0]['data'].keys() if k not in column_order and k not in keys]
     column_order = column_order + sorted(remaining)
 
     with pd.option_context('display.max_rows', None, 'display.max_columns', None):
         print('\n' + '*' * 100)
-        print("RESULTS GROUPED BY PARAM VALUES, WORST COMES FIRST: ")
+        print("RESULTS GROUPED BY PARAM VALUES, ORDER OF INCREASING VALUE OF <best_stopping_criteria>: ")
         for i, d in enumerate(data):
             print('\n {} '.format(len(data)-i) + '*' * 40)
             pprint({n: v for n, v in zip(keys, d['keys'])})
