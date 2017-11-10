@@ -1,7 +1,7 @@
 import tensorflow as tf
 from tensorflow.python.ops.rnn import dynamic_rnn
-
 from copy import deepcopy
+from collections import OrderedDict
 
 from dps import cfg
 from dps.rl import RLObject
@@ -55,7 +55,7 @@ class Agent(RLObject):
     def __init__(self, name, controller_func, heads):
         self.name = name
 
-        self.heads = {head.name: head for head in heads}
+        self.heads = OrderedDict([(head.name, head) for head in heads])
         assert len(set(self.heads)) == len(heads), "Multiple heads with the same name."
 
         self._head_offsets = dict()
