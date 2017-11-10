@@ -10,7 +10,7 @@ from dps.config import DEFAULT_CONFIG
 
 
 config = DEFAULT_CONFIG.copy(
-    name="SimpleGridArithmeticExperiment",
+    name="SimpleAddition",
 
     n_train=10000,
     n_val=100,

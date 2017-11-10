@@ -73,7 +73,7 @@ def get_experiment_name():
 
 DEFAULT_CONFIG = SystemConfig(
     name="Default",
-    seed=None,
+    seed=-1,
 
     load_path="",  # Path to load variables from.
     do_train=True,
@@ -113,6 +113,7 @@ DEFAULT_CONFIG = SystemConfig(
     max_experiences=np.inf,
 
     deadline='',
+    render_n_rollouts=10,
     render_hook=rl_render_hook,
 
     get_experiment_name=get_experiment_name,

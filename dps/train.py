@@ -27,7 +27,10 @@ from dps.utils.tf import (
 
 
 def training_loop(exp_name='', start_time=None):
-    np.random.seed(cfg.seed)
+    seed = cfg.seed
+    if seed is not None and seed < 0:
+        seed = None
+    np.random.seed(seed)
 
     exp_name = exp_name or cfg.get_experiment_name()
     try:
@@ -204,6 +207,9 @@ class TrainingLoop(object):
                 stack.enter_context(sess)
                 stack.enter_context(sess.as_default())
 
+                tf_seed = gen_seed()
+                tf.set_random_seed(tf_seed)
+
                 memory_limit_mb = cfg.get("memory_limit_mb", None)
                 if memory_limit_mb is not None:
                     stack.enter_context(memory_limit(cfg.memory_limit_mb))
@@ -232,9 +238,6 @@ class TrainingLoop(object):
                     updater.restore(sess, path)
                 elif stage > 0 and cfg.preserve_policy:
                     updater.restore(sess, self.history[-2]['best_path'])
-
-                tf_seed = gen_seed()
-                tf.set_random_seed(tf_seed)
 
                 self.summary_op = tf.summary.merge_all()
                 tf.train.get_or_create_global_step()

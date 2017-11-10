@@ -404,11 +404,11 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
                 T_ph = tf.placeholder(tf.int32, (), name="T_ph")
 
                 initial_policy_state = policy.zero_state(n_rollouts_ph, tf.float32)
-                initial_registers = self.rb.new_array(n_rollouts_ph, lib='tf')
+                _initial_registers = self.rb.new_array(n_rollouts_ph, lib='tf')
+                initial_registers = self.build_init(_initial_registers)
 
                 sampler_cell = SamplerCell(self, policy)
 
-                initial_registers = self.build_init(initial_registers)
                 t = timestep_tensor(n_rollouts_ph, T_ph)
 
                 # Force build-step to be called in a safe environment for the first time.
