@@ -26,8 +26,10 @@ class StochasticGradientDescent(Optimizer):
 
     def build_update(self, context):
         tvars = self.trainable_variables()
+
+        # `context.objective` is the quantity we want to maximize, but TF minimizes.
         self.train_op, train_summaries = build_gradient_train_op(
-            context.loss, tvars, self.alg, self.lr_schedule, self.max_grad_norm,
+            -context.objective, tvars, self.alg, self.lr_schedule, self.max_grad_norm,
             self.noise_schedule)
 
         for s in train_summaries:

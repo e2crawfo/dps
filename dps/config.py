@@ -106,8 +106,6 @@ DEFAULT_CONFIG = SystemConfig(
 
     n_controller_units=64,
 
-    stopping_function=None,
-
     max_time=0,
     max_steps=1000000,
     max_experiences=np.inf,

@@ -50,13 +50,13 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
         raise Exception("NotImplemented")
 
     def evaluate(self, batch_size, mode):
-        loss, summaries, record = self._evaluate(batch_size, mode)
+        summaries, record = self._evaluate(batch_size, mode)
 
         scheduled_value_summaries = \
             tf.get_default_session().run(self.scheduled_value_summaries_op)
         summaries += scheduled_value_summaries
 
-        return loss, summaries, record
+        return summaries, record
 
     @abc.abstractmethod
     def _evaluate(self, batch_size, mode):
@@ -97,6 +97,9 @@ class DifferentiableUpdater(Updater):
     max_grad_norm = Param()
     l2_weight = Param(None)
 
+    stopping_criteria = "loss"
+    maximize = False
+
     def __init__(self, env, f, **kwargs):
         assert hasattr(env, 'build_loss'), (
             "Environments used with DifferentiableUpdater must possess "
@@ -125,7 +128,7 @@ class DifferentiableUpdater(Updater):
         self.output = self.f(self.x_ph, self.actions_dim, self.is_training)
         self.loss = tf.reduce_mean(self.env.build_loss(self.output, self.target_ph))
         self.reward = tf.reduce_mean(self.env.build_reward(self.output, self.target_ph))
-        self.mean_value = tf.reduce_mean(self.output)
+        self.output = tf.reduce_mean(self.output)
 
         tvars = trainable_variables()
         if self.l2_weight is not None:
@@ -138,7 +141,7 @@ class DifferentiableUpdater(Updater):
         self.summary_op = tf.summary.merge([
             tf.summary.scalar("loss_per_ep", self.loss),
             tf.summary.scalar("reward_per_ep", self.reward),
-            tf.summary.scalar("mean_value", self.mean_value)
+            tf.summary.scalar("output", self.output)
         ] + train_summaries)
 
     def _update(self, batch_size, collect_summaries):
@@ -170,6 +173,6 @@ class DifferentiableUpdater(Updater):
         }
 
         sess = tf.get_default_session()
-        summaries, loss, reward, mean_value = sess.run(
-            [self.summary_op, self.loss, self.reward, self.mean_value], feed_dict=feed_dict)
-        return loss, summaries, {"loss": loss, "reward": reward, "mean_value": mean_value}
+        summaries, loss, reward = sess.run(
+            [self.summary_op, self.loss, self.reward], feed_dict=feed_dict)
+        return summaries, {"loss": loss, "reward": reward}

@@ -518,8 +518,7 @@ class GridArithmetic(InternalEnv):
     def _init_networks(self):
         digit_config = cfg.emnist_config.copy(
             classes=list(range(self.base)),
-            build_function=cfg.build_digit_classifier,
-            stopping_function=lambda val_record: -val_record['reward']
+            build_function=cfg.build_digit_classifier
         )
 
         self.digit_classifier = cfg.build_digit_classifier()
@@ -530,8 +529,7 @@ class GridArithmetic(InternalEnv):
 
         op_config = cfg.emnist_config.copy(
             classes=list(self.op_classes),
-            build_function=cfg.build_op_classifier,
-            stopping_function=lambda val_record: -val_record['reward']
+            build_function=cfg.build_op_classifier
         )
 
         self.op_classifier = cfg.build_op_classifier()
@@ -839,7 +837,6 @@ class OmniglotCounting(GridArithmeticEasy):
         omniglot_config = cfg.omniglot_config.copy(
             classes=self.omniglot_classes,
             build_function=cfg.build_omniglot_classifier,
-            stopping_function=lambda val_record: -val_record['reward'],
         )
 
         self.omniglot_classifier = cfg.build_omniglot_classifier()

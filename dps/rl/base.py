@@ -186,9 +186,7 @@ class RLContext(Parameterized):
                 else:
                     objective += term.weight * term.build_graph(self)
             self.objective = objective
-            self.loss = -objective
-
-            self.add_recorded_value("objective", self.objective)
+            self.add_recorded_value("rl_objective", self.objective)
 
             self.optimizer.build_update(self)
 
@@ -214,37 +212,37 @@ class RLContext(Parameterized):
             tf.reduce_sum(self._signals['rewards'], axis=0), name="_reward_per_ep")
 
         self.add_summary(tf.summary.scalar("reward_per_ep", self._signals['reward_per_ep']))
-        self.add_recorded_value("loss", -self._signals['reward_per_ep'])
+        self.add_recorded_value("reward_per_ep", self._signals['reward_per_ep'])
 
-        self._signals['train_n_experiences'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
+        self._signals['train_n_episodes'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
         self._signals['train_cumulative_reward'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
-        self._signals['train_avg_cumulative_reward'] = (
-            self._signals['train_cumulative_reward'] / self._signals['train_n_experiences'])
+        self._signals['train_reward_per_ep_avg'] = (
+            self._signals['train_cumulative_reward'] / self._signals['train_n_episodes'])
 
-        self._signals['update_n_experiences'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
+        self._signals['update_n_episodes'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
         self._signals['update_cumulative_reward'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
-        self._signals['update_avg_cumulative_reward'] = (
-            self._signals['update_cumulative_reward'] / self._signals['update_n_experiences'])
+        self._signals['update_reward_per_ep_avg'] = (
+            self._signals['update_cumulative_reward'] / self._signals['update_n_episodes'])
 
-        self._signals['val_n_experiences'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
+        self._signals['val_n_episodes'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
         self._signals['val_cumulative_reward'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
-        self._signals['val_avg_cumulative_reward'] = (
-            self._signals['val_cumulative_reward'] / self._signals['val_n_experiences'])
+        self._signals['val_reward_per_ep_avg'] = (
+            self._signals['val_cumulative_reward'] / self._signals['val_n_episodes'])
 
         mode = self._signals['mode'] = tf.placeholder(tf.string, ())
 
         self.update_stats_op = tf.case(
             [
                 (tf.equal(mode, 'train'), lambda: tf.group(
-                    tf.assign_add(self._signals['train_n_experiences'], self._signals['batch_size_float']),
+                    tf.assign_add(self._signals['train_n_episodes'], self._signals['batch_size_float']),
                     tf.assign_add(self._signals['train_cumulative_reward'], tf.reduce_sum(self._signals['rewards']))
                 )),
                 (tf.equal(mode, 'update'), lambda: tf.group(
-                    tf.assign_add(self._signals['update_n_experiences'], self._signals['batch_size_float']),
+                    tf.assign_add(self._signals['update_n_episodes'], self._signals['batch_size_float']),
                     tf.assign_add(self._signals['update_cumulative_reward'], tf.reduce_sum(self._signals['rewards']))
                 )),
                 (tf.equal(mode, 'val'), lambda: tf.group(
-                    tf.assign_add(self._signals['val_n_experiences'], self._signals['batch_size_float']),
+                    tf.assign_add(self._signals['val_n_episodes'], self._signals['batch_size_float']),
                     tf.assign_add(self._signals['val_cumulative_reward'], tf.reduce_sum(self._signals['rewards']))
                 )),
             ],
@@ -252,21 +250,18 @@ class RLContext(Parameterized):
             exclusive=True
         )
 
-        self._signals['avg_cumulative_reward'] = tf.case(
+        self._signals['reward_per_ep_avg'] = tf.case(
             [
-                (tf.equal(mode, 'train'), lambda: self._signals['train_avg_cumulative_reward']),
-                (tf.equal(mode, 'update'), lambda: self._signals['update_avg_cumulative_reward']),
-                (tf.equal(mode, 'val'), lambda: self._signals['val_avg_cumulative_reward']),
+                (tf.equal(mode, 'train'), lambda: self._signals['train_reward_per_ep_avg']),
+                (tf.equal(mode, 'update'), lambda: self._signals['update_reward_per_ep_avg']),
+                (tf.equal(mode, 'val'), lambda: self._signals['val_reward_per_ep_avg']),
             ],
-            default=lambda: tf.zeros_like(self._signals['train_avg_cumulative_reward']),
+            default=lambda: tf.zeros_like(self._signals['train_reward_per_ep_avg']),
             exclusive=True
         )
 
-        self.add_summary(tf.summary.scalar("avg_cumulative_reward", self._signals['avg_cumulative_reward']))
-
-        self.add_recorded_value(
-            "avg_cumulative_reward",
-            self._signals['avg_cumulative_reward'])
+        self.add_summary(tf.summary.scalar("reward_per_ep_avg", self._signals['reward_per_ep_avg']))
+        self.add_recorded_value("reward_per_ep_avg", self._signals['reward_per_ep_avg'])
 
         self._signals['weights'] = tf.placeholder(
             tf.float32, shape=(cfg.T, None, 1), name="_weights")
@@ -414,9 +409,10 @@ class RLContext(Parameterized):
                 train_summaries, train_record = self._run_and_record(
                     rollouts, mode='train', weights=None, do_update=False,
                     summary_op=self.summary_op, collect_summaries=True)
-            train_duration = time.time() - start
+            train_step_duration = time.time() - start
             train_record.update(
-                duration=train_duration, rollout_duration=train_rollout_duration)
+                step_duration=train_step_duration,
+                rollout_duration=train_rollout_duration)
 
             update_summaries = b""
             update_record = {}
@@ -443,7 +439,7 @@ class RLContext(Parameterized):
                         collect_summaries=_collect_summaries)
 
                 update_duration = time.time() - start
-                update_record['duration'] = update_duration
+                update_record['step_duration'] = update_duration
 
             return train_summaries, update_summaries, train_record, update_record
 
@@ -463,7 +459,7 @@ class RLContext(Parameterized):
             eval_duration = time.time() - start
 
             eval_record.update(
-                duration=eval_duration, rollout_duration=eval_rollout_duration)
+                eval_duration=eval_duration, rollout_duration=eval_rollout_duration)
 
         return eval_summaries, eval_record
 
@@ -483,7 +479,10 @@ class RLUpdater(Updater):
         Objects that learn from the trajectories.
 
     """
-    def __init__(self, env, learners=None, loss_func=None, **kwargs):
+    stopping_criteria = "reward_per_ep"
+    maximize = True
+
+    def __init__(self, env, learners=None, **kwargs):
         self.env = env
 
         learners = learners or []
@@ -495,10 +494,6 @@ class RLUpdater(Updater):
         learner_names = [l.name for l in self.learners]
         assert len(learner_names) == len(set(learner_names)), (
             "Learners must have unique names. Names are: {}".format(learner_names))
-
-        if loss_func is None:
-            loss_func = lambda records: records[0]['loss']
-        self.loss_func = loss_func
 
         super(RLUpdater, self).__init__(env, **kwargs)
 
@@ -555,7 +550,5 @@ class RLUpdater(Updater):
                 record[s] = v
             records.append(r)
 
-        loss = self.loss_func(records)
-
         summaries = (b'').join(summaries)
-        return loss, summaries, record
+        return summaries, record

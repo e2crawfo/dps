@@ -126,8 +126,7 @@ cnn_config = SL_EXPERIMENT_CONFIG.copy(
     reward_window=0.499,
     one_hot_output=True,
     loss_type="xent",
-    stopping_function=lambda val_record: -val_record['reward'],
     preserve_policy=True,
 )
 
-cnn_config.update(env_config)
+cnn_config.update(env_config, build_env=sl_build_env)
