@@ -93,6 +93,7 @@ EMNIST_CONFIG = DEFAULT_CONFIG.copy(
     n_controller_units=100,
     use_gpu=True,
     gpu_allow_growth=True,
+    seed=347405995
 )
 
 
@@ -151,8 +152,7 @@ OMNIGLOT_CONFIG = DEFAULT_CONFIG.copy(
     n_controller_units=100,
     use_gpu=True,
     gpu_allow_growth=True,
-
-
+    seed=936416219
 )
 
 
@@ -230,7 +230,7 @@ SALIENCE_CONFIG = DEFAULT_CONFIG.copy(
     flatten_output=True,
     batch_size=32,
     eval_step=1000,
-    display_step=10,
+    display_step=1000,
     max_steps=100000,
     patience=10000,
     lr_schedule="Exp(0.0001, 0, 10000, 0.9)",
@@ -246,4 +246,5 @@ SALIENCE_CONFIG = DEFAULT_CONFIG.copy(
     image_shape=(3*14, 3*14),
     output_shape=(14, 14),
     gpu_allow_growth=True,
+    seed=1723686433
 )
