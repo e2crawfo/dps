@@ -220,9 +220,6 @@ def build_search(
 
     print("{} configs were sampled for parameter search.".format(len(new_configs)))
 
-    # Can't remember why I thought I needed this...
-    # new_configs = [Config(c).flatten() for c in new_configs]
-
     if do_local_test:
         print("\nStarting local test " + ("=" * 80))
         test_config = new_configs[0].copy()
@@ -248,13 +245,8 @@ def build_search(
 
 def process_detailed_data(record, kind):
     try:
-        data = pd.read_csv(StringIO(record[kind + '_data']), index_col=False)
-        if len(data) > 0:
-            for k, v in data.iloc[-1].items():
-                record[k + '_' + kind] = v
         del record[kind + '_data']
-        del data
-    except:
+    except Exception:
         pass
 
 
@@ -320,15 +312,21 @@ def _summarize_search(args):
             with_stats = pd.merge(
                 _data.transpose(), _data.describe().transpose(),
                 left_index=True, right_index=True, how='outer')
-            print(tabulate(with_stats, headers='keys', tablefmt='fancy_grid'))
 
-    print('\n' + '*' * 100)
-    print("BASE CONFIG")
-    print(job.objects.load_object('metadata', 'config'))
+            profile_rows = [k for k in with_stats.index if 'time' in k or 'duration' in k or 'memory' in k]
+            other_rows = [k for k in with_stats.index if k not in profile_rows]
 
-    print('\n' + '*' * 100)
-    print("DISTRIBUTIONS")
-    pprint(distributions)
+            print(tabulate(with_stats.loc[profile_rows], headers='keys', tablefmt='fancy_grid'))
+            print(tabulate(with_stats.loc[other_rows], headers='keys', tablefmt='fancy_grid'))
+
+    if not args.no_config:
+        print('\n' + '*' * 100)
+        print("BASE CONFIG")
+        print(job.objects.load_object('metadata', 'config'))
+
+        print('\n' + '*' * 100)
+        print("DISTRIBUTIONS")
+        pprint(distributions)
 
 
 def _rl_plot(args):
@@ -589,6 +587,7 @@ def dps_hyper_cl():
     summary_cmd = (
         'summary', 'Summarize results of a hyper-parameter search.', _summarize_search,
         ('path', dict(help="Location of data store for job.", type=str)),
+        ('--no-config', dict(help="If supplied, don't print out config.", action='store_true')),
     )
 
     style_list = ['default', 'classic'] + sorted(style for style in plt.style.available if style != 'classic')

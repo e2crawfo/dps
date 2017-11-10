@@ -455,7 +455,7 @@ class ParallelSession(object):
                 self.execute_command(command, frmt=False, robust=True)
 
         self.execute_command("zip -rq results {archive_root}", robust=True)
-        self.execute_command("dps-hyper summary results.zip", robust=True, quiet=False)
+        self.execute_command("dps-hyper summary --no-config results.zip", robust=True, quiet=False)
         self.execute_command("dps-hyper view results.zip", robust=True, quiet=False)
 
     def run(self):
