@@ -714,7 +714,7 @@ def submit_job(
         env_vars=dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1'),
         redirect=True, **run_params)
 
-    if kind in "parallel slurm-local":
+    if kind in "parallel slurm-local".split():
         session.run()
         return
 
