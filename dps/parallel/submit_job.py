@@ -404,7 +404,8 @@ class ParallelSession(object):
                 "--log-root {local_scratch} --log-name experiments --gpu-set={gpu_set} --ppn={ppn} {_ignore_gpu} {redirect}"
             )
 
-            command = 'srun -vv --accel-bind=g --no-kill sh -c "' + parallel_command + '"'
+            bind = "--accel-bind=g" if self.gpu_set else ""
+            command = 'srun ' + bind + ' --no-kill sh -c "' + parallel_command + '"'
         else:
             parallel_command = (
                 "cd {local_scratch} && "
@@ -501,7 +502,6 @@ class ParallelSession(object):
                         p = subprocess.run(
                             'scontrol show hostnames $SLURM_JOB_NODELIST', stdout=subprocess.PIPE, shell=True)
                         self.host_pool = list(set([host.strip() for host in p.stdout.decode().split('\n') if host]))
-                        print(self.host_pool)
                     else:
                         raise Exception("NotImplemented")
 

@@ -644,7 +644,7 @@ def build_and_submit(
         A string outlining the purpose/context for the created search.
 
     """
-    assert kind in "pbs slurm parallel local".split()
+    assert kind in "pbs slurm slurm-local parallel local".split()
     assert 'build_command' not in config
     config['build_command'] = ' '.join(sys.argv)
     print(config['build_command'])

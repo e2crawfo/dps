@@ -8,6 +8,7 @@ import signal
 import numpy as np
 import os
 import types
+import sys
 
 from dps.utils import SigTerm, KeywordMapping, pdb_postmortem, redirect_stream, modify_env
 
@@ -373,27 +374,31 @@ class Job(ReadOnlyJob):
         if not operators:
             return False
 
+        # When using SLURM, not sure how to pass different arguments to different tasks. So instead, we
+        # pass ALL arguments to all tasks, and then let each task select the argument we intend for it
+        # by using SLURM_PROCID, which is basically gives the ID of the task within the job.
+        # `idx_in_job` is not used when not using slurm, as we can pass the indices to run directly to each job.
+        idx_in_job = int(os.environ.get("SLURM_PROCID", -1))
+        if idx_in_job != -1:
+            try:
+                indices = [indices[idx_in_job]]
+            except IndexError:
+                print("Process with index {} was not provided with an argument, exiting.".format(idx_in_job))
+                sys.exit(0)
+            print("My idx in the job is {}, the idx of the task I'm running is {}.".format(idx_in_job, indices[0]))
+            print("My value of CUDA_VISIBLE_DEVICES is {}.".format(os.environ.get('CUDA_VISIBLE_DEVICES', None)))
+            print("My value of GPU_DEVICE_ORDINAL is {}.".format(os.environ.get('GPU_DEVICE_ORDINAL', None)))
+
         if int(idx_in_node) == -1:
             idx_in_node = int(os.environ.get("SLURM_LOCALID", -1))
         else:
             # When getting idx_in_node from gnu-parallel, it starts from 1 instead of 0.
             idx_in_node -= 1
 
-        # When using SLURM, not sure how to pass different arguments to different tasks. So instead, we
-        # pass ALL arguments to all tasks, and then let each task select the argument we intend for it
-        # by using SLURM_PROCID, which is basically gives the ID of the task within the job.
-        idx_in_job = int(os.environ.get("SLURM_PROCID", -1))
-        if idx_in_job != -1:
-            indices = [indices[idx_in_job]]
-            print("My idx in the job is {}, the idx of the task I'm running is {}".format(idx_in_job, indices[0]))
-            print("My value of CUDA_VISIBLE_DEVICES is {}".format(os.environ.get('CUDA_VISIBLE_DEVICES', None)))
-            print("My value of GPU_DEVICE_ORDINAL is {}".format(os.environ.get('GPU_DEVICE_ORDINAL', None)))
-
-        print("Ignoring GPU: {}".format(ignore_gpu))
-
         if ignore_gpu:
             env = dict(CUDA_VISIBLE_DEVICES="-1")
         elif idx_in_node != -1 and gpu_set:
+            # `ppn` and `idx_in_node` are only used when using gpus.
             # Manually choose GPU to use based on our index in the node, the number of GPUs available on the node,
             # and the number of processors running on the node.
             assert ppn > 0
