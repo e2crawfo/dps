@@ -21,7 +21,7 @@ from io import StringIO
 import clify
 
 from dps import cfg
-from dps.utils.base import gen_seed, Config, cd, ExperimentStore
+from dps.utils.base import gen_seed, Config, cd, ExperimentStore, edit_text
 from dps.parallel.submit_job import ParallelSession
 from dps.parallel.base import Job, ReadOnlyJob
 
@@ -169,7 +169,7 @@ class RunTrainingLoop(object):
 
 def build_search(
         path, name, distributions, config, n_repeats, n_param_settings=None,
-        _zip=True, add_date=0, do_local_test=True):
+        _zip=True, add_date=0, do_local_test=True, readme=""):
     """ Create a Job implementing a hyper-parameter search.
 
     Parameters
@@ -194,12 +194,15 @@ def build_search(
         If True, run a short test using one of the sampled
         aonfigs on the local machine to catch any dumb errors
         before starting the real experiment.
+    readme: str
+        String specifiying context/purpose of search.
 
     """
     with config:
         cfg.update_from_command_line()
 
     es = ExperimentStore(str(path), max_experiments=10, delete_old=1)
+
     count = 0
     base_name = name
     has_built = False
@@ -210,6 +213,12 @@ def build_search(
         except FileExistsError:
             name = "{}_{}".format(base_name, count)
             count += 1
+
+    if readme:
+        config.readme = readme
+        with open(exp_dir.path_for('README.md'), 'w') as f:
+            f.write(readme)
+
     print(str(config))
 
     print("Building parameter search at {}.".format(exp_dir.path))
@@ -622,14 +631,17 @@ def dps_hyper_cl():
 
 
 def build_and_submit(
-        name, config, distributions=None, wall_time="1year", cleanup_time="1min", max_hosts=1, ppn=1,
-        n_param_settings=0, n_repeats=1, n_retries=0, host_pool=None, pmem=0, queue="", do_local_test=False,
-        kind="local", gpu_set="", step_time_limit="", ignore_gpu=False, store_experiments=True, time_slack_pct=0.0):
+        name, config, distributions=None, wall_time="1year", cleanup_time="1hour", slack_time="1hour",
+        max_hosts=1, ppn=1, n_param_settings=0, n_repeats=1, n_retries=0, host_pool=None, pmem=0,
+        queue="", do_local_test=False, kind="local", gpu_set="", step_time_limit="", ignore_gpu=False,
+        store_experiments=True, readme=""):
     """ Meant to be called from within a script.
 
     Parameters
     ----------
     kind: str
+    readme: str
+        A string outlining the purpose/context for the created search.
 
     """
     assert kind in "pbs slurm parallel local".split()
@@ -659,11 +671,15 @@ def build_and_submit(
         del config['data_dir']
         del config['model_dir']
 
+        if readme == "_vim_":
+            readme = edit_text(prefix="dps_readme_", editor="vim", initial_text="README.md: \n")
+
         with config:
             job, archive_path = build_search(
                 cfg.experiments_dir, name, distributions, config,
                 add_date=1, _zip=True, do_local_test=do_local_test,
-                n_param_settings=n_param_settings, n_repeats=n_repeats)
+                n_param_settings=n_param_settings, n_repeats=n_repeats,
+                readme=readme)
 
         submit_job(**locals())
 
@@ -676,22 +692,21 @@ def dps_submit_cl():
 
 
 def submit_job(
-        archive_path, name, wall_time="1year", cleanup_time="1min", max_hosts=1, ppn=1,
-        n_retries=0, host_pool=None, pmem=0, queue="", kind="local", gpu_set="",
-        step_time_limit="", ignore_gpu=False, store_experiments=True, time_slack_pct=0.0, **kwargs):
+        archive_path, name, wall_time="1year", cleanup_time="1hour", slack_time="1hour",
+        max_hosts=1, ppn=1, n_retries=0, host_pool=None, pmem=0, queue="", kind="local", gpu_set="",
+        step_time_limit="", ignore_gpu=False, store_experiments=True, readme="", **kwargs):
 
     os.nice(10)
 
-    assert kind in "pbs slurm parallel".split()
+    assert kind in "pbs slurm slurm-local parallel".split()
 
-    if kind == "slurm" and not pmem:
+    if "slurm" in kind and not pmem:
         raise Exception("Must supply a value for pmem (per-process-memory in mb) when using SLURM")
 
     run_params = dict(
-        wall_time=wall_time, cleanup_time=cleanup_time, max_hosts=max_hosts, ppn=ppn,
-        n_retries=n_retries, host_pool=host_pool, kind=kind, gpu_set=gpu_set,
-        step_time_limit=step_time_limit, ignore_gpu=ignore_gpu,
-        store_experiments=store_experiments, time_slack_pct=time_slack_pct)
+        wall_time=wall_time, cleanup_time=cleanup_time, slack_time=slack_time,
+        max_hosts=max_hosts, ppn=ppn, n_retries=n_retries, host_pool=host_pool, kind=kind, gpu_set=gpu_set,
+        step_time_limit=step_time_limit, ignore_gpu=ignore_gpu, store_experiments=store_experiments, readme=readme)
 
     session = ParallelSession(
         name, archive_path, 'map', cfg.experiments_dir + '/execution/',
@@ -699,7 +714,7 @@ def submit_job(
         env_vars=dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1'),
         redirect=True, **run_params)
 
-    if kind == "parallel":
+    if kind in "parallel slurm-local":
         session.run()
         return
 

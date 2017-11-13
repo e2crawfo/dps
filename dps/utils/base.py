@@ -19,6 +19,7 @@ import sys
 import shutil
 import pandas as pd
 import errno
+from tempfile import NamedTemporaryFile
 
 import clify
 import dps
@@ -179,6 +180,33 @@ class ExperimentDirectory(object):
         except:
             pass
         return full_path
+
+
+def edit_text(dir=None, prefix=None, editor="vim", initial_text=None):
+    if editor != "vim":
+        raise Exception("NotImplemented")
+
+    with NamedTemporaryFile(mode='w',
+                            prefix='',
+                            suffix='.md',
+                            delete=False) as temp_file:
+        pass
+
+    try:
+        if initial_text:
+            with open(temp_file.name, 'w') as f:
+                f.write(initial_text)
+
+        subprocess.call(['vim', str(temp_file.name)])
+
+        with open(temp_file.name, 'r') as f:
+            text = f.read()
+    finally:
+        try:
+            os.remove(temp_file.name)
+        except FileNotFoundError:
+            pass
+    return text
 
 
 class Tee(object):

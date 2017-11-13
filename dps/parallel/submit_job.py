@@ -41,13 +41,12 @@ class ParallelSession(object):
     wall_time: str
         String specifying the maximum wall-time allotted to running the selected ops.
     cleanup_time: str
-        String specifying the amount of time required to clean-up. Job execution will be
-        halted when there is this much time left in the overall wall_time, at which point
-        results computed so far will be collected.
+        String specifying the amount of cleanup time to allow per step.
+    slack_time: float
+        String specifying the amount of slack time to allow per step. Corresponds to
+        time allotted to each process to respond to the signal that the step's time is up.
     add_date: bool
         Whether to add current date/time to the name of the directory where results are stored.
-    time_slack_pct: float
-        Percent of wall time to allow as slack, per step.
     dry_run: bool
         If True, control script will be generated but not executed/submitted.
     parallel_exe: str
@@ -80,10 +79,10 @@ class ParallelSession(object):
     """
     def __init__(
             self, name, input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', ppn=12,
-            wall_time="1hour", cleanup_time="1mins", time_slack_pct=0, add_date=True, dry_run=0,
+            wall_time="1hour", cleanup_time="1min", slack_time="1min", add_date=True, dry_run=0,
             parallel_exe="$HOME/.local/bin/parallel", kind="parallel", host_pool=None,
             min_hosts=1, max_hosts=1, env_vars=None, redirect=False, n_retries=0, gpu_set="",
-            step_time_limit="", ignore_gpu=False, store_experiments=True, ssh_options=None):
+            step_time_limit="", ignore_gpu=False, store_experiments=True, ssh_options=None, readme=""):
 
         if ssh_options is None:
             ssh_options = (
@@ -95,11 +94,11 @@ class ParallelSession(object):
 
         if kind == "pbs":
             local_scratch_prefix = "\\$RAMDISK"
-        elif kind == "slurm":
+        elif "slurm" in kind:
             local_scratch_prefix = "/tmp/dps/hyper"
 
-        assert kind in "parallel pbs slurm".split()
-        hpc = kind in "pbs slurm".split()
+        assert kind in "parallel pbs slurm slurm-local".split()
+        hpc = kind != "parallel"
         clean_pattern = pattern.replace(' ', '_')
 
         # Create directory to run the job from - should be on scratch.
@@ -110,6 +109,10 @@ class ParallelSession(object):
             add_date=add_date)
         os.makedirs(os.path.realpath(job_directory + "/experiments"))
 
+        if readme:
+            with open(os.path.join(job_directory, 'README.md'), 'w') as f:
+                f.write(readme)
+
         input_zip_stem = Path(input_zip).stem
         input_zip = shutil.copy(str(input_zip), os.path.join(job_directory, "orig.zip"))
         input_zip = Path(input_zip)
@@ -119,15 +122,6 @@ class ParallelSession(object):
 
         # storage local to each node, from the perspective of that node
         local_scratch = str(Path(local_scratch_prefix) / Path(job_directory).name)
-
-        wall_time = parse_timedelta(wall_time)
-        cleanup_time = parse_timedelta(cleanup_time)
-
-        wall_time_seconds = int(wall_time.total_seconds())
-        cleanup_time_seconds = int(cleanup_time.total_seconds())
-
-        assert wall_time_seconds > 0
-        assert cleanup_time_seconds > 0
 
         redirect = "--redirect" if redirect else ""
 
@@ -177,21 +171,36 @@ class ParallelSession(object):
 
         node_file = " --sshloginfile nodefile.txt "
 
-        execution_time = int((wall_time - cleanup_time).total_seconds())
+        wall_time = parse_timedelta(wall_time)
+        wall_time_seconds = int(wall_time.total_seconds())
+
+        cleanup_time_per_step = parse_timedelta(cleanup_time)
+        cleanup_seconds = int(cleanup_time_per_step.total_seconds())
+
+        slack_time_per_step = parse_timedelta(slack_time)
+        slack_seconds = int(slack_time_per_step.total_seconds())
+
+        assert wall_time_seconds > 0
+        assert cleanup_seconds > 0
+        assert slack_seconds > 0
 
         if step_time_limit:
-            abs_seconds_per_step = int(parse_timedelta(step_time_limit).total_seconds())
+            total_seconds_per_step = int(parse_timedelta(step_time_limit).total_seconds())
         else:
-            abs_seconds_per_step = int(np.floor(execution_time / n_steps))
-        seconds_per_step = int((1 - time_slack_pct) * abs_seconds_per_step)
+            total_seconds_per_step = int(np.floor(wall_time_seconds / n_steps))
+
+        # Subtract cleanup time and wall time.
+        parallel_seconds_per_step = int(total_seconds_per_step - cleanup_seconds)
+        python_seconds_per_step = int(
+            total_seconds_per_step - cleanup_seconds - slack_seconds)
 
         self.__dict__.update(locals())
 
         self.print_time_limits()
 
-        assert execution_time > 0
-        assert abs_seconds_per_step > 0
-        assert seconds_per_step > 0
+        assert total_seconds_per_step > 0
+        assert parallel_seconds_per_step > 0
+        assert python_seconds_per_step > 0
 
         # Create convenience `latest` symlinks
         make_symlink(job_directory, os.path.join(scratch, 'latest'))
@@ -199,10 +208,10 @@ class ParallelSession(object):
     def print_time_limits(self):
         print("We have {wall_time_seconds} seconds to complete {n_jobs_to_run} "
               "sub-jobs (grouped into {n_steps} steps) using {n_procs} processors.".format(**self.__dict__))
-        print("{execution_time} seconds have been reserved for job execution, "
-              "and {cleanup_time_seconds} seconds have been reserved for cleanup.".format(**self.__dict__))
-        print("Each step has been allotted {abs_seconds_per_step} seconds, "
-              "{seconds_per_step} seconds of which is pure computation time.\n".format(**self.__dict__))
+        print("Total time per step is {total_seconds_per_step}.".format(**self.__dict__))
+        print("Each step, we are allowing {slack_seconds} seconds as slack and {cleanup_seconds} seconds for cleanup.".format(**self.__dict__))
+        print("Time-limit passed to parallel is {parallel_seconds_per_step}.".format(**self.__dict__))
+        print("Time-limit passed to dps-hyper is {python_seconds_per_step}.".format(**self.__dict__))
 
     def recruit_hosts(self, hpc, min_hosts, max_hosts, host_pool, ppn, max_procs):
         hosts = []
@@ -388,10 +397,10 @@ class ParallelSession(object):
 
         indices_for_step = ' '.join(str(i) for i in indices_for_step)
 
-        if self.kind == "slurm":
+        if "slurm" in self.kind:
             parallel_command = (
                 "cd {local_scratch} && "
-                "dps-hyper run {archive_root} {pattern} {indices_for_step} --max-time {seconds_per_step} "
+                "dps-hyper run {archive_root} {pattern} {indices_for_step} --max-time {python_seconds_per_step} "
                 "--log-root {local_scratch} --log-name experiments --gpu-set={gpu_set} --ppn={ppn} {_ignore_gpu} {redirect}"
             )
 
@@ -399,13 +408,13 @@ class ParallelSession(object):
         else:
             parallel_command = (
                 "cd {local_scratch} && "
-                "dps-hyper run {archive_root} {pattern} {{}} --max-time {seconds_per_step} "
+                "dps-hyper run {archive_root} {pattern} {{}} --max-time {python_seconds_per_step} "
                 "--log-root {local_scratch} --log-name experiments "
                 "--idx-in-node={{%}} --gpu-set={gpu_set} --ppn={ppn} {_ignore_gpu} {redirect}"
             )
 
             command = (
-                '{parallel_exe} --timeout {abs_seconds_per_step} --no-notice -j{ppn} \\\n'
+                '{parallel_exe} --timeout {parallel_seconds_per_step} --no-notice -j{ppn} \\\n'
                 '    --joblog {job_directory}/job_log.txt {node_file} \\\n'
                 '    --env PATH --env LD_LIBRARY_PATH {env_vars} -v \\\n'
                 '    "' + parallel_command + '" \\\n'
@@ -417,7 +426,7 @@ class ParallelSession(object):
 
         self.execute_command(
             command, frmt=False, robust=True,
-            max_seconds=self.abs_seconds_per_step, progress=not self.hpc,
+            max_seconds=self.parallel_seconds_per_step, progress=not self.hpc,
             quiet=False, verbose=True)
 
     def _checkpoint(self, i):
@@ -488,7 +497,7 @@ class ParallelSession(object):
                         with open(os.path.expandvars("$PBS_NODEFILE"), 'r') as f:
                             self.host_pool = list(set([s.strip() for s in iter(f.readline, '')]))
                             print(self.host_pool)
-                    elif self.kind == "slurm":
+                    elif "slurm" in self.kind:
                         p = subprocess.run(
                             'scontrol show hostnames $SLURM_JOB_NODELIST', stdout=subprocess.PIPE, shell=True)
                         self.host_pool = list(set([host.strip() for host in p.stdout.decode().split('\n') if host]))
