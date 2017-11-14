@@ -376,7 +376,10 @@ def _rl_plot(args):
         record = r['history'][-1].copy()
 
         vd = pd.read_csv(StringIO(record['val_data']), index_col=False)
-        val_data[key].append(vd['loss'])
+        try:
+            val_data[key].append(vd['loss'])
+        except KeyError:
+            val_data[key].append(vd['reward_per_ep'])
 
         del record['train_data']
         del record['update_data']
