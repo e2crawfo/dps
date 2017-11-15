@@ -191,6 +191,8 @@ class GridArithmeticDataset(RegressionDataset):
     def __init__(self, **kwargs):
         if not self.draw_shape:
             self.draw_shape = self.env_shape
+        if not self.draw_offset:
+            self.draw_offset = (0, 0)
 
         assert 1 <= self.base <= 10
         assert self.min_digits <= self.max_digits

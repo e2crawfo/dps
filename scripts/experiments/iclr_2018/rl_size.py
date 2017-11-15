@@ -23,7 +23,7 @@ F_curric = [dict(env_shape=(3, 3), min_digits=4, max_digits=4)]
 
 config.update(
     load_path="",
-    curric=zero_curric,
+    curriculum=zero_curric,
     reductions="sum",
 )
 
