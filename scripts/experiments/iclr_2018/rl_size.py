@@ -15,20 +15,22 @@ B_load_paths = [
     os.path.join(B_dir, str(i), 'best_of_stage_0') for i in range(4)
 ]
 
-A_curric = [dict(shape=(3, 3), load_path=A_load_paths)]
-C_curric = [dict(shape=(3, 3))]
-B_curric = [dict(shape=(3, 3), min_digits=4, max_digits=4, load_path=B_load_paths)]
-F_curric = [dict(shape=(3, 3), min_digits=4, max_digits=4)]
+zero_curric = [dict(env_shape=(2, 2))]
+A_curric = [dict(env_shape=(3, 3), load_path=A_load_paths)]
+C_curric = [dict(env_shape=(3, 3))]
+B_curric = [dict(env_shape=(3, 3), min_digits=4, max_digits=4, load_path=B_load_paths)]
+F_curric = [dict(env_shape=(3, 3), min_digits=4, max_digits=4)]
 
 config.update(
     load_path="",
-    curric=A_curric
+    curric=zero_curric,
     reductions="sum",
 )
 
 
 # grid = dict(n_train=[2**16])
-grid = dict(n_train=2**np.arange(6, 18, 2))
+grid = dict(n_train=2**np.arange(14, 18, 2))
+# grid = dict(n_train=2**np.arange(6, 18, 2))
 
 
 from dps.parallel.hyper import build_and_submit, default_host_pool

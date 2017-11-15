@@ -632,8 +632,8 @@ def dps_hyper_cl():
 
 def build_and_submit(
         name, config, distributions=None, wall_time="1year", cleanup_time="1hour", slack_time="1hour",
-        max_hosts=1, ppn=1, n_param_settings=0, n_repeats=1, n_retries=0, host_pool=None, pmem=0,
-        queue="", do_local_test=False, kind="local", gpu_set="", step_time_limit="", ignore_gpu=False,
+        step_time_limit="", max_hosts=1, ppn=1, cpp=1, n_param_settings=0, n_repeats=1, n_retries=0,
+        host_pool=None, pmem=0, queue="", do_local_test=False, kind="local", gpu_set="", ignore_gpu=False,
         store_experiments=True, readme=""):
     """ Meant to be called from within a script.
 
@@ -642,6 +642,8 @@ def build_and_submit(
     kind: str
     readme: str
         A string outlining the purpose/context for the created search.
+    cpp: int
+        Number of CPUs per process. Only has an effect when `"slurm" in kind` is True.
 
     """
     assert kind in "pbs slurm slurm-local parallel local".split()
@@ -693,7 +695,7 @@ def dps_submit_cl():
 
 def submit_job(
         archive_path, name, wall_time="1year", cleanup_time="1hour", slack_time="1hour",
-        max_hosts=1, ppn=1, n_retries=0, host_pool=None, pmem=0, queue="", kind="local", gpu_set="",
+        max_hosts=1, ppn=1, cpp=1, n_retries=0, host_pool=None, pmem=0, queue="", kind="local", gpu_set="",
         step_time_limit="", ignore_gpu=False, store_experiments=True, readme="", **kwargs):
 
     os.nice(10)
@@ -705,8 +707,9 @@ def submit_job(
 
     run_params = dict(
         wall_time=wall_time, cleanup_time=cleanup_time, slack_time=slack_time,
-        max_hosts=max_hosts, ppn=ppn, n_retries=n_retries, host_pool=host_pool, kind=kind, gpu_set=gpu_set,
-        step_time_limit=step_time_limit, ignore_gpu=ignore_gpu, store_experiments=store_experiments, readme=readme)
+        max_hosts=max_hosts, ppn=ppn, cpp=cpp, n_retries=n_retries, host_pool=host_pool,
+        kind=kind, gpu_set=gpu_set, step_time_limit=step_time_limit, ignore_gpu=ignore_gpu,
+        store_experiments=store_experiments, readme=readme, pmem=pmem)
 
     session = ParallelSession(
         name, archive_path, 'map', cfg.experiments_dir + '/execution/',
@@ -752,8 +755,8 @@ session.run()
 
     elif kind == "slurm":
         wall_time_minutes = int(np.ceil(session.wall_time_seconds / 60))
-        resources = "--nodes={} --ntasks-per-node={} --time={}".format(
-            session.n_nodes, session.ppn, wall_time_minutes)
+        resources = "--nodes={} --ntasks-per-node={} --cpus-per-task={} --time={}".format(
+            session.n_nodes, session.ppn, cpp, wall_time_minutes)
 
         if pmem:
             resources = "{} --mem-per-cpu={}mb".format(resources, pmem)

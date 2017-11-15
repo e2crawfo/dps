@@ -389,6 +389,8 @@ class Job(ReadOnlyJob):
             print("My value of CUDA_VISIBLE_DEVICES is {}.".format(os.environ.get('CUDA_VISIBLE_DEVICES', None)))
             print("My value of GPU_DEVICE_ORDINAL is {}.".format(os.environ.get('GPU_DEVICE_ORDINAL', None)))
 
+        print("My value of OMP_NUM_THREADS is {}.".format(os.environ.get('OMP_NUM_THREADS', None)))
+
         if int(idx_in_node) == -1:
             idx_in_node = int(os.environ.get("SLURM_LOCALID", -1))
         else:

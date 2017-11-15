@@ -78,8 +78,8 @@ class ParallelSession(object):
 
     """
     def __init__(
-            self, name, input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', ppn=12,
-            wall_time="1hour", cleanup_time="1min", slack_time="1min", add_date=True, dry_run=0,
+            self, name, input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', ppn=12, cpp=1,
+            pmem=None, wall_time="1hour", cleanup_time="1min", slack_time="1min", add_date=True, dry_run=0,
             parallel_exe="$HOME/.local/bin/parallel", kind="parallel", host_pool=None,
             min_hosts=1, max_hosts=1, env_vars=None, redirect=False, n_retries=0, gpu_set="",
             step_time_limit="", ignore_gpu=False, store_experiments=True, ssh_options=None, readme=""):
@@ -128,7 +128,6 @@ class ParallelSession(object):
         env = os.environ.copy()
 
         env_vars = env_vars or {}
-        env_vars["OMP_NUM_THREADS"] = 1
 
         env.update({e: str(v) for e, v in env_vars.items()})
         env_vars = ' '.join('--env ' + k for k in env_vars)
@@ -395,17 +394,20 @@ class ParallelSession(object):
 
         _ignore_gpu = "--ignore-gpu" if self.ignore_gpu else ""
 
-        indices_for_step = ' '.join(str(i) for i in indices_for_step)
+        indices = ' '.join(str(i) for i in indices_for_step)
 
         if "slurm" in self.kind:
             parallel_command = (
                 "cd {local_scratch} && "
-                "dps-hyper run {archive_root} {pattern} {indices_for_step} --max-time {python_seconds_per_step} "
+                "dps-hyper run {archive_root} {pattern} {indices} --max-time {python_seconds_per_step} "
                 "--log-root {local_scratch} --log-name experiments --gpu-set={gpu_set} --ppn={ppn} {_ignore_gpu} {redirect}"
             )
 
             bind = "--accel-bind=g" if self.gpu_set else ""
-            command = 'srun ' + bind + ' --no-kill sh -c "' + parallel_command + '"'
+            mem = "--mem-per-cpu={}mb".format(self.pmem) if self.pmem else ""
+            command = 'srun --cpus-per-task {cpp} --ntasks {n_tasks} {bind} {mem} --no-kill sh -c "{parallel_command}"'.format(
+                cpp=self.cpp, n_tasks=len(indices_for_step), bind=bind, mem=mem, parallel_command=parallel_command)
+            print(command)
         else:
             parallel_command = (
                 "cd {local_scratch} && "
@@ -419,11 +421,11 @@ class ParallelSession(object):
                 '    --joblog {job_directory}/job_log.txt {node_file} \\\n'
                 '    --env PATH --env LD_LIBRARY_PATH {env_vars} -v \\\n'
                 '    "' + parallel_command + '" \\\n'
-                '    ::: {indices_for_step}'
+                '    ::: {indices}'
             )
 
         command = command.format(
-            indices_for_step=indices_for_step, _ignore_gpu=_ignore_gpu, **self.__dict__)
+            indices=indices, _ignore_gpu=_ignore_gpu, **self.__dict__)
 
         self.execute_command(
             command, frmt=False, robust=True,
