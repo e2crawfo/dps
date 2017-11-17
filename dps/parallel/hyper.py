@@ -215,7 +215,6 @@ def build_search(
             count += 1
 
     if readme:
-        config.readme = readme
         with open(exp_dir.path_for('README.md'), 'w') as f:
             f.write(readme)
 

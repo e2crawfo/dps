@@ -112,6 +112,7 @@ class ParallelSession(object):
         if readme:
             with open(os.path.join(job_directory, 'README.md'), 'w') as f:
                 f.write(readme)
+            del f
 
         input_zip_stem = Path(input_zip).stem
         input_zip = shutil.copy(str(input_zip), os.path.join(job_directory, "orig.zip"))
