@@ -252,13 +252,6 @@ def build_search(
     return job, path
 
 
-def process_detailed_data(record, kind):
-    try:
-        del record[kind + '_data']
-    except Exception:
-        pass
-
-
 def _print_config(args):
     job = ReadOnlyJob(args.path)
     distributions = job.objects.load_object('metadata', 'distributions')
@@ -431,13 +424,22 @@ def ci(data, coverage):
         coverage, len(data)-1, loc=np.mean(data), scale=stats.sem(data))
 
 
-def extract_dataframe_from_job(job, data_keys=None, kinds=None):
+def extract_dataframe_from_job(job, data_keys=None):
+    """ Extract a pandas data frame from a job.
+
+    Parameters
+    ----------
+    job: string or Job instance
+        If string, then a path to a directory reprenting the job to extract data from.
+        Otherwise, a Job instance representing the path to extract data from.
+    data_keys: list of string
+        Keys to extract from the sub-job configurations and inject into the resulting data frames.
+
+    """
     if isinstance(job, str) or isinstance(job, Path):
         job = ReadOnlyJob(str(job))
 
-    kinds = kinds or 'train update val test'
-    if isinstance(kinds, str):
-        kinds = kinds.split()
+    kinds = 'train update val test'.split()
 
     if not data_keys:
         data_keys = []
@@ -457,8 +459,12 @@ def extract_dataframe_from_job(job, data_keys=None, kinds=None):
         record['op_name'] = op.name
         del record['best_path']
 
+        # Removes verbose data (per step) from the record
         for k in kinds:
-            process_detailed_data(record, k)
+            try:
+                del record[k + '_data']
+            except Exception:
+                pass
 
         config = Config(r['config'])
         for k in data_keys:
@@ -479,6 +485,64 @@ def extract_dataframe_from_job(job, data_keys=None, kinds=None):
     for key in data_keys:
         df[key] = df[key].fillna(-np.inf)
     return df
+
+
+def extract_verbose_data_from_job(job, data_keys=None):
+    """ Extract list of dictionaries from job, one dictionary per sub-job. Dictionaries include verbose data.
+
+    Parameters
+    ----------
+    job: string or Job instance
+        If string, then a path to a directory reprenting the job to extract data from.
+        Otherwise, a Job instance representing the path to extract data from.
+    data_keys: list of string
+        Keys to extract from the sub-job configurations and inject into the resulting data frames.
+
+    """
+    if isinstance(job, str) or isinstance(job, Path):
+        job = ReadOnlyJob(str(job))
+
+    kinds = 'train update val test'.split()
+
+    if not data_keys:
+        data_keys = []
+    elif isinstance(data_keys, str):
+        data_keys = data_keys.split()
+
+    records = []
+    for op in job.completed_ops(partial=True):
+        if 'map' in op.name:
+            try:
+                r = op.get_outputs(job.objects)[0]
+            except BaseException as e:
+                print("Exception thrown when accessing output of op {}:\n    {}".format(op.name, e))
+
+        record = r['history'][-1].copy()
+        record['host'] = r['host']
+        record['op_name'] = op.name
+        del record['best_path']
+
+        for k in kinds:
+            key = k + '_data'
+            data = record.get(key, '').strip()
+            if data:
+                record[key] = pd.read_csv(StringIO(data), index_col=False)
+
+        config = Config(r['config'])
+        for k in data_keys:
+            try:
+                record[k] = config[k]
+            except KeyError:
+                record[k] = None
+
+        record.update(
+            latest_stage=r['history'][-1]['stage'],
+            total_steps=sum(s['n_steps'] for s in r['history']),
+        )
+
+        record['seed'] = r['config']['seed']
+        records.append(record)
+    return records
 
 
 def _sample_complexity_plot(args):
