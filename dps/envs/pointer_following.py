@@ -45,10 +45,7 @@ class Pointer(InternalEnv):
 
     def __init__(self, **kwargs):
         self.rb = RegisterBank(
-            'PointerRB', 'fovea vision wm', None,
-            values=([0.0] * 3), output_names='wm',
-            min_values=[-self.width] * 3,
-            max_values=[self.width, max(self.width, 10), max(self.width, 10)]
+            'PointerRB', 'fovea vision wm', None, values=([0.0] * 3), output_names='wm',
         )
         super(Pointer, self).__init__(**kwargs)
 

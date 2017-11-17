@@ -35,8 +35,7 @@ class PathDiscovery(TensorFlowEnv):
         self.action_names = '^ > v < look'.split()
         self.actions_dim = len(self.action_names)
         self.rb = RegisterBank(
-            'PathDiscoveryRB', 'x y vision action', 'discovered', [0.0, 0.0, -1.0, 0.0, 0.0], 'x y',
-            min_values=[0, 0, -1, 0], max_values=[self.shape[1], self.shape[0], 3, 5])
+            'PathDiscoveryRB', 'x y vision action', 'discovered', [0.0, 0.0, -1.0, 0.0, 0.0], 'x y')
         self.val_input = self._make_input(self.n_val)
         self.test_input = self._make_input(self.n_val)
 

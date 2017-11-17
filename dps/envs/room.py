@@ -55,9 +55,8 @@ class Room(TensorFlowEnv):
 
         self.rb = RegisterBank(
             'RoomRB', 'x y r dx dy', 'goal_x goal_y',
-            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 'x y',
-            min_values=[-1, -1, -1/self.T, -2, -2],
-            max_values=[1, 1, 0, 2, 2])
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 'x y'
+        )
 
         super(Room, self).__init__()
 

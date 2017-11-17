@@ -29,20 +29,46 @@ def concat(values, axis=-1, lib=None):
 
 
 class RegisterBank(object):
-    """
+    """ A wrapper around an array (np.ndarray or tf.Tensor) that allows
+        name-based extraction of slices along the final dimension of the array.
+
+    When wrapping an array of dimension (n1, ..., n_d), assumes dimensions (n_1, ..., n_{d-1})
+    correspond to batch dimension, and final dimension corresponds to varying the register
+    (and/or the position within a register).
+
+    Register order within the bank is the same as the order of the names in `visible_names` and `hidden_names`,
+    with visible registers always coming first.
+
     Parameters
     ----------
-    values:
-        Initial values for each register in the unnormalized space.
-    min_values:
-        Minimum value for each register in the unnormalized space. Used for normalization.
-    max_values:
-        Maximum value for each register in the unnormalized space. Used for normalization.
+    bank_name: str
+        Name for the register bank.
+    visible_names: space-separated str or list of str
+        Names for registers that are "visible". Only these entries are returned
+        when the `RegisterBank.visible` method is called.
+    hidden_names: space-separated str or list of str
+        Names for registers that are "visible". Only these entries are returned
+        when the `RegisterBank.hidden` method is called.
+    values: list of array
+        Initial values for each register. Dimension of each register is determined by dimension of this array.
+    output_names: space-separated str or list of str
+        Registers returned when the `RegisterBank.get_output` method is called.
+    no_names: space-separated str or list of str
+        Registers that are not displayed (e.g. when __str__ is called).
+
+    Attributes
+    ----------
+    width: int
+        Sum of dimensions of all registers.
+    visible_width: int
+        Sum of dimensions of visible registers.
+    hidden_width: int
+        Sum of dimensions of hidden registers.
 
     """
     def __init__(
             self, bank_name, visible_names, hidden_names, values,
-            output_names, min_values=None, max_values=None, no_display=None):
+            output_names, no_display=None):
 
         if isinstance(visible_names, str):
             visible_names = visible_names.replace(',', ' ').split()
@@ -65,6 +91,7 @@ class RegisterBank(object):
         assert len(names) == len(values)
         assert names, "Register bank must contain at least one register."
 
+        # Validate `bank_name` and register names.
         bank_name = str(bank_name)
         for n in [bank_name] + names:
             if type(n) is not str:
@@ -75,13 +102,14 @@ class RegisterBank(object):
             if iskeyword(n):
                 raise ValueError('Type names and field names cannot be a '
                                  'keyword: %r' % n)
+
+        # Validate register names.
         seen = set()
         for n in names:
             if n.startswith('_'):
-                raise ValueError('Field names cannot start with an underscore: '
-                                 '%r' % n)
+                raise ValueError('Field names cannot start with an underscore: {}'.format(n))
             if n in seen:
-                raise ValueError('Encountered duplicate field n: %r' % n)
+                raise ValueError('Encountered duplicate field: {}'.format(n))
             seen.add(n)
 
         values = [np.array(v) for v in values]
@@ -117,16 +145,6 @@ class RegisterBank(object):
         self.hidden_width = self.width - self.visible_width
         self.dtype = tf.float32
 
-        self.min_values = min_values
-        if min_values is not None:
-            assert len(min_values) == visible_width
-            self.min_values = np.array(min_values).astype('f')
-
-        self.max_values = max_values
-        if max_values is not None:
-            assert len(max_values) == visible_width
-            self.max_values = np.array(max_values).astype('f')
-
     def __str__(self):
         s = ["{}(".format(self.__class__.__name__)]
         s.append("    Registers:")
@@ -158,7 +176,18 @@ class RegisterBank(object):
         return '\n'.join(s)
 
     def new_array(self, leading_shape, lib='np', dtype='f'):
-        """ Create a new register bank using stored initial values. """
+        """ Create a new register bank using stored initial values.
+
+        Parameters
+        ----------
+        leading_shape: tuple
+            Batch shape for the returned array. Shape of the returned array is leading_shape + self.width.
+        lib: 'np' or 'tf'
+            Library to use to create returned array.
+        dtype:
+            dtype of returned array.
+
+        """
         try:
             leading_shape = tuple(leading_shape)
         except TypeError:
@@ -199,7 +228,7 @@ class RegisterBank(object):
         return {name: self.get(name, array) for name in names}
 
     def get_output(self, array):
-        values = [self.get(oname, array) for oname in self.output_names]
+        values = [self.get(name, array) for name in self.output_names]
         return concat(values)
 
     def visible(self, array):
@@ -209,6 +238,13 @@ class RegisterBank(object):
         return array[..., self.visible_width:]
 
     def wrap(self, **kwargs):
+        """
+        Accepts values for individual registers. Packs them into an array that can later
+        be interpreted by this register bank. Values for all registers must be provided.
+        All values must have the same batch shape (i.e. reg.shape[:-1]), and the final dimension
+        of each value must match the dimension for the corresponding register.
+
+        """
         names = kwargs.keys()
         missing = set(self.names) - names
         if missing:
@@ -218,9 +254,3 @@ class RegisterBank(object):
             raise Exception("Value provided for unknown registers {}.".format(extra))
         values = [kwargs[name] for name in self.names]
         return concat(values)
-
-    def normalize_visible(self, visible):
-        if self.min_values is not None and self.max_values is not None:
-            return (visible - self.min_values) / (self.max_values - self.min_values)
-        else:
-            return visible

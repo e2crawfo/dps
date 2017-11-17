@@ -56,6 +56,16 @@ def grid_arithmetic_render_rollouts(env, rollouts):
             print("\naction={}".format(internal.action_names[action_idx]))
 
 
+class RegressionEnvNoModules(RegressionEnv):
+    def build_reward(self, actions, targets):
+        if self.mode == "train":
+            reward = tf.nn.softmax_cross_entropy_with_logits(labels=targets, logits=actions) - 1
+            return tf.reshape(reward, (-1, 1))
+        else:
+            reward = tf.nn.softmax_cross_entropy_with_logits(labels=targets, logits=actions) - 1
+            return tf.reshape(reward, (-1, 1))
+
+
 def build_env():
     if cfg.ablation == 'omniglot':
         if not cfg.omniglot_classes:
@@ -74,17 +84,24 @@ def build_env():
     else:
         internal = GridArithmetic()
 
-    if cfg.ablation == 'omniglot':
-        with Config(classes=cfg.omniglot_classes, target_loc=cfg.op_loc):
-            train = GridOmniglotDataset(n_examples=cfg.n_train, indices=range(15))
-            val = GridOmniglotDataset(n_examples=cfg.n_val, indices=range(15))
-            test = GridOmniglotDataset(n_examples=cfg.n_val, indices=range(15, 20))
-    else:
+    if cfg.ablation == 'no_modules':
         train = GridArithmeticDataset(n_examples=cfg.n_train)
         val = GridArithmeticDataset(n_examples=cfg.n_val)
         test = GridArithmeticDataset(n_examples=cfg.n_val)
+        external = RegressionEnvNoModules(train, val, test)
 
-    external = RegressionEnv(train, val, test)
+    else:
+        if cfg.ablation == 'omniglot':
+            with Config(classes=cfg.omniglot_classes, target_loc=cfg.op_loc):
+                train = GridOmniglotDataset(n_examples=cfg.n_train, indices=range(15))
+                val = GridOmniglotDataset(n_examples=cfg.n_val, indices=range(15))
+                test = GridOmniglotDataset(n_examples=cfg.n_val, indices=range(15, 20))
+        else:
+            train = GridArithmeticDataset(n_examples=cfg.n_train)
+            val = GridArithmeticDataset(n_examples=cfg.n_val)
+            test = GridArithmeticDataset(n_examples=cfg.n_val)
+
+        external = RegressionEnv(train, val, test)
 
     env = CompositeEnv(external, internal)
     env.obs_is_image = True
@@ -481,14 +498,11 @@ class GridArithmetic(InternalEnv):
             _arithmetic_actions[key] = self.arithmetic_actions_dict[key]
         self.arithmetic_actions = _arithmetic_actions
 
-        if self.salience_action:
-            self.action_names = (
-                self._action_names +
-                ['update_salience'] +
-                sorted(self.arithmetic_actions.keys())
-            )
-        else:
-            self.action_names = self._action_names + sorted(self.arithmetic_actions.keys())
+        self.action_names = (
+            self._action_names +
+            ['update_salience'] +
+            sorted(self.arithmetic_actions.keys())
+        )
 
         self.actions_dim = len(self.action_names)
         self._init_networks()
@@ -975,16 +989,20 @@ class GridArithmeticNoModules(GridArithmetic):
     def __init__(self, **kwargs):
         super(GridArithmeticNoModules, self).__init__()
 
-        if self.salience_action:
-            self.action_names = ['>', '<', 'v', '^', 'update_salience', 'output']
-            self.n_discrete = 5
-        else:
-            self.action_names = ['>', '<', 'v', '^', 'output']
-            self.n_discrete = 4
+        self.action_names = ['>', '<', 'v', '^', 'update_salience', 'output']
+        self.n_discrete = 5
         self.actions_dim = len(self.action_names)
 
         self._init_networks()
         self._init_rb()
+
+    def build_rewards(self, r):
+        rewards = tf.cond(
+            self.is_testing_ph,
+            lambda: tf.fill((tf.shape(r)[0], 1), 0.0),
+            lambda: tf.nn.softmax_cross_entropy_with_logits(labels=self.target_ph, logits=self.rb.get_output(r)) - 1
+        )
+        return rewards
 
     def build_init(self, r):
         self.build_placeholders(r)
@@ -1033,7 +1051,7 @@ class GridArithmeticNoModules(GridArithmetic):
         )
 
         self.rb = RegisterBank(
-            'GridArithmeticRB',
+            'GridArithmeticNoModulesRB',
             'output fovea_x fovea_y prev_action salience glimpse', 'salience_input', values=values,
             output_names='output', no_display='glimpse salience salience_input',
         )
@@ -1046,8 +1064,12 @@ class GridArithmeticNoModules(GridArithmetic):
         fovea_y, fovea_x = self._build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
         glimpse = self._build_update_glimpse(_fovea_y, _fovea_x)
 
-        salience, salience_input = self._build_update_salience(
-            update_salience, _salience, _salience_input, fovea_y, fovea_x)
+        salience = _salience
+        salience_input = _salience_input
+        if self.salience_action:
+            salience, salience_input = self._build_update_salience(
+                update_salience, _salience, _salience_input, _fovea_y, _fovea_x)
+
         prev_action = tf.cast(tf.reshape(tf.argmax(a[..., :self.n_discrete], axis=1), (-1, 1)), tf.float32)
 
         return self._build_return(

@@ -67,6 +67,11 @@ class BatchBox(gym.Space):
 
 class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
     def set_mode(self, mode, batch_size):
+        """ Called at the beginning of `do_rollouts`.
+
+        Sets the mode that the rollouts run under, as well as the number of rollouts to run.
+
+        """
         assert mode in 'train val test'.split(), "Unknown mode: {}.".format(mode)
         self.mode = mode
         self.batch_size = batch_size
@@ -315,11 +320,7 @@ class SamplerCell(RNNCell):
             registers, policy_state = state
 
             with tf.name_scope('policy'):
-                visible = self.env.rb.visible(registers)
-                if self.env.normalize_obs:
-                    obs = self.env.rb.normalize_visible(visible)
-                else:
-                    obs = visible
+                obs = self.env.rb.visible(registers)
                 hidden = self.env.rb.hidden(registers)
                 (log_prob, action, entropy, util), new_policy_state = self.policy(obs, policy_state)
 
@@ -358,9 +359,7 @@ class TensorFlowEnvMeta(abc.ABCMeta):
 class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
     rb = None
     action_names = None
-
     scale_rewards = Param(True)
-    normalize_obs = Param()
 
     def __init__(self, **kwargs):
         self._samplers = {}
@@ -688,19 +687,19 @@ class CompositeEnv(Env):
                 rewards[-1, ...] += external_reward
 
             if save_utils:
-                rb = RolloutBatch(
+                rollout_batch = RolloutBatch(
                     obs, actions, rewards,
                     log_probs=log_probs, utils=utils,
                     entropy=entropy, hidden=hidden, done=done)
             else:
-                rb = RolloutBatch(
+                rollout_batch = RolloutBatch(
                     obs, actions, rewards, log_probs=log_probs,
                     entropy=entropy, hidden=hidden, done=done)
-            rollouts.extend(rb)
+            rollouts.extend(rollout_batch)
 
             external_rollouts.append(
                 external_obs, external_action, external_reward, done=external_done,
-                info=dict(length=len(rollouts)))
+                info=dict(length=rollouts.T))
 
             external_obs = new_external_obs
 

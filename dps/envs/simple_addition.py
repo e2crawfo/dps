@@ -53,10 +53,7 @@ class SimpleAddition(InternalEnv):
         self.rb = RegisterBank(
             'SimpleAdditionRB',
             'fovea vision wm1 wm2 output', None,
-            values=[0.] * 5,
-            min_values=[-self.width] + ([0] * 4),
-            max_values=[self.width] + ([10] * 3) + [20],
-            output_names='output')
+            values=[0.] * 5, output_names='output')
 
         super(SimpleAddition, self).__init__(**kwargs)
 

@@ -189,31 +189,20 @@ class SimpleGridArithmetic(InternalEnv):
 
     def _init_rb(self):
         values = (
-            [0., 0., -1., 0., 0., -1.] +
-            [-1. * np.ones(np.product(self.salience_shape))] +
-            [0.]
-        )
-
-        min_values = [0, 10, 0, 0, 0, 0] + [-1.] * np.product(self.salience_shape)
-        max_values = (
-            [9, 12, 999, self.env_shape[1], self.env_shape[0], self.actions_dim] +
-            [1.] * np.product(self.salience_shape)
+            [0., 0., -1., 0., 0., -1.] + [-1. * np.ones(np.product(self.salience_shape))] + [0.]
         )
 
         if self.visible_glimpse:
-            min_values.append(-1.)
-            max_values.append(self.base + len(self.reductions))
-
             self.rb = RegisterBank(
                 'GridArithmeticRB',
-                'digit op acc fovea_x fovea_y prev_action salience glimpse', '', values=values,
-                output_names='acc', min_values=min_values, max_values=max_values
+                'digit op acc fovea_x fovea_y prev_action salience glimpse', '',
+                values=values, output_names='acc'
             )
         else:
             self.rb = RegisterBank(
                 'GridArithmeticRB',
-                'digit op acc fovea_x fovea_y prev_action salience', 'glimpse', values=values,
-                output_names='acc', min_values=min_values, max_values=max_values
+                'digit op acc fovea_x fovea_y prev_action salience', 'glimpse',
+                values=values, output_names='acc',
             )
 
     def _build_update_glimpse(self, fovea_y, fovea_x):

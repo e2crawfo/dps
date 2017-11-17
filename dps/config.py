@@ -60,12 +60,12 @@ def get_experiment_name():
 
     try:
         name.append('name={}'.format(cfg.name))
-    except:
+    except Exception:
         pass
 
     try:
         name.append('seed={}'.format(cfg.seed))
-    except:
+    except Exception:
         pass
 
     return '_'.join(name)
@@ -100,7 +100,6 @@ DEFAULT_CONFIG = SystemConfig(
     noise_schedule=None,
     max_grad_norm=None,
 
-    normalize_obs=False,
     standardize_advantage=True,
     reset_env=True,
 
