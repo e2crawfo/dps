@@ -17,7 +17,7 @@ import copy
 
 from dps import cfg
 from dps.utils import (
-    gen_seed, time_limit, memory_usage, ExperimentStore,
+    gen_seed, time_limit, memory_usage, ExperimentStore, git_dps_commit_hash,
     memory_limit, du, Config, ClearConfig, parse_date, redirect_stream
 )
 from dps.utils.tf import (
@@ -139,6 +139,7 @@ class TrainingLoop(object):
         self.exp_dir = exp_dir = es.new_experiment(
             self.exp_name, add_date=1, force_fresh=1, update_latest=cfg.update_latest)
 
+        print("dps git commit is {}".format(git_dps_commit_hash()))
         print("Scratch directory is {}.".format(exp_dir.path))
         cfg.path = exp_dir.path
 

@@ -25,6 +25,26 @@ import clify
 import dps
 
 
+def git_dps_commit_hash():
+    """ Get full hash of commit of dps module. """
+    return git_module_commit_hash(dps)
+
+
+def git_module_commit_hash(module):
+    """ Get full hash of commit of provided module. """
+    module_dir = Path(module.__file__).parent
+    with cd(module_dir):
+        return git_cwd_commit_hash()
+
+
+def git_cwd_commit_hash():
+    """ Get full hash of commit of repo that CWD belongs to. """
+    try:
+        return subprocess.check_output('git rev-parse HEAD'.split(), stderr=subprocess.DEVNULL).strip().decode()
+    except subprocess.CalledProcessError:
+        return None
+
+
 @contextmanager
 def modify_env(*remove, **update):
     """

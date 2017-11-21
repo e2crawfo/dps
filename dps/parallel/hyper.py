@@ -21,7 +21,8 @@ from io import StringIO
 import clify
 
 from dps import cfg
-from dps.utils.base import gen_seed, Config, cd, ExperimentStore, edit_text
+from dps.utils.base import (
+    gen_seed, Config, cd, ExperimentStore, edit_text, git_dps_commit_hash)
 from dps.parallel.submit_job import ParallelSession
 from dps.parallel.base import Job, ReadOnlyJob
 
@@ -715,6 +716,7 @@ def build_and_submit(
     assert kind in "pbs slurm slurm-local parallel local".split()
     assert 'build_command' not in config
     config['build_command'] = ' '.join(sys.argv)
+    config['build_git_commit'] = git_dps_commit_hash()
     print(config['build_command'])
 
     if kind == "local":
