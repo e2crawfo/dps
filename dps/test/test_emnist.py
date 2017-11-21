@@ -1,5 +1,4 @@
 import pytest
-import numpy as np
 import tensorflow as tf
 from pathlib import Path
 from shutil import rmtree
@@ -213,10 +212,11 @@ def test_omniglot(build_function):
             _eval_model(test_dataset, inference, x_ph)
 
 
-def test_salience_pretrained(show_plots):
+def test_salience_pretrained(show_plots, save_plots):
     with NumpySeed(83849):
         config = SALIENCE_CONFIG.copy(
             show_plots=show_plots,
+            save_plots=save_plots,
             classes=list(range(10)),
         )
 

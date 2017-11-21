@@ -3,8 +3,8 @@ import numpy as np
 
 from dps import cfg
 from dps.register import RegisterBank
-from dps.environment import (
-    RegressionDataset, RegressionEnv, CompositeEnv, InternalEnv)
+from dps.environment import CompositeEnv, InternalEnv
+from dps.supervised import SupervisedDataset, IntegerRegressionEnv
 from dps.vision.attention import apply_gaussian_filter
 from dps.utils import Param, Config
 
@@ -13,7 +13,7 @@ def build_env():
     train = PointerDataset(n_examples=cfg.n_train)
     val = PointerDataset(n_examples=cfg.n_val)
     test = PointerDataset(n_examples=cfg.n_val)
-    external = RegressionEnv(train, val, test)
+    external = IntegerRegressionEnv(train, val, test)
     internal = Pointer()
     return CompositeEnv(external, internal)
 
@@ -26,7 +26,7 @@ config = Config(
 )
 
 
-class PointerDataset(RegressionDataset):
+class PointerDataset(SupervisedDataset):
     width = Param()
     base = Param()
 
@@ -81,7 +81,7 @@ class Pointer(InternalEnv):
 
         new_registers = self.rb.wrap(fovea=fovea, vision=vision, wm=wm)
 
-        rewards = self.build_rewards(new_registers)
+        rewards = self.build_reward(new_registers)
 
         return (
             tf.fill((tf.shape(r)[0], 1), 0.0),

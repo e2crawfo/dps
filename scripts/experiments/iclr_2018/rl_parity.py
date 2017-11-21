@@ -4,8 +4,10 @@ import clify
 
 from config import rl_config as config
 
-A_dir = "/home/2014/ecrawf6/rl_parity_A"
-A_load_paths = [os.path.join(A_dir, "best_of_stage_0")]
+A_dir = "/home/2014/ecrawf6/rl_parity_A_models"
+A_load_paths = [
+    os.path.join(A_dir, str(i), "best_of_stage_0")
+    for i in range(18)]
 
 A_curric = [dict(parity='even')]
 B_curric = [dict(parity='odd', load_path=A_load_paths)]
@@ -13,10 +15,8 @@ C_curric = [dict(parity='odd')]
 
 config.update(
     load_path="",
-    curriculum=B_curric,
+    curriculum=C_curric,
     reductions="sum",
-    exploration_schedule="0.1",
-    opt_steps_per_update=1,
 )
 
 

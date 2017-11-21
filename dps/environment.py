@@ -1,6 +1,5 @@
 import abc
 from future.utils import with_metaclass
-
 import numpy as np
 import tensorflow as tf
 from tensorflow.python.ops.rnn import dynamic_rnn
@@ -9,7 +8,6 @@ from tabulate import tabulate
 
 import gym
 from gym import Env as GymEnv
-from gym.utils import seeding
 from gym.spaces import prng
 
 from dps import cfg
@@ -130,180 +128,6 @@ class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
         self._pprint_rollouts(rollouts)
         if render_rollouts is not None and (cfg.save_plots or cfg.show_plots):
             render_rollouts(self, rollouts)
-
-
-class RegressionDataset(Parameterized):
-    n_examples = Param()
-
-    def __init__(self, x, y, shuffle=True, **kwargs):
-        self.x = x
-        self.y = y
-        self.n_examples = self.x.shape[0]
-        self.shuffle = shuffle
-
-        self._epochs_completed = 0
-        self._index_in_epoch = 0
-
-        super(RegressionDataset, self).__init__(**kwargs)
-
-    @property
-    def obs_shape(self):
-        return self.x.shape[1:]
-
-    @property
-    def epochs_completed(self):
-        return self._epochs_completed
-
-    @property
-    def index_in_epoch(self):
-        return self._index_in_epoch
-
-    @property
-    def completion(self):
-        return self.epochs_completed + self.index_in_epoch / self.n_examples
-
-    def next_batch(self, batch_size=None, advance=True):
-        """ Return the next ``batch_size`` examples from this data set.
-
-        If ``batch_size`` not specified, return rest of the examples in the current epoch.
-
-        """
-        start = self._index_in_epoch
-
-        if batch_size is None:
-            batch_size = self.n_examples - start
-        elif batch_size > self.n_examples:
-            raise Exception("Too few examples ({}) to satisfy batch size of {}.".format(self.n_examples, batch_size))
-
-        # Shuffle for the first epoch
-        if self._epochs_completed == 0 and start == 0 and self.shuffle:
-            perm0 = np.arange(self.n_examples)
-            np.random.shuffle(perm0)
-            self._x = self.x[perm0]
-            self._y = self.y[perm0]
-
-        if start + batch_size >= self.n_examples:
-            # Finished epoch
-
-            # Get the remaining examples in this epoch
-            x_rest_part = self._x[start:]
-            y_rest_part = self._y[start:]
-
-            # Shuffle the data
-            if self.shuffle and advance:
-                perm = np.arange(self.n_examples)
-                np.random.shuffle(perm)
-                self._x = self.x[perm]
-                self._y = self.y[perm]
-
-            # Start next epoch
-            end = batch_size - len(x_rest_part)
-            x_new_part = self._x[:end]
-            y_new_part = self._y[:end]
-            x = np.concatenate((x_rest_part, x_new_part), axis=0)
-            y = np.concatenate((y_rest_part, y_new_part), axis=0)
-
-            if advance:
-                self._index_in_epoch = end
-                self._epochs_completed += 1
-        else:
-            # Middle of epoch
-            end = start + batch_size
-            x, y = self._x[start:end], self._y[start:end]
-
-            if advance:
-                self._index_in_epoch = end
-
-        return x, y
-
-
-class RegressionEnv(Env):
-    metadata = {"render.modes": ["human", "ansi"]}
-
-    loss_type = Param("2-norm")
-
-    def __init__(self, train, val, test=None, **kwargs):
-        self.train, self.val, self.test = train, val, test
-        self.datasets = {
-            'train': self.train,
-            'val': self.val,
-            'test': self.test,
-        }
-
-        self.actions_dim = self.train.y.shape[1]
-        self.obs_shape = self.train.x.shape[1:]
-
-        self.reward_range = (-np.inf, 0)
-
-        self.mode = 'train'
-        self.batch_size = None
-
-        self.action_ph, self.loss, self.target_ph = None, None, None
-        self.t = 0
-
-    def __str__(self):
-        return "<RegressionEnv train={} val={} test={}>".format(self.train, self.val, self.test)
-
-    def next_batch(self, batch_size, mode):
-        advance = mode == 'train'
-        return self.datasets[mode].next_batch(batch_size=batch_size, advance=advance)
-
-    def build_loss(self, actions, targets):
-        if self.loss_type == "2-norm":
-            return tf.reduce_mean((actions - targets)**2, axis=-1, keep_dims=True)
-        elif self.loss_type == "1-norm":
-            return tf.reduce_mean(tf.abs(actions - targets), axis=-1, keep_dims=True)
-        elif self.loss_type == "xent":
-            return tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=targets, logits=actions))
-
-    def build_reward(self, actions, targets):
-        if self.loss_type == "xent":
-            action_argmax = tf.argmax(actions, axis=-1)
-            targets_argmax = tf.argmax(targets, axis=-1)
-            reward = tf.cast(tf.equal(action_argmax, targets_argmax), tf.float32) - 1
-            return tf.reshape(reward, (-1, 1))
-        else:
-            abs_error = tf.reduce_sum(tf.abs(actions - targets), axis=-1, keep_dims=True)
-            return -tf.cast(abs_error > cfg.reward_window, tf.float32)
-
-    @property
-    def completion(self):
-        return self.train.completion
-
-    def _step(self, action):
-        self.t += 1
-
-        assert self.y.shape == action.shape
-        obs = np.zeros(self.x.shape)
-
-        if self.action_ph is None:
-            self.target_ph = tf.placeholder(tf.float32, (None, self.actions_dim), name="target_ph")
-            self.action_ph = tf.placeholder(tf.float32, (None, self.actions_dim), name="action_ph")
-            self.reward = self.build_reward(self.action_ph, self.target_ph)
-
-        sess = tf.get_default_session()
-        reward = sess.run(self.reward, {self.action_ph: action, self.target_ph: self.y})
-
-        done = True
-        info = {"y": self.y}
-        return obs, reward, done, info
-
-    def _reset(self):
-        self.t = 0
-
-        advance = self.mode == 'train'
-        self.x, self.y = self.datasets[self.mode].next_batch(self.batch_size, advance=advance)
-        return self.x
-
-    def _render(self, mode='human', close=False):
-        pass
-
-    def _close(self):
-        pass
-
-    def _seed(self, seed=None):
-        self.np_random, seed = seeding.np_random(seed)
-        return [seed]
 
 
 class SamplerCell(RNNCell):
@@ -589,7 +413,7 @@ class InternalEnv(TensorFlowEnv):
             self.input_ph = tf.placeholder(tf.float32, (None,) + self.input_shape, name="input_ph")
             self.target_ph = tf.placeholder(tf.float32, (None,) + self.target_shape, name="target_ph")
 
-    def build_rewards(self, r):
+    def build_reward(self, r):
         rewards = tf.cond(
             self.is_testing_ph,
             lambda: tf.fill((tf.shape(r)[0], 1), 0.0),
@@ -680,7 +504,7 @@ class CompositeEnv(Env):
                 feed_dict=feed_dict)
 
             external_action = self.rb.get_output(final_registers)
-            new_external_obs, external_reward, external_done, i = \
+            new_external_obs, external_reward, external_done, external_info = \
                 self.external.step(external_action)
 
             if self.final_reward:
@@ -697,9 +521,10 @@ class CompositeEnv(Env):
                     entropy=entropy, hidden=hidden, done=done)
             rollouts.extend(rollout_batch)
 
+            external_info['length'] = rollouts.T
             external_rollouts.append(
-                external_obs, external_action, external_reward, done=external_done,
-                info=dict(length=rollouts.T))
+                external_obs, external_action, external_reward,
+                done=external_done, info=external_info)
 
             external_obs = new_external_obs
 

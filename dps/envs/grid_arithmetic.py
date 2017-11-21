@@ -3,8 +3,8 @@ import numpy as np
 
 from dps import cfg
 from dps.register import RegisterBank
-from dps.environment import (
-    RegressionDataset, RegressionEnv, CompositeEnv, InternalEnv)
+from dps.environment import CompositeEnv, InternalEnv
+from dps.supervised import SupervisedDataset, ClassificationEnv, IntegerRegressionEnv
 from dps.vision import EMNIST_CONFIG, SALIENCE_CONFIG, OMNIGLOT_CONFIG, OmniglotDataset
 from dps.utils.tf import LeNet, MLP, SalienceMap, extract_glimpse_numpy_like
 from dps.utils import DataContainer, Param, Config, image_to_string
@@ -56,16 +56,6 @@ def grid_arithmetic_render_rollouts(env, rollouts):
             print("\naction={}".format(internal.action_names[action_idx]))
 
 
-class RegressionEnvNoModules(RegressionEnv):
-    def build_reward(self, actions, targets):
-        if self.mode == "train":
-            reward = tf.nn.softmax_cross_entropy_with_logits(labels=targets, logits=actions) - 1
-            return tf.reshape(reward, (-1, 1))
-        else:
-            reward = tf.nn.softmax_cross_entropy_with_logits(labels=targets, logits=actions) - 1
-            return tf.reshape(reward, (-1, 1))
-
-
 def build_env():
     if cfg.ablation == 'omniglot':
         if not cfg.omniglot_classes:
@@ -88,7 +78,7 @@ def build_env():
         train = GridArithmeticDataset(n_examples=cfg.n_train)
         val = GridArithmeticDataset(n_examples=cfg.n_val)
         test = GridArithmeticDataset(n_examples=cfg.n_val)
-        external = RegressionEnvNoModules(train, val, test)
+        external = ClassificationEnv(train, val, test)
 
     else:
         if cfg.ablation == 'omniglot':
@@ -101,7 +91,7 @@ def build_env():
             val = GridArithmeticDataset(n_examples=cfg.n_val)
             test = GridArithmeticDataset(n_examples=cfg.n_val)
 
-        external = RegressionEnv(train, val, test)
+        external = IntegerRegressionEnv(train, val, test)
 
     env = CompositeEnv(external, internal)
     env.obs_is_image = True
@@ -116,7 +106,7 @@ def build_policy(env, **kwargs):
     elif cfg.ablation == 'no_ops':
         action_selection = ProductDist(Softmax(11), Normal(), Normal(), Normal())
     elif cfg.ablation == 'no_modules':
-        action_selection = ProductDist(Softmax(5), Normal())
+        action_selection = ProductDist(Softmax(5), Softmax(env.n_classes))
     else:
         action_selection = Softmax(env.actions_dim)
         return DiscretePolicy(action_selection, env.obs_shape, **kwargs)
@@ -180,7 +170,7 @@ config = Config(
 )
 
 
-class GridArithmeticDataset(RegressionDataset):
+class GridArithmeticDataset(SupervisedDataset):
     reductions = Param()
 
     env_shape = Param()
@@ -339,7 +329,7 @@ class GridArithmeticDataset(RegressionDataset):
         return new_X, new_Y
 
 
-class GridOmniglotDataset(RegressionDataset):
+class GridOmniglotDataset(SupervisedDataset):
     min_digits = Param()
     max_digits = Param()
     classes = Param()
@@ -626,7 +616,7 @@ class GridArithmetic(InternalEnv):
         fovea_x = tf.clip_by_value(fovea_x, 0, self.env_shape[1]-1)
         return fovea_y, fovea_x
 
-    def _build_return(
+    def _build_return_values(
             self, digit, op, acc, fovea_x, fovea_y,
             prev_action, salience, glimpse, salience_input):
 
@@ -642,7 +632,7 @@ class GridArithmetic(InternalEnv):
                 salience_input=tf.identity(salience_input, "salience_input"),
                 glimpse=glimpse)
 
-        rewards = self.build_rewards(new_registers)
+        rewards = self.build_reward(new_registers)
 
         return (
             tf.fill((tf.shape(digit)[0], 1), 0.0),
@@ -679,7 +669,7 @@ class GridArithmetic(InternalEnv):
         op = -1 * tf.ones((batch_size, 1), dtype=tf.float32)
         acc = -1 * tf.ones((batch_size, 1), dtype=tf.float32)
 
-        _, _, new_r = self._build_return(
+        _, _, new_r = self._build_return_values(
             digit, op, acc, fovea_x, fovea_y, _prev_action, salience, glimpse, salience_input)
         return new_r
 
@@ -712,7 +702,7 @@ class GridArithmetic(InternalEnv):
 
         action = tf.cast(tf.reshape(tf.argmax(a, axis=1), (-1, 1)), tf.float32)
 
-        return self._build_return(digit, op, acc, fovea_x, fovea_y, action, salience, glimpse, salience_input)
+        return self._build_return_values(digit, op, acc, fovea_x, fovea_y, action, salience, glimpse, salience_input)
 
 
 class GridArithmeticEasy(GridArithmetic):
@@ -753,7 +743,7 @@ class GridArithmeticEasy(GridArithmetic):
 
         action = tf.cast(tf.reshape(tf.argmax(a, axis=1), (-1, 1)), tf.float32)
 
-        return self._build_return(digit, op, acc, fovea_x, fovea_y, action, salience, glimpse, salience_input)
+        return self._build_return_values(digit, op, acc, fovea_x, fovea_y, action, salience, glimpse, salience_input)
 
 
 class OmniglotCounting(GridArithmeticEasy):
@@ -822,9 +812,9 @@ class OmniglotCounting(GridArithmeticEasy):
 
         action = tf.cast(tf.reshape(tf.argmax(a, axis=1), (-1, 1)), tf.float32)
 
-        return self._build_return(omniglot, digit, op, acc, fovea_x, fovea_y, action, salience, glimpse, salience_input)
+        return self._build_return_values(omniglot, digit, op, acc, fovea_x, fovea_y, action, salience, glimpse, salience_input)
 
-    def _build_return(
+    def _build_return_values(
             self, omniglot, digit, op, acc, fovea_x, fovea_y,
             prev_action, salience, glimpse, salience_input):
 
@@ -841,7 +831,7 @@ class OmniglotCounting(GridArithmeticEasy):
                 salience_input=tf.identity(salience_input, "salience_input"),
                 glimpse=glimpse)
 
-        rewards = self.build_rewards(new_registers)
+        rewards = self.build_reward(new_registers)
 
         return (
             tf.fill((tf.shape(digit)[0], 1), 0.0),
@@ -895,7 +885,7 @@ class OmniglotCounting(GridArithmeticEasy):
         op = -1 * tf.ones((batch_size, 1), dtype=tf.float32)
         acc = -1 * tf.ones((batch_size, 1), dtype=tf.float32)
 
-        _, _, new_r = self._build_return(
+        _, _, new_r = self._build_return_values(
             omniglot, digit, op, acc, fovea_x, fovea_y, _prev_action, salience, glimpse, salience_input)
         return new_r
 
@@ -996,7 +986,7 @@ class GridArithmeticNoModules(GridArithmetic):
         self._init_networks()
         self._init_rb()
 
-    def build_rewards(self, r):
+    def build_reward(self, r):
         rewards = tf.cond(
             self.is_testing_ph,
             lambda: tf.fill((tf.shape(r)[0], 1), 0.0),
@@ -1034,7 +1024,7 @@ class GridArithmeticNoModules(GridArithmetic):
 
         _output = tf.zeros((batch_size, 1), dtype=tf.float32)
 
-        _, _, new_r = self._build_return(
+        _, _, new_r = self._build_return_values(
             output=_output, fovea_x=fovea_x, fovea_y=fovea_y, prev_action=_prev_action,
             salience=salience, glimpse=glimpse, salience_input=salience_input)
         return new_r
@@ -1072,15 +1062,15 @@ class GridArithmeticNoModules(GridArithmetic):
 
         prev_action = tf.cast(tf.reshape(tf.argmax(a[..., :self.n_discrete], axis=1), (-1, 1)), tf.float32)
 
-        return self._build_return(
+        return self._build_return_values(
             output=_output, fovea_x=fovea_x, fovea_y=fovea_y, prev_action=prev_action,
             salience=salience, glimpse=glimpse, salience_input=salience_input)
 
-    def _build_return(self, **kwargs):
+    def _build_return_values(self, **kwargs):
         with tf.name_scope(self.__class__.__name__):
             kwargs = {k: tf.identity(v, k) for k, v in kwargs.items()}
             new_registers = self.rb.wrap(**kwargs)
-        rewards = self.build_rewards(new_registers)
+        rewards = self.build_reward(new_registers)
 
         return (
             tf.fill((tf.shape(new_registers)[0], 1), 0.0),

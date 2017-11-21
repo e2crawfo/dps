@@ -3,8 +3,8 @@ import numpy as np
 
 from dps import cfg
 from dps.register import RegisterBank
-from dps.environment import (
-    RegressionDataset, RegressionEnv, CompositeEnv, InternalEnv)
+from dps.supervised import SupervisedDataset, IntegerRegressionEnv
+from dps.environment import CompositeEnv, InternalEnv
 from dps.vision.attention import gaussian_filter
 from dps.utils import Param, digits_to_numbers, numbers_to_digits, Config
 
@@ -14,7 +14,7 @@ def build_env():
     val = HardAdditionDataset(n_examples=cfg.n_val)
     test = HardAdditionDataset(n_examples=cfg.n_val)
 
-    external = RegressionEnv(train, val, test)
+    external = IntegerRegressionEnv(train, val, test)
     internal = HardAddition()
     return CompositeEnv(external, internal)
 
@@ -29,7 +29,7 @@ config = Config(
 )
 
 
-class HardAdditionDataset(RegressionDataset):
+class HardAdditionDataset(SupervisedDataset):
     width = Param()
     height = Param()
     base = Param()
@@ -153,7 +153,7 @@ class HardAddition(InternalEnv):
                 carry=tf.identity(carry, "carry"),
                 digit=tf.identity(digit, "digit"))
 
-        rewards = self.build_rewards(new_registers)
+        rewards = self.build_reward(new_registers)
 
         return (
             tf.fill((tf.shape(r)[0], 1), 0.0),

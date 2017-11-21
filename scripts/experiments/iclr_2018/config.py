@@ -6,7 +6,7 @@ from dps.rl.algorithms import a2c
 from dps.rl.policy import BuildEpsilonSoftmaxPolicy, BuildLstmController
 from dps.config import RL_EXPERIMENT_CONFIG, SL_EXPERIMENT_CONFIG
 from dps.updater import DifferentiableUpdater
-from dps.environment import RegressionEnv
+from dps.supervised import ClassificationEnv
 
 
 env_config = grid_arithmetic.config.copy(
@@ -97,7 +97,7 @@ def sl_build_env():
     train = grid_arithmetic.GridArithmeticDataset(n_examples=cfg.n_train)
     val = grid_arithmetic.GridArithmeticDataset(n_examples=cfg.n_val)
     test = grid_arithmetic.GridArithmeticDataset(n_examples=cfg.n_val)
-    return RegressionEnv(train, val, test)
+    return ClassificationEnv(train, val, test)
 
 
 def get_updater(env):

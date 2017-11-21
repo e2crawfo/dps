@@ -385,6 +385,9 @@ class RLContext(Parameterized):
                 obj.post_eval(feed_dict, self)
 
         record = {k: v for v, (k, _) in zip(values, self.recorded_values)}
+        for k, v in rollouts._metadata['external_rollouts'].info[-1].items():
+            if k.endswith('_loss'):
+                record[k] = v
         return summaries, record
 
     def update(self, batch_size, collect_summaries):

@@ -7,7 +7,8 @@ from pathlib import Path
 
 from dps import cfg
 from dps.register import RegisterBank
-from dps.environment import RegressionEnv, CompositeEnv, InternalEnv
+from dps.environment import CompositeEnv, InternalEnv
+from dps.supervised import IntegerRegressionEnv
 from dps.vision import MnistArithmeticDataset, DRAW
 from dps.utils import Param, Config
 from dps.utils.tf import MLP
@@ -18,7 +19,7 @@ def build_env():
     val = MnistArithmeticDataset(n_examples=cfg.n_val)
     test = MnistArithmeticDataset(n_examples=cfg.n_val)
 
-    external = RegressionEnv(train, val, test)
+    external = IntegerRegressionEnv(train, val, test)
     internal = MnistArithmetic()
     return CompositeEnv(external, internal)
 
@@ -179,7 +180,7 @@ class MnistArithmetic(InternalEnv):
                 op_vision=tf.identity(op_vision, "op_vision"),
                 delta=tf.identity(delta, "delta"))
 
-        rewards = self.build_rewards(new_registers)
+        rewards = self.build_reward(new_registers)
 
         return (
             tf.fill((tf.shape(r)[0], 1), 0.0),

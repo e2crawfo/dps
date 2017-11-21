@@ -1,17 +1,19 @@
 import numpy as np
 import clify
 import tensorflow as tf
+import argparse
 
 from config import rl_config as config
 
 from dps import cfg
-from dps.rl.policy import Policy, EpsilonSoftmax, Normal, ProductDist
+from dps.rl.policy import Policy, EpsilonSoftmax, Normal, ProductDist, Deterministic
 from dps.utils.tf import FullyConvolutional, LeNet, CompositeCell, MLP
 
+parser = argparse.ArgumentParser()
+parser.add_argument("ablation", choices="no_modules no_classifiers no_ops".split())
+args = parser.parse_args()
 
-ablation = 'no_modules'
-
-if ablation == 'no_modules':
+if args.ablation == 'no_modules':
     # A
     def no_modules_inp(obs):
         glimpse_start = 4 + 14**2
@@ -38,33 +40,31 @@ if ablation == 'no_modules':
                 MLP(), params_dim, inp=no_modules_inp, name=name)
 
     def build_policy(env, **kwargs):
-        # return Policy(
-        #     ProductDist(EpsilonSoftmax(5, one_hot=True), Normal()),
-        #     env.obs_shape, **kwargs)
-
-        # But maybe this should actually just be differentiable. Could train it using cross entropy.
-        # I'm actually quite interested to see if we could make this work. Would be a more direct extension of RMVA.
         return Policy(
-            ProductDist(EpsilonSoftmax(5, one_hot=True), EpsilonSoftmax(one_hot=False)),
-            env.obs_shape, **kwargs)
+            ProductDist(
+                EpsilonSoftmax(4, one_hot=False),
+                Deterministic(env.n_classes),
+            ),
+            env.obs_shape, **kwargs
+        )
 
     config.update(
         ablation='no_modules',
         build_policy=build_policy,
         build_controller=BuildNoModulesController(),
-        n_lenet_units=128,
-        n_lenet_outputs=128,
     )
-elif ablation == 'no_classifiers':
+
+elif args.ablation == 'no_classifiers':
     # B
-    config.update(
-        ablation='no_classifiers',
-    )
-else:
+    pass
+
+elif args.ablation == 'no_ops':
     # C
-    config.update(
-        ablation='no_ops',
-    )
+    pass
+else:
+    raise Exception("NotImplemented")
+
+config.update(ablations=args.ablation)
 
 
 grid = dict(n_train=2**np.arange(6, 18, 2))

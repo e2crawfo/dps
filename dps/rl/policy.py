@@ -381,10 +381,10 @@ class Deterministic(TensorFlowSelection):
         return tf_dists.VectorDeterministic(self.func(utils))
 
     def entropy(self, utils, exploration):
-        return tf.fill((tf.shape(utils)[0], 1), 0.)
+        return tf.zeros((tf.shape(utils)[0], 1))
 
     def kl(self, utils1, utils2, e1, e2=None):
-        raise Exception()
+        raise Exception("NotImplemented")
 
 
 def softplus(x):

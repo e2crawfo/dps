@@ -3,8 +3,8 @@ import numpy as np
 
 from dps import cfg
 from dps.register import RegisterBank
-from dps.environment import (
-    RegressionDataset, RegressionEnv, CompositeEnv, InternalEnv)
+from dps.environment import CompositeEnv, InternalEnv
+from dps.supervised import SupervisedDataset, IntegerRegressionEnv
 from dps.utils import DataContainer, Param, Config
 from dps.utils.tf import extract_glimpse_numpy_like, resize_image_with_crop_or_pad
 from dps.envs.grid_arithmetic import GridArithmeticDataset
@@ -15,7 +15,7 @@ def build_env():
     val = SimpleGridArithmeticDataset(n_examples=cfg.n_val)
     test = SimpleGridArithmeticDataset(n_examples=cfg.n_val)
 
-    external = RegressionEnv(train, val, test)
+    external = IntegerRegressionEnv(train, val, test)
 
     if cfg.ablation == 'easy':
         internal = SimpleGridArithmeticEasy()
@@ -64,7 +64,7 @@ config = Config(
 )
 
 
-class SimpleGridArithmeticDataset(RegressionDataset):
+class SimpleGridArithmeticDataset(SupervisedDataset):
     reductions = Param()
 
     env_shape = Param()
@@ -263,7 +263,7 @@ class SimpleGridArithmetic(InternalEnv):
                 salience=tf.identity(salience, "salience"),
                 glimpse=glimpse)
 
-        rewards = self.build_rewards(new_registers)
+        rewards = self.build_reward(new_registers)
 
         return (
             tf.fill((tf.shape(digit)[0], 1), 0.0),

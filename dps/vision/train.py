@@ -3,7 +3,7 @@ import tensorflow as tf
 
 from dps import cfg
 from dps.updater import DifferentiableUpdater
-from dps.environment import RegressionEnv, RegressionDataset
+from dps.supervised import ClassificationEnv, RegressionEnv, SupervisedDataset
 from dps.utils import Param
 from dps.config import DEFAULT_CONFIG
 
@@ -17,7 +17,7 @@ def get_differentiable_updater(env):
     return DifferentiableUpdater(env, f)
 
 
-class MnistArithmeticDataset(RegressionDataset):
+class MnistArithmeticDataset(SupervisedDataset):
     sub_image_shape = Param()
     image_shape = Param()
     max_overlap = Param()
@@ -35,7 +35,7 @@ class MnistArithmeticDataset(RegressionDataset):
 # EMNIST ***************************************
 
 
-class EmnistDataset(RegressionDataset):
+class EmnistDataset(SupervisedDataset):
     shape = Param((14, 14))
     include_blank = Param(True)
     one_hot = Param(True)
@@ -68,7 +68,7 @@ def build_emnist_env():
     train_dataset = EmnistDataset(n_examples=cfg.n_train, one_hot=one_hot)
     val_dataset = EmnistDataset(n_examples=cfg.n_val, one_hot=one_hot)
     test_dataset = EmnistDataset(n_examples=cfg.n_val, one_hot=one_hot)
-    return RegressionEnv(train_dataset, val_dataset, test_dataset)
+    return ClassificationEnv(train_dataset, val_dataset, test_dataset)
 
 
 # For training networks on EMNIST datasets.
@@ -100,7 +100,7 @@ EMNIST_CONFIG = DEFAULT_CONFIG.copy(
 # OMNIGLOT ***************************************
 
 
-class OmniglotDataset(RegressionDataset):
+class OmniglotDataset(SupervisedDataset):
     shape = Param()
     include_blank = Param()
     one_hot = Param()
@@ -125,7 +125,7 @@ def build_omniglot_env():
     train_dataset = OmniglotDataset(indices=cfg.train_indices, one_hot=one_hot)
     val_dataset = OmniglotDataset(indices=cfg.val_indices, one_hot=one_hot)
     test_dataset = OmniglotDataset(indices=cfg.test_indices, one_hot=one_hot)
-    return RegressionEnv(train_dataset, val_dataset, test_dataset)
+    return ClassificationEnv(train_dataset, val_dataset, test_dataset)
 
 
 # For training networks on OMNIGLOT datasets.
@@ -194,8 +194,11 @@ class salience_render_hook(object):
             if cfg.show_plots:
                 plt.show(block=True)
 
+            if cfg.save_plots:
+                plt.savefig("salience")
 
-class SalienceDataset(RegressionDataset):
+
+class SalienceDataset(SupervisedDataset):
     classes = Param()
     min_digits = Param()
     max_digits = Param()

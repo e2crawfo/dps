@@ -4,8 +4,8 @@ import numpy as np
 from dps import cfg
 from dps.utils import Param, Config
 from dps.register import RegisterBank
-from dps.environment import (
-    RegressionDataset, RegressionEnv, CompositeEnv, InternalEnv)
+from dps.environment import CompositeEnv, InternalEnv
+from dps.supervised import SupervisedDataset, RegressionEnv
 
 
 def build_env():
@@ -29,7 +29,7 @@ config = Config(
 )
 
 
-class HelloWorldDataset(RegressionDataset):
+class HelloWorldDataset(SupervisedDataset):
     order = Param()
 
     def __init__(self, **kwargs):
@@ -80,7 +80,7 @@ class HelloWorld(InternalEnv):
             r1=mult * (_r0 * _r1) + (1 - mult) * _r1,
             r2=_r2+1)
 
-        rewards = self.build_rewards(new_registers)
+        rewards = self.build_reward(new_registers)
 
         return (
             tf.fill((tf.shape(r)[0], 1), 0.0),
