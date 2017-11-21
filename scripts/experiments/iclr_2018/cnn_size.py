@@ -11,12 +11,18 @@ C_curric = [
     dict(shape=(3, 3), n_train=2**17),
     dict(shape=(3, 3), min_digits=4, max_digits=4)]
 F_curric = [dict(shape=(3, 3), min_digits=4, max_digits=4)]
+G_curric = [
+    dict(draw_shape=(2, 2), n_train=2**17),
+    dict(draw_shape=(3, 3), n_train=2**17),
+    dict(draw_shape=(3, 3), min_digits=4, max_digits=4, n_train=2**17),
+    dict(draw_shape=(3, 3), min_digits=5, max_digits=5)
+]
 
 config = config.copy(
-    curriculum=A_curric,
+    curriculum=G_curric,
     n_controller_units=512,
     reductions="sum",
-    padded_shape=(3, 3),
+    env_shape=(3, 3),
 )
 
 grid = [
