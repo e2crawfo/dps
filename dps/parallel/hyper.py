@@ -124,6 +124,9 @@ def sample_configs(distributions, base_config, n_repeats, n_samples=None):
 
     if isinstance(distributions, list):
         samples = distributions + []
+
+        if n_samples:
+            samples = list(np.random.permutation(samples)[:n_samples])
     else:
         if not n_samples:
             samples = generate_all(distributions)
