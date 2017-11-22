@@ -282,7 +282,7 @@ def _summarize_search(args):
         keys = list(distributions.keys())
     keys = sorted(keys)
 
-    df = extract_dataframe_from_job(job, keys)
+    df = extract_data_from_job(job, keys, as_frame=True, omit_timestep_data=True)
 
     groups = df.groupby(keys)
 
@@ -424,7 +424,7 @@ def ci(data, coverage):
         coverage, len(data)-1, loc=np.mean(data), scale=stats.sem(data))
 
 
-def extract_dataframe_from_job(job, data_keys=None):
+def extract_data_from_job(job, data_keys=None, as_frame=True, omit_timestep_data=True):
     """ Extract a pandas data frame from a job.
 
     Parameters
@@ -434,10 +434,20 @@ def extract_dataframe_from_job(job, data_keys=None):
         Otherwise, a Job instance representing the path to extract data from.
     data_keys: list of string
         Keys to extract from the sub-job configurations and inject into the resulting data frames.
+    as_frame: bool
+        If True, returns that data as a dataframe.
+        Otherwise, returns the data as a list of dictionaries
+    omit_timestep_data: bool
+        If True, per-timestep data is deleted to save RAM. Can only be set to False
+        if `as_frame` is False.
+
 
     """
     if isinstance(job, str) or isinstance(job, Path):
         job = ReadOnlyJob(str(job))
+
+    if as_frame and not omit_timestep_data:
+        raise Exception("If `omit_timestep_data` is False, `as_frame` must also be False.")
 
     kinds = 'train update val test'.split()
 
@@ -457,76 +467,23 @@ def extract_dataframe_from_job(job, data_keys=None):
         record = r['history'][-1].copy()
         record['host'] = r['host']
         record['op_name'] = op.name
-        del record['best_path']
+        try:
+            del record['best_path']
+        except Exception:
+            pass
 
-        # Removes verbose data (per step) from the record
-        for k in kinds:
-            try:
-                del record[k + '_data']
-            except Exception:
-                pass
-
-        config = Config(r['config'])
-        for k in data_keys:
-            try:
-                record[k] = config[k]
-            except KeyError:
-                record[k] = None
-
-        record.update(
-            latest_stage=r['history'][-1]['stage'],
-            total_steps=sum(s['n_steps'] for s in r['history']),
-        )
-
-        record['seed'] = r['config']['seed']
-        records.append(record)
-
-    df = pd.DataFrame.from_records(records)
-    for key in data_keys:
-        df[key] = df[key].fillna(-np.inf)
-    return df
-
-
-def extract_verbose_data_from_job(job, data_keys=None):
-    """ Extract list of dictionaries from job, one dictionary per sub-job. Dictionaries include verbose data.
-
-    Parameters
-    ----------
-    job: string or Job instance
-        If string, then a path to a directory reprenting the job to extract data from.
-        Otherwise, a Job instance representing the path to extract data from.
-    data_keys: list of string
-        Keys to extract from the sub-job configurations and inject into the resulting data frames.
-
-    """
-    if isinstance(job, str) or isinstance(job, Path):
-        job = ReadOnlyJob(str(job))
-
-    kinds = 'train update val test'.split()
-
-    if not data_keys:
-        data_keys = []
-    elif isinstance(data_keys, str):
-        data_keys = data_keys.split()
-
-    records = []
-    for op in job.completed_ops(partial=True):
-        if 'map' in op.name:
-            try:
-                r = op.get_outputs(job.objects)[0]
-            except BaseException as e:
-                print("Exception thrown when accessing output of op {}:\n    {}".format(op.name, e))
-
-        record = r['history'][-1].copy()
-        record['host'] = r['host']
-        record['op_name'] = op.name
-        del record['best_path']
-
-        for k in kinds:
-            key = k + '_data'
-            data = record.get(key, '').strip()
-            if data:
-                record[key] = pd.read_csv(StringIO(data), index_col=False)
+        if omit_timestep_data:
+            for k in kinds:
+                try:
+                    del record[k + '_data']
+                except Exception:
+                    pass
+        else:
+            for k in kinds:
+                key = k + '_data'
+                data = record.get(key, '').strip()
+                if data:
+                    record[key] = pd.read_csv(StringIO(data), index_col=False)
 
         config = Config(r['config'])
         for k in data_keys:
@@ -537,12 +494,24 @@ def extract_verbose_data_from_job(job, data_keys=None):
 
         record.update(
             latest_stage=r['history'][-1]['stage'],
-            total_steps=sum(s['n_steps'] for s in r['history']),
         )
+        try:
+            record.update(
+                total_steps=sum(s['n_steps'] for s in r['history'])
+            )
+        except Exception:
+            pass
 
         record['seed'] = r['config']['seed']
         records.append(record)
-    return records
+
+    if as_frame:
+        df = pd.DataFrame.from_records(records)
+        for key in data_keys:
+            df[key] = df[key].fillna(-np.inf)
+        return df
+    else:
+        return records
 
 
 def _sample_complexity_plot(args):
@@ -592,7 +561,7 @@ def _sample_complexity_plot_core(path, style, spread_measure):
         keys = list(distributions.keys())
     keys = sorted(keys)
 
-    df = extract_dataframe_from_job(job, keys)
+    df = extract_data_from_job(job, keys)
 
     rl = 'n_controller_units' not in df
 
