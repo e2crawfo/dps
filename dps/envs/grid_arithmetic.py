@@ -9,8 +9,21 @@ from dps.vision import EMNIST_CONFIG, SALIENCE_CONFIG, OMNIGLOT_CONFIG, Omniglot
 from dps.utils.tf import LeNet, MLP, SalienceMap, extract_glimpse_numpy_like
 from dps.utils import DataContainer, Param, Config, image_to_string
 from dps.rl.policy import Softmax, Normal, ProductDist, Policy, DiscretePolicy
+from dps.updater import DifferentiableUpdater
 
 from mnist_arithmetic import load_emnist, load_omniglot
+
+
+def sl_build_env():
+    train = GridArithmeticDataset(n_examples=cfg.n_train)
+    val = GridArithmeticDataset(n_examples=cfg.n_val)
+    test = GridArithmeticDataset(n_examples=cfg.n_val)
+    return RegressionEnv(train, val, test)
+
+
+def sl_get_updater(env):
+    build_model = LeNet(n_units=int(cfg.n_controller_units))
+    return DifferentiableUpdater(env, build_model)
 
 
 def grid_arithmetic_render_rollouts(env, rollouts):

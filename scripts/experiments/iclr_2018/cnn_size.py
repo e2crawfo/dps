@@ -18,7 +18,7 @@ G_curric = [
     dict(draw_shape=(3, 3), min_digits=5, max_digits=5)
 ]
 
-config = config.copy(
+config.update(
     curriculum=G_curric,
     n_controller_units=512,
     reductions="sum",

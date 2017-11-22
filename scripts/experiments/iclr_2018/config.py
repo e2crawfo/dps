@@ -93,18 +93,6 @@ rl_config.update(alg_config)
 rl_config.update(env_config)
 
 
-def sl_build_env():
-    train = grid_arithmetic.GridArithmeticDataset(n_examples=cfg.n_train)
-    val = grid_arithmetic.GridArithmeticDataset(n_examples=cfg.n_val)
-    test = grid_arithmetic.GridArithmeticDataset(n_examples=cfg.n_val)
-    return ClassificationEnv(train, val, test)
-
-
-def get_updater(env):
-    build_model = LeNet(n_units=int(cfg.n_controller_units))
-    return DifferentiableUpdater(env, build_model)
-
-
 cnn_config = SL_EXPERIMENT_CONFIG.copy(
     name="GridArithmeticCNN",
 
@@ -113,7 +101,7 @@ cnn_config = SL_EXPERIMENT_CONFIG.copy(
     gpu_allow_growth=True,
     per_process_gpu_memory_fraction=0.22,
 
-    get_updater=get_updater,
+    get_updater=grid_arithmetic.sl_get_updater,
     optimizer_spec="adam",
     lr_schedule=1e-4,
     power_through=True,
@@ -131,4 +119,5 @@ cnn_config = SL_EXPERIMENT_CONFIG.copy(
     preserve_policy=True,
 )
 
-cnn_config.update(env_config, build_env=sl_build_env)
+cnn_config.update(env_config)
+cnn_config.update(build_env=grid_arithmetic.sl_build_env)
