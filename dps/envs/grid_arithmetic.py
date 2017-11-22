@@ -18,7 +18,7 @@ def sl_build_env():
     train = GridArithmeticDataset(n_examples=cfg.n_train)
     val = GridArithmeticDataset(n_examples=cfg.n_val)
     test = GridArithmeticDataset(n_examples=cfg.n_val)
-    return RegressionEnv(train, val, test)
+    return ClassificationEnv(train, val, test)
 
 
 def sl_get_updater(env):

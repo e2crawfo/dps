@@ -80,7 +80,12 @@ alg_config = Config(
     updates_per_sample=1,
 )
 
-rl_config = RL_EXPERIMENT_CONFIG.copy(
+rl_config = RL_EXPERIMENT_CONFIG.copy()
+
+rl_config.update(alg_config)
+rl_config.update(env_config)
+
+rl_config.update(
     name="GridArithmeticRL",
 
     memory_limit_mb=12*1024,
@@ -89,11 +94,13 @@ rl_config = RL_EXPERIMENT_CONFIG.copy(
     per_process_gpu_memory_fraction=0.22,
 )
 
-rl_config.update(alg_config)
-rl_config.update(env_config)
 
+cnn_config = SL_EXPERIMENT_CONFIG.copy()
 
-cnn_config = SL_EXPERIMENT_CONFIG.copy(
+cnn_config.update(env_config)
+cnn_config.update(build_env=grid_arithmetic.sl_build_env)
+
+cnn_config.update(
     name="GridArithmeticCNN",
 
     memory_limit_mb=12*1024,
@@ -118,6 +125,3 @@ cnn_config = SL_EXPERIMENT_CONFIG.copy(
     loss_type="xent",
     preserve_policy=True,
 )
-
-cnn_config.update(env_config)
-cnn_config.update(build_env=grid_arithmetic.sl_build_env)

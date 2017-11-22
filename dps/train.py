@@ -222,6 +222,9 @@ class TrainingLoop(object):
                 stack.enter_context(stage_config)
 
                 if stage == 0 or not cfg.preserve_env:
+                    if getattr(self, 'env', None):
+                        self.env.close()
+
                     self.env = cfg.build_env()
 
                 updater = cfg.get_updater(self.env)
