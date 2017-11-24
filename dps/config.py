@@ -63,17 +63,14 @@ def get_experiment_name():
     except Exception:
         pass
 
-    try:
-        name.append('seed={}'.format(cfg.seed))
-    except Exception:
-        pass
-
     return '_'.join(name)
 
 
 DEFAULT_CONFIG = SystemConfig(
     name="Default",
     seed=-1,
+
+    curriculum=[{}],
 
     load_path="",  # Path to load variables from.
     do_train=True,

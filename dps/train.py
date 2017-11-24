@@ -18,7 +18,8 @@ import copy
 from dps import cfg
 from dps.utils import (
     gen_seed, time_limit, memory_usage, ExperimentStore, dps_git_summary,
-    memory_limit, du, Config, ClearConfig, parse_date, redirect_stream
+    memory_limit, du, Config, ClearConfig, parse_date, redirect_stream,
+    NumpySeed
 )
 from dps.utils.tf import (
     restart_tensorboard, uninitialized_variables_initializer,
@@ -27,25 +28,13 @@ from dps.utils.tf import (
 
 
 def training_loop(exp_name='', start_time=None):
-    seed = cfg.seed
-    if seed is not None and seed < 0:
-        seed = None
-    np.random.seed(seed)
-
-    exp_name = exp_name or cfg.get_experiment_name()
-    try:
-        curriculum = cfg.curriculum
-    except AttributeError:
-        curriculum = [{}]
-
-    loop = TrainingLoop(curriculum, exp_name, start_time)
+    loop = TrainingLoop(exp_name, start_time)
     yield from loop.run()
 
 
 class TrainingLoop(object):
-    def __init__(self, curriculum, exp_name='', start_time=None):
-        self.curriculum = curriculum
-        self.exp_name = exp_name
+    def __init__(self, exp_name='', start_time=None):
+        self.exp_name = exp_name or cfg.get_experiment_name()
         self.start_time = start_time
         self.history = []
 
@@ -115,7 +104,7 @@ class TrainingLoop(object):
         history = copy.deepcopy(self.history)
         for kind in 'train update val test'.split():
             key = kind + '_data'
-            if key in self.latest:
+            if key in self.latest:
                 history[-1][key] = pd.DataFrame.from_records(self.latest[key]).to_csv(index=False)
 
         result = dict(
@@ -126,6 +115,15 @@ class TrainingLoop(object):
         return result
 
     def run(self):
+        self.curriculum = cfg.curriculum
+
+        if cfg.seed is None or cfg.seed < 0:
+            cfg.seed = gen_seed()
+
+        with NumpySeed(cfg.seed):
+            yield from self._run()
+
+    def _run(self):
         if cfg.start_tensorboard:
             restart_tensorboard(str(cfg.log_dir), cfg.tbport, cfg.reload_interval)
         if self.start_time is None:
@@ -134,9 +132,9 @@ class TrainingLoop(object):
 
         es = ExperimentStore(str(cfg.log_dir), max_experiments=cfg.max_experiments, delete_old=1)
         self.exp_dir = exp_dir = es.new_experiment(
-            self.exp_name, add_date=1, force_fresh=1, update_latest=cfg.update_latest)
+            self.exp_name, cfg.seed, add_date=1, force_fresh=1, update_latest=cfg.update_latest)
 
-        print("Scratch directory is {}.".format(exp_dir.path))
+        print("Scratch directory for this training run is {}.".format(exp_dir.path))
         cfg.path = exp_dir.path
 
         print(cfg)

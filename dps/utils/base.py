@@ -35,7 +35,7 @@ class GitSummary(object):
     def __init__(self, directory):
         self.directory = directory
 
-    def summarize(self, n_logs=5, diff=False):
+    def summarize(self, n_logs=10, diff=False):
         s = []
         with cd(self.directory):
             s.append("*" * 40)
@@ -129,13 +129,12 @@ class ExperimentStore(object):
         self.prefix = prefix
         self.max_experiments = max_experiments
         self.delete_old = delete_old
-        try:
-            os.makedirs(os.path.realpath(self.path))
-        except:
-            pass
+        os.makedirs(os.path.realpath(self.path), exist_ok=True)
 
-    def new_experiment(self, name, data=None, add_date=False, force_fresh=True, update_latest=True):
-        """ Create a new experiment path. """
+    def new_experiment(self, name, seed, data=None, add_date=False, force_fresh=True, update_latest=True):
+        """ Create a directory for a new experiment. """
+        assert seed is not None and seed >= 0 and seed < np.iinfo(np.int32).max and isinstance(seed, int)
+
         if self.max_experiments is not None:
             experiments = os.listdir(self.path)
             n_experiments = len(experiments)
@@ -158,7 +157,13 @@ class ExperimentStore(object):
                         "Too many experiments (greater than {}) in "
                         "directory {}.".format(self.max_experiments, self.path))
 
-        filename = make_filename(self.prefix + '_' + name, add_date=add_date, config_dict=data)
+        data = data or {}
+        config_dict = data.copy()
+        config_dict['seed'] = str(seed)
+
+        filename = make_filename(
+            self.prefix + '_' + name, add_date=add_date, config_dict=config_dict)
+
         if update_latest:
             make_symlink(filename, os.path.join(self.path, 'latest'))
         return ExperimentDirectory(
@@ -185,10 +190,7 @@ class ExperimentStore(object):
     def experiment_finished(self, exp_dir, success):
         dest_name = 'complete' if success else 'incomplete'
         dest_path = os.path.join(self.path, dest_name)
-        try:
-            os.makedirs(dest_path)
-        except:
-            pass
+        os.makedirs(dest_path, exist_ok=True)
         shutil.move(exp_dir.path, dest_path)
         exp_dir.path = os.path.join(dest_path, os.path.basename(exp_dir.path))
 
@@ -293,7 +295,7 @@ def redirect_stream(stream, filename, mode='w', tee=False, **kwargs):
 
 
 def make_filename(main_title, directory='', config_dict=None, add_date=True,
-                  sep='_', kvsep=':', extension='', omit=[]):
+                  sep='_', kvsep='=', extension='', omit=[]):
     """ Create a filename.
 
     Parameters
@@ -330,7 +332,7 @@ def make_filename(main_title, directory='', config_dict=None, add_date=True,
         if not isinstance(value, str):
             raise ValueError("values in config_dict must be strings.")
 
-        if not str(key) in omit and not hasattr(value, '__len__'):
+        if not str(key) in omit:
             labels.append(kvsep.join([key, value]))
 
     if add_date:

@@ -196,23 +196,20 @@ def build_search(
         Whether to add time to name of experiment directory.
     do_local_test: bool
         If True, run a short test using one of the sampled
-        aonfigs on the local machine to catch any dumb errors
+        configs on the local machine to catch any dumb errors
         before starting the real experiment.
     readme: str
         String specifiying context/purpose of search.
 
     """
-    with config:
-        cfg.update_from_command_line()
-
-    es = ExperimentStore(str(path), max_experiments=10, delete_old=1)
+    es = ExperimentStore(str(path), max_experiments=None, delete_old=1)
 
     count = 0
     base_name = name
     has_built = False
     while not has_built:
         try:
-            exp_dir = es.new_experiment(name, add_date=add_date, force_fresh=1)
+            exp_dir = es.new_experiment(name, config.seed, add_date=add_date, force_fresh=1)
             has_built = True
         except FileExistsError:
             name = "{}_{}".format(base_name, count)
@@ -685,6 +682,12 @@ def build_and_submit(
         Number of CPUs per process. Only has an effect when `"slurm" in kind` is True.
 
     """
+    with config:
+        cfg.update_from_command_line()
+
+    if config.seed is None or config.seed < 0:
+        config.seed = gen_seed()
+
     assert kind in "pbs slurm slurm-local parallel local".split()
     assert 'build_command' not in config
     config['build_command'] = ' '.join(sys.argv)
