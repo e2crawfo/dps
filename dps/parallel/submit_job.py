@@ -12,7 +12,7 @@ from collections import defaultdict
 import sys
 
 from dps.parallel.base import ReadOnlyJob, zip_root
-from dps.utils import cd, parse_timedelta, make_filename, make_symlink
+from dps.utils import cd, parse_timedelta, make_filename, make_symlink, dps_git_summary
 
 
 DEFAULT_HOST_POOL = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 32)]
@@ -113,6 +113,11 @@ class ParallelSession(object):
             with open(os.path.join(job_directory, 'README.md'), 'w') as f:
                 f.write(readme)
             del f
+
+        git_summary = dps_git_summary()
+        with open(os.path.join(job_directory, 'git_summary.txt'), 'w') as f:
+            f.write(git_summary.summarize(diff=True))
+        del f
 
         input_zip_stem = Path(input_zip).stem
         input_zip = shutil.copy(str(input_zip), os.path.join(job_directory, "orig.zip"))
