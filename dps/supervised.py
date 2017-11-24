@@ -137,7 +137,7 @@ class SupervisedEnv(Env):
         info = {"y": self.y}
         for name in self.recorded_names:
             func = getattr(self, "get_{}".format(name))
-            info[name] = func(action, self.y)
+            info[name] = np.mean(func(action, self.y))
 
         return obs, reward, done, info
 
@@ -166,26 +166,28 @@ class ClassificationEnv(SupervisedEnv):
         return self.build_xent_loss(actions, targets)
 
     def build_xent_loss(self, actions, targets):
-        return tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=targets, logits=actions))
+        return tf.nn.softmax_cross_entropy_with_logits(labels=targets, logits=actions)[..., None]
 
     def build_01_loss(self, actions, targets):
         action_argmax = tf.argmax(actions, axis=-1)
         targets_argmax = tf.argmax(targets, axis=-1)
-        return tf.reduce_mean(1 - tf.cast(tf.equal(action_argmax, targets_argmax), tf.float32))
+        return tf.reduce_mean(
+            1 - tf.to_float(tf.equal(action_argmax, targets_argmax)),
+            axis=-1, keep_dims=True)
 
     def get_reward(self, actions, targets):
         return self.get_xent_loss(actions, targets)
 
-    def get_xent_loss(self, actions, targets):
+    def get_xent_loss(self, logits, targets):
         """ Assumes `targets` is one-hot. """
-        log_numer = np.sum(actions * targets, axis=-1)
-        log_denom = logsumexp(actions, axis=-1)
-        return np.mean(log_numer - log_denom)
+        log_numer = np.sum(logits * targets, axis=-1, keepdims=True)
+        log_denom = logsumexp(logits, axis=-1, keepdims=True)
+        return log_numer - log_denom
 
     def get_01_loss(self, actions, targets):
-        action_argmax = np.argmax(actions, axis=-1)
-        targets_argmax = np.argmax(targets, axis=-1)
-        return np.mean(1 - (action_argmax == targets_argmax).astype(actions.dtype))
+        action_argmax = np.argmax(actions, axis=-1)[..., None]
+        targets_argmax = np.argmax(targets, axis=-1)[..., None]
+        return 1 - (action_argmax == targets_argmax).astype('f')
 
 
 class RegressionEnv(SupervisedEnv):
@@ -196,13 +198,13 @@ class RegressionEnv(SupervisedEnv):
         return self.build_2norm_loss(actions, targets)
 
     def build_2norm_loss(self, actions, targets):
-        return tf.reduce_mean((actions - targets)**2)
+        return tf.reduce_mean((actions - targets)**2, keep_dims=True)
 
     def get_reward(self, actions, targets):
         return -self.get_2norm_loss(actions, targets)
 
     def get_2norm_loss(self, actions, targets):
-        return np.mean((actions - targets)**2)
+        return np.mean((actions - targets)**2, axis=-1, keepdims=True)
 
 
 class IntegerRegressionEnv(RegressionEnv):
@@ -210,10 +212,12 @@ class IntegerRegressionEnv(RegressionEnv):
     recorded_names = ["2norm_loss", "01_loss"]
 
     def build_01_loss(self, actions, targets):
-        return tf.reduce_mean(tf.cast(tf.abs(actions - targets) >= 0.5, tf.float32))
+        return tf.reduce_mean(
+            tf.to_float(tf.abs(actions - targets) >= 0.5),
+            axis=-1, keep_dims=True)
 
     def get_reward(self, actions, targets):
         return -self.get_01_loss(actions, targets)
 
     def get_01_loss(self, actions, targets):
-        return np.mean(np.abs(actions - targets) >= 0.5)
+        return np.mean(np.abs(actions - targets) >= 0.5, axis=-1, keepdims=True)
