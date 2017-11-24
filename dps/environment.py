@@ -504,8 +504,7 @@ class CompositeEnv(Env):
                 feed_dict=feed_dict)
 
             external_action = self.rb.get_output(final_registers)
-            new_external_obs, external_reward, external_done, external_info = \
-                self.external.step(external_action)
+            new_external_obs, external_reward, external_done, external_info = self.external.step(external_action)
 
             if self.final_reward:
                 rewards[-1, ...] += external_reward

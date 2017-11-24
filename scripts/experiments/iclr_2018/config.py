@@ -1,12 +1,8 @@
-from dps import cfg
 from dps.utils import Config
-from dps.utils.tf import LeNet
 from dps.envs import grid_arithmetic
 from dps.rl.algorithms import a2c
 from dps.rl.policy import BuildEpsilonSoftmaxPolicy, BuildLstmController
 from dps.config import RL_EXPERIMENT_CONFIG, SL_EXPERIMENT_CONFIG
-from dps.updater import DifferentiableUpdater
-from dps.supervised import ClassificationEnv
 
 
 env_config = grid_arithmetic.config.copy(
@@ -89,7 +85,7 @@ rl_config.update(
     name="GridArithmeticRL",
 
     memory_limit_mb=12*1024,
-    use_gpu=True,
+    use_gpu=False,
     gpu_allow_growth=True,
     per_process_gpu_memory_fraction=0.22,
 )
