@@ -25,24 +25,52 @@ import clify
 import dps
 
 
-def git_dps_commit_hash():
-    """ Get full hash of commit of dps module. """
-    return git_module_commit_hash(dps)
+def _run_cmd(cmd):
+    if isinstance(cmd, str):
+        cmd = cmd.split()
+    return subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode()
 
 
-def git_module_commit_hash(module):
-    """ Get full hash of commit of provided module. """
-    module_dir = Path(module.__file__).parent
-    with cd(module_dir):
-        return git_cwd_commit_hash()
+class GitSummary(object):
+    def __init__(self, directory):
+        self.directory = directory
+
+    def summarize(self, n_logs=5, diff=False):
+        s = []
+        with cd(self.directory):
+            s.append("*" * 40)
+            s.append("GitSummary for directory {}\n".format(self.directory))
+
+            s.append("log:\n")
+            log = _run_cmd('git log -n {}'.format(n_logs))
+            s.append(log)
+
+            s.append("\nstatus:\n")
+            status = _run_cmd('git status --porcelain')
+            s.append(status)
+
+            s.append("\ndiff:\n")
+            if diff:
+                diff = _run_cmd('git diff')
+                s.append(diff)
+            else:
+                s.append("<ommitted>")
+
+            s.append("\nEnd of GitSummary for directory {}".format(self.directory))
+            s.append("*" * 40)
+        return '\n'.join(s)
+
+    def freeze(self):
+        pass
 
 
-def git_cwd_commit_hash():
-    """ Get full hash of commit of repo that CWD belongs to. """
-    try:
-        return subprocess.check_output('git rev-parse HEAD'.split(), stderr=subprocess.DEVNULL).strip().decode()
-    except subprocess.CalledProcessError:
-        return None
+def module_git_summary(module, **kwargs):
+    module_dir = Path(module.__file__).parent.parent
+    return GitSummary(module_dir)
+
+
+def dps_git_summary(**kwargs):
+    return module_git_summary(dps, **kwargs)
 
 
 @contextmanager

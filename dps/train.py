@@ -17,7 +17,7 @@ import copy
 
 from dps import cfg
 from dps.utils import (
-    gen_seed, time_limit, memory_usage, ExperimentStore, git_dps_commit_hash,
+    gen_seed, time_limit, memory_usage, ExperimentStore, dps_git_summary,
     memory_limit, du, Config, ClearConfig, parse_date, redirect_stream
 )
 from dps.utils.tf import (
@@ -126,29 +126,33 @@ class TrainingLoop(object):
         return result
 
     def run(self):
-        print("CUDA_VISIBLE_DEVICES: ", os.getenv("CUDA_VISIBLE_DEVICES"))
-
         if cfg.start_tensorboard:
             restart_tensorboard(str(cfg.log_dir), cfg.tbport, cfg.reload_interval)
         if self.start_time is None:
             self.start_time = time.time()
         print("Starting training {} seconds after given start time.".format(time.time() - self.start_time))
-        print("Max experiments: {}".format(cfg.max_experiments))
 
         es = ExperimentStore(str(cfg.log_dir), max_experiments=cfg.max_experiments, delete_old=1)
         self.exp_dir = exp_dir = es.new_experiment(
             self.exp_name, add_date=1, force_fresh=1, update_latest=cfg.update_latest)
 
-        print("dps git commit is {}".format(git_dps_commit_hash()))
         print("Scratch directory is {}.".format(exp_dir.path))
         cfg.path = exp_dir.path
 
         print(cfg)
 
-        with open(exp_dir.path_for('config.txt'), 'w') as f:
-            f.write(str(cfg.freeze()))
         with open(exp_dir.path_for('config.pkl'), 'wb') as f:
             dill.dump(cfg.freeze(), f, protocol=dill.HIGHEST_PROTOCOL)
+
+        with open(exp_dir.path_for('config.txt'), 'w') as f:
+            f.write(str(cfg.freeze()))
+
+        git_summary = dps_git_summary()
+        with open(exp_dir.path_for('git_summary.txt'), 'w') as f:
+            f.write(git_summary.summarize(diff=True))
+
+        with open(exp_dir.path_for('os_environ.txt'), 'w') as f:
+            f.write(pformat(os.environ._data))
 
         threshold_reached = True
         self.global_step = 0
