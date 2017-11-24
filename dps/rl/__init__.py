@@ -3,7 +3,7 @@ from .base import (
 )
 from .terms import (
     PolicyGradient, PolicyEntropyBonus, PolicyEvaluation_State, PolicyEvaluation_StateAction,
-    ValueFunctionRegularization, ConstrainedPolicyEvaluation_State
+    ValueFunctionRegularization, ConstrainedPolicyEvaluation_State, DifferentiableLoss
 )
 from .rollout import RolloutBatch
 from .replay import ReplayBuffer, PrioritizedReplayBuffer

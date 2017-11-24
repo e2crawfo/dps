@@ -1,7 +1,8 @@
 import tensorflow as tf
+from tensorflow.python.ops.rnn import dynamic_rnn
 
 from dps.rl import ObjectiveFunctionTerm
-from dps.utils.tf import masked_mean
+from dps.utils.tf import masked_mean, RNNCell
 
 
 class PolicyGradient(ObjectiveFunctionTerm):
@@ -394,3 +395,66 @@ class ConstrainedPolicyEvaluation_State(ObjectiveFunctionTerm):
 
     def pre_eval(self, feed_dict, context):
         self.pre_update(feed_dict, context)
+
+
+class GetActionsCell(RNNCell):
+    def __init__(self, policy):
+        self.policy = policy
+        self._state_size = self.policy.state_size
+        self._output_size = self.policy.actions_dim
+
+    def __call__(self, obs, policy_state, scope=None):
+        with tf.name_scope(scope or 'get_actions_cell'):
+            (_, action, _, _), new_policy_state = self.policy(obs, policy_state)
+
+        return action, new_policy_state
+
+    @property
+    def state_size(self):
+        return self._state_size
+
+    @property
+    def output_size(self):
+        return self._output_size
+
+    def zero_state(self, batch_size, dtype):
+        return self.policy.zero_state(batch_size, dtype)
+
+
+class DifferentiableLoss(ObjectiveFunctionTerm):
+    """ A terms that minimizes a differentiable loss provided by the environment. """
+
+    def __init__(self, env, policy, **kwargs):
+        self.env = env
+        assert env.has_differentiable_loss
+        assert hasattr(env, 'build_trajectory_loss'), (
+            "To optimize a differentiable loss, environment must have a method called `build_trajectory_loss`.")
+        self.policy = policy
+        super(DifferentiableLoss, self).__init__(**kwargs)
+
+    def generate_signal(self, signal_key, context, **kwargs):
+        if signal_key == "loss":
+            obs = context.get_signal('obs')
+            get_actions_cell = GetActionsCell(self.policy)
+
+            initial_state = get_actions_cell.zero_state(tf.shape(obs)[0], tf.float32)
+
+            actions, final_state = dynamic_rnn(
+                get_actions_cell, obs, initial_state=initial_state,
+                parallel_iterations=1, swap_memory=False, time_major=True)
+
+            hidden = context.get_signal('hidden')
+            loss = self.env.build_trajectory_loss(actions, obs, hidden)
+            return loss
+        else:
+            raise Exception("NotImplemented")
+
+    def build_graph(self, context):
+        loss = context.get_signal("loss", self, gradient=True)
+        mask = context.get_signal("mask")
+        objective = -masked_mean(loss, mask)
+
+        label = "{}-differentiable_objective".format(self.policy.display_name)
+        context.add_summary(tf.summary.scalar(label, objective))
+
+        return objective

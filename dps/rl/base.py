@@ -198,6 +198,8 @@ class RLContext(Parameterized):
             tf.float32, shape=(cfg.T, None, 1), name="_mask")
         self._signals['obs'] = tf.placeholder(
             tf.float32, shape=(cfg.T, None) + self.obs_shape, name="_obs")
+        self._signals['hidden'] = tf.placeholder(
+            tf.float32, shape=(cfg.T, None) + (self.env.rb.hidden_width,), name="_hidden")
         self._signals['actions'] = tf.placeholder(
             tf.float32, shape=(cfg.T, None, self.actions_dim), name="_actions")
         self._signals['gamma'] = tf.constant(self.gamma)
@@ -297,6 +299,7 @@ class RLContext(Parameterized):
         feed_dict = {
             self._signals['mask']: (1-shift_fill(rollouts.done, 1)).astype('f'),
             self._signals['obs']: rollouts.o,
+            self._signals['hidden']: rollouts.hidden,
             self._signals['actions']: rollouts.a,
             self._signals['rewards']: rollouts.r,
             self._signals['weights']: weights,

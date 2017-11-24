@@ -73,6 +73,13 @@ def dps_git_summary(**kwargs):
     return module_git_summary(dps, **kwargs)
 
 
+def one_hot(indices, depth):
+    array = np.zeros(indices.shape + (depth,))
+    batch_indices = np.unravel_index(range(indices.size), indices.shape)
+    array[batch_indices + (indices.flatten(),)] = 1.0
+    return array
+
+
 @contextmanager
 def modify_env(*remove, **update):
     """
@@ -227,7 +234,7 @@ class ExperimentDirectory(object):
         full_path = os.path.join(self.path, path)
         try:
             os.makedirs(full_path)
-        except:
+        except Exception:
             pass
         return full_path
 
@@ -528,7 +535,7 @@ class Parameterized(object):
             try:
                 if p != 'params' and isinstance(getattr(cls, p), Param):
                     params.append(p)
-            except:
+            except Exception:
                 pass
         return params
 
@@ -750,7 +757,7 @@ class ChainSchedule(Schedule):
         try:
             int(self.component_n_steps)
             n_steps = [self.component_n_steps] * self.n_components
-        except:
+        except Exception:
             n_steps = self.component_n_steps
 
         signal = []
@@ -949,10 +956,10 @@ class Config(dict, MutableMapping):
             for k in keys:
                 try:
                     value = value[k]
-                except:
+                except Exception:
                     try:
                         value = value[int(k)]
-                    except:
+                    except Exception:
                         raise KeyError(
                             "Calling __getitem__ with key {} failed at component {}.".format(key, k))
             return value
@@ -967,15 +974,15 @@ class Config(dict, MutableMapping):
             for k in keys[:-1]:
                 try:
                     to_set = to_set[k]
-                except:
+                except Exception:
                     try:
                         to_set = to_set[int(k)]
-                    except:
+                    except Exception:
                         to_set[k] = self.__class__()
                         to_set = to_set[k]
             try:
                 to_set[keys[-1]] = value
-            except:
+            except Exception:
                 to_set[int(keys[-1])] = value
         else:
             self._validate_key(key)
@@ -989,17 +996,17 @@ class Config(dict, MutableMapping):
             for k in keys[:-1]:
                 try:
                     to_del = to_del[k]
-                except:
+                except Exception:
                     try:
                         to_del = to_del[int(k)]
-                    except:
+                    except Exception:
                         raise KeyError("Calling __getitem__ with key {} failed at component {}.".format(key, k))
             try:
                 del to_del[keys[-1]]
-            except:
+            except Exception:
                 try:
                     to_del = to_del[int(k)]
-                except:
+                except Exception:
                     raise KeyError("Calling __getitem__ with key {} failed at component {}.".format(key, k))
         else:
             return super(Config, self).__delitem__(key)

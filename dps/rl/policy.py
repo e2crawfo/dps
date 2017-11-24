@@ -381,7 +381,7 @@ class Deterministic(TensorFlowSelection):
         return tf_dists.VectorDeterministic(self.func(utils))
 
     def entropy(self, utils, exploration):
-        return tf.zeros((tf.shape(utils)[0], 1))
+        return tf.zeros(tf.shape(utils)[:-1])[..., None]
 
     def kl(self, utils1, utils2, e1, e2=None):
         raise Exception("NotImplemented")

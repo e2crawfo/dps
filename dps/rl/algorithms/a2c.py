@@ -5,7 +5,7 @@ from dps.rl import (
     BuildEpsilonSoftmaxPolicy, BuildLstmController,
     PolicyGradient, RLUpdater, AdvantageEstimator, PolicyEntropyBonus,
     ValueFunction, PolicyEvaluation_State, Retrace, ValueFunctionRegularization,
-    BasicAdvantageEstimator, ConstrainedPolicyEvaluation_State
+    BasicAdvantageEstimator, ConstrainedPolicyEvaluation_State, DifferentiableLoss
 )
 
 
@@ -80,6 +80,9 @@ def A2C(env):
             importance_c=cfg.policy_importance_c, weight=cfg.policy_weight)
         PolicyEntropyBonus(actor, weight=cfg.entropy_weight)
 
+        if env.has_differentiable_loss and cfg.use_differentiable_loss:
+            DifferentiableLoss(env, actor)
+
         if cfg.actor_exploration_schedule is not None:
             agents[0].add_head(mu, existing_head=actor)
 
@@ -123,7 +126,9 @@ config = Config(
     q_importance_c=None,
     v_importance_c=None,
     max_grad_norm=None,
-    gamma=1.0
+    gamma=1.0,
+
+    use_differentiable_loss=False
 )
 
 

@@ -34,7 +34,7 @@ class RegisterBank(object):
 
     When wrapping an array of dimension (n1, ..., n_d), assumes dimensions (n_1, ..., n_{d-1})
     correspond to batch dimension, and final dimension corresponds to varying the register
-    (and/or the position within a register).
+    and/or the position within a register.
 
     Register order within the bank is the same as the order of the names in `visible_names` and `hidden_names`,
     with visible registers always coming first.
@@ -68,7 +68,7 @@ class RegisterBank(object):
     """
     def __init__(
             self, bank_name, visible_names, hidden_names, values,
-            output_names, no_display=None):
+            output_names=None, no_display=None):
 
         if isinstance(visible_names, str):
             visible_names = visible_names.replace(',', ' ').split()
@@ -79,6 +79,7 @@ class RegisterBank(object):
         if isinstance(no_display, str):
             no_display = no_display.replace(',', ' ').split()
 
+        output_names = output_names or []
         no_display = set(no_display or [])
 
         visible_names = list(visible_names or [])
@@ -157,6 +158,9 @@ class RegisterBank(object):
     def __repr__(self):
         return str(self)
 
+    def reg_shape(self, reg_name):
+        return self.shapes[self.names.index(reg_name)]
+
     def as_str(self, array):
         if isinstance(array, tf.Tensor):
             lib = 'tf'
@@ -219,6 +223,13 @@ class RegisterBank(object):
         start, end = self._offsets[name]
         array[..., start:end] = other
 
+    def get_from_hidden(self, name, array):
+        """ Assumes `array` only contains values for hidden dimensions (its final dim is ``self.hidden_width`). """
+        start, end = self._offsets[name]
+        start -= self.visible_width
+        end -= self.visible_width
+        return array[..., start:end]
+
     def as_tuple(self, array, visible_only=False):
         names = self.visible_names if visible_only else self.names
         return tuple(self.get(name, array) for name in names)
@@ -228,6 +239,8 @@ class RegisterBank(object):
         return {name: self.get(name, array) for name in names}
 
     def get_output(self, array):
+        if self.output_names is None:
+            raise Exception("`output_names` was not provided at RegisterBank creation time.")
         values = [self.get(name, array) for name in self.output_names]
         return concat(values)
 
@@ -237,7 +250,7 @@ class RegisterBank(object):
     def hidden(self, array):
         return array[..., self.visible_width:]
 
-    def wrap(self, **kwargs):
+    def wrap(self, *args, **kwargs):
         """
         Accepts values for individual registers. Packs them into an array that can later
         be interpreted by this register bank. Values for all registers must be provided.
@@ -245,12 +258,22 @@ class RegisterBank(object):
         of each value must match the dimension for the corresponding register.
 
         """
-        names = kwargs.keys()
+        registers = {}
+        for name, reg in zip(self.names, args):
+            registers[name] = reg
+
+        duplicate = registers.keys() & kwargs.keys()
+        if duplicate:
+            raise Exception("Multiple values recieved for registers {}.".format(duplicate))
+
+        registers.update(kwargs)
+
+        names = registers.keys()
         missing = set(self.names) - names
         if missing:
             raise Exception("No value provided for registers {}.".format(missing))
         extra = names - set(self.names)
         if extra:
             raise Exception("Value provided for unknown registers {}.".format(extra))
-        values = [kwargs[name] for name in self.names]
+        values = [registers[name] for name in self.names]
         return concat(values)

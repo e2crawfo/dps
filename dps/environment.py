@@ -64,6 +64,8 @@ class BatchBox(gym.Space):
 
 
 class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
+    has_differentiable_loss = False
+
     def set_mode(self, mode, batch_size):
         """ Called at the beginning of `do_rollouts`.
 
@@ -183,7 +185,7 @@ class TensorFlowEnvMeta(abc.ABCMeta):
 class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
     rb = None
     action_names = None
-    scale_rewards = Param(True)
+    action_sizes = None
 
     def __init__(self, **kwargs):
         self._samplers = {}
@@ -198,9 +200,10 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
         return (self.rb.visible_width,)
 
     def unpack_actions(self, actions):
-        actions = tf.unstack(actions, axis=-1)
-        actions = [a[..., None] for a in actions]
-        return actions
+        if self.action_sizes is None:
+            return tf.split(actions, len(self.action_names), axis=-1)
+        else:
+            return tf.split(actions, self.action_sizes, axis=-1)
 
     def _assert_defined(self, attr):
         assert getattr(self, attr) is not None, (
@@ -208,7 +211,7 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
             "specify a value for attr {}.".format(attr))
 
     @abc.abstractmethod
-    def start_episode(self):
+    def start_episode(self, T):
         raise Exception("NotImplemented")
 
     @abc.abstractmethod
@@ -224,8 +227,6 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
         if not sampler:
             with tf.name_scope("sampler_" + policy.display_name):
                 n_rollouts_ph = tf.placeholder(tf.int32, (), name="n_rollouts_ph")
-                T_ph = tf.placeholder(tf.int32, (), name="T_ph")
-
                 initial_policy_state = policy.zero_state(n_rollouts_ph, tf.float32)
                 _initial_registers = self.rb.new_array(n_rollouts_ph, lib='tf')
                 initial_registers = self.build_init(_initial_registers)
@@ -244,9 +245,6 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
 
                 obs, hidden, done, utils, entropy, actions, log_probs, rewards, policy_states = _output[0]
                 final_registers, final_policy_state = _output[1]
-
-                if self.scale_rewards:
-                    rewards /= tf.cast(T_ph, tf.float32)
 
                 output = dict(
                     obs=obs,
@@ -276,12 +274,11 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
         self.set_mode(mode, n_rollouts)
         T = T or cfg.T
 
-        n_rollouts_ph, T_ph, _, _, output = self.get_sampler(policy)
-        n_rollouts, feed_dict = self.start_episode(n_rollouts)
+        n_rollouts_ph, _, _, output = self.get_sampler(policy)
+        n_rollouts, feed_dict = self.start_episode(n_rollouts, T)
 
         feed_dict.update({
             n_rollouts_ph: n_rollouts,
-            T_ph: T,
         })
 
         if exploration is not None:
@@ -396,31 +393,38 @@ class InternalEnv(TensorFlowEnv):
     target_shape = (1,)
     input_shape = None
 
-    def start_episode(self, external_obs, external):
+    def start_episode(self, T, external_obs, external):
         return (
             external_obs.shape[0],
-            {self.input_ph: external_obs,
+            {self.T_ph: T,
+             self.input_ph: external_obs,
              self.target_ph: external.y,
              self.is_training_ph: self.mode == 'train',
              self.is_testing_ph: self.mode == 'test'}
         )
 
     def build_placeholders(self, r):
-        is_training_ph = getattr(self, 'is_training_ph', None)
-        if is_training_ph is None:
-            self.is_training_ph = tf.placeholder(tf.bool, (), name="is_training_ph")
-            self.is_testing_ph = tf.placeholder(tf.bool, (), name="is_testing_ph")
+        if getattr(self, 'is_training_ph', None) is None:
+            self.T_ph = tf.placeholder(tf.int32, (), name="T_ph")
             self.input_ph = tf.placeholder(tf.float32, (None,) + self.input_shape, name="input_ph")
             self.target_ph = tf.placeholder(tf.float32, (None,) + self.target_shape, name="target_ph")
+            self.is_training_ph = tf.placeholder(tf.bool, (), name="is_training_ph")
+            self.is_testing_ph = tf.placeholder(tf.bool, (), name="is_testing_ph")
 
-    def build_reward(self, r):
+    def build_reward(self, registers, actions):
         rewards = tf.cond(
             self.is_testing_ph,
-            lambda: tf.fill((tf.shape(r)[0], 1), 0.0),
-            lambda: -tf.cast(
-                tf.reduce_sum(tf.abs(self.rb.get_output(r) - self.target_ph), axis=-1, keep_dims=True) > cfg.reward_window, tf.float32)
+            lambda: tf.zeros(tf.shape(registers)[:-1])[..., None],
+            lambda: -tf.reduce_sum(
+                tf.to_float(tf.abs(self.rb.get_output(registers) - self.target_ph) > cfg.reward_window),
+                axis=-1, keep_dims=True
+            ),
         )
+        rewards /= tf.to_float(self.T)
         return rewards
+
+    def get_output(self, registers, actions):
+        return self.rb.get_output(registers)
 
 
 class CompositeEnv(Env):
@@ -439,14 +443,20 @@ class CompositeEnv(Env):
 
         super(CompositeEnv, self).__init__()
 
+    def build_trajectory_loss(self, actions, visible, hidden):
+        return self.internal.build_trajectory_loss(actions, visible, hidden)
+
     @property
     def completion(self):
         return self.external.completion
 
+    @property
+    def has_differentiable_loss(self):
+        return self.internal.has_differentiable_loss
+
     def do_rollouts(self, policy, n_rollouts=None, T=None, exploration=None, mode='train', save_utils=False):
         T = T or cfg.T
-        (n_rollouts_ph, T_ph, initial_policy_state,
-         initial_registers, output) = self.internal.get_sampler(policy)
+        n_rollouts_ph, initial_policy_state, initial_registers, output = self.internal.get_sampler(policy)
 
         policy.set_mode(mode)
         self.external.set_mode(mode, n_rollouts)
@@ -464,12 +474,11 @@ class CompositeEnv(Env):
         external_done = False
 
         while not external_done:
-            _, feed_dict = self.internal.start_episode(external_obs, self.external)
+            _, feed_dict = self.internal.start_episode(T, external_obs, self.external)
 
             if e > 0:
                 feed_dict.update({
                     n_rollouts_ph: n_rollouts,
-                    T_ph: T,
                     initial_registers: final_registers,
                 })
 
@@ -478,10 +487,7 @@ class CompositeEnv(Env):
                         {initial_policy_state: final_policy_state})
                 )
             else:
-                feed_dict.update({
-                    n_rollouts_ph: n_rollouts,
-                    T_ph: T,
-                })
+                feed_dict.update({n_rollouts_ph: n_rollouts})
 
             if exploration is not None:
                 feed_dict.update({policy.exploration: exploration})
@@ -520,7 +526,7 @@ class CompositeEnv(Env):
                     entropy=entropy, hidden=hidden, done=done)
             rollouts.extend(rollout_batch)
 
-            external_info['length'] = rollouts.T
+            external_info['length'] = rollout_batch.T
             external_rollouts.append(
                 external_obs, external_action, external_reward,
                 done=external_done, info=external_info)

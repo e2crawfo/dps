@@ -3,7 +3,7 @@ import tensorflow as tf
 from scipy.misc import logsumexp
 
 from gym.utils import seeding
-from dps.utils import Parameterized, Param
+from dps.utils import Parameterized, Param, one_hot
 from dps.environment import Env
 
 
@@ -162,15 +162,31 @@ class ClassificationEnv(SupervisedEnv):
     reward_range = (-np.inf, 0)
     recorded_names = ["xent_loss", "01_loss"]
 
+    def __init__(self, *args, one_hot=True, **kwargs):
+        """
+        Parameters
+        ----------
+        one_hot: bool
+            Whether targets are presented as one-hot vectors or as integers.
+
+        """
+        self.one_hot = one_hot
+        super(ClassificationEnv, self).__init__(*args, **kwargs)
+
     def build_loss(self, actions, targets):
         return self.build_xent_loss(actions, targets)
 
     def build_xent_loss(self, actions, targets):
+        if not self.one_hot:
+            targets = tf.one_hot(tf.cast(targets, tf.int32), depth=tf.shape(actions)[-1])
         return tf.nn.softmax_cross_entropy_with_logits(labels=targets, logits=actions)[..., None]
 
     def build_01_loss(self, actions, targets):
         action_argmax = tf.argmax(actions, axis=-1)
-        targets_argmax = tf.argmax(targets, axis=-1)
+        if self.one_hot:
+            targets_argmax = tf.argmax(targets, axis=-1)
+        else:
+            targets_argmax = tf.reshape(targets, tf.shape(action_argmax))
         return tf.reduce_mean(
             1 - tf.to_float(tf.equal(action_argmax, targets_argmax)),
             axis=-1, keep_dims=True)
@@ -180,13 +196,18 @@ class ClassificationEnv(SupervisedEnv):
 
     def get_xent_loss(self, logits, targets):
         """ Assumes `targets` is one-hot. """
+        if not self.one_hot:
+            targets = one_hot(targets, logits.shape[-1])
         log_numer = np.sum(logits * targets, axis=-1, keepdims=True)
         log_denom = logsumexp(logits, axis=-1, keepdims=True)
         return log_numer - log_denom
 
     def get_01_loss(self, actions, targets):
         action_argmax = np.argmax(actions, axis=-1)[..., None]
-        targets_argmax = np.argmax(targets, axis=-1)[..., None]
+        if self.one_hot:
+            targets_argmax = np.argmax(targets, axis=-1)
+        else:
+            targets_argmax = targets.reshape(action_argmax.shape)
         return 1 - (action_argmax == targets_argmax).astype('f')
 
 

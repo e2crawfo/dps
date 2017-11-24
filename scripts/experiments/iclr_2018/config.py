@@ -74,6 +74,8 @@ alg_config = Config(
     max_grad_norm=None,
 
     updates_per_sample=1,
+
+    use_differentiable_loss=False,
 )
 
 rl_config = RL_EXPERIMENT_CONFIG.copy()

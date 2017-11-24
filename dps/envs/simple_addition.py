@@ -78,7 +78,8 @@ class SimpleAddition(InternalEnv):
     def build_step(self, t, r, a):
         _fovea, _vision, _wm1, _wm2, _output = self.rb.as_tuple(r)
 
-        inc_fovea, dec_fovea, vision_to_wm1, vision_to_wm2, vision_to_output, add, no_op = self.unpack_actions(a)
+        actions = self.unpack_actions(a)
+        inc_fovea, dec_fovea, vision_to_wm1, vision_to_wm2, vision_to_output, add, no_op = actions
 
         fovea = (1 - inc_fovea - dec_fovea) * _fovea + inc_fovea * (_fovea + 1) + dec_fovea * (_fovea - 1)
         fovea = tf.clip_by_value(fovea, -self.width, self.width)
@@ -93,9 +94,7 @@ class SimpleAddition(InternalEnv):
         new_registers = self.rb.wrap(
             fovea=fovea, vision=vision, wm1=wm1, wm2=wm2, output=output)
 
-        rewards = self.build_reward(new_registers)
+        reward = self.build_reward(new_registers, actions)
+        done = tf.zeros(tf.shape(r)[:-1])[..., None]
 
-        return (
-            tf.fill((tf.shape(r)[0], 1), 0.0),
-            rewards,
-            new_registers)
+        return done, reward, new_registers
