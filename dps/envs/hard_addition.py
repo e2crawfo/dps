@@ -87,7 +87,7 @@ class HardAddition(InternalEnv):
         super(HardAddition, self).__init__()
 
     def build_init(self, r):
-        self.build_placeholders(r)
+        self.maybe_build_placeholders()
 
         fovea_x, fovea_y, _vision, wm1, wm2, carry, digit, outp = self.rb.as_tuple(r)
 

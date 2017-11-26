@@ -58,7 +58,7 @@ class HelloWorld(InternalEnv):
         return (2,)
 
     def build_init(self, r):
-        self.build_placeholders(r)
+        self.maybe_build_placeholders()
 
         r0 = self.input_ph[:, :1]
         r1 = self.input_ph[:, 1:2]

@@ -75,7 +75,7 @@ class SimpleGridArithmeticDataset(SupervisedDataset):
     max_digits = Param()
     base = Param()
     op_loc = Param()
-    loss_type = Param("2-norm")
+    one_hot = Param(False)
     largest_digit = Param(9)
     show_op = Param(True)
     parity = Param('both')
@@ -133,7 +133,7 @@ class SimpleGridArithmeticDataset(SupervisedDataset):
             self.env_shape, self.min_digits, self.max_digits, self.base,
             blank_element, digit_reps, symbol_reps,
             reductions, self.n_examples, self.op_loc, self.show_op,
-            one_hot_output=self.loss_type == "xent", largest_digit=self.largest_digit,
+            one_hot=self.one_hot, largest_digit=self.largest_digit,
             draw_offset=self.draw_offset, draw_shape=self.draw_shape)
 
         super(SimpleGridArithmeticDataset, self).__init__(x, y)
@@ -248,30 +248,14 @@ class SimpleGridArithmetic(InternalEnv):
         fovea_x = tf.clip_by_value(fovea_x, 0, self.env_shape[1]-1)
         return fovea_y, fovea_x
 
-    def _build_return(
-            self, digit, op, acc, fovea_x, fovea_y,
-            prev_action, salience, glimpse):
-
-        with tf.name_scope("GridArithmetic"):
-            new_registers = self.rb.wrap(
-                digit=tf.identity(digit, "digit"),
-                op=tf.identity(op, "op"),
-                acc=tf.identity(acc, "acc"),
-                fovea_x=tf.identity(fovea_x, "fovea_x"),
-                fovea_y=tf.identity(fovea_y, "fovea_y"),
-                prev_action=tf.identity(prev_action, "prev_action"),
-                salience=tf.identity(salience, "salience"),
-                glimpse=glimpse)
-
-        rewards = self.build_reward(new_registers)
-
-        return (
-            tf.fill((tf.shape(digit)[0], 1), 0.0),
-            rewards,
-            new_registers)
+    def _build_return_values(self, registers, actions):
+        new_registers = self.rb.wrap(*registers)
+        reward = self.build_reward(new_registers, actions)
+        done = tf.zeros(tf.shape(new_registers)[:-1])[..., None]
+        return done, reward, new_registers
 
     def build_init(self, r):
-        self.build_placeholders(r)
+        self.maybe_build_placeholders()
         self.pad_offset = (
             int(np.floor(self.salience_shape[0] / 2)),
             int(np.floor(self.salience_shape[1] / 2))
@@ -308,14 +292,13 @@ class SimpleGridArithmetic(InternalEnv):
         op = -1 * tf.ones((batch_size, 1), dtype=tf.float32)
         acc = -1 * tf.ones((batch_size, 1), dtype=tf.float32)
 
-        _, _, new_r = self._build_return(digit, op, acc, fovea_x, fovea_y, _prev_action, salience, glimpse)
-        return new_r
+        return self.rb.wrap(digit, op, acc, fovea_x, fovea_y, _prev_action, salience, glimpse)
 
     def build_step(self, t, r, a):
         _digit, _op, _acc, _fovea_x, _fovea_y, _prev_action, _salience, _glimpse = self.rb.as_tuple(r)
-
+        actions = self.unpack_actions(a)
         (right, left, down, up, classify_digit, classify_op,
-            update_salience, *arithmetic_actions) = self.unpack_actions(a)
+            update_salience, *arithmetic_actions) = actions
 
         salience = _salience
         if self.salience_action:
@@ -336,17 +319,19 @@ class SimpleGridArithmetic(InternalEnv):
         fovea_y, fovea_x = self._build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
         glimpse = self._build_update_glimpse(fovea_y, fovea_x)
 
-        action = tf.cast(tf.reshape(tf.argmax(a, axis=1), (-1, 1)), tf.float32)
+        prev_action = tf.cast(tf.reshape(tf.argmax(a, axis=1), (-1, 1)), tf.float32)
 
-        return self._build_return(digit, op, acc, fovea_x, fovea_y, action, salience, glimpse)
+        return self._build_return_values(
+            [digit, op, acc, fovea_x, fovea_y, prev_action, salience, glimpse], actions)
 
 
 class SimpleGridArithmeticEasy(SimpleGridArithmetic):
     def build_step(self, t, r, a):
         _digit, _op, _acc, _fovea_x, _fovea_y, _prev_action, _salience, _glimpse = self.rb.as_tuple(r)
 
+        actions = self.unpack_actions(a)
         (right, left, down, up, classify_digit, classify_op,
-            update_salience, *arithmetic_actions) = self.unpack_actions(a)
+            update_salience, *arithmetic_actions) = actions
 
         salience = _salience
         if self.salience_action:
@@ -378,6 +363,7 @@ class SimpleGridArithmeticEasy(SimpleGridArithmetic):
         fovea_y, fovea_x = self._build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
         glimpse = self._build_update_glimpse(fovea_y, fovea_x)
 
-        action = tf.cast(tf.reshape(tf.argmax(a, axis=1), (-1, 1)), tf.float32)
+        prev_action = tf.cast(tf.reshape(tf.argmax(a, axis=1), (-1, 1)), tf.float32)
 
-        return self._build_return(digit, op, acc, fovea_x, fovea_y, action, salience, glimpse)
+        return self._build_return_values(
+            [digit, op, acc, fovea_x, fovea_y, prev_action, salience, glimpse], actions)

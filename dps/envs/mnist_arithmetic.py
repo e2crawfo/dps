@@ -99,7 +99,7 @@ class MnistArithmetic(InternalEnv):
         super(MnistArithmetic, self).__init__()
 
     def build_init(self, r):
-        self.build_placeholders(r)
+        self.maybe_build_placeholders()
 
         op, acc, fovea_x, fovea_y, delta, vision, op_vision, glimpse = self.rb.as_tuple(r)
 

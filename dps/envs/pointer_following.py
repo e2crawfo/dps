@@ -54,7 +54,7 @@ class Pointer(InternalEnv):
         return (2*self.width+1,)
 
     def build_init(self, r):
-        self.build_placeholders(r)
+        self.maybe_build_placeholders()
 
         fovea, vision, wm = self.rb.as_tuple(r)
 

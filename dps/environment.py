@@ -99,18 +99,15 @@ class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
             if T is not None and t >= T:
                 break
 
-            log_prob, action, entropy, util, policy_state = policy.act(obs, policy_state, exploration)
+            log_prob, action, entropy, utils, policy_state = policy.act(obs, policy_state, exploration)
 
             new_obs, reward, done, info = self.step(action)
             obs = new_obs
+
+            kwargs = dict(done=float(done), entropy=entropy, log_probs=log_prob)
             if save_utils:
-                rollouts.append(
-                    obs, action, reward, done=float(done),
-                    entropy=entropy, log_probs=log_prob, utils=util)
-            else:
-                rollouts.append(
-                    obs, action, reward, done=float(done),
-                    entropy=entropy, log_probs=log_prob)
+                kwargs['utils'] = utils
+            rollouts.append(obs, action, reward, **kwargs)
 
             t += 1
 
@@ -193,6 +190,7 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
         self._assert_defined('rb')
         self.mode = 'train'
         self._built = False
+        self._placeholders_built = False
         super(TensorFlowEnv, self).__init__(**kwargs)
 
     @property
@@ -210,12 +208,31 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
             "Subclasses of TensorFlowEnv must "
             "specify a value for attr {}.".format(attr))
 
-    @abc.abstractmethod
-    def start_episode(self, T):
-        raise Exception("NotImplemented")
+    def make_feed_dict(self, mode, n_rollouts, T):
+        """ Create a feed-dict for sampling the rollouts. """
+        return {
+            self.mode_ph: mode,
+            self.n_rollouts_ph: n_rollouts,
+            self.T_ph: T,
+        }
+
+    def maybe_build_placeholders(self):
+        if not self._placeholders_built:
+            self.n_rollouts_ph = tf.placeholder(tf.int32, (), name="n_rollouts_ph")
+            self.T_ph = tf.placeholder(tf.int32, (), name="T_ph")
+            self.mode_ph = tf.placeholder(tf.string, (), name="mode_ph")
+
+            self.n_rollouts = tf.identity(self.n_rollouts_ph, name="n_rollouts")
+            self.T = tf.identity(self.T_ph, name="T")
+            self.mode = tf.identity(self.mode_ph, name="mode")
+
+            self.is_training = tf.equal(self.mode_ph, 'train')
+            self.is_testing = tf.equal(self.mode_ph, 'test')
+            self._placeholders_built = True
 
     @abc.abstractmethod
-    def build_init(self):
+    def build_init(self, registers):
+        """ Populate registers, providing initial values. """
         raise Exception("NotImplemented")
 
     @abc.abstractmethod
@@ -225,18 +242,20 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
     def get_sampler(self, policy):
         sampler = self._samplers.get(id(policy))
         if not sampler:
+            self.maybe_build_placeholders()
+
             with tf.name_scope("sampler_" + policy.display_name):
-                n_rollouts_ph = tf.placeholder(tf.int32, (), name="n_rollouts_ph")
-                initial_policy_state = policy.zero_state(n_rollouts_ph, tf.float32)
-                _initial_registers = self.rb.new_array(n_rollouts_ph, lib='tf')
+                initial_policy_state = policy.zero_state(self.n_rollouts_ph, tf.float32)
+
+                _initial_registers = self.rb.new_array(self.n_rollouts_ph, lib='tf')
                 initial_registers = self.build_init(_initial_registers)
 
                 sampler_cell = SamplerCell(self, policy)
 
-                t = timestep_tensor(n_rollouts_ph, T_ph)
+                t = timestep_tensor(self.n_rollouts_ph, self.T_ph)
 
                 # Force build-step to be called in a safe environment for the first time.
-                dummy_action = tf.zeros((n_rollouts_ph, self.actions_dim))
+                dummy_action = tf.zeros((self.n_rollouts_ph, self.actions_dim))
                 self.build_step(t, initial_registers, dummy_action)
 
                 _output = dynamic_rnn(
@@ -261,25 +280,21 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
                     exploration=policy.exploration
                 )
 
-            self._samplers[id(policy)] = (
-                n_rollouts_ph, T_ph, initial_policy_state,
-                initial_registers, output)
-
+            self._samplers[id(policy)] = initial_policy_state, initial_registers, output
             sampler = self._samplers[id(policy)]
 
         return sampler
 
-    def do_rollouts(self, policy, n_rollouts=None, T=None, exploration=None, mode='train', save_utils=False):
+    def do_rollouts(
+            self, policy, n_rollouts=None, T=None, exploration=None,
+            mode='train', save_utils=False):
+
         policy.set_mode(mode)
-        self.set_mode(mode, n_rollouts)
+
         T = T or cfg.T
 
-        n_rollouts_ph, _, _, output = self.get_sampler(policy)
-        n_rollouts, feed_dict = self.start_episode(n_rollouts, T)
-
-        feed_dict.update({
-            n_rollouts_ph: n_rollouts,
-        })
+        _, _, output = self.get_sampler(policy)
+        feed_dict = self.make_feed_dict(mode, n_rollouts, T)
 
         if exploration is not None:
             feed_dict.update({policy.exploration: exploration})
@@ -300,22 +315,20 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
              output['exploration']],
             feed_dict=feed_dict)
 
+        kwargs = dict(
+            log_probs=log_probs, utils=utils, entropy=entropy,
+            hidden=hidden, done=done, static=dict(exploration=exploration),
+            metadata=dict(final_registers=final_registers))
+
         if save_utils:
-            rollouts = RolloutBatch(
-                obs, actions, rewards, log_probs=log_probs, utils=utils, entropy=entropy,
-                hidden=hidden, done=done, static=dict(exploration=exploration),
-                metadata={'final_registers': final_registers})
-        else:
-            rollouts = RolloutBatch(
-                obs, actions, rewards, log_probs=log_probs, entropy=entropy,
-                hidden=hidden, done=done, static=dict(exploration=exploration),
-                metadata={'final_registers': final_registers})
-        return rollouts
+            kwargs['utils'] = utils
+
+        return RolloutBatch(obs, actions, rewards, **kwargs)
 
     def _pprint_rollouts(self, rollouts):
         registers = np.concatenate([rollouts.obs, rollouts.hidden], axis=2)
         registers = np.concatenate(
-            [registers, rollouts._metadata['final_registers'][np.newaxis, ...]],
+            [registers, rollouts._metadata['final_registers'][None, ...]],
             axis=0)
         actions = rollouts.a
 
@@ -390,30 +403,34 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
 
 
 class InternalEnv(TensorFlowEnv):
+    """ A TensorFlowEnv that solves a supervised learning problem. """
+
     target_shape = (1,)
     input_shape = None
 
-    def start_episode(self, T, external_obs, external):
-        return (
-            external_obs.shape[0],
-            {self.T_ph: T,
-             self.input_ph: external_obs,
-             self.target_ph: external.y,
-             self.is_training_ph: self.mode == 'train',
-             self.is_testing_ph: self.mode == 'test'}
-        )
+    def make_feed_dict(self, mode, n_rollouts, T, inp, targets):
+        feed_dict = super(InternalEnv, self).make_feed_dict(mode, n_rollouts, T)
+        feed_dict.update({
+            self.input_ph: inp,
+            self.target_ph: targets
+        })
+        return feed_dict
 
-    def build_placeholders(self, r):
-        if getattr(self, 'is_training_ph', None) is None:
-            self.T_ph = tf.placeholder(tf.int32, (), name="T_ph")
-            self.input_ph = tf.placeholder(tf.float32, (None,) + self.input_shape, name="input_ph")
-            self.target_ph = tf.placeholder(tf.float32, (None,) + self.target_shape, name="target_ph")
-            self.is_training_ph = tf.placeholder(tf.bool, (), name="is_training_ph")
-            self.is_testing_ph = tf.placeholder(tf.bool, (), name="is_testing_ph")
+    def maybe_build_placeholders(self):
+        if getattr(self, 'input_ph', None) is None:
+            self.input_ph = tf.placeholder(
+                tf.float32, (None,) + self.input_shape, name="input_ph")
+            self.target_ph = tf.placeholder(
+                tf.float32, (None,) + self.target_shape, name="target_ph")
+
+            self.input = tf.identity(self.input_ph, name="input")
+            self.target = tf.identity(self.target_ph, name="target")
+
+        super(InternalEnv, self).maybe_build_placeholders()
 
     def build_reward(self, registers, actions):
         rewards = tf.cond(
-            self.is_testing_ph,
+            self.is_testing,
             lambda: tf.zeros(tf.shape(registers)[:-1])[..., None],
             lambda: -tf.reduce_sum(
                 tf.to_float(tf.abs(self.rb.get_output(registers) - self.target_ph) > cfg.reward_window),
@@ -456,11 +473,10 @@ class CompositeEnv(Env):
 
     def do_rollouts(self, policy, n_rollouts=None, T=None, exploration=None, mode='train', save_utils=False):
         T = T or cfg.T
-        n_rollouts_ph, initial_policy_state, initial_registers, output = self.internal.get_sampler(policy)
+        initial_policy_state, initial_registers, output = self.internal.get_sampler(policy)
 
         policy.set_mode(mode)
         self.external.set_mode(mode, n_rollouts)
-        self.internal.set_mode(mode, n_rollouts)
         external_obs = self.external.reset()
         n_rollouts = external_obs.shape[0]
 
@@ -474,11 +490,11 @@ class CompositeEnv(Env):
         external_done = False
 
         while not external_done:
-            _, feed_dict = self.internal.start_episode(T, external_obs, self.external)
+            feed_dict = self.internal.make_feed_dict(
+                mode, n_rollouts, T, external_obs, self.external.y)
 
             if e > 0:
                 feed_dict.update({
-                    n_rollouts_ph: n_rollouts,
                     initial_registers: final_registers,
                 })
 
@@ -486,8 +502,6 @@ class CompositeEnv(Env):
                     tf.python.util.nest.flatten_dict_items(
                         {initial_policy_state: final_policy_state})
                 )
-            else:
-                feed_dict.update({n_rollouts_ph: n_rollouts})
 
             if exploration is not None:
                 feed_dict.update({policy.exploration: exploration})
@@ -515,18 +529,16 @@ class CompositeEnv(Env):
             if self.final_reward:
                 rewards[-1, ...] += external_reward
 
-            if save_utils:
-                rollout_batch = RolloutBatch(
-                    obs, actions, rewards,
-                    log_probs=log_probs, utils=utils,
-                    entropy=entropy, hidden=hidden, done=done)
-            else:
-                rollout_batch = RolloutBatch(
-                    obs, actions, rewards, log_probs=log_probs,
-                    entropy=entropy, hidden=hidden, done=done)
-            rollouts.extend(rollout_batch)
+            kwargs = dict(log_probs=log_probs, entropy=entropy, hidden=hidden, done=done)
 
-            external_info['length'] = rollout_batch.T
+            if save_utils:
+                kwargs['utils'] = utils
+
+            rollout_segment = RolloutBatch(obs, actions, rewards, **kwargs)
+
+            rollouts.extend(rollout_segment)
+
+            external_info['length'] = rollout_segment.T
             external_rollouts.append(
                 external_obs, external_action, external_reward,
                 done=external_done, info=external_info)
@@ -544,7 +556,7 @@ class CompositeEnv(Env):
     def _pprint_rollouts(self, rollouts):
         registers = np.concatenate([rollouts.obs, rollouts.hidden], axis=2)
         registers = np.concatenate(
-            [registers, rollouts._metadata['final_registers'][np.newaxis, ...]],
+            [registers, rollouts._metadata['final_registers'][None, ...]],
             axis=0)
         actions = rollouts.a
 

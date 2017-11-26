@@ -8,17 +8,20 @@ from dps.supervised import SupervisedDataset, ClassificationEnv, IntegerRegressi
 from dps.vision import EMNIST_CONFIG, SALIENCE_CONFIG, OMNIGLOT_CONFIG, OmniglotDataset
 from dps.utils.tf import LeNet, MLP, SalienceMap, extract_glimpse_numpy_like
 from dps.utils import DataContainer, Param, Config, image_to_string
-from dps.rl.policy import Softmax, EpsilonSoftmax, Normal, ProductDist, Policy, DiscretePolicy, Deterministic
 from dps.updater import DifferentiableUpdater
+from dps.rl.policy import (
+    Softmax, EpsilonSoftmax, Normal, ProductDist,
+    Policy, DiscretePolicy, Deterministic
+)
 
 from mnist_arithmetic import load_emnist, load_omniglot
 
 
 def sl_build_env():
-    train = GridArithmeticDataset(n_examples=cfg.n_train)
-    val = GridArithmeticDataset(n_examples=cfg.n_val)
-    test = GridArithmeticDataset(n_examples=cfg.n_val)
-    return ClassificationEnv(train, val, test)
+    train = GridArithmeticDataset(n_examples=cfg.n_train, one_hot=True)
+    val = GridArithmeticDataset(n_examples=cfg.n_val, one_hot=True)
+    test = GridArithmeticDataset(n_examples=cfg.n_val, one_hot=True)
+    return ClassificationEnv(train, val, test, one_hot=True)
 
 
 def sl_get_updater(env):
@@ -639,8 +642,10 @@ class GridArithmetic(InternalEnv):
         return done, reward, new_registers
 
     def build_init(self, r):
-        self.build_placeholders(r)
-        _digit, _op, _acc, _fovea_x, _fovea_y, _prev_action, _salience, _glimpse, _salience_input = self.rb.as_tuple(r)
+        self.maybe_build_placeholders()
+
+        (_digit, _op, _acc, _fovea_x, _fovea_y, _prev_action,
+            _salience, _glimpse, _salience_input) = self.rb.as_tuple(r)
         batch_size = tf.shape(self.input_ph)[0]
 
         # init fovea
@@ -832,7 +837,7 @@ class OmniglotCounting(GridArithmeticEasy):
         )
 
     def build_init(self, r):
-        self.build_placeholders(r)
+        self.maybe_build_placeholders()
 
         (_omniglot, _digit, _op, _acc, _fovea_x, _fovea_y,
             _prev_action, _salience, _glimpse, _salience_input) = self.rb.as_tuple(r)
@@ -993,7 +998,7 @@ class GridArithmeticNoModules(GridArithmetic):
         return loss
 
     def build_init(self, r):
-        self.build_placeholders(r)
+        self.maybe_build_placeholders()
         self.targets_one_hot = tf.one_hot(tf.cast(tf.squeeze(self.target_ph, axis=-1), tf.int32), self.n_classes)
 
         _fovea_x, _fovea_y, _prev_action, _salience, _glimpse, _salience_input, _y = self.rb.as_tuple(r)

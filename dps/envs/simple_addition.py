@@ -62,7 +62,8 @@ class SimpleAddition(InternalEnv):
         return (2*self.width+1,)
 
     def build_init(self, r):
-        self.build_placeholders(r)
+        self.maybe_build_placeholders()
+
         fovea, vision, wm1, wm2, output = self.rb.as_tuple(r)
         std = tf.fill(tf.shape(fovea), 0.01)
         locations = tf.constant(
