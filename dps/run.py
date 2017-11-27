@@ -1,7 +1,5 @@
 import argparse
 
-import clify
-
 from dps import cfg
 from dps.config import DEFAULT_CONFIG
 from dps.train import training_loop

@@ -437,9 +437,9 @@ class DifferentiableLoss(ObjectiveFunctionTerm):
             obs = context.get_signal('obs')
             get_actions_cell = GetActionsCell(self.policy)
 
-            initial_state = get_actions_cell.zero_state(tf.shape(obs)[0], tf.float32)
+            initial_state = get_actions_cell.zero_state(tf.shape(obs)[1], tf.float32)
 
-            actions, final_state = dynamic_rnn(
+            actions, _ = dynamic_rnn(
                 get_actions_cell, obs, initial_state=initial_state,
                 parallel_iterations=1, swap_memory=False, time_major=True)
 

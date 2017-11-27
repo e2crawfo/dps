@@ -65,6 +65,9 @@ class BatchBox(gym.Space):
 
 class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
     has_differentiable_loss = False
+    recorded_names = []
+    action_sizes = None
+    action_names = None
 
     def set_mode(self, mode, batch_size):
         """ Called at the beginning of `do_rollouts`.
@@ -120,7 +123,112 @@ class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
         return rollouts
 
     def _pprint_rollouts(self, rollouts):
-        pass
+        registers = np.concatenate([rollouts.obs, rollouts.hidden], axis=2)
+        registers = np.concatenate(
+            [registers, rollouts._metadata['final_registers'][None, ...]],
+            axis=0)
+        actions = rollouts.a
+
+        segment_lengths = rollouts._metadata.get('segment_lengths', [registers.shape[0]])
+        description = rollouts._metadata.get('description', None)
+
+        total_steps = sum(segment_lengths)
+
+        row_names = ['t=', 'i=', ''] + self.internal.action_names
+
+        action_sizes = self.action_sizes or [1] * len(self.action_names)
+        action_ranges = {}
+
+        for n, s in zip(self.action_names, action_sizes):
+            row_names.append('')
+            start = len(row_names)
+            for k in range(s):
+                row_names.append('{}[{}]'.format(n, k))
+            end = len(row_names)
+            action_ranges[n] = (start, end)
+
+        omit = set(self.rb.no_display)
+        reg_ranges = {}
+
+        for name, shape in zip(self.rb.names, self.rb.shapes):
+            if name in omit:
+                continue
+
+            row_names.append('')
+            start = len(row_names)
+            row_names.extend(['{}[{}]'.format(name, k) for k in range(shape)])
+            end = len(row_names)
+            reg_ranges[name] = (start, end)
+
+        other_ranges = {}
+        other_keys = sorted(rollouts.keys())
+        other_keys.remove('obs')
+        other_keys.remove('actions')
+        other_keys.remove('hidden')
+
+        for k in other_keys:
+            row_names.append('')
+
+            start = len(row_names)
+            row_names.extend(['{}[{}]'.format(k, i) for i in range(rollouts[k].shape[2])])
+            end = len(row_names)
+            other_ranges[k] = (start, end)
+
+        n_timesteps, batch_size, actions_dim = actions.shape
+
+        registers = self.rb.as_tuple(registers)
+
+        for b in range(batch_size):
+            print("\nElement {} of batch ".format(b) + "-" * 40)
+
+            if description is not None:
+                if getattr(self, 'obs_is_image', None):
+                    print(image_to_string(description[b, ...]))
+                else:
+                    if np.product(description.shape[1:]) < 40:
+                        print(description[b, ...])
+
+            values = np.zeros((total_steps+1, len(row_names)))
+            external_t, internal_t = 0, 0
+
+            for i in range(total_steps):
+                values[i, 0] = external_t
+                values[i, 1] = internal_t
+
+                offset = 0
+                for name, size in zip(self.action_names, action_sizes):
+                    ar = action_ranges[name]
+                    values[i, ar[0]:ar[1]] = actions[i, b, offset:offset + size]
+                    offset += size
+
+                for name, v in zip(self.rb.names, registers):
+                    if name in omit:
+                        continue
+                    rr = reg_ranges[name]
+                    values[i, rr[0]:rr[1]] = v[i, b, :]
+
+                for k in other_keys:
+                    v = rollouts[k]
+                    _range = other_ranges[k]
+                    values[i, _range[0]:_range[1]] = v[i, b, :]
+
+                internal_t += 1
+
+                if internal_t == segment_lengths[external_t]:
+                    external_t += 1
+                    internal_t = 0
+
+            # Print final values for the registers
+            for n, v in zip(self.rb.names, registers):
+                if n in omit:
+                    continue
+                rr = reg_ranges[n]
+                values[-1, rr[0]:rr[1]] = v[-1, b, :]
+
+            values = pd.DataFrame(values.T)
+            values.insert(0, 'name', row_names)
+            values = values.set_index('name')
+            print(tabulate(values, headers='keys', tablefmt='fancy_grid'))
 
     def visualize(self, render_rollouts=None, **rollout_kwargs):
         rollouts = self.do_rollouts(**rollout_kwargs)
@@ -182,7 +290,6 @@ class TensorFlowEnvMeta(abc.ABCMeta):
 class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
     rb = None
     action_names = None
-    action_sizes = None
 
     def __init__(self, **kwargs):
         self._samplers = {}
@@ -325,82 +432,6 @@ class TensorFlowEnv(with_metaclass(TensorFlowEnvMeta, Env)):
 
         return RolloutBatch(obs, actions, rewards, **kwargs)
 
-    def _pprint_rollouts(self, rollouts):
-        registers = np.concatenate([rollouts.obs, rollouts.hidden], axis=2)
-        registers = np.concatenate(
-            [registers, rollouts._metadata['final_registers'][None, ...]],
-            axis=0)
-        actions = rollouts.a
-
-        row_names = ['t=', ''] + self.action_names
-
-        omit = set(self.rb.no_display)
-        reg_ranges = {}
-
-        T = actions.shape[0]
-
-        for n, s in zip(self.rb.names, self.rb.shapes):
-            if n in omit:
-                continue
-
-            row_names.append('')
-            start = len(row_names)
-            for k in range(s):
-                row_names.append('{}[{}]'.format(n, k))
-            end = len(row_names)
-            reg_ranges[n] = (start, end)
-
-        other_ranges = {}
-        other_keys = sorted(rollouts.keys())
-        other_keys.remove('obs')
-        other_keys.remove('actions')
-        other_keys.remove('hidden')
-
-        for k in other_keys:
-            row_names.append('')
-
-            start = len(row_names)
-            row_names.extend(['{}[{}]'.format(k, i) for i in range(rollouts[k].shape[2])])
-            end = len(row_names)
-            other_ranges[k] = (start, end)
-
-        n_timesteps, batch_size, actions_dim = actions.shape
-
-        registers = self.rb.as_tuple(registers)
-
-        for b in range(batch_size):
-            print("\nElement {} of batch ".format(b) + "-" * 40)
-
-            values = np.zeros((T+1, len(row_names)))
-            for t in range(T):
-                values[t, 0] = t
-                offset = 2
-                values[t, offset:offset+actions_dim] = actions[t, b, :]
-                offset += actions_dim + 1
-
-                for n, v in zip(self.rb.names, registers):
-                    if n in omit:
-                        continue
-                    rr = reg_ranges[n]
-                    values[t, rr[0]:rr[1]] = v[t, b, :]
-
-                for k in other_keys:
-                    v = rollouts[k]
-                    _range = other_ranges[k]
-                    values[t, _range[0]:_range[1]] = v[t, b, :]
-
-            # Print final values for the registers
-            for n, v in zip(self.rb.names, registers):
-                if n in omit:
-                    continue
-                rr = reg_ranges[n]
-                values[-1, rr[0]:rr[1]] = v[-1, b, :]
-
-            values = pd.DataFrame(values.T)
-            values.insert(0, 'name', row_names)
-            values = values.set_index('name')
-            print(tabulate(values, headers='keys', tablefmt='fancy_grid'))
-
 
 class InternalEnv(TensorFlowEnv):
     """ A TensorFlowEnv that solves a supervised learning problem. """
@@ -460,6 +491,22 @@ class CompositeEnv(Env):
 
         super(CompositeEnv, self).__init__()
 
+    @property
+    def recorded_names(self):
+        return self.external.recorded_names
+
+    @property
+    def action_sizes(self):
+        return self.internal.action_sizes
+
+    @property
+    def action_names(self):
+        return self.internal.action_names
+
+    @property
+    def n_discrete_actions(self):
+        return self.internal.n_discrete_actions
+
     def build_trajectory_loss(self, actions, visible, hidden):
         return self.internal.build_trajectory_loss(actions, visible, hidden)
 
@@ -488,6 +535,8 @@ class CompositeEnv(Env):
         external_rollouts = RolloutBatch()
         rollouts = RolloutBatch()
         external_done = False
+
+        segment_lengths = []
 
         while not external_done:
             feed_dict = self.internal.make_feed_dict(
@@ -523,7 +572,7 @@ class CompositeEnv(Env):
                  output['exploration']],
                 feed_dict=feed_dict)
 
-            external_action = self.rb.get_output(final_registers)
+            external_action = self.internal.get_output(final_registers, actions[-1, ...])
             new_external_obs, external_reward, external_done, external_info = self.external.step(external_action)
 
             if self.final_reward:
@@ -538,10 +587,17 @@ class CompositeEnv(Env):
 
             rollouts.extend(rollout_segment)
 
-            external_info['length'] = rollout_segment.T
             external_rollouts.append(
                 external_obs, external_action, external_reward,
                 done=external_done, info=external_info)
+
+            external_info['length'] = rollout_segment.T
+            segment_lengths.append(rollout_segment.T)
+
+            for name in getattr(self.external, "recorded_names", []):
+                rollouts._metadata[name] = np.mean(external_info[name])
+
+            rollouts._metadata['description'] = external_obs
 
             external_obs = new_external_obs
 
@@ -551,98 +607,6 @@ class CompositeEnv(Env):
         rollouts._metadata['final_registers'] = final_registers
         rollouts._metadata['external_rollouts'] = external_rollouts
 
+        rollouts._metadata['segment_lengths'] = segment_lengths
+
         return rollouts
-
-    def _pprint_rollouts(self, rollouts):
-        registers = np.concatenate([rollouts.obs, rollouts.hidden], axis=2)
-        registers = np.concatenate(
-            [registers, rollouts._metadata['final_registers'][None, ...]],
-            axis=0)
-        actions = rollouts.a
-
-        external_rollouts = rollouts._metadata['external_rollouts']
-        external_step_lengths = [i['length'] for i in external_rollouts.info]
-        external_obs = external_rollouts.o
-
-        total_internal_steps = sum(external_step_lengths)
-
-        row_names = ['t=', 'i=', ''] + self.internal.action_names
-
-        omit = set(self.rb.no_display)
-        reg_ranges = {}
-
-        for name, shape in zip(self.rb.names, self.rb.shapes):
-            if name in omit:
-                continue
-
-            row_names.append('')
-            start = len(row_names)
-            row_names.extend(['{}[{}]'.format(name, k) for k in range(shape)])
-            end = len(row_names)
-            reg_ranges[name] = (start, end)
-
-        other_ranges = {}
-        other_keys = sorted(rollouts.keys())
-        other_keys.remove('obs')
-        other_keys.remove('actions')
-        other_keys.remove('hidden')
-
-        for k in other_keys:
-            row_names.append('')
-
-            start = len(row_names)
-            row_names.extend(['{}[{}]'.format(k, i) for i in range(rollouts[k].shape[2])])
-            end = len(row_names)
-            other_ranges[k] = (start, end)
-
-        n_timesteps, batch_size, actions_dim = actions.shape
-
-        registers = self.rb.as_tuple(registers)
-
-        for b in range(batch_size):
-            print("\nElement {} of batch ".format(b) + "-" * 40)
-
-            if getattr(self, 'obs_is_image', None):
-                for e in external_obs:
-                    print(image_to_string(e[b, :]))
-            else:
-                if np.product(external_obs[0].shape[1:]) < 40:
-                    for e in external_obs:
-                        print(e[b, :])
-
-            values = np.zeros((total_internal_steps+1, len(row_names)))
-            external_t, internal_t = 0, 0
-
-            for i in range(total_internal_steps):
-                values[i, 0] = external_t
-                values[i, 1] = internal_t
-                values[i, 3:3+actions_dim] = actions[i, b, :]
-
-                for name, v in zip(self.rb.names, registers):
-                    if name in omit:
-                        continue
-                    rr = reg_ranges[name]
-                    values[i, rr[0]:rr[1]] = v[i, b, :]
-
-                for k in other_keys:
-                    v = rollouts[k]
-                    _range = other_ranges[k]
-                    values[i, _range[0]:_range[1]] = v[i, b, :]
-
-                internal_t += 1
-
-                if internal_t == external_step_lengths[external_t]:
-                    external_t += 1
-                    internal_t = 0
-
-            # Print final values for the registers
-            for n, v in zip(self.rb.names, registers):
-                if n in omit:
-                    continue
-                rr = reg_ranges[n]
-                values[-1, rr[0]:rr[1]] = v[-1, b, :]
-
-            values = pd.DataFrame(values.T)
-            values.insert(0, 'name', row_names)
-            values = values.set_index('name')
-            print(tabulate(values, headers='keys', tablefmt='fancy_grid'))

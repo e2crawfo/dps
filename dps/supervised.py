@@ -128,7 +128,6 @@ class SupervisedEnv(Env):
     def _step(self, action):
         self.t += 1
 
-        assert self.y.shape == action.shape
         obs = np.zeros(self.x.shape)
 
         reward = self.get_reward(action, self.y)
@@ -178,7 +177,7 @@ class ClassificationEnv(SupervisedEnv):
 
     def build_xent_loss(self, actions, targets):
         if not self.one_hot:
-            targets = tf.one_hot(tf.cast(targets, tf.int32), depth=tf.shape(actions)[-1])
+            targets = tf.one_hot(tf.squeeze(tf.cast(targets, tf.int32), axis=-1), depth=tf.shape(actions)[-1])
         return tf.nn.softmax_cross_entropy_with_logits(labels=targets, logits=actions)[..., None]
 
     def build_01_loss(self, actions, targets):
@@ -192,15 +191,15 @@ class ClassificationEnv(SupervisedEnv):
             axis=-1, keep_dims=True)
 
     def get_reward(self, actions, targets):
-        return self.get_xent_loss(actions, targets)
+        return -self.get_xent_loss(actions, targets)
 
     def get_xent_loss(self, logits, targets):
         """ Assumes `targets` is one-hot. """
         if not self.one_hot:
-            targets = one_hot(targets, logits.shape[-1])
+            targets = one_hot(np.squeeze(targets, axis=-1), logits.shape[-1])
         log_numer = np.sum(logits * targets, axis=-1, keepdims=True)
         log_denom = logsumexp(logits, axis=-1, keepdims=True)
-        return log_numer - log_denom
+        return -(log_numer - log_denom)
 
     def get_01_loss(self, actions, targets):
         action_argmax = np.argmax(actions, axis=-1)[..., None]

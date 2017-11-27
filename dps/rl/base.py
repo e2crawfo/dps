@@ -190,6 +190,12 @@ class RLContext(Parameterized):
 
             self.optimizer.build_update(self)
 
+            self.recorded_tensors = {}
+            for name in getattr(env, 'recorded_names', []):
+                ph = tf.placeholder(tf.float32, (), name=name+"_ph")
+                self.recorded_tensors[name] = ph
+                self.add_summary(tf.summary.scalar("env_" + name, ph))
+
             self.train_summary_op = tf.summary.merge(self.train_summaries + self.summaries)
             self.summary_op = tf.summary.merge(self.summaries)
 
@@ -367,6 +373,12 @@ class RLContext(Parameterized):
             else:
                 obj.pre_eval(feed_dict, self)
 
+        record = {}
+        for name in getattr(self.env, 'recorded_names', []):
+            v = rollouts._metadata[name]
+            feed_dict[self.recorded_tensors[name]] = v
+            record[name] = v
+
         if do_update:
             self.optimizer.update(rollouts.batch_size, feed_dict)
 
@@ -387,12 +399,7 @@ class RLContext(Parameterized):
             else:
                 obj.post_eval(feed_dict, self)
 
-        record = {k: v for v, (k, _) in zip(values, self.recorded_values)}
-
-        if 'external_rollouts' in rollouts._metadata:
-            for k, v in rollouts._metadata['external_rollouts'].info[-1].items():
-                if k.endswith('_loss'):
-                    record[k] = v
+        record.update({k: v for v, (k, _) in zip(values, self.recorded_values)})
 
         return summaries, record
 
