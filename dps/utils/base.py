@@ -20,6 +20,7 @@ import shutil
 import pandas as pd
 import errno
 from tempfile import NamedTemporaryFile
+import dill
 
 import clify
 import dps
@@ -69,8 +70,8 @@ def module_git_summary(module, **kwargs):
     return GitSummary(module_dir)
 
 
-def dps_git_summary(**kwargs):
-    return module_git_summary(dps, **kwargs)
+def pip_freeze(**kwargs):
+    return _run_cmd('pip freeze')
 
 
 def one_hot(indices, depth):
@@ -237,6 +238,31 @@ class ExperimentDirectory(object):
         except Exception:
             pass
         return full_path
+
+    def record_environment(self, config=None, dill_recurse=False, git_modules=None, git_diff=True):
+        git_modules = [] if git_modules is None else git_modules
+        if not isinstance(git_modules, list):
+            git_modules = [git_modules]
+
+        for module in git_modules:
+            git_summary = module_git_summary(module)
+            with open(self.path_for(module.__name__ + '_git_summary.txt'), 'w') as f:
+                f.write(git_summary.summarize(diff=git_diff))
+
+        environ = {k.decode(): v.decode() for k, v in os.environ._data.items()}
+        with open(self.path_for('os_environ.txt'), 'w') as f:
+            f.write(pformat(environ))
+
+        pip = pip_freeze()
+        with open(self.path_for('pip_freeze.txt'), 'w') as f:
+            f.write(pip)
+
+        if config is not None:
+            with open(self.path_for('config.pkl'), 'wb') as f:
+                dill.dump(config, f, protocol=dill.HIGHEST_PROTOCOL, recurse=dill_recurse)
+
+            with open(self.path_for('config.txt'), 'w') as f:
+                f.write(str(config))
 
 
 def edit_text(dir=None, prefix=None, editor="vim", initial_text=None):

@@ -20,9 +20,10 @@ from io import StringIO
 
 import clify
 
+import dps
 from dps import cfg
 from dps.utils.base import (
-    dps_git_summary, gen_seed, Config, cd, ExperimentStore, edit_text)
+    gen_seed, Config, cd, ExperimentStore, edit_text)
 from dps.parallel.submit_job import ParallelSession
 from dps.parallel.base import Job, ReadOnlyJob
 
@@ -219,11 +220,9 @@ def build_search(
         with open(exp_dir.path_for('README.md'), 'w') as f:
             f.write(readme)
 
-    git_summary = dps_git_summary()
-    with open(exp_dir.path_for('git_summary.txt'), 'w') as f:
-        f.write(git_summary.summarize(diff=True))
-
     print(str(config))
+
+    exp_dir.record_environment(config=config, git_modules=[dps])
 
     print("Building parameter search at {}.".format(exp_dir.path))
 
@@ -333,6 +332,8 @@ def _summarize_search(args):
         print('\n' + '*' * 100)
         print("DISTRIBUTIONS")
         pprint(distributions)
+
+    print(job.summary(verbose=args.verbose))
 
 
 def _rl_plot(args):
@@ -715,7 +716,7 @@ def build_and_submit(
             max_experiments=np.inf,
         )
         del config['log_root']
-        del config['experiments_dir']
+        del config['build_experiments_dir']
         del config['data_dir']
         del config['model_dir']
 
@@ -724,7 +725,7 @@ def build_and_submit(
 
         with config:
             job, archive_path = build_search(
-                cfg.experiments_dir, name, distributions, config,
+                cfg.build_experiments_dir, name, distributions, config,
                 add_date=1, _zip=True, do_local_test=do_local_test,
                 n_param_settings=n_param_settings, n_repeats=n_repeats,
                 readme=readme)
@@ -758,7 +759,7 @@ def submit_job(
         store_experiments=store_experiments, readme=readme, pmem=pmem)
 
     session = ParallelSession(
-        name, archive_path, 'map', cfg.experiments_dir + '/execution/',
+        name, archive_path, 'map', cfg.run_experiments_dir,
         parallel_exe='$HOME/.local/bin/parallel', dry_run=False,
         env_vars=dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1'),
         redirect=True, **run_params)

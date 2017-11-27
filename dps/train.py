@@ -15,11 +15,12 @@ import pandas as pd
 from pathlib import Path
 import copy
 
+import dps
 from dps import cfg
 from dps.utils import (
-    gen_seed, time_limit, memory_usage, ExperimentStore, dps_git_summary,
+    gen_seed, time_limit, memory_usage, ExperimentStore,
     memory_limit, du, Config, ClearConfig, parse_date, redirect_stream,
-    NumpySeed
+    NumpySeed, pip_freeze
 )
 from dps.utils.tf import (
     restart_tensorboard, uninitialized_variables_initializer,
@@ -139,18 +140,7 @@ class TrainingLoop(object):
 
         print(cfg)
 
-        with open(exp_dir.path_for('config.pkl'), 'wb') as f:
-            dill.dump(cfg.freeze(), f, protocol=dill.HIGHEST_PROTOCOL)
-
-        with open(exp_dir.path_for('config.txt'), 'w') as f:
-            f.write(str(cfg.freeze()))
-
-        git_summary = dps_git_summary()
-        with open(exp_dir.path_for('git_summary.txt'), 'w') as f:
-            f.write(git_summary.summarize(diff=True))
-
-        with open(exp_dir.path_for('os_environ.txt'), 'w') as f:
-            f.write(pformat(os.environ._data))
+        exp_dir.record_environment(config=cfg.freeze(), git_modules=[dps])
 
         threshold_reached = True
         self.global_step = 0

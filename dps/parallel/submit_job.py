@@ -11,8 +11,9 @@ import shutil
 from collections import defaultdict
 import sys
 
+import dps
 from dps.parallel.base import ReadOnlyJob, zip_root
-from dps.utils import cd, parse_timedelta, make_filename, make_symlink, dps_git_summary
+from dps.utils import cd, parse_timedelta, make_symlink, ExperimentStore
 
 
 DEFAULT_HOST_POOL = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 32)]
@@ -99,25 +100,21 @@ class ParallelSession(object):
 
         assert kind in "parallel pbs slurm slurm-local".split()
         hpc = kind != "parallel"
-        clean_pattern = pattern.replace(' ', '_')
 
         # Create directory to run the job from - should be on scratch.
         scratch = os.path.abspath(os.path.expandvars(str(scratch)))
-        job_directory = make_filename(
-            '{}_{}'.format(name, clean_pattern),
-            directory=scratch,
-            add_date=add_date)
+        es = ExperimentStore(str(scratch), max_experiments=None, delete_old=False)
+        exp_dir = es.new_experiment(name, 0, add_date=add_date, force_fresh=1)
+        exp_dir.record_environment(git_modules=[dps])
+
+        job_directory = str(exp_dir.path)
+
         os.makedirs(os.path.realpath(job_directory + "/experiments"))
 
         if readme:
             with open(os.path.join(job_directory, 'README.md'), 'w') as f:
                 f.write(readme)
             del f
-
-        git_summary = dps_git_summary()
-        with open(os.path.join(job_directory, 'git_summary.txt'), 'w') as f:
-            f.write(git_summary.summarize(diff=True))
-        del f
 
         input_zip_stem = Path(input_zip).stem
         input_zip = shutil.copy(str(input_zip), os.path.join(job_directory, "orig.zip"))
@@ -473,8 +470,8 @@ class ParallelSession(object):
                 self.execute_command(command, frmt=False, robust=True)
 
         self.execute_command("zip -rq results {archive_root}", robust=True)
-        self.execute_command("dps-hyper summary --no-config results.zip | tee results.txt", robust=True, quiet=False)
-        self.execute_command("dps-hyper view results.zip", robust=True, quiet=False)
+        self.execute_command(
+            "dps-hyper summary --no-config results.zip | tee results.txt", robust=True, quiet=False)
 
     def run(self):
         if self.dry_run:
