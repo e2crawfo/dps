@@ -267,7 +267,7 @@ class TrainingLoop(object):
                     restart_tensorboard(
                         str(cfg.log_dir), cfg.tbport, cfg.reload_interval)
 
-                if cfg.render_hook is not None:
+                if cfg.render_step > 0 and cfg.render_hook is not None:
                     cfg.render_hook(updater)
 
                 if not (threshold_reached or cfg.power_through):
@@ -346,7 +346,7 @@ class TrainingLoop(object):
 
             evaluate = self.local_step % cfg.eval_step == 0
             display = self.local_step % cfg.display_step == 0
-            render = (self.local_step % cfg.render_step == 0) and self.local_step > 0
+            render = cfg.render_step > 0 and (self.local_step % cfg.render_step == 0) and self.local_step > 0
 
             start_time = time.time()
             train_summaries = b""

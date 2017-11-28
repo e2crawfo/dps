@@ -1,7 +1,8 @@
--e git+git@github.com:e2crawfo/clify.git@v0.2#egg=clify
+-e git+https://github.com/e2crawfo/clify.git@v0.2#egg=clify
 future
 gym
--e git+git@github.com:e2crawfo/mnist_arithmetic.git@v0.2#egg=mnist_arithmetic
+matplotlib
+-e git+https://github.com/e2crawfo/mnist_arithmetic.git@v0.2#egg=mnist_arithmetic
 numpy>=1.7
 pandas
 progressbar2

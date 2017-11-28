@@ -8,7 +8,7 @@ python:
 
 os: linux
 dist: trusty
-sudo: required
+sudo: false
 
 branches:
   only:
@@ -24,7 +24,7 @@ before_install:
   - pip install -r requirements_dev.txt
 
 install:
-  - pip install .
+  - pip install -e .
 
 script:
-  - dps-run simple_addition a2c
+  - dps-run simple_addition a2c --max-steps=201 --render-step=0
