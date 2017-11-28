@@ -1,0 +1,30 @@
+notifications:
+  email:
+    - eric.crawford@mail.mcgill.ca
+
+language: python
+python:
+  - 3.5
+
+os: linux
+dist: trusty
+sudo: required
+
+branches:
+  only:
+    - master
+
+git:
+  depth: 3
+
+cache:
+  apt: true
+
+before_install:
+  - pip install -r requirements_dev.txt
+
+install:
+  - pip install .
+
+script:
+  - dps-run simple_addition a2c
