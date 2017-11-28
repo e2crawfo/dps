@@ -15,20 +15,23 @@ setup(
     packages=find_packages(),
     setup_requires=['numpy>=1.7'],
     install_requires=[
-        "numpy",
+        "numpy>=1.7",
         "scipy",
+        "tensorflow",
+        "pandas",
         "pytest",
         "future",
-        # "tensorflow",
         "gym",
         "tabulate",
         "psutil",
         "pyskiplist",
         "progressbar2",
         "mnist_arithmetic",
+        "clify",
     ],
     entry_points={
         'console_scripts': ['dps-hyper=dps.parallel:dps_hyper_cl',
                             'dps-submit=dps.parallel:dps_submit_cl',
-                            'dps-run=dps.run:run',]}
+                            'dps-run=dps.run:run']
+    }
 )
