@@ -7,7 +7,7 @@ from dps.utils import (
 )
 
 
-def test_schedule():
+def test_schedule(show_plots):
     components = "[Exp(2.0, 1.0, 100, 0.9), Constant(2), Poly(2.0, 1.0, 5000), Reciprocal(2.0, 1.0, 5000)]"
 
     schedules = [
@@ -25,6 +25,9 @@ def test_schedule():
     for schedule in schedules:
         s = eval(schedule)
         signal = s.build(np.arange(10000).astype('f'))
-        plt.plot(signal, label=schedule)
-    plt.legend()
-    plt.show()
+        if show_plots:
+            plt.plot(signal, label=schedule)
+
+    if show_plots:
+        plt.legend()
+        plt.show()

@@ -65,6 +65,7 @@ def test_emnist_load_or_train(build_function, test_config):
             threshold=0.1,
             stopping_criteria_name="01_loss",
             n_controller_units=100,
+            n_train=10000
         )
         config.update(test_config)
 
@@ -120,6 +121,7 @@ def test_emnist_pretrained(build_function, test_config):
             threshold=0.1,
             stopping_criteria_name="01_loss",
             n_controller_units=100,
+            n_train=10000
         )
         config.update(test_config)
 

@@ -6,7 +6,7 @@ DATA_DIR="$TRAVIS_BUILD_DIR"/data
 mkdir "$DATA_DIR"
 
 echo "\nDownloading and processing emnist data..."
-time python "$MNIST_ARITHMETIC_PATH"/download.py emnist "$DATA_DIR"
+time python "$MNIST_ARITHMETIC_PATH"/download.py emnist "$DATA_DIR" -q
 rm matlab.zip
 
 echo "\nDownloading and processing omniglot data..."
