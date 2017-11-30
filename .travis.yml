@@ -27,4 +27,4 @@ install:
   - pip install -e .
 
 script:
-  - py.test
+  - py.test --durations=0 --skip-slow

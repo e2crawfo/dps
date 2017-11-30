@@ -5,10 +5,18 @@ def pytest_addoption(parser):
     parser.addoption("--max-steps", default=None, help="Maximum number of steps to run.")
     parser.addoption("--show-plots", action='store_true', help="Display any graphs that are created.")
     parser.addoption("--save-plots", action='store_true', help="Save any graphs that are created.")
-    parser.addoption("--run-slow", action="store_true", help="Run slow tests.")
+    parser.addoption("--skip-slow", action="store_true", help="Skip slow tests.")
     parser.addoption(
         "--tf-log-level", type=int, default=3,
         help="Quietness of tensorflow logging; 3 (default) is most quiet, 0 is least quiet.")
+
+
+def pytest_collection_modifyitems(config, items):
+    if config.getoption("--skip-slow"):
+        skip_slow = pytest.mark.skip(reason="Test is marked slow and --skip-slow was supplied.")
+        for item in items:
+            if "slow" in item.keywords:
+                item.add_marker(skip_slow)
 
 
 @pytest.fixture
