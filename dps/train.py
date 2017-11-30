@@ -133,8 +133,8 @@ class TrainingLoop(object):
                 self.exp_name, cfg.seed, add_date=1, force_fresh=1, update_latest=cfg.update_latest)
             exp_dir.record_environment(config=cfg.freeze(), git_modules=[dps])
 
-            stack.enter_context(redirect_stream('stdout', exp_dir.path_for('stdout'), tee=True))
-            stack.enter_context(redirect_stream('stderr', exp_dir.path_for('stderr'), tee=True))
+            stack.enter_context(redirect_stream('stdout', exp_dir.path_for('stdout'), tee=cfg.tee))
+            stack.enter_context(redirect_stream('stderr', exp_dir.path_for('stderr'), tee=cfg.tee))
 
             print("Scratch directory for this training run is {}.".format(exp_dir.path))
             cfg.path = exp_dir.path
@@ -513,14 +513,9 @@ def load_or_train(train_config, var_scope, path, sess=None):
 
     success = False
     try:
-        print("Trying to load variables for variable scope {} "
-              "from checkpoint {}...".format(var_scope.name, path))
         saver.restore(sess, path)
         success = True
-        print("Load successful.")
     except tf.errors.NotFoundError:
-        print("Loading failed, training a model...")
-
         with ExitStack() as stack:
             stack.enter_context(ClearConfig())
             stack.enter_context(train_config.copy(save_path=path))
@@ -532,5 +527,4 @@ def load_or_train(train_config, var_scope, path, sess=None):
             shutil.copyfile(os.path.join(output['exp_dir'], 'stderr'), stem + '.stderr')
 
         saver.restore(sess, path)
-        print("Training successful.")
     return success

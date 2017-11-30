@@ -8,7 +8,7 @@ def pytest_addoption(parser):
     parser.addoption("--run-slow", action="store_true", help="Run slow tests.")
     parser.addoption(
         "--tf-log-level", type=int, default=3,
-        help="Quietness of tensorflow logging; 3 (default) is most quiet, 0 is least quiet")
+        help="Quietness of tensorflow logging; 3 (default) is most quiet, 0 is least quiet.")
 
 
 @pytest.fixture

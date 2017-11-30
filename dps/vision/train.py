@@ -76,7 +76,7 @@ EMNIST_CONFIG = DEFAULT_CONFIG.copy(
     get_updater=get_differentiable_updater,
     build_env=build_emnist_env,
 
-    shape=((14, 14)),
+    shape=(14, 14),
     batch_size=128,
     eval_step=100,
     max_steps=100000,
@@ -131,7 +131,7 @@ OMNIGLOT_CONFIG = DEFAULT_CONFIG.copy(
     get_updater=get_differentiable_updater,
     build_env=build_omniglot_env,
 
-    shape=((14, 14)),
+    shape=(14, 14),
     batch_size=8,
     eval_step=100,
     max_steps=100000,
@@ -199,6 +199,7 @@ class SalienceDataset(SupervisedDataset):
     min_digits = Param()
     max_digits = Param()
     sub_image_shape = Param()
+    n_sub_image_examples = Param()
     image_shape = Param()
     output_shape = Param()
     max_overlap = Param()
@@ -241,6 +242,7 @@ SALIENCE_CONFIG = DEFAULT_CONFIG.copy(
     max_overlap=20,
     std=0.05,
     sub_image_shape=(14, 14),
+    n_sub_image_examples=None,
     image_shape=(3*14, 3*14),
     output_shape=(14, 14),
     gpu_allow_growth=True,

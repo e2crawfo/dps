@@ -9,7 +9,5 @@ echo "\nDownloading and processing emnist data..."
 time python "$MNIST_ARITHMETIC_PATH"/download.py emnist "$DATA_DIR"
 rm matlab.zip
 
-time python -c "import mnist_arithmetic; mnist_arithmetic.load_emnist('$DATA_DIR', [0, 1], shape=(14, 14))"
-
 echo "\nDownloading and processing omniglot data..."
 time python "$MNIST_ARITHMETIC_PATH"/download.py omniglot "$DATA_DIR"

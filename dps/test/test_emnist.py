@@ -62,7 +62,8 @@ def test_emnist_load_or_train(build_function, test_config):
         config = EMNIST_CONFIG.copy(
             build_function=build_function,
             classes=classes,
-            threshold=0.2,
+            threshold=0.1,
+            stopping_criteria_name="01_loss",
             n_controller_units=100,
         )
         config.update(test_config)
@@ -116,7 +117,8 @@ def test_emnist_pretrained(build_function, test_config):
         config = EMNIST_CONFIG.copy(
             build_function=build_function,
             classes=classes,
-            threshold=0.2,
+            threshold=0.1,
+            stopping_criteria_name="01_loss",
             n_controller_units=100,
         )
         config.update(test_config)
@@ -228,6 +230,7 @@ def test_salience_pretrained(test_config):
         config = SALIENCE_CONFIG.copy(
             classes=list(range(10)),
             threshold=0.01,  # Can get down to 0.005, but takes too long for a test
+            n_sub_image_examples=2000,
         )
         config.update(test_config)
 
@@ -316,7 +319,7 @@ determinism_info = dict(
 
 @pytest.mark.parametrize("dataset", "emnist omni".split())
 def test_determinism(dataset, test_config):
-    build_function = build_mlp  # Can't use build_lenet here as it tends to be slightly non-deterministic.
+    build_function = build_mlp  # Can't use build_lenet here as it is slightly non-deterministic for reasons unknown.
     with NumpySeed(83849):
         n_classes = 10
 
@@ -332,7 +335,8 @@ def test_determinism(dataset, test_config):
             seed=334324923,
             display_step=1000,
             eval_step=1000,
-            max_steps=1001
+            max_steps=1001,
+            tee=False
         )
         config.update(test_config)
 
