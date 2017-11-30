@@ -672,9 +672,10 @@ def dps_hyper_cl():
 
 
 def build_and_submit(
-        name, config, distributions=None, wall_time="1year", cleanup_time="1hour", slack_time="1hour",
-        step_time_limit="", max_hosts=1, ppn=1, cpp=1, n_param_settings=0, n_repeats=1, n_retries=0,
-        host_pool=None, pmem=0, queue="", do_local_test=False, kind="local", gpu_set="", ignore_gpu=False,
+        name, config, distributions=None, wall_time="1year", cleanup_time="1hour",
+        slack_time="1hour", step_time_limit="", max_hosts=1, ppn=1, cpp=1,
+        n_param_settings=0, n_repeats=1, n_retries=0, host_pool=None, pmem=0,
+        queue="", do_local_test=False, kind="local", gpu_set="", ignore_gpu=False,
         store_experiments=True, readme=""):
     """ Meant to be called from within a script.
 
@@ -721,7 +722,8 @@ def build_and_submit(
         del config['model_dir']
 
         if readme == "_vim_":
-            readme = edit_text(prefix="dps_readme_", editor="vim", initial_text="README.md: \n")
+            readme = edit_text(
+                prefix="dps_readme_", editor="vim", initial_text="README.md: \n")
 
         with config:
             job, archive_path = build_search(
@@ -730,10 +732,12 @@ def build_and_submit(
                 n_param_settings=n_param_settings, n_repeats=n_repeats,
                 readme=readme)
 
-        submit_job(**locals())
+        parallel_session = submit_job(**locals())
 
         os.remove(str(archive_path))
         shutil.rmtree(str(archive_path).split('.')[0])
+
+        return parallel_session
 
 
 def dps_submit_cl():
@@ -766,7 +770,7 @@ def submit_job(
 
     if kind in "parallel slurm-local".split():
         session.run()
-        return
+        return session
 
     job_dir = Path(session.job_directory)
 
@@ -832,3 +836,4 @@ session.run()
     print(command)
     with cd(job_dir):
         subprocess.run(command.split())
+    return session

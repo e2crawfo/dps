@@ -1,5 +1,6 @@
 import abc
 from future.utils import with_metaclass
+import numpy as np
 
 import tensorflow as tf
 
@@ -98,7 +99,7 @@ class DifferentiableUpdater(Updater):
     max_grad_norm = Param()
     l2_weight = Param(None)
 
-    stopping_criteria = "loss"
+    stopping_criteria_name = "loss"
     maximize = False
 
     def __init__(self, env, f, **kwargs):
@@ -120,7 +121,7 @@ class DifferentiableUpdater(Updater):
         return trainable_variables(self.f.scope_name)
 
     def _build_graph(self):
-        self.is_training = tf.Variable(False, trainable=False)
+        self.is_training = tf.Variable(False, trainable=False, name="is_training")
         self._set_is_training = tf.placeholder(tf.bool, ())
         self._assign_is_training = tf.assign(self.is_training, self._set_is_training)
 
@@ -149,12 +150,12 @@ class DifferentiableUpdater(Updater):
 
     def _update(self, batch_size, collect_summaries):
         self.set_is_training(True)
-        train_x, train_y = self.env.next_batch(batch_size, mode='train')
+        x, y = self.env.next_batch(batch_size, mode='train')
 
         sess = tf.get_default_session()
         feed_dict = {
-            self.x_ph: train_x,
-            self.target_ph: train_y
+            self.x_ph: x,
+            self.target_ph: y
         }
 
         sess = tf.get_default_session()

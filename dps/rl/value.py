@@ -182,10 +182,11 @@ class AdvantageEstimator(RLObject):
             advantage = self.post_process(advantage, context)
 
             mask = context.get_signal("mask")
-            mean_advantage = masked_mean(advantage, mask)
-            mean_abs_advantage = masked_mean(tf.abs(advantage), mask)
 
+            mean_advantage = masked_mean(advantage, mask)
             context.add_summary(tf.summary.scalar("advantage", mean_advantage))
+
+            mean_abs_advantage = masked_mean(tf.abs(advantage), mask)
             context.add_summary(tf.summary.scalar("abs_advantage", mean_abs_advantage))
 
             return advantage

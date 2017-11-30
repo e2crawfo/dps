@@ -64,11 +64,10 @@ class EmnistDataset(SupervisedDataset):
 
 
 def build_emnist_env():
-    one_hot = cfg.loss_type == 'xent'
-    train_dataset = EmnistDataset(n_examples=cfg.n_train, one_hot=one_hot)
-    val_dataset = EmnistDataset(n_examples=cfg.n_val, one_hot=one_hot)
-    test_dataset = EmnistDataset(n_examples=cfg.n_val, one_hot=one_hot)
-    return ClassificationEnv(train_dataset, val_dataset, test_dataset)
+    train_dataset = EmnistDataset(n_examples=cfg.n_train, one_hot=True)
+    val_dataset = EmnistDataset(n_examples=cfg.n_val, one_hot=True)
+    test_dataset = EmnistDataset(n_examples=cfg.n_val, one_hot=True)
+    return ClassificationEnv(train_dataset, val_dataset, test_dataset, one_hot=True)
 
 
 # For training networks on EMNIST datasets.
@@ -88,7 +87,6 @@ EMNIST_CONFIG = DEFAULT_CONFIG.copy(
     n_train=60000,
     n_val=100,
     include_blank=True,
-    loss_type='xent',
     classes=list(range(10)),
     n_controller_units=100,
     use_gpu=True,
@@ -121,11 +119,10 @@ class OmniglotDataset(SupervisedDataset):
 
 
 def build_omniglot_env():
-    one_hot = cfg.loss_type == 'xent'
-    train_dataset = OmniglotDataset(indices=cfg.train_indices, one_hot=one_hot)
-    val_dataset = OmniglotDataset(indices=cfg.val_indices, one_hot=one_hot)
-    test_dataset = OmniglotDataset(indices=cfg.test_indices, one_hot=one_hot)
-    return ClassificationEnv(train_dataset, val_dataset, test_dataset)
+    train_dataset = OmniglotDataset(indices=cfg.train_indices, one_hot=True)
+    val_dataset = OmniglotDataset(indices=cfg.val_indices, one_hot=True)
+    test_dataset = OmniglotDataset(indices=cfg.test_indices, one_hot=True)
+    return ClassificationEnv(train_dataset, val_dataset, test_dataset, one_hot=True)
 
 
 # For training networks on OMNIGLOT datasets.
@@ -146,7 +143,6 @@ OMNIGLOT_CONFIG = DEFAULT_CONFIG.copy(
     val_indices=list(range(15, 17)),
     test_indices=list(range(17, 20)),
     include_blank=True,
-    loss_type='xent',
     classes=["Latin,1", "Latin,2"],
     n_examples=None,
     n_controller_units=100,
@@ -241,7 +237,6 @@ SALIENCE_CONFIG = DEFAULT_CONFIG.copy(
     threshold=-np.inf,
     n_train=100000,
     n_val=100,
-    loss_type='2-norm',
     classes=EmnistDataset.class_pool,
     max_overlap=20,
     std=0.05,

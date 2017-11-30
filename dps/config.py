@@ -26,14 +26,11 @@ def _load_system_config(key=None):
     if not key:
         key = socket.gethostname()
 
-    print("config key before: ", key)
     if 'travis' in key:
         key = 'travis'
 
     if key not in _config:
         key = 'DEFAULT'
-
-    print("config key after: ", key)
 
     # Load default configuration from a file
     config = Config(
@@ -119,6 +116,8 @@ DEFAULT_CONFIG = SystemConfig(
 
     get_experiment_name=get_experiment_name,
     error_on_timeout=False,
+
+    stopping_criteria_name="",
 )
 
 

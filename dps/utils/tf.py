@@ -154,7 +154,7 @@ class ScopedFunction(object):
     def _maybe_initialize(self):
         if not self.initialized and (self.n_builds > 0 and self.do_pretraining):
             from dps.train import load_or_train
-            self.was_loaded = load_or_train(self.train_config, self.scope, self.path, redirect=True)
+            self.was_loaded = load_or_train(self.train_config, self.scope, self.path)
             self.initialized = True
 
             param_path = os.path.join(
@@ -215,9 +215,11 @@ class MLP(ScopedFunction):
         if len(inp.shape) > 2:
             trailing_dim = np.product([int(s) for s in inp.shape[1:]])
             inp = tf.reshape(inp, (tf.shape(inp)[0], trailing_dim))
+
         hidden = inp
         for i, nu in enumerate(self.n_units):
             hidden = fully_connected(hidden, nu, **self.fc_kwargs)
+
         fc_kwargs = self.fc_kwargs.copy()
         fc_kwargs['activation_fn'] = None
         return fully_connected(hidden, output_size, **fc_kwargs)
@@ -252,7 +254,9 @@ class LeNet(ScopedFunction):
         net = slim.max_pool2d(net, 2, 2, scope='pool1')
         net = slim.conv2d(net, 64, 5, scope='conv2', **self.conv_kwargs)
         net = slim.max_pool2d(net, 2, 2, scope='pool2')
-        net = slim.flatten(net)
+
+        trailing_dim = np.product([int(s) for s in net.shape[1:]])
+        net = tf.reshape(net, (tf.shape(net)[0], trailing_dim))
 
         net = slim.fully_connected(net, self.n_units, scope='fc3', **self.fc_kwargs)
         net = slim.dropout(net, self.dropout_keep_prob, is_training=is_training, scope='dropout3')
@@ -764,20 +768,17 @@ def build_optimizer(spec, learning_rate):
     return opt
 
 
-def masked_mean(array, mask, axis=None, keep_dims=True):
-    if axis is None:
-        return tf.reduce_mean(tf.boolean_mask(array, tf.cast(mask, tf.bool)))
-    else:
-        denom = tf.reduce_sum(mask, axis=axis, keep_dims=keep_dims)
-        denom = tf.where(tf.abs(denom) < 1e-6, np.inf * tf.ones_like(denom), denom)
-        return tf.reduce_sum(array, axis=axis, keep_dims=keep_dims) / denom
+def masked_mean(array, mask, axis=None, keep_dims=False):
+    denom = tf.count_nonzero(mask, axis=axis, keep_dims=keep_dims)
+    denom = tf.maximum(denom, 1)
+    denom = tf.to_float(denom)
+    return tf.reduce_sum(array * mask, axis=axis) / denom
 
 
 def build_gradient_train_op(
         loss, tvars, optimizer_spec, lr_schedule,
         max_grad_norm=None, noise_schedule=None, global_step=None):
     """ By default, `global_step` is None, so the global step is not incremented. """
-
     pure_gradients = tf.gradients(loss, tvars)
 
     clipped_gradients = pure_gradients

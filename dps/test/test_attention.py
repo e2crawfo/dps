@@ -14,6 +14,14 @@ def get_images(n_images, classes):
     return images
 
 
+def get_test_session():
+    session_config = tf.ConfigProto()
+    session_config.intra_op_parallelism_threads = 1
+    session_config.inter_op_parallelism_threads = 1
+    sess = tf.Session(config=session_config)
+    return sess
+
+
 def test_draw_mnist(show_plots):
     params = tf.constant([
         [0.0, 0.0, 1.0, 1, 1],
@@ -45,7 +53,7 @@ def test_draw_mnist(show_plots):
     tf_attended_images = DRAW_attention_2D(
         images, params[:, 0:1], params[:, 1:2], params[:, 2:3], params[:, 3:4], N, normalize=0)
 
-    sess = tf.Session()
+    sess = get_test_session()
     sess.run(tf.global_variables_initializer())
     attended_images = sess.run(tf_attended_images)
 
@@ -82,7 +90,7 @@ def test_draw_parameter_effect(show_plots):
 
     tf_attended_images = DRAW_attention_2D(
         images, params[:, :1], params[:, 1:2], params[:, 2:3], params[:, 3:4], N, normalize=0)
-    sess = tf.Session()
+    sess = get_test_session()
     glimpses = sess.run(tf_attended_images)
 
     if show_plots:
@@ -130,8 +138,9 @@ def test_discrete_mnist(show_plots):
     N = 14
     tf_attended_images = discrete_attention(images, params[:, 0:1], params[:, 1:2], params[:, 2:3], N)
 
-    sess = tf.Session()
+    sess = get_test_session()
     sess.run(tf.global_variables_initializer())
+
     attended_images = sess.run(tf_attended_images)
 
     if show_plots:

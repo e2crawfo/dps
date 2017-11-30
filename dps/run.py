@@ -34,16 +34,16 @@ def run():
                         help="If supplied, enter post-mortem debugging on error.")
     args, _ = parser.parse_known_args()
 
-    env, alg = parse_env_alg(args.env, args.alg)
-
     if args.pdb:
         with pdb_postmortem():
-            _run(env, alg)
+            _run(args.env, args.alg)
     else:
-        _run(env, alg)
+        _run(args.env, args.alg)
 
 
-def _run(env_config, alg_config, _config=None, **kwargs):
+def _run(env_str, alg_str, _config=None, **kwargs):
+    env_config, alg_config = parse_env_alg(env_str, alg_str)
+
     config = DEFAULT_CONFIG.copy()
     config.update(alg_config)
     config.update(env_config)
@@ -56,4 +56,4 @@ def _run(env_config, alg_config, _config=None, **kwargs):
         cfg.update_from_command_line()
 
         # Force generator evaluation.
-        list(training_loop())
+        return list(training_loop())[-1]

@@ -8,7 +8,6 @@ import numpy as np
 from pprint import pformat
 import datetime
 import shutil
-import dill
 import os
 import socket
 import pandas as pd
@@ -18,13 +17,11 @@ import copy
 import dps
 from dps import cfg
 from dps.utils import (
-    gen_seed, time_limit, memory_usage, ExperimentStore,
-    memory_limit, du, Config, ClearConfig, parse_date, redirect_stream,
-    NumpySeed, pip_freeze
+    gen_seed, time_limit, memory_usage, ExperimentStore, memory_limit,
+    du, Config, ClearConfig, parse_date, redirect_stream, NumpySeed
 )
 from dps.utils.tf import (
-    restart_tensorboard, uninitialized_variables_initializer,
-    trainable_variables
+    restart_tensorboard, uninitialized_variables_initializer, trainable_variables
 )
 
 
@@ -78,7 +75,12 @@ class TrainingLoop(object):
                         except IndexError:
                             pass
                     else:
-                        s += "* {} (final_step): {}\n".format(k, v[-1])
+                        if isinstance(v[-1], dict):
+                            _v = v[-1]
+                            _v = [(_k, _v[_k]) for _k in sorted(_v)]
+                            s += "* {} (final_step): {}\n".format(k, _v)
+                        else:
+                            s += "* {} (final_step): {}\n".format(k, v[-1])
                 else:
                     s += "* {}: {}\n".format(k, v)
             if not latest:
@@ -111,7 +113,8 @@ class TrainingLoop(object):
         result = dict(
             config=cfg.freeze(remove_callable=True),
             history=history,
-            host=socket.gethostname()
+            host=socket.gethostname(),
+            exp_dir=str(self.exp_dir.path)
         )
         return result
 
@@ -121,26 +124,33 @@ class TrainingLoop(object):
         if cfg.seed is None or cfg.seed < 0:
             cfg.seed = gen_seed()
 
-        with NumpySeed(cfg.seed):
+        if cfg.start_tensorboard:
+            restart_tensorboard(str(cfg.log_dir), cfg.tbport, cfg.reload_interval)
+
+        with ExitStack() as stack:
+            es = ExperimentStore(str(cfg.log_dir), max_experiments=cfg.max_experiments, delete_old=1)
+            self.exp_dir = exp_dir = es.new_experiment(
+                self.exp_name, cfg.seed, add_date=1, force_fresh=1, update_latest=cfg.update_latest)
+            exp_dir.record_environment(config=cfg.freeze(), git_modules=[dps])
+
+            stack.enter_context(redirect_stream('stdout', exp_dir.path_for('stdout'), tee=True))
+            stack.enter_context(redirect_stream('stderr', exp_dir.path_for('stderr'), tee=True))
+
+            print("Scratch directory for this training run is {}.".format(exp_dir.path))
+            cfg.path = exp_dir.path
+
+            stack.enter_context(NumpySeed(cfg.seed))
+
+            print("Set numpy random seed to {}.".format(cfg.seed))
+
+            if self.start_time is None:
+                self.start_time = time.time()
+            print("Starting training {} seconds after given start time.".format(time.time() - self.start_time))
+
             yield from self._run()
 
     def _run(self):
-        if cfg.start_tensorboard:
-            restart_tensorboard(str(cfg.log_dir), cfg.tbport, cfg.reload_interval)
-        if self.start_time is None:
-            self.start_time = time.time()
-        print("Starting training {} seconds after given start time.".format(time.time() - self.start_time))
-
-        es = ExperimentStore(str(cfg.log_dir), max_experiments=cfg.max_experiments, delete_old=1)
-        self.exp_dir = exp_dir = es.new_experiment(
-            self.exp_name, cfg.seed, add_date=1, force_fresh=1, update_latest=cfg.update_latest)
-
-        print("Scratch directory for this training run is {}.".format(exp_dir.path))
-        cfg.path = exp_dir.path
-
         print(cfg)
-
-        exp_dir.record_environment(config=cfg.freeze(), git_modules=[dps])
 
         threshold_reached = True
         self.global_step = 0
@@ -158,6 +168,8 @@ class TrainingLoop(object):
 
             with ExitStack() as stack:
                 session_config = tf.ConfigProto()
+                session_config.intra_op_parallelism_threads = cfg.get('intra_op_parallelism_threads', 0)
+                session_config.inter_op_parallelism_threads = cfg.get('inter_op_parallelism_threads', 0)
 
                 if cfg.use_gpu:
                     per_process_gpu_memory_fraction = getattr(cfg, 'per_process_gpu_memory_fraction', None)
@@ -185,16 +197,15 @@ class TrainingLoop(object):
 
                 if cfg.save_summaries:
                     self.train_writer = tf.summary.FileWriter(
-                        exp_dir.path_for('train'), graph,
-                        flush_secs=cfg.reload_interval)
+                        self.exp_dir.path_for('train'), graph, flush_secs=cfg.reload_interval)
                     self.update_writer = tf.summary.FileWriter(
-                        exp_dir.path_for('update'), flush_secs=cfg.reload_interval)
+                        self.exp_dir.path_for('update'), flush_secs=cfg.reload_interval)
                     self.val_writer = tf.summary.FileWriter(
-                        exp_dir.path_for('val'), flush_secs=cfg.reload_interval)
+                        self.exp_dir.path_for('val'), flush_secs=cfg.reload_interval)
                     self.test_writer = tf.summary.FileWriter(
-                        exp_dir.path_for('test'), flush_secs=cfg.reload_interval)
+                        self.exp_dir.path_for('test'), flush_secs=cfg.reload_interval)
 
-                    print("Writing summaries to {}.".format(exp_dir.path))
+                    print("Writing summaries to {}.".format(self.exp_dir.path))
 
                 stack.enter_context(graph.as_default())
                 stack.enter_context(sess)
@@ -249,7 +260,7 @@ class TrainingLoop(object):
                 print("Best hypothesis for this stage was found on "
                       "step (g: {best_global_step}, l: {best_local_step}) "
                       "with stopping criteria ({sc_name}) of {best_stopping_criteria}.".format(
-                          sc_name=updater.stopping_criteria, **self.latest))
+                          sc_name=self.stopping_criteria_name, **self.latest))
 
                 best_path = self.latest['best_path']
                 print("Loading best hypothesis for this stage "
@@ -332,6 +343,11 @@ class TrainingLoop(object):
         time_per_example = 0.0
         time_per_batch = 0.0
 
+        stopping_criteria_name = cfg.get("stopping_criteria_name", "")
+        if not stopping_criteria_name:
+            stopping_criteria_name = updater.stopping_criteria_name
+        self.stopping_criteria_name = stopping_criteria_name
+
         while True:
             if self.local_step >= cfg.max_steps:
                 reason = "Maximum number of steps reached"
@@ -374,7 +390,7 @@ class TrainingLoop(object):
                     self.val_writer.add_summary(val_summaries, (self.global_step + 1) * cfg.batch_size)
                     self.test_writer.add_summary(test_summaries, (self.global_step + 1) * cfg.batch_size)
 
-                stopping_criteria = val_record[updater.stopping_criteria]
+                stopping_criteria = val_record[stopping_criteria_name]
                 new_best, stop = early_stop.check(stopping_criteria, self.local_step, val_record)
 
                 if new_best:
@@ -382,13 +398,11 @@ class TrainingLoop(object):
                           "constituting {} local experiences, "
                           "with stopping criteria ({}) of {}.".format(
                               self.local_step, self.global_step, updater.n_experiences,
-                              updater.stopping_criteria, stopping_criteria))
+                              stopping_criteria_name, stopping_criteria))
 
-                    try:
-                        path = cfg.save_path
-                        assert path
-                    except (AttributeError, AssertionError):
-                        path = self.exp_dir.path_for('best_of_stage_{}'.format(stage))
+                    path = cfg.get('save_path', '')
+                    path = path or self.exp_dir.path_for('best_of_stage_{}'.format(stage))
+
                     best_path = updater.save(tf.get_default_session(), path)
 
                     self.record(best_path=best_path, best_global_step=self.global_step)
@@ -480,7 +494,7 @@ class EarlyStopHook(object):
         self._early_stopped = 0
 
 
-def load_or_train(train_config, var_scope, path, sess=None, redirect=False):
+def load_or_train(train_config, var_scope, path, sess=None):
     """ Attempts to load variables into ``var_scope`` from checkpoint stored at ``path``.
 
     If said checkpoint is not found, trains a model using the function
@@ -508,15 +522,14 @@ def load_or_train(train_config, var_scope, path, sess=None, redirect=False):
         print("Loading failed, training a model...")
 
         with ExitStack() as stack:
-            if redirect:
-                stem = os.path.splitext(str(path))[0]
-                stack.enter_context(redirect_stream('stdout', stem + '.stdout', tee=True))
-                stack.enter_context(redirect_stream('stderr', stem + '.stderr', tee=True))
-
             stack.enter_context(ClearConfig())
             stack.enter_context(train_config.copy(save_path=path))
 
-            list(training_loop(var_scope.name))
+            output = list(training_loop(var_scope.name))[-1]
+
+            stem = os.path.splitext(path)[0]
+            shutil.copyfile(os.path.join(output['exp_dir'], 'stdout'), stem + '.stdout')
+            shutil.copyfile(os.path.join(output['exp_dir'], 'stderr'), stem + '.stderr')
 
         saver.restore(sess, path)
         print("Training successful.")

@@ -495,7 +495,7 @@ class RLUpdater(Updater):
         Objects that learn from the trajectories.
 
     """
-    stopping_criteria = "reward_per_ep"
+    stopping_criteria_name = "reward_per_ep"
     maximize = True
 
     def __init__(self, env, learners=None, **kwargs):

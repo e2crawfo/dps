@@ -10,7 +10,7 @@ def test_time_limit():
     config = DEFAULT_CONFIG.copy()
     config.update(simple_addition.config)
     config.update(reinforce_config)
-    config.update(max_time=2, max_steps=10000, seed=100)
+    config.update(max_time=10, max_steps=10000, seed=100)
 
     start = time.time()
     with config:
