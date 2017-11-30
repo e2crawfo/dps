@@ -334,17 +334,18 @@ def test_determinism(dataset, test_config):
             threshold=0.2,
             stopping_criteria_name="01_loss",
             seed=334324923,
-            display_step=1000,
-            eval_step=1000,
+            display_step=100,
+            eval_step=100,
             max_steps=1001,
-            tee=False
+            tee=False,
+            n_train=500,
         )
         config.update(test_config)
 
         name_params = 'classes include_blank shape n_controller_units'
         output_size = n_classes + 1
 
-        n_repeats = 20
+        n_repeats = 10
 
         output = defaultdict(int)
 
