@@ -81,9 +81,12 @@ class ParallelSession(object):
     def __init__(
             self, name, input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', ppn=12, cpp=1,
             pmem=None, wall_time="1hour", cleanup_time="1min", slack_time="1min", add_date=True, dry_run=0,
-            parallel_exe="$HOME/.local/bin/parallel", kind="parallel", host_pool=None,
+            parallel_exe=None, kind="parallel", host_pool=None,
             min_hosts=1, max_hosts=1, env_vars=None, redirect=False, n_retries=0, gpu_set="",
             step_time_limit="", ignore_gpu=False, store_experiments=True, ssh_options=None, readme=""):
+
+        if not parallel_exe:
+            parallel_exe = "$HOME/.local/bin/parallel"
 
         if ssh_options is None:
             ssh_options = (

@@ -11,3 +11,15 @@ rm matlab.zip
 
 echo "\nDownloading and processing omniglot data..."
 time python "$MNIST_ARITHMETIC_PATH"/download.py omniglot "$DATA_DIR"
+
+echo "\nDownloading and installing gnu-parallel..."
+OLD_WD=$PWD
+cd "$TRAVIS_BUILD_DIR"
+echo "$PWD"
+wget http://mirror.sergal.org/gnu/parallel/parallel-20170622.tar.bz2
+tar -xjvf parallel-20170622.tar.bz2
+cd parallel-20170622
+./configure --prefix="$TRAVIS_BUILD_DIR" && make && make install
+cd ..
+rm -rf parallel-20170622.tar.bz2 parallel-20170622
+cd "$OLD_WD"

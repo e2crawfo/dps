@@ -2,7 +2,6 @@ import pytest
 import os
 import shutil
 from pathlib import Path
-import subprocess
 from contextlib import contextmanager
 import numpy as np
 

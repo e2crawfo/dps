@@ -731,8 +731,9 @@ def build_and_submit(
                 add_date=1, _zip=True, do_local_test=do_local_test,
                 n_param_settings=n_param_settings, n_repeats=n_repeats,
                 readme=readme)
-
-        parallel_session = submit_job(**locals())
+        kwargs = locals().copy()
+        kwargs['parallel_exe'] = config['parallel_exe']
+        parallel_session = submit_job(**kwargs)
 
         os.remove(str(archive_path))
         shutil.rmtree(str(archive_path).split('.')[0])
@@ -747,7 +748,7 @@ def dps_submit_cl():
 def submit_job(
         archive_path, name, wall_time="1year", cleanup_time="1hour", slack_time="1hour",
         max_hosts=1, ppn=1, cpp=1, n_retries=0, host_pool=None, pmem=0, queue="", kind="local", gpu_set="",
-        step_time_limit="", ignore_gpu=False, store_experiments=True, readme="", **kwargs):
+        step_time_limit="", ignore_gpu=False, store_experiments=True, readme="", parallel_exe=None, **kwargs):
 
     os.nice(10)
 
@@ -760,13 +761,11 @@ def submit_job(
         wall_time=wall_time, cleanup_time=cleanup_time, slack_time=slack_time,
         max_hosts=max_hosts, ppn=ppn, cpp=cpp, n_retries=n_retries, host_pool=host_pool,
         kind=kind, gpu_set=gpu_set, step_time_limit=step_time_limit, ignore_gpu=ignore_gpu,
-        store_experiments=store_experiments, readme=readme, pmem=pmem)
+        store_experiments=store_experiments, readme=readme, pmem=pmem, parallel_exe=parallel_exe)
 
     session = ParallelSession(
-        name, archive_path, 'map', cfg.run_experiments_dir,
-        parallel_exe='$HOME/.local/bin/parallel', dry_run=False,
-        env_vars=dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1'),
-        redirect=True, **run_params)
+        name, archive_path, 'map', cfg.run_experiments_dir, dry_run=False, redirect=True,
+        env_vars=dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1'), **run_params)
 
     if kind in "parallel slurm-local".split():
         session.run()

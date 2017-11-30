@@ -51,6 +51,7 @@ def _load_system_config(key=None):
         verbose=_config.getboolean(key, 'verbose'),
         per_process_gpu_memory_fraction=_config.getfloat(key, 'per_process_gpu_memory_fraction'),
         gpu_allow_growth=_config.getboolean(key, 'gpu_allow_growth'),
+        parallel_exe=process_path(_config.get(key, 'parallel_exe')),
     )
 
     config.max_experiments = _config.getint(key, 'max_experiments')
