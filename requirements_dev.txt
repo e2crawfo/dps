@@ -2,7 +2,7 @@
 future==0.16.0
 gym==0.9.4
 matplotlib==2.1.0
--e git+https://github.com/e2crawfo/mnist_arithmetic.git@v0.2#egg=mnist_arithmetic
+-e git+https://github.com/e2crawfo/mnist_arithmetic.git@v0.2.1#egg=mnist_arithmetic
 numpy==1.13.3
 pandas==0.21.0
 progressbar2==3.34.3

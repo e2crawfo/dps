@@ -21,10 +21,10 @@ cache:
   apt: true
 
 before_install:
-  - pip install -r requirements_dev.txt
+  - sh travis-setup.sh
 
 install:
   - pip install -e .
 
 script:
-  - dps-run simple_addition a2c --max-steps=201 --render-step=0
+  - py.test
