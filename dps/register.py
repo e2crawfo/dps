@@ -239,7 +239,7 @@ class RegisterBank(object):
         return {name: self.get(name, array) for name in names}
 
     def get_output(self, array):
-        if self.output_names is None:
+        if not self.output_names:
             raise Exception("`output_names` was not provided at RegisterBank creation time.")
         values = [self.get(name, array) for name in self.output_names]
         return concat(values)

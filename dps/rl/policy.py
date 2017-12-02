@@ -294,12 +294,31 @@ class ActionSelection(object):
         self.params_dim = actions_dim
 
     def sample(self, utils, exploration):
-        raise Exception()
+        s = self._sample(utils, exploration)
+        return tf.identity(s, name="{}.sample".format(self.__class__.__name__))
 
     def log_probs(self, utils, actions, exploration):
-        raise Exception()
+        lp = self._log_probs(utils, actions, exploration)
+        return tf.identity(lp, name="{}.log_probs".format(self.__class__.__name__))
+
+    def entropy(self, utils, exploration):
+        e = self._entropy(utils, exploration)
+        return tf.identity(e, name="{}.entropy".format(self.__class__.__name__))
 
     def kl(self, utils1, utils2, exploration):
+        kl = self._kl(utils1, utils2, exploration)
+        return tf.identity(kl, name="{}.kl".format(self.__class__.__name__))
+
+    def _sample(self, utils, exploration):
+        raise Exception()
+
+    def _log_probs(self, utils, actions, exploration):
+        raise Exception()
+
+    def _entropy(self, utils, exploration):
+        raise Exception()
+
+    def _kl(self, utils1, utils2, exploration):
         raise Exception()
 
 
@@ -316,23 +335,23 @@ class ProductDist(ActionSelection):
         self.actions_dim_vector = [c.actions_dim for c in components]
         self.actions_dim = sum(self.actions_dim_vector)
 
-    def sample(self, utils, exploration):
+    def _sample(self, utils, exploration):
         _utils = tf.split(utils, self.params_dim_vector, axis=final_d(utils))
-        _samples = [c.sample(u, exploration) for u, c in zip(_utils, self.components)]
+        _samples = [tf.to_float(c.sample(u, exploration)) for u, c in zip(_utils, self.components)]
         return tf.concat(_samples, axis=1)
 
-    def log_probs(self, utils, actions, exploration):
+    def _log_probs(self, utils, actions, exploration):
         _utils = tf.split(utils, self.params_dim_vector, axis=final_d(utils))
         _actions = tf.split(actions, self.actions_dim_vector, axis=final_d(actions))
         _log_probs = [c.log_probs(u, a, exploration) for u, a, c in zip(_utils, _actions, self.components)]
         return tf.reduce_sum(tf.concat(_log_probs, axis=-1), axis=-1, keep_dims=True)
 
-    def entropy(self, utils, exploration):
+    def _entropy(self, utils, exploration):
         _utils = tf.split(utils, self.params_dim_vector, axis=final_d(utils))
         _entropies = [c.entropy(u, exploration) for u, c in zip(_utils, self.components)]
         return tf.reduce_sum(tf.concat(_entropies, axis=-1), axis=-1, keep_dims=True)
 
-    def kl(self, utils1, utils2, e1, e2=None):
+    def _kl(self, utils1, utils2, e1, e2=None):
         _utils1 = tf.split(utils1, self.params_dim_vector, axis=final_d(utils1))
         _utils2 = tf.split(utils2, self.params_dim_vector, axis=final_d(utils2))
 
@@ -348,23 +367,23 @@ class TensorFlowSelection(ActionSelection):
     def _dist(self, utils, exploration):
         raise Exception()
 
-    def sample(self, utils, exploration):
+    def _sample(self, utils, exploration):
         dist = self._dist(utils, exploration)
         samples = tf.cast(dist.sample(), tf.float32)
         if len(dist.event_shape) == 0:
             samples = samples[..., None]
         return samples
 
-    def log_probs(self, utils, actions, exploration):
+    def _log_probs(self, utils, actions, exploration):
         dist = self._dist(utils, exploration)
         actions = tf.reshape(actions, tf.shape(dist.sample()))
         return dist.log_prob(actions)[..., None]
 
-    def entropy(self, utils, exploration):
+    def _entropy(self, utils, exploration):
         dist = self._dist(utils, exploration)
         return dist.entropy()[..., None]
 
-    def kl(self, utils1, utils2, e1, e2=None):
+    def _kl(self, utils1, utils2, e1, e2=None):
         e2 = e1 if e2 is None else e2
         dist1 = self._dist(utils1, e1)
         dist2 = self._dist(utils2, e2)
@@ -380,10 +399,11 @@ class Deterministic(TensorFlowSelection):
     def _dist(self, utils, exploration):
         return tf_dists.VectorDeterministic(self.func(utils))
 
-    def entropy(self, utils, exploration):
-        return tf.zeros(tf.shape(utils)[:-1])[..., None]
+    def _entropy(self, utils, exploration):
+        entropy = tf.zeros(tf.shape(utils)[:-1])[..., None]
+        return tf.identity(entropy, name="{}.entropy".format(self.__class__.__name__))
 
-    def kl(self, utils1, utils2, e1, e2=None):
+    def _kl(self, utils1, utils2, e1, e2=None):
         raise Exception("NotImplemented")
 
 
@@ -463,7 +483,7 @@ class Categorical(TensorFlowSelection):
         self.actions_dim = actions_dim if one_hot else 1
         self.one_hot = one_hot
 
-    def sample(self, utils, exploration):
+    def _sample(self, utils, exploration):
         dist = self._dist(utils, exploration)
         sample = dist.sample()
         if self.one_hot:
@@ -472,7 +492,7 @@ class Categorical(TensorFlowSelection):
             sample = sample[..., None]
         return sample
 
-    def log_probs(self, utils, actions, exploration):
+    def _log_probs(self, utils, actions, exploration):
         dist = self._dist(utils, exploration)
         if self.one_hot:
             actions = tf.argmax(actions, axis=-1)
@@ -490,13 +510,14 @@ class Categorical(TensorFlowSelection):
         sample = tf.reshape(tf.range(self.actions_dim), sample_shape)
         log_probs = dist.log_prob(sample)
         axis_perm = tuple(range(1, batch_rank+1)) + (0,)
-        return tf.transpose(log_probs, perm=axis_perm)
+        log_probs = tf.transpose(log_probs, perm=axis_perm)
+        return tf.identity(log_probs, name="{}.log_probs_all".format(self.__class__.__name__))
 
-    def entropy(self, utils, exploration):
+    def _entropy(self, utils, exploration):
         dist = self._dist(utils, exploration)
         return dist.entropy()[..., None]
 
-    def kl(self, utils1, utils2, e1, e2=None):
+    def _kl(self, utils1, utils2, e1, e2=None):
         e2 = e1 if e2 is None else e2
         dist1 = self._dist(utils1, e1)
         dist2 = self._dist(utils2, e2)

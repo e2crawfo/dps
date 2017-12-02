@@ -49,10 +49,9 @@ def grid_arithmetic_render_rollouts(env, rollouts):
         salience = salience.reshape(
             (salience.shape[0],) + internal.salience_output_shape)
 
-        if cfg.ablation != "no_modules":
-            digit = internal.rb.get("digit", registers[:, i, :])
-            op = internal.rb.get("op", registers[:, i, :])
-            acc = internal.rb.get("acc", registers[:, i, :])
+        digit = internal.rb.get("digit", registers[:, i, :])
+        op = internal.rb.get("op", registers[:, i, :])
+        acc = internal.rb.get("acc", registers[:, i, :])
 
         actions = rollouts.a[:, i, :]
 
@@ -61,10 +60,9 @@ def grid_arithmetic_render_rollouts(env, rollouts):
             print("t={}".format(t) + " * " * 20)
             action_idx = int(np.argmax(actions[t, :env.n_discrete_actions]))
 
-            if cfg.ablation != "no_modules":
-                print("digit: ", digit[t])
-                print("op: ", op[t])
-                print("acc: ", acc[t])
+            print("digit: ", digit[t])
+            print("op: ", op[t])
+            print("acc: ", acc[t])
 
             print(image_to_string(glimpse[t]))
             print("\n")
@@ -82,14 +80,6 @@ def build_env():
         if not cfg.omniglot_classes:
             cfg.omniglot_classes = OmniglotDataset.sample_classes(10)
         internal = OmniglotCounting()
-    elif cfg.ablation == 'bad_wiring':
-        internal = GridArithmeticBadWiring()
-    elif cfg.ablation == 'no_classifiers':
-        internal = GridArithmeticNoClassifiers()
-    elif cfg.ablation == 'no_ops':
-        internal = GridArithmeticNoOps()
-    elif cfg.ablation == 'easy':
-        internal = GridArithmeticEasy()
     else:
         internal = GridArithmetic()
 
@@ -111,16 +101,8 @@ def build_env():
 
 
 def build_policy(env, **kwargs):
-    if cfg.ablation == 'bad_wiring':
-        action_selection = ProductDist(Softmax(11), Normal(), Normal(), Normal())
-    elif cfg.ablation == 'no_classifiers':
-        action_selection = ProductDist(Softmax(9), Softmax(10, one_hot=0), Softmax(10, one_hot=0), Softmax(10, one_hot=0))
-    elif cfg.ablation == 'no_ops':
-        action_selection = ProductDist(Softmax(11), Normal(), Normal(), Normal())
-    else:
-        action_selection = EpsilonSoftmax(env.actions_dim, one_hot=True)
-        return DiscretePolicy(action_selection, env.obs_shape, **kwargs)
-    return Policy(action_selection, env.obs_shape, **kwargs)
+    action_selection = EpsilonSoftmax(env.actions_dim, one_hot=True)
+    return DiscretePolicy(action_selection, env.obs_shape, **kwargs)
 
 
 config = Config(
@@ -464,7 +446,7 @@ def classifier_head(x):
 
 
 class GridArithmetic(InternalEnv):
-    _action_names = ['>', '<', 'v', '^', 'classify_digit', 'classify_op']
+    _action_names = ['>', '<', 'v', '^', 'classify_digit', 'classify_op', 'update_salience']
 
     @property
     def input_shape(self):
@@ -511,11 +493,11 @@ class GridArithmetic(InternalEnv):
 
         self.action_names = (
             self._action_names +
-            ['update_salience'] +
             sorted(self.arithmetic_actions.keys())
         )
 
         self.actions_dim = len(self.action_names)
+        self.action_sizes = [1] * self.actions_dim
         self._init_networks()
         self._init_rb()
 

@@ -4,22 +4,21 @@ import argparse
 
 from config import rl_config as config
 
-from dps.envs import ga_no_modules
+from dps.envs import ga_no_modules, ga_no_classifiers, ga_no_transformations
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--ablation", default="no_modules", choices="no_modules no_classifiers no_ops".split())
+parser.add_argument("--ablation", default="no_modules", choices="no_modules no_classifiers no_transformations".split())
 args, _ = parser.parse_known_args()
 
 if args.ablation == 'no_modules':
     config.update(ga_no_modules.config_delta)
 
 elif args.ablation == 'no_classifiers':
-    # B
-    pass
+    config.update(ga_no_classifiers.config_delta)
 
-elif args.ablation == 'no_ops':
-    # C
-    pass
+elif args.ablation == 'no_transformations':
+    config.update(ga_no_transformations.config_delta)
+
 else:
     raise Exception("NotImplemented")
 
