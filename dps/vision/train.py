@@ -187,11 +187,11 @@ class salience_render_hook(object):
                 self.axes[1, i].imshow(y[i], vmin=0, vmax=1.0)
                 self.axes[2, i].imshow(_y[i], vmin=0, vmax=1.0)
 
-            if cfg.show_plots:
-                plt.show(block=True)
-
             if cfg.save_plots:
                 plt.savefig("salience")
+
+            if cfg.show_plots:
+                plt.show(block=True)
 
 
 class SalienceDataset(SupervisedDataset):

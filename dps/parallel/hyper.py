@@ -336,11 +336,18 @@ def _summarize_search(args):
     print(job.summary(verbose=args.verbose))
 
 
-def _rl_plot(args):
+def _traj_plot(args):
     style = args.style
     paths = args.paths
     paths = [Path(p).absolute() for p in paths]
-    print("Plotting searches stored at {}.".format(paths))
+
+    kind = args.kind
+    assert kind in "train val test update".split()
+    field = args.field
+
+    print(
+        "Plotting {} value of field {} from experiments "
+        "stored at {}.".format(kind, field, paths))
 
     if len(paths) > 1:
         raise Exception("Not implemented")
@@ -359,7 +366,9 @@ def _rl_plot(args):
         keys = list(distributions.keys())
     keys = sorted(keys)
 
-    val_data = defaultdict(list)
+    data = defaultdict(list)
+
+    first = True
 
     for op in job.completed_ops(partial=True):
         if 'map' in op.name:
@@ -369,15 +378,20 @@ def _rl_plot(args):
                 print("Exception thrown when accessing output of op {}:\n    {}".format(op.name, e))
 
         config = Config(r['config'])
-        key = ",".join("{}={}".format(k, config[k]) for k in keys)
 
         record = r['history'][-1].copy()
 
-        vd = pd.read_csv(StringIO(record['val_data']), index_col=False)
-        try:
-            val_data[key].append(vd['loss'])
-        except KeyError:
-            val_data[key].append(vd['reward_per_ep'])
+        trajectory = pd.read_csv(
+            StringIO(record[kind + '_data']),
+            index_col=False)
+
+        if first:
+            valid_fields = list(trajectory.keys())
+            print("Valid fields are {}".format(valid_fields))
+            first = False
+
+        key = tuple(config[k] for k in keys)
+        data[key].append(trajectory[field])
 
         del record['train_data']
         del record['update_data']
@@ -386,11 +400,11 @@ def _rl_plot(args):
             del record['test_data']
         except KeyError:
             pass
-        del vd
+        del trajectory
         del op
         del r
 
-    n_plots = len(val_data) + 1
+    n_plots = len(data) + 1
     w = int(np.ceil(np.sqrt(n_plots)))
     h = int(np.ceil(n_plots / w))
 
@@ -399,29 +413,33 @@ def _rl_plot(args):
         axes = np.atleast_2d(axes)
         final_ax = axes[-1, -1]
 
-        for n, key in enumerate(sorted(val_data)):
+        label_order = []
+
+        for n, key in enumerate(sorted(data)):
+            label = ",".join("{}={}".format(k, v) for k, v in zip(keys, key))
+            label_order.append(label)
+
             i = int(n / w)
             j = n % w
             ax = axes[i, j]
-            for vd in val_data[key]:
+            for vd in data[key]:
                 ax.plot(vd)
-            ax.set_title(key)
-            mean = pd.concat(val_data[key], axis=1).mean(axis=1)
-            final_ax.plot(mean, label=key)
+            ax.set_title(label)
+            mean = pd.concat(data[key], axis=1).mean(axis=1)
+            final_ax.plot(mean, label=label)
 
         legend_handles = {l: h for h, l in zip(*final_ax.get_legend_handles_labels())}
-        ordered_labels = sorted(legend_handles.keys())
-        ordered_handles = [legend_handles[l] for l in ordered_labels]
+        ordered_handles = [legend_handles[l] for l in label_order]
 
         final_ax.legend(
-            ordered_handles, ordered_labels, loc='center left',
+            ordered_handles, label_order, loc='center left',
             bbox_to_anchor=(1.05, 0.5), ncol=1)
 
         plt.subplots_adjust(
             left=0.05, bottom=0.05, right=0.86, top=0.97, wspace=0.05, hspace=0.18)
 
+        plt.savefig('traj_plot_kind={}_field={}'.format(kind, field))
         plt.show()
-        plt.savefig('rl_plot.pdf')
 
 
 def ci(data, coverage):
@@ -430,7 +448,7 @@ def ci(data, coverage):
 
 
 def extract_data_from_job(job, data_keys=None, as_frame=True, omit_timestep_data=True):
-    """ Extract a pandas data frame from a job.
+    """ Extract a pandas data frame or list of dictionaries from a job.
 
     Parameters
     ----------
@@ -445,7 +463,6 @@ def extract_data_from_job(job, data_keys=None, as_frame=True, omit_timestep_data
     omit_timestep_data: bool
         If True, per-timestep data is deleted to save RAM. Can only be set to False
         if `as_frame` is False.
-
 
     """
     if isinstance(job, str) or isinstance(job, Path):
@@ -467,7 +484,8 @@ def extract_data_from_job(job, data_keys=None, as_frame=True, omit_timestep_data
             try:
                 r = op.get_outputs(job.objects)[0]
             except BaseException as e:
-                print("Exception thrown when accessing output of op {}:\n    {}".format(op.name, e))
+                print("Exception thrown when accessing "
+                      "output of op {}:\n    {}".format(op.name, e))
 
         record = r['history'][-1].copy()
         record['host'] = r['host']
@@ -542,13 +560,14 @@ def _sample_complexity_plot(args):
             bbox_to_anchor=(1.05, 0.5), ncol=1)
     plt.ylim((0.0, 100.0))
 
+    if args.filename:
+        plt.savefig('{}.pdf'.format(args.filename))
+
     # plt.ylabel("% Incorrect on Test Set")
     # plt.xlabel("# Training Examples")
     # plt.subplots_adjust(
     #     left=0.09, bottom=0.13, right=0.7, top=0.93, wspace=0.05, hspace=0.18)
     # plt.show()
-    if args.filename:
-        plt.savefig('{}.pdf'.format(args.filename))
 
 
 def _sample_complexity_plot_core(path, style, spread_measure):
@@ -642,9 +661,11 @@ def dps_hyper_cl():
 
     style_list = ['default', 'classic'] + sorted(style for style in plt.style.available if style != 'classic')
 
-    rl_plot_cmd = (
-        'rl_plot', 'Plot results of an RL hyper-parameter search.', _rl_plot,
+    traj_plot_cmd = (
+        'traj_plot', 'Plot the trajectory of a value throughout all training runs.', _traj_plot,
         ('paths', dict(help="Paths to locations of data stores.", type=str, default="results.zip", nargs='+')),
+        ('kind', dict(help="Mode to gather data from.", choices="train val test update".split(), default="")),
+        ('field', dict(help="Field to plot.", default="")),
         ('--style', dict(help="Style for plot.", choices=style_list, default="ggplot")),
     )
 
@@ -668,7 +689,7 @@ def dps_hyper_cl():
 
     parallel_cl(
         'Build, run, plot and view results of hyper-parameter searches.',
-        [config_cmd, summary_cmd, rl_plot_cmd, sc_plot_cmd, zip_cmd])
+        [config_cmd, summary_cmd, traj_plot_cmd, sc_plot_cmd, zip_cmd])
 
 
 def build_and_submit(
