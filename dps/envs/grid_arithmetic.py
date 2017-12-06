@@ -1,5 +1,8 @@
 import tensorflow as tf
 import numpy as np
+import os
+from collections import OrderedDict
+import sys
 
 from dps import cfg
 from dps.register import RegisterBank
@@ -9,10 +12,7 @@ from dps.vision import EMNIST_CONFIG, SALIENCE_CONFIG, OMNIGLOT_CONFIG, Omniglot
 from dps.utils.tf import LeNet, MLP, SalienceMap, extract_glimpse_numpy_like
 from dps.utils import DataContainer, Param, Config, image_to_string
 from dps.updater import DifferentiableUpdater
-from dps.rl.policy import (
-    Softmax, EpsilonSoftmax, Normal, ProductDist,
-    Policy, DiscretePolicy
-)
+from dps.rl.policy import EpsilonSoftmax, DiscretePolicy
 
 from mnist_arithmetic import load_emnist, load_omniglot
 
@@ -27,52 +27,6 @@ def sl_build_env():
 def sl_get_updater(env):
     build_model = LeNet(n_units=int(cfg.n_controller_units))
     return DifferentiableUpdater(env, build_model)
-
-
-def grid_arithmetic_render_rollouts(env, rollouts):
-    registers = np.concatenate([rollouts.obs, rollouts.hidden], axis=2)
-    registers = np.concatenate(
-        [registers, rollouts._metadata['final_registers'][np.newaxis, ...]],
-        axis=0)
-
-    internal = env.internal
-
-    for i in range(registers.shape[1]):
-        glimpse = internal.rb.get("glimpse", registers[:, i, :])
-        glimpse = glimpse.reshape((glimpse.shape[0],) + internal.image_shape)
-
-        salience_input = internal.rb.get("salience_input", registers[:, i, :])
-        salience_input = salience_input.reshape(
-            (salience_input.shape[0],) + internal.salience_input_shape)
-
-        salience = internal.rb.get("salience", registers[:, i, :])
-        salience = salience.reshape(
-            (salience.shape[0],) + internal.salience_output_shape)
-
-        digit = internal.rb.get("digit", registers[:, i, :])
-        op = internal.rb.get("op", registers[:, i, :])
-        acc = internal.rb.get("acc", registers[:, i, :])
-
-        actions = rollouts.a[:, i, :]
-
-        print("Start of rollout {}.".format(i))
-        for t in range(rollouts.T):
-            print("t={}".format(t) + " * " * 20)
-            action_idx = int(np.argmax(actions[t, :env.n_discrete_actions]))
-
-            print("digit: ", digit[t])
-            print("op: ", op[t])
-            print("acc: ", acc[t])
-
-            print(image_to_string(glimpse[t]))
-            print("\n")
-            print(image_to_string(salience_input[t]))
-            print("\n")
-            print(image_to_string(salience[t]))
-            print("\n")
-
-            print("\ndiscrete action={}".format(internal.action_names[action_idx]))
-            print("\nother action={}".format(actions[t, env.n_discrete_actions:]))
 
 
 def build_env():
@@ -105,9 +59,85 @@ def build_policy(env, **kwargs):
     return DiscretePolicy(action_selection, env.obs_shape, **kwargs)
 
 
+class _GridArithmeticRenderRollouts(object):
+    image_fields = "glimpse salience_input salience".split()
+
+    def _render_rollout(self, env, T, action_names, actions, fields, f):
+        if 'glimpse' in fields:
+            glimpse = fields['glimpse']
+            glimpse = glimpse.reshape((glimpse.shape[0],) + env.internal.sub_image_shape)
+        else:
+            glimpse = None
+
+        if 'salience_input' in fields:
+            salience_input = fields['salience_input']
+            salience_input = salience_input.reshape(
+                (salience_input.shape[0],) + env.internal.salience_input_shape)
+        else:
+            salience_input = None
+
+        if 'salience' in fields:
+            salience = fields['salience']
+            salience = salience.reshape(
+                (salience.shape[0],) + env.internal.salience_output_shape)
+        else:
+            salience = None
+
+        for t in range(T):
+            print("t={}".format(t) + "* " * 20, file=f)
+
+            if glimpse is not None:
+                print('glimpse', file=f)
+                print(image_to_string(glimpse[t]), file=f)
+                print("\n", file=f)
+
+            if salience_input is not None:
+                print('salience_input', file=f)
+                print(image_to_string(salience_input[t]), file=f)
+                print("\n", file=f)
+
+            if salience is not None:
+                print('salience', file=f)
+                print(image_to_string(salience[t]), file=f)
+                print("\n", file=f)
+
+            for k, v in fields.items():
+                if k not in self.image_fields:
+                    print("{}: {}".format(k, v[t]), file=f)
+
+            action_idx = int(np.argmax(actions[t, :env.n_discrete_actions]))
+            print("\ndiscrete action={}".format(action_names[action_idx]), file=f)
+            print("\nother action={}".format(actions[t, env.n_discrete_actions:]), file=f)
+
+    def __call__(self, env, rollouts):
+        self.env = env
+        registers = np.concatenate([rollouts.obs, rollouts.hidden], axis=2)
+        registers = np.concatenate(
+            [registers, rollouts._metadata['final_registers'][np.newaxis, ...]],
+            axis=0)
+
+        internal = env.internal
+
+        path = os.path.join(cfg.path, 'rollouts')
+        os.makedirs(path, exist_ok=True)
+
+        for i in range(registers.shape[1]):
+            fields = internal.rb.as_dict(registers[:, i, :])
+            fields = OrderedDict((k, fields[k]) for k in sorted(fields.keys()))
+
+            actions = rollouts.a[:, i, :]
+
+            with open(os.path.join(path, str(i)), 'w') as f:
+                print("Start of rollout {}.".format(i), file=f)
+                self._render_rollout(env, rollouts.T, internal.action_names, actions, fields, f)
+
+
+render_rollouts = _GridArithmeticRenderRollouts()
+
+
 config = Config(
     log_name='grid_arithmetic',
-    render_rollouts=grid_arithmetic_render_rollouts,
+    render_rollouts=render_rollouts,
     build_env=build_env,
     build_policy=build_policy,
 
@@ -128,7 +158,7 @@ config = Config(
     env_shape=(2, 2),
     draw_offset=(0, 0),
     draw_shape=(2, 2),
-    image_shape=(14, 14),
+    sub_image_shape=(14, 14),
 
     n_train=10000,
     n_val=100,
@@ -180,7 +210,7 @@ class GridArithmeticDataset(SupervisedDataset):
     op_loc = Param()
     one_hot = Param()
     largest_digit = Param(1000)
-    image_shape = Param((14, 14))
+    sub_image_shape = Param((14, 14))
     show_op = Param(True)
     parity = Param('both')
 
@@ -215,7 +245,7 @@ class GridArithmeticDataset(SupervisedDataset):
 
         op_symbols = sorted(self.reductions)
         emnist_x, emnist_y, symbol_map = load_emnist(
-            cfg.data_dir, op_symbols, balance=True, shape=self.image_shape)
+            cfg.data_dir, op_symbols, balance=True, shape=self.sub_image_shape)
         emnist_y = np.squeeze(emnist_y, 1)
 
         reductions = {symbol_map[k]: v for k, v in self.reductions.items()}
@@ -233,13 +263,13 @@ class GridArithmeticDataset(SupervisedDataset):
             raise Exception("NotImplemented")
 
         mnist_x, mnist_y, classmap = load_emnist(
-            cfg.data_dir, mnist_classes, balance=True, shape=self.image_shape)
+            cfg.data_dir, mnist_classes, balance=True, shape=self.sub_image_shape)
         mnist_y = np.squeeze(mnist_y, 1)
         inverted_classmap = {v: k for k, v in classmap.items()}
         mnist_y = np.array([inverted_classmap[y] for y in mnist_y])
 
         digit_reps = DataContainer(mnist_x, mnist_y)
-        blank_element = np.zeros(self.image_shape)
+        blank_element = np.zeros(self.sub_image_shape)
 
         x, y = self.make_dataset(
             self.env_shape, self.min_digits, self.max_digits, self.base,
@@ -335,7 +365,7 @@ class GridOmniglotDataset(SupervisedDataset):
     indices = Param()
     target_loc = Param()
     one_hot = Param(False)
-    image_shape = Param((14, 14))
+    sub_image_shape = Param((14, 14))
 
     env_shape = Param()
     draw_offset = Param(None)
@@ -349,12 +379,12 @@ class GridOmniglotDataset(SupervisedDataset):
 
         omniglot_x, omniglot_y, symbol_map = load_omniglot(
             cfg.data_dir, self.classes, one_hot=False,
-            indices=list(range(17, 20)), shape=self.image_shape
+            indices=list(range(17, 20)), shape=self.sub_image_shape
         )
         omniglot_y = np.squeeze(omniglot_y, 1)
         symbol_reps = DataContainer(omniglot_x, omniglot_y)
 
-        blank_element = np.zeros(self.image_shape)
+        blank_element = np.zeros(self.sub_image_shape)
 
         x, y = self.make_dataset(
             self.env_shape, self.min_digits, self.max_digits,
@@ -438,10 +468,9 @@ class GridOmniglotDataset(SupervisedDataset):
 def classifier_head(x):
     base = int(x.shape[-1])
     x = tf.stop_gradient(x)
-    x = tf.argmax(x, 1)
-    x = tf.expand_dims(x, 1)
+    x = tf.argmax(x, -1)[..., None]
     x = tf.where(tf.equal(x, base), -1*tf.ones_like(x), x)
-    x = tf.cast(x, tf.float32)
+    x = tf.to_float(x)
     return x
 
 
@@ -450,7 +479,7 @@ class GridArithmetic(InternalEnv):
 
     @property
     def input_shape(self):
-        return tuple(es*s for es, s in zip(self.env_shape, self.image_shape))
+        return tuple(es*s for es, s in zip(self.env_shape, self.sub_image_shape))
 
     @property
     def n_discrete_actions(self):
@@ -460,7 +489,7 @@ class GridArithmetic(InternalEnv):
     env_shape = Param()
     base = Param()
     start_loc = Param()
-    image_shape = Param()
+    sub_image_shape = Param()
     visible_glimpse = Param()
     salience_action = Param()
     salience_input_shape = Param()
@@ -481,7 +510,7 @@ class GridArithmetic(InternalEnv):
     }
 
     def __init__(self, **kwargs):
-        self.image_size = np.product(self.image_shape)
+        self.sub_image_size = np.product(self.sub_image_shape)
         self.salience_input_size = np.product(self.salience_input_shape)
         self.salience_output_size = np.product(self.salience_output_shape)
 
@@ -507,7 +536,7 @@ class GridArithmetic(InternalEnv):
         values = (
             [0., 0., -1., 0., 0., -1.] +
             [np.zeros(self.salience_output_size, dtype='f')] +
-            [np.zeros(self.image_size, dtype='f')] +
+            [np.zeros(self.sub_image_size, dtype='f')] +
             [np.zeros(self.salience_input_size, dtype='f')]
         )
 
@@ -555,13 +584,15 @@ class GridArithmetic(InternalEnv):
         if self.salience_action:
             def _build_salience_detector(output_shape=self.salience_output_shape):
                 return SalienceMap(
-                    2 * cfg.max_digits, MLP([cfg.n_units, cfg.n_units, cfg.n_units], scope="salience_detector"),
+                    2 * cfg.max_digits,
+                    MLP([cfg.n_units, cfg.n_units, cfg.n_units], scope="salience_detector"),
                     output_shape, std=cfg.std, flatten_output=True
                 )
 
             salience_config = cfg.salience_config.copy(
                 output_shape=self.salience_output_shape,
                 image_shape=self.salience_input_shape,
+                sub_image_shape=self.sub_image_shape,
                 build_function=_build_salience_detector,
             )
 
@@ -570,25 +601,31 @@ class GridArithmetic(InternalEnv):
 
             self.salience_detector.set_pretraining_params(
                 salience_config,
-                name_params='classes std min_digits max_digits n_units sub_image_shape image_shape output_shape',
+                name_params='classes std min_digits max_digits n_units '
+                            'sub_image_shape image_shape output_shape',
                 directory=cfg.model_dir + '/salience_pretrained'
             )
         else:
             self.salience_detector = None
 
     def _build_update_glimpse(self, fovea_y, fovea_x):
-        top_left = tf.concat([fovea_y, fovea_x], axis=-1) * self.image_shape
+        top_left = tf.concat([fovea_y, fovea_x], axis=-1) * self.sub_image_shape
+
         inp = self.input_ph[..., None]
+
         glimpse = extract_glimpse_numpy_like(
-            inp, self.image_shape, top_left, fill_value=0.0)
-        glimpse = tf.reshape(glimpse, (-1, self.image_size), name="glimpse")
+            inp, self.sub_image_shape, top_left, fill_value=0.0)
+        glimpse = tf.reshape(glimpse, (-1, self.sub_image_size), name="glimpse")
         return glimpse
 
     def _build_update_salience(self, update_salience, salience, salience_input, fovea_y, fovea_x):
-        top_left = tf.concat([fovea_y, fovea_x], axis=-1) * self.image_shape
-        top_left -= (np.array(self.salience_input_shape) - np.array(self.image_shape)) / 2.0
-        inp = tf.expand_dims(self.input_ph, -1)
-        glimpse = extract_glimpse_numpy_like(inp, self.salience_input_shape, top_left, fill_value=0.0)
+        top_left = tf.concat([fovea_y, fovea_x], axis=-1) * self.sub_image_shape
+        top_left -= (np.array(self.salience_input_shape) - np.array(self.sub_image_shape)) / 2.0
+
+        inp = self.input_ph[..., None]
+
+        glimpse = extract_glimpse_numpy_like(
+            inp, self.salience_input_shape, top_left, fill_value=0.0)
 
         new_salience = self.salience_detector(glimpse, self.salience_output_shape, False)
         new_salience = tf.reshape(new_salience, (-1, self.salience_output_size))
@@ -657,7 +694,9 @@ class GridArithmetic(InternalEnv):
         op = -1 * tf.ones((batch_size, 1), dtype=tf.float32)
         acc = -1 * tf.ones((batch_size, 1), dtype=tf.float32)
 
-        return self.rb.wrap(digit, op, acc, fovea_x, fovea_y, _prev_action, salience, glimpse, salience_input)
+        return self.rb.wrap(
+            digit, op, acc, fovea_x, fovea_y,
+            _prev_action, salience, glimpse, salience_input)
 
     def build_step(self, t, r, a):
         _digit, _op, _acc, _fovea_x, _fovea_y, _prev_action, _salience, _glimpse, _salience_input = self.rb.as_tuple(r)
@@ -687,10 +726,12 @@ class GridArithmetic(InternalEnv):
         fovea_y, fovea_x = self._build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
         glimpse = self._build_update_glimpse(fovea_y, fovea_x)
 
-        prev_action = tf.cast(tf.reshape(tf.argmax(a, axis=1), (-1, 1)), tf.float32)
+        prev_action = tf.argmax(a, axis=-1)[..., None]
+        prev_action = tf.to_float(prev_action)
 
         return self._build_return_values(
-            [digit, op, acc, fovea_x, fovea_y, prev_action, salience, glimpse, salience_input], actions)
+            [digit, op, acc, fovea_x, fovea_y, prev_action, salience, glimpse, salience_input],
+            actions)
 
 
 class GridArithmeticEasy(GridArithmetic):
@@ -730,10 +771,12 @@ class GridArithmeticEasy(GridArithmetic):
         fovea_y, fovea_x = self._build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
         glimpse = self._build_update_glimpse(fovea_y, fovea_x)
 
-        prev_action = tf.cast(tf.reshape(tf.argmax(a, axis=1), (-1, 1)), tf.float32)
+        prev_action = tf.argmax(a, axis=-1)[..., None]
+        prev_action = tf.to_float(prev_action)
 
         return self._build_return_values(
-            [digit, op, acc, fovea_x, fovea_y, prev_action, salience, glimpse, salience_input], actions)
+            [digit, op, acc, fovea_x, fovea_y, prev_action, salience, glimpse, salience_input],
+            actions)
 
 
 class OmniglotCounting(GridArithmeticEasy):
@@ -745,7 +788,7 @@ class OmniglotCounting(GridArithmeticEasy):
         values = (
             [0., 0., 0., -1., 0., 0., -1.] +
             [np.zeros(self.salience_output_size, dtype='f')] +
-            [np.zeros(self.image_size, dtype='f')] +
+            [np.zeros(self.sub_image_size, dtype='f')] +
             [np.zeros(self.salience_input_size, dtype='f')]
         )
 
@@ -801,7 +844,8 @@ class OmniglotCounting(GridArithmeticEasy):
         fovea_y, fovea_x = self._build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
         glimpse = self._build_update_glimpse(fovea_y, fovea_x)
 
-        prev_action = tf.cast(tf.reshape(tf.argmax(a, axis=1), (-1, 1)), tf.float32)
+        prev_action = tf.argmax(a, axis=-1)[..., None]
+        prev_action = tf.to_float(prev_action)
 
         return self._build_return_values(
             [omniglot, digit, op, acc, fovea_x, fovea_y, prev_action, salience, glimpse, salience_input], actions)
@@ -854,87 +898,6 @@ class OmniglotCounting(GridArithmeticEasy):
         op = -1 * tf.ones((batch_size, 1), dtype=tf.float32)
         acc = -1 * tf.ones((batch_size, 1), dtype=tf.float32)
 
-        return self.rb.wrap(omniglot, digit, op, acc, fovea_x, fovea_y, _prev_action, salience, glimpse, salience_input)
-
-
-class GridArithmeticBadWiring(GridArithmetic):
-    """ The network has to directly output values to be fed into the operators, but still has access to all the modules. """
-    action_names = [
-        '>', '<', 'v', '^', 'classify_digit', 'classify_op',
-        '+', '+1', '*', '=', '+ arg', '* arg', '= arg']
-
-    def build_step(self, t, r, a):
-        _digit, _op, _acc, _fovea_x, _fovea_y, _glimpse = self.rb.as_tuple(r)
-
-        (right, left, down, up, classify_digit, classify_op,
-         add, inc, multiply, store, add_arg, mult_arg, store_arg) = self.unpack_actions(a)
-
-        acc = (1 - add - inc - multiply - store) * _acc + \
-            add * (add_arg + _acc) + \
-            multiply * (mult_arg * _acc) + \
-            inc * (_acc + 1) + \
-            store * store_arg
-
-        glimpse = self.build_update_glimpse(_fovea_y, _fovea_x)
-
-        digit, op = self.build_update_storage(
-            glimpse, _digit, classify_digit, _op, classify_op)
-
-        fovea_y, fovea_x = self.build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
-
-        return self.build_return(digit, op, acc, fovea_x, fovea_y, glimpse)
-
-
-class GridArithmeticNoClassifiers(GridArithmetic):
-    """ The network has no classifiers; instead it has to learn a map from the glimpse to arguments for the arithmetic modules. """
-
-    action_names = ['>', '<', 'v', '^', '+', '+1', '*', '=', '+ arg', '* arg', '= arg']
-
-    def init_networks(self):
-        return
-
-    def build_step(self, t, r, a):
-        _digit, _op, _acc, _fovea_x, _fovea_y, _glimpse = self.rb.as_tuple(r)
-
-        (right, left, down, up, add, inc, multiply, store,
-         add_arg, mult_arg, store_arg) = self.unpack_actions(a)
-
-        acc = (1 - add - inc - multiply - store) * _acc + \
-            add * (add_arg + _acc) + \
-            multiply * (mult_arg * _acc) + \
-            inc * (_acc + 1) + \
-            store * store_arg
-
-        glimpse = self.build_update_glimpse(_fovea_y, _fovea_x)
-
-        fovea_y, fovea_x = self.build_update_fovea(
-            right, left, down, up, _fovea_y, _fovea_x)
-
-        return self.build_return(_digit, _op, acc, fovea_x, fovea_y, glimpse)
-
-
-class GridArithmeticNoOps(GridArithmetic):
-    """ The network has no operators, but does have classifiers. Has a register, which is its output...
-        also has registers storing results of classify_digit, classify_op. Should the output always get
-        stored in the register? No, just have an output, doesn't need a register. Or could have a register,
-        but have it always been updated. """
-
-    action_names = ['>', '<', 'v', '^', 'classify_digit', 'classify_op', '=', '= arg']
-
-    def build_step(self, t, r, a):
-        _digit, _op, _acc, _fovea_x, _fovea_y, _glimpse = self.rb.as_tuple(r)
-
-        (right, left, down, up, classify_digit, classify_op,
-         store, store_arg) = self.unpack_actions(a)
-
-        acc = (1 - store) * _acc + store * store_arg
-
-        glimpse = self.build_update_glimpse(_fovea_y, _fovea_x)
-
-        digit, op = self.build_update_storage(
-            glimpse, _digit, classify_digit, _op, classify_op)
-
-        fovea_y, fovea_x = self.build_update_fovea(
-            right, left, down, up, _fovea_y, _fovea_x)
-
-        return self.build_return(digit, op, acc, fovea_x, fovea_y, glimpse)
+        return self.rb.wrap(
+            omniglot, digit, op, acc, fovea_x, fovea_y,
+            _prev_action, salience, glimpse, salience_input)

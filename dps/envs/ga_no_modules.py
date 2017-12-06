@@ -6,10 +6,10 @@ from dps.register import RegisterBank
 from dps.supervised import ClassificationEnv
 from dps.environment import CompositeEnv
 from dps.utils.tf import LeNet, MLP, CompositeCell
-from dps.utils import Param, image_to_string, Config
+from dps.utils import Param, Config
 from dps.rl.policy import EpsilonSoftmax, ProductDist, Policy, Deterministic
 
-from dps.envs.grid_arithmetic import GridArithmeticDataset, GridArithmetic
+from dps.envs.grid_arithmetic import GridArithmeticDataset, GridArithmetic, render_rollouts
 from dps.envs.grid_arithmetic import config as ga_config
 
 
@@ -51,47 +51,9 @@ def build_controller(params_dim, name=None):
         MLP(), params_dim, inp=no_modules_inp, name=name)
 
 
-def ga_no_modules_render_rollouts(env, rollouts):
-    registers = np.concatenate([rollouts.obs, rollouts.hidden], axis=2)
-    registers = np.concatenate(
-        [registers, rollouts._metadata['final_registers'][np.newaxis, ...]],
-        axis=0)
-
-    internal = env.internal
-
-    for i in range(registers.shape[1]):
-        glimpse = internal.rb.get("glimpse", registers[:, i, :])
-        glimpse = glimpse.reshape((glimpse.shape[0],) + internal.image_shape)
-
-        salience_input = internal.rb.get("salience_input", registers[:, i, :])
-        salience_input = salience_input.reshape(
-            (salience_input.shape[0],) + internal.salience_input_shape)
-
-        salience = internal.rb.get("salience", registers[:, i, :])
-        salience = salience.reshape(
-            (salience.shape[0],) + internal.salience_output_shape)
-
-        actions = rollouts.a[:, i, :]
-
-        print("Start of rollout {}.".format(i))
-        for t in range(rollouts.T):
-            print("t={}".format(t) + " * " * 20)
-            action_idx = int(np.argmax(actions[t, :env.n_discrete_actions]))
-
-            print(image_to_string(glimpse[t]))
-            print("\n")
-            print(image_to_string(salience_input[t]))
-            print("\n")
-            print(image_to_string(salience[t]))
-            print("\n")
-
-            print("\ndiscrete action={}".format(internal.action_names[action_idx]))
-            print("\nother action={}".format(actions[t, env.n_discrete_actions:]))
-
-
 config_delta = Config(
     log_name='grid_arithmetic_no_modules',
-    render_rollouts=ga_no_modules_render_rollouts,
+    render_rollouts=render_rollouts,
     build_env=build_env,
     build_policy=build_policy,
     build_controller=build_controller,
@@ -188,7 +150,7 @@ class GridArithmeticNoModules(GridArithmetic):
         values = (
             [0., 0., -1.] +
             [np.zeros(self.salience_output_size, dtype='f')] +
-            [np.zeros(self.image_size, dtype='f')] +
+            [np.zeros(self.sub_image_size, dtype='f')] +
             [np.zeros(self.salience_input_size, dtype='f')] +
             [0.]
         )
@@ -205,8 +167,6 @@ class GridArithmeticNoModules(GridArithmetic):
         actions = self.unpack_actions(a)
         right, left, down, up, update_salience, output = actions
 
-        prev_action = tf.argmax(a[..., :self.n_discrete_actions], axis=-1)
-
         fovea_y, fovea_x = self._build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
         glimpse = self._build_update_glimpse(fovea_y, fovea_x)
 
@@ -216,7 +176,8 @@ class GridArithmeticNoModules(GridArithmetic):
             salience, salience_input = self._build_update_salience(
                 update_salience, _salience, _salience_input, fovea_y, fovea_x)
 
-        prev_action = tf.cast(tf.reshape(tf.argmax(a[..., :self.n_discrete_actions], axis=1), (-1, 1)), tf.float32)
+        prev_action = tf.argmax(a[..., :self.n_discrete_actions], axis=-1)[..., None]
+        prev_action = tf.to_float(prev_action)
 
         return self._build_return_values(
             [fovea_x, fovea_y, prev_action, salience, glimpse, salience_input, _y], actions)

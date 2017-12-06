@@ -107,6 +107,8 @@ DEFAULT_CONFIG = SystemConfig(
 
     n_controller_units=64,
 
+    save_utils=False,
+
     max_time=0,
     max_steps=1000000,
     max_experiences=np.inf,
@@ -119,6 +121,8 @@ DEFAULT_CONFIG = SystemConfig(
     error_on_timeout=False,
 
     stopping_criteria_name="",
+    maximize_sc=None,
+
     tee=True,  # If True, output of training run (stdout and stderr) will is written to screen as
                # well as a file. If False, only written to the file.
 )

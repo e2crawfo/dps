@@ -50,7 +50,7 @@ def resize_image_with_crop_or_pad(img, target_height, target_width):
 
 
 def extract_glimpse_numpy_like(inp, glimpse_shape, glimpse_offsets, name=None, uniform_noise=None, fill_value=None):
-    """ Taken from: https://github.com/tensorflow/tensorflow/issues/2134#issuecomment-262525617
+    """ Based on: https://github.com/tensorflow/tensorflow/issues/2134#issuecomment-262525617
 
     Works like numpy with pixel coordinates starting at (0, 0), returns:
        inp[:, glimpse_offset[0] : glimpse_offset[0] + glimpse_size[0],
@@ -246,7 +246,7 @@ class LeNet(ScopedFunction):
             images = tf.reshape(images, (-1, s, s, 1))
 
         if len(images.shape) == 3:
-            images = tf.expand_dims(images, -1)
+            images = images[..., None]
 
         slim = tf.contrib.slim
         net = images
@@ -283,7 +283,7 @@ class VGGNet(ScopedFunction):
             s = int(np.sqrt(int(images.shape[1])))
             images = tf.reshape(images, (-1, s, s, 1))
         if len(images.shape) == 3:
-            images = tf.expand_dims(images, -1)
+            images = images[..., None]
 
         if self.kind == 'a':
             return vgg_a(images, output_size, is_training)
@@ -313,7 +313,7 @@ class FullyConvolutional(ScopedFunction):
             images = tf.reshape(images, (-1, s, s, 1))
 
         if len(images.shape) == 3:
-            images = tf.expand_dims(images, -1)
+            images = images[..., None]
         slim = tf.contrib.slim
         net = images
 

@@ -20,9 +20,13 @@ def get_differentiable_updater(env):
 class MnistArithmeticDataset(SupervisedDataset):
     sub_image_shape = Param()
     image_shape = Param()
+    draw_shape = Param()
+    draw_offset = Param()
     max_overlap = Param()
     min_digits = Param()
     max_digits = Param()
+    one_hot = Param()
+    largest_digit = Param()
     reductions = Param()
     base = Param()
     n_examples = Param()

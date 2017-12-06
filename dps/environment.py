@@ -134,16 +134,18 @@ class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
 
         total_steps = sum(segment_lengths)
 
-        row_names = ['t=', 'i=', ''] + self.internal.action_names
+        row_names = ['t=', 'i=', '']
 
         action_sizes = self.action_sizes or [1] * len(self.action_names)
         action_ranges = {}
 
         for n, s in zip(self.action_names, action_sizes):
-            row_names.append('')
             start = len(row_names)
-            for k in range(s):
-                row_names.append('{}[{}]'.format(n, k))
+            if s == 1:
+                row_names.append(n)
+            else:
+                for k in range(s):
+                    row_names.append('{}[{}]'.format(n, k))
             end = len(row_names)
             action_ranges[n] = (start, end)
 
@@ -231,7 +233,7 @@ class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
             print(tabulate(values, headers='keys', tablefmt='fancy_grid'))
 
     def visualize(self, render_rollouts=None, **rollout_kwargs):
-        rollouts = self.do_rollouts(**rollout_kwargs)
+        rollouts = self.do_rollouts(**rollout_kwargs, save_utils=cfg.save_utils)
         self._pprint_rollouts(rollouts)
         if render_rollouts is not None and (cfg.save_plots or cfg.show_plots):
             render_rollouts(self, rollouts)

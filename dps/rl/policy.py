@@ -411,6 +411,36 @@ def softplus(x):
     return tf.log(1 + tf.exp(x))
 
 
+class SigmoidNormal(TensorFlowSelection):
+    def __init__(self, scale=None):
+        self.scale = scale
+        self.actions_dim = 1
+        self.params_dim = 1 if self.scale else 2
+
+    def _dist(self, utils, exploration):
+        mean = tf.nn.sigmoid(utils[..., 0])
+
+        if self.scale:
+            scale = self.scale
+        else:
+            scale = softplus(utils[..., 1])
+
+        return tf_dists.Normal(loc=mean, scale=scale)
+
+
+class SigmoidBeta(TensorFlowSelection):
+    def __init__(self, c0_bounds, c1_bounds):
+        self.actions_dim = 1
+        self.params_dim = 2
+        self.c0_bounds = c0_bounds
+        self.c1_bounds = c1_bounds
+
+    def _dist(self, utils, exploration):
+        c0 = tf.sigmoid(utils[..., 0]) * (self.c0_bounds[1] - self.c0_bounds[0]) + self.c0_bounds[0]
+        c1 = tf.sigmoid(utils[..., 1]) * (self.c1_bounds[1] - self.c1_bounds[0]) + self.c1_bounds[0]
+        return tf_dists.Beta(concentration0=c0, concentration1=c1)
+
+
 class Normal(TensorFlowSelection):
     def __init__(self):
         self.actions_dim = 1
@@ -421,8 +451,7 @@ class Normal(TensorFlowSelection):
         scale = softplus(utils[..., 1])
         # Could use tf_dists.NormalWithSoftplusScale, but found it to cause problems
         # when taking hessian-vector products.
-        dist = tf_dists.Normal(loc=mean, scale=scale)
-        return dist
+        return tf_dists.Normal(loc=mean, scale=scale)
 
 
 class NormalWithFixedScale(TensorFlowSelection):
@@ -432,8 +461,7 @@ class NormalWithFixedScale(TensorFlowSelection):
         self.scale = scale
 
     def _dist(self, utils, exploration):
-        dist = tf_dists.Normal(loc=utils[..., 0], scale=self.scale)
-        return dist
+        return tf_dists.Normal(loc=utils[..., 0], scale=self.scale)
 
 
 class NormalWithExploration(TensorFlowSelection):
@@ -442,8 +470,7 @@ class NormalWithExploration(TensorFlowSelection):
         self.params_dim = 1
 
     def _dist(self, utils, exploration):
-        dist = tf_dists.Normal(loc=utils[..., 0], scale=exploration)
-        return dist
+        return tf_dists.Normal(loc=utils[..., 0], scale=exploration)
 
 
 class Gamma(TensorFlowSelection):
@@ -456,8 +483,46 @@ class Gamma(TensorFlowSelection):
         concentration = softplus(utils[..., 0])
         rate = softplus(utils[..., 1])
 
-        dist = tf_dists.Gamma(concentration=concentration, rate=rate)
-        return dist
+        return tf_dists.Gamma(concentration=concentration, rate=rate)
+
+
+class Beta(TensorFlowSelection):
+    def __init__(self, offset=None, maximum=None):
+        self.actions_dim = 1
+        self.params_dim = 2
+        self.offset = offset
+        self.maximum = maximum
+
+    def _dist(self, utils, exploration):
+        c0 = softplus(utils[..., 0])
+        c1 = softplus(utils[..., 1])
+
+        if self.offset is not None:
+            c0 += self.offset
+            c1 += self.offset
+
+        if self.maximum is not None:
+            c0 += tf.minimum(c0, self.maximum)
+            c1 += tf.minimum(c1, self.maximum)
+
+        return tf_dists.Beta(concentration0=c0, concentration1=c1)
+
+
+class BetaMeanESS(TensorFlowSelection):
+    """ A Beta distribution parameterized by mean and effective sample size. """
+
+    def __init__(self):
+        self.actions_dim = 1
+        self.params_dim = 2
+
+    def _dist(self, utils, exploration):
+        mean = tf.nn.sigmoid(utils[..., 0])
+        ess = softplus(utils[..., 1])
+
+        c1 = mean * ess
+        c0 = (1 - mean) * ess
+
+        return tf_dists.Beta(concentration0=c0, concentration1=c1)
 
 
 class Bernoulli(TensorFlowSelection):

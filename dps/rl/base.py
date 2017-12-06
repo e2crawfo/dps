@@ -317,7 +317,7 @@ class RLContext(Parameterized):
             # utils are not always stored in the rollouts as they can occupy a lot of memory
             feed_dict.update({
                 self._signals['mu_utils']: rollouts.utils,
-                self._signals['mu_exploration']: rollouts.exploration,
+                self._signals['mu_exploration']: rollouts.get_static('exploration')
             })
 
         return feed_dict
@@ -409,7 +409,7 @@ class RLContext(Parameterized):
 
         with self:
             start = time.time()
-            rollouts = self.env.do_rollouts(self.mu, batch_size, mode='train')
+            rollouts = self.env.do_rollouts(self.mu, batch_size, mode='train', save_utils=cfg.save_utils)
             train_rollout_duration = time.time() - start
 
             train_summaries = b""
@@ -464,7 +464,7 @@ class RLContext(Parameterized):
 
         with self:
             start = time.time()
-            rollouts = self.env.do_rollouts(self.pi, batch_size, mode=mode)
+            rollouts = self.env.do_rollouts(self.pi, batch_size, mode=mode, save_utils=cfg.save_utils)
             eval_rollout_duration = time.time() - start
 
             start = time.time()

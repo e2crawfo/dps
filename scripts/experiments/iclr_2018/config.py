@@ -31,7 +31,7 @@ env_config = grid_arithmetic.config.copy(
     initial_salience=False,
     salience_input_shape=(3*14, 3*14),
     salience_output_shape=(14, 14),
-    image_shape=(14, 14),
+    sub_image_shape=(14, 14),
 
     final_reward=True,
 

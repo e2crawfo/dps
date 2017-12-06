@@ -304,7 +304,18 @@ class TrainingLoop(object):
     def run_stage(self, stage, updater):
         self.threshold_reached = False
         self.reason = ""
-        early_stop = EarlyStopHook(patience=cfg.patience, maximize=updater.maximize)
+
+        stopping_criteria_name = cfg.get("stopping_criteria_name", "")
+        if not stopping_criteria_name:
+            stopping_criteria_name = updater.stopping_criteria_name
+        self.stopping_criteria_name = stopping_criteria_name
+
+        maximize_sc = cfg.get("maximize_sc", None)
+        if maximize_sc is None:
+            maximize_sc = updater.maximize
+        self.maximize_sc = maximize_sc
+
+        early_stop = EarlyStopHook(patience=cfg.patience, maximize=self.maximize_sc)
         time_remaining = self.time_remaining
 
         print("{} seconds left "
@@ -342,11 +353,6 @@ class TrainingLoop(object):
         total_train_time = 0.0
         time_per_example = 0.0
         time_per_batch = 0.0
-
-        stopping_criteria_name = cfg.get("stopping_criteria_name", "")
-        if not stopping_criteria_name:
-            stopping_criteria_name = updater.stopping_criteria_name
-        self.stopping_criteria_name = stopping_criteria_name
 
         while True:
             if self.local_step >= cfg.max_steps:
@@ -390,7 +396,7 @@ class TrainingLoop(object):
                     self.val_writer.add_summary(val_summaries, (self.global_step + 1) * cfg.batch_size)
                     self.test_writer.add_summary(test_summaries, (self.global_step + 1) * cfg.batch_size)
 
-                stopping_criteria = val_record[stopping_criteria_name]
+                stopping_criteria = val_record[self.stopping_criteria_name]
                 new_best, stop = early_stop.check(stopping_criteria, self.local_step, val_record)
 
                 if new_best:
@@ -398,7 +404,7 @@ class TrainingLoop(object):
                           "constituting {} local experiences, "
                           "with stopping criteria ({}) of {}.".format(
                               self.local_step, self.global_step, updater.n_experiences,
-                              stopping_criteria_name, stopping_criteria))
+                              self.stopping_criteria_name, stopping_criteria))
 
                     path = cfg.get('save_path', '')
                     path = path or self.exp_dir.path_for('best_of_stage_{}'.format(stage))
@@ -413,10 +419,11 @@ class TrainingLoop(object):
                     reason = "Early stopping triggered"
                     break
 
-                if updater.maximize:
+                if self.maximize_sc:
                     threshold_reached = stopping_criteria > cfg.threshold
                 else:
                     threshold_reached = stopping_criteria < cfg.threshold
+
                 if threshold_reached:
                     reason = "Stopping criteria threshold reached"
                     break

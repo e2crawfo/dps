@@ -4,8 +4,6 @@ from tensorflow.contrib.slim import fully_connected
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 import sys
 
-import clify
-
 from dps import cfg
 from dps.config import DEFAULT_CONFIG
 from dps.train import training_loop

@@ -1,6 +1,5 @@
 import abc
 from future.utils import with_metaclass
-import numpy as np
 
 import tensorflow as tf
 
