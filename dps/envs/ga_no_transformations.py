@@ -8,7 +8,8 @@ from dps.environment import CompositeEnv
 from dps.utils import Param, Config
 from dps.rl.policy import EpsilonSoftmax, ProductDist, Policy, Deterministic
 
-from dps.envs.grid_arithmetic import GridArithmeticDataset, GridArithmetic, render_rollouts
+from dps.datasets import GridArithmeticDataset
+from dps.envs.grid_arithmetic import GridArithmetic, render_rollouts
 from dps.envs.grid_arithmetic import config as ga_config
 
 

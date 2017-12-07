@@ -522,8 +522,13 @@ NotSupplied = object()
 
 
 class Param(object):
-    def __init__(self, default=NotSupplied):
+    def __init__(self, default=NotSupplied, aliases=None):
+        """ aliases are different ways to fill the value (i.e. from config or kwargs),
+            but should not be used to access the value as a class attribute. """
         self.default = default
+        if isinstance(aliases, str):
+            aliases = aliases.split()
+        self.aliases = aliases or []
 
 
 class Parameterized(object):
@@ -539,19 +544,36 @@ class Parameterized(object):
 
     def _resolve_params(self, **kwargs):
         if not self._resolved:
-            for p in self.param_names():
-                value = kwargs.get(p)
-                if value is None:
-                    try:
-                        value = getattr(dps.cfg, p)
-                    except AttributeError as e:
-                        param = getattr(self, p)
-                        if param.default is not NotSupplied:
-                            value = param.default
-                        else:
-                            raise e
+            for name in self.param_names():
+                param = getattr(self.__class__, name)
 
-                setattr(self, p, value)
+                aliases = list([name] + param.aliases)
+
+                value = NotSupplied
+
+                # Check kwargs
+                for alias in aliases:
+                    if value is not NotSupplied:
+                        break
+                    value = kwargs.get(alias, NotSupplied)
+
+                # Check cfg
+                for alias in aliases:
+                    if value is not NotSupplied:
+                        break
+                    value = getattr(dps.cfg, alias, NotSupplied)
+
+                # Try the default value
+                if value is NotSupplied:
+                    if param.default is not NotSupplied:
+                        value = param.default
+                    else:
+                        raise AttributeError(
+                            "Could not find value for parameter {} for class {} "
+                            "in either kwargs or config, and no default was provided.".format(
+                                name, self.__class__))
+
+                setattr(self, name, value)
             self._resolved = True
 
     @classmethod

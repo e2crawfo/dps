@@ -3,7 +3,7 @@ import tensorflow as tf
 import matplotlib.pyplot as plt
 from itertools import product
 
-from dps.vision import EmnistDataset
+from dps.datasets import EmnistDataset
 from dps.vision.attention import DRAW_attention_2D, discrete_attention
 
 

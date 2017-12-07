@@ -3,13 +3,9 @@ import tensorflow as tf
 
 from dps import cfg
 from dps.updater import DifferentiableUpdater
-from dps.supervised import ClassificationEnv, RegressionEnv, SupervisedDataset
-from dps.utils import Param
+from dps.supervised import ClassificationEnv, RegressionEnv
 from dps.config import DEFAULT_CONFIG
-
-from mnist_arithmetic import load_emnist, load_omniglot, omniglot_classes
-from mnist_arithmetic import MnistArithmeticDataset as _MnistArithmeticDataset
-from mnist_arithmetic import SalienceDataset as _SalienceDataset
+from dps.datasets import EmnistDataset, OmniglotDataset, SalienceDataset
 
 
 def get_differentiable_updater(env):
@@ -17,54 +13,7 @@ def get_differentiable_updater(env):
     return DifferentiableUpdater(env, f)
 
 
-class MnistArithmeticDataset(SupervisedDataset):
-    sub_image_shape = Param()
-    image_shape = Param()
-    draw_shape = Param()
-    draw_offset = Param()
-    max_overlap = Param()
-    min_digits = Param()
-    max_digits = Param()
-    one_hot = Param()
-    largest_digit = Param()
-    reductions = Param()
-    base = Param()
-    n_examples = Param()
-
-    def __init__(self, *args, **kwargs):
-        _dataset = _MnistArithmeticDataset(cfg.data_dir, **self.param_values())
-        super(MnistArithmeticDataset, self).__init__(_dataset.x, _dataset.y)
-
-
 # EMNIST ***************************************
-
-
-class EmnistDataset(SupervisedDataset):
-    shape = Param((14, 14))
-    include_blank = Param(True)
-    one_hot = Param(True)
-    balance = Param(False)
-    classes = Param()
-
-    class_pool = ''.join(
-        [str(i) for i in range(10)] +
-        [chr(i + ord('A')) for i in range(26)] +
-        [chr(i + ord('a')) for i in range(26)]
-    )
-
-    @staticmethod
-    def sample_classes(n_classes):
-        classes = np.random.choice(len(EmnistDataset.class_pool), n_classes, replace=False)
-        return [EmnistDataset.class_pool[i] for i in classes]
-
-    def __init__(self, **kwargs):
-        x, y, class_map = load_emnist(cfg.data_dir, **self.param_values())
-
-        if x.shape[0] < self.n_examples:
-            raise Exception(
-                "Too few datapoints. Requested {}, "
-                "only {} are available.".format(self.n_examples, x.shape[0]))
-        super(EmnistDataset, self).__init__(x, y)
 
 
 def build_emnist_env():
@@ -100,26 +49,6 @@ EMNIST_CONFIG = DEFAULT_CONFIG.copy(
 
 
 # OMNIGLOT ***************************************
-
-
-class OmniglotDataset(SupervisedDataset):
-    shape = Param()
-    include_blank = Param()
-    one_hot = Param()
-    indices = Param()
-    classes = Param()
-
-    @staticmethod
-    def sample_classes(n_classes):
-        class_pool = omniglot_classes(cfg.data_dir)
-        classes = np.random.choice(len(class_pool), n_classes, replace=False)
-        return [class_pool[i] for i in classes]
-
-    def __init__(self, indices, **kwargs):
-        pv = self.param_values()
-        del pv['n_examples']
-        x, y, class_map = load_omniglot(cfg.data_dir, **pv)
-        super(OmniglotDataset, self).__init__(x, y)
 
 
 def build_omniglot_env():
@@ -196,23 +125,6 @@ class salience_render_hook(object):
 
             if cfg.show_plots:
                 plt.show(block=True)
-
-
-class SalienceDataset(SupervisedDataset):
-    classes = Param()
-    min_digits = Param()
-    max_digits = Param()
-    sub_image_shape = Param()
-    n_sub_image_examples = Param()
-    image_shape = Param()
-    output_shape = Param()
-    max_overlap = Param()
-    std = Param()
-    flatten_output = Param()
-
-    def __init__(self, *args, **kwargs):
-        _dataset = _SalienceDataset(cfg.data_dir, **self.param_values())
-        super(SalienceDataset, self).__init__(_dataset.x, _dataset.y)
 
 
 def build_salience_env():

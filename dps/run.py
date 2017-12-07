@@ -13,14 +13,14 @@ def parse_env_alg(env, alg):
         env_config = getattr(envs_module, env).config
     except AttributeError:
         envs = [e for e in dir(envs_module) if e.startswith(env)]
-        assert len(envs) == 1, "Ambiguity in env selection, possibilities are: {}.".format(env)
+        assert len(envs) == 1, "Ambiguity in env selection, possibilities are: {}.".format(envs)
         env_config = getattr(envs_module, envs[0]).config
 
     try:
         alg_config = getattr(algorithms_module, alg).config
     except AttributeError:
         algs = [a for a in dir(algorithms_module) if a.startswith(alg)]
-        assert len(algs) == 1, "Ambiguity in alg selection, possibilities are: {}.".format(alg)
+        assert len(algs) == 1, "Ambiguity in alg selection, possibilities are: {}.".format(algs)
         alg_config = getattr(algorithms_module, algs[0]).config
 
     return env_config, alg_config

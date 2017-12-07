@@ -9,7 +9,8 @@ import os
 from dps import cfg
 from dps.utils import NumpySeed
 from dps.utils.tf import MLP, LeNet, SalienceMap
-from dps.vision import SALIENCE_CONFIG, EMNIST_CONFIG, EmnistDataset, OMNIGLOT_CONFIG, OmniglotDataset
+from dps.vision.train import SALIENCE_CONFIG, EMNIST_CONFIG, OMNIGLOT_CONFIG
+from dps.datasets import EmnistDataset, OmniglotDataset
 from dps.train import load_or_train
 
 

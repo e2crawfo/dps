@@ -26,7 +26,6 @@ setup(
         "psutil",
         "pyskiplist",
         "progressbar2",
-        "mnist_arithmetic",
         "clify",
     ],
     entry_points={

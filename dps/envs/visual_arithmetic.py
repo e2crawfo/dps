@@ -7,7 +7,8 @@ from dps.register import RegisterBank
 from dps.environment import CompositeEnv, InternalEnv
 from dps.envs.grid_arithmetic import render_rollouts
 from dps.supervised import ClassificationEnv, IntegerRegressionEnv
-from dps.vision import MnistArithmeticDataset, EMNIST_CONFIG, SALIENCE_CONFIG
+from dps.vision.train import EMNIST_CONFIG, SALIENCE_CONFIG
+from dps.datasets import VisualArithmeticDataset
 from dps.utils.tf import LeNet, MLP, SalienceMap, extract_glimpse_numpy_like
 from dps.utils import Param, Config, image_to_string
 from dps.updater import DifferentiableUpdater
@@ -15,9 +16,9 @@ from dps.rl.policy import EpsilonSoftmax, Beta, ProductDist, Policy, SigmoidNorm
 
 
 def sl_build_env():
-    train = MnistArithmeticDataset(n_examples=cfg.n_train, one_hot=True)
-    val = MnistArithmeticDataset(n_examples=cfg.n_val, one_hot=True)
-    test = MnistArithmeticDataset(n_examples=cfg.n_val, one_hot=True)
+    train = VisualArithmeticDataset(n_examples=cfg.n_train, one_hot=True)
+    val = VisualArithmeticDataset(n_examples=cfg.n_val, one_hot=True)
+    test = VisualArithmeticDataset(n_examples=cfg.n_val, one_hot=True)
     return ClassificationEnv(train, val, test, one_hot=True)
 
 
@@ -29,11 +30,11 @@ def sl_get_updater(env):
 def build_env():
     internal = VisualArithmetic()
 
-    train = MnistArithmeticDataset(n_examples=cfg.n_train, one_hot=False, image_shape=cfg.env_shape)
+    train = VisualArithmeticDataset(n_examples=cfg.n_train, one_hot=False, image_shape=cfg.env_shape)
     for i in range(10):
         print(image_to_string(train.x[i, ...]))
-    val = MnistArithmeticDataset(n_examples=cfg.n_val, one_hot=False, image_shape=cfg.env_shape)
-    test = MnistArithmeticDataset(n_examples=cfg.n_val, one_hot=False, image_shape=cfg.env_shape)
+    val = VisualArithmeticDataset(n_examples=cfg.n_val, one_hot=False, image_shape=cfg.env_shape)
+    test = VisualArithmeticDataset(n_examples=cfg.n_val, one_hot=False, image_shape=cfg.env_shape)
 
     external = IntegerRegressionEnv(train, val, test)
 
@@ -68,7 +69,7 @@ config = Config(
 
     curriculum=[
         dict(env_shape=(28, 28), draw_shape=(14, 14), draw_offset=(7, 7)),
-        # dict(env_shape=(28, 28), draw_shape=(20, 20), draw_offset=(4, 4)),
+        dict(env_shape=(28, 28), draw_shape=(20, 20), draw_offset=(4, 4)),
         dict(env_shape=(28, 28), draw_shape=(28, 28), draw_offset=(0, 0)),
     ],
     stopping_criteria_name="01_loss",

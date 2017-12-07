@@ -2,19 +2,17 @@ import tensorflow as tf
 import numpy as np
 import os
 from collections import OrderedDict
-import sys
 
 from dps import cfg
 from dps.register import RegisterBank
 from dps.environment import CompositeEnv, InternalEnv
-from dps.supervised import SupervisedDataset, ClassificationEnv, IntegerRegressionEnv
-from dps.vision import EMNIST_CONFIG, SALIENCE_CONFIG, OMNIGLOT_CONFIG, OmniglotDataset
+from dps.supervised import ClassificationEnv, IntegerRegressionEnv
+from dps.vision import EMNIST_CONFIG, SALIENCE_CONFIG, OMNIGLOT_CONFIG
+from dps.datasets import GridArithmeticDataset, GridOmniglotDataset, OmniglotDataset
 from dps.utils.tf import LeNet, MLP, SalienceMap, extract_glimpse_numpy_like
-from dps.utils import DataContainer, Param, Config, image_to_string
+from dps.utils import Param, Config, image_to_string
 from dps.updater import DifferentiableUpdater
 from dps.rl.policy import EpsilonSoftmax, DiscretePolicy
-
-from mnist_arithmetic import load_emnist, load_omniglot
 
 
 def sl_build_env():
@@ -155,16 +153,15 @@ config = Config(
 
     op_loc=(0, 0),  # With respect to draw_shape
     start_loc=(0, 0),  # With respect to env_shape
-    env_shape=(2, 2),
+    image_shape_grid=(2, 2),
     draw_offset=(0, 0),
-    draw_shape=(2, 2),
+    draw_shape_grid=(2, 2),
     sub_image_shape=(14, 14),
 
     n_train=10000,
     n_val=100,
     use_gpu=False,
 
-    show_op=True,
     reward_window=0.4999,
     salience_action=True,
     salience_input_shape=(3*14, 3*14),
@@ -197,274 +194,6 @@ config = Config(
 )
 
 
-class GridArithmeticDataset(SupervisedDataset):
-    reductions = Param()
-
-    env_shape = Param()
-    draw_offset = Param(None)
-    draw_shape = Param(None)
-
-    min_digits = Param()
-    max_digits = Param()
-    base = Param()
-    op_loc = Param()
-    one_hot = Param()
-    largest_digit = Param(1000)
-    sub_image_shape = Param((14, 14))
-    show_op = Param(True)
-    parity = Param('both')
-
-    reductions_dict = {
-        "sum": sum,
-        "prod": np.product,
-        "max": max,
-        "min": min,
-        "len": len,
-    }
-
-    def __init__(self, **kwargs):
-        if not self.draw_shape:
-            self.draw_shape = self.env_shape
-        if not self.draw_offset:
-            self.draw_offset = (0, 0)
-
-        assert 1 <= self.base <= 10
-        assert self.min_digits <= self.max_digits
-        assert np.product(self.draw_shape) >= self.max_digits + 1
-
-        if ":" not in self.reductions:
-            self.reductions = {'A': self.reductions_dict[self.reductions.strip()]}
-            self.show_op = False
-        else:
-            _reductions = {}
-            delim = ',' if ',' in self.reductions else ' '
-            for pair in self.reductions.split(delim):
-                char, key = pair.split(':')
-                _reductions[char] = self.reductions_dict[key]
-            self.reductions = _reductions
-
-        op_symbols = sorted(self.reductions)
-        emnist_x, emnist_y, symbol_map = load_emnist(
-            cfg.data_dir, op_symbols, balance=True, shape=self.sub_image_shape)
-        emnist_y = np.squeeze(emnist_y, 1)
-
-        reductions = {symbol_map[k]: v for k, v in self.reductions.items()}
-
-        symbol_reps = DataContainer(emnist_x, emnist_y)
-
-        mnist_classes = list(range(self.base))
-        if self.parity == 'even':
-            mnist_classes = [c for c in mnist_classes if c % 2 == 0]
-        elif self.parity == 'odd':
-            mnist_classes = [c for c in mnist_classes if c % 2 == 1]
-        elif self.parity == 'both':
-            pass
-        else:
-            raise Exception("NotImplemented")
-
-        mnist_x, mnist_y, classmap = load_emnist(
-            cfg.data_dir, mnist_classes, balance=True, shape=self.sub_image_shape)
-        mnist_y = np.squeeze(mnist_y, 1)
-        inverted_classmap = {v: k for k, v in classmap.items()}
-        mnist_y = np.array([inverted_classmap[y] for y in mnist_y])
-
-        digit_reps = DataContainer(mnist_x, mnist_y)
-        blank_element = np.zeros(self.sub_image_shape)
-
-        x, y = self.make_dataset(
-            self.env_shape, self.min_digits, self.max_digits, self.base,
-            blank_element, digit_reps, symbol_reps,
-            reductions, self.n_examples, self.op_loc, self.show_op,
-            one_hot=self.one_hot, largest_digit=self.largest_digit,
-            draw_offset=self.draw_offset, draw_shape=self.draw_shape)
-
-        super(GridArithmeticDataset, self).__init__(x, y)
-
-    @staticmethod
-    def make_dataset(
-            env_shape, min_digits, max_digits, base, blank_element,
-            digit_reps, symbol_reps, functions, n_examples, op_loc, show_op,
-            one_hot, largest_digit, draw_offset, draw_shape):
-
-        new_X, new_Y = [], []
-
-        size = np.product(draw_shape)
-
-        m, n = blank_element.shape
-        if op_loc is not None:
-            _op_loc = np.ravel_multi_index(op_loc, draw_shape)
-
-        for j in range(n_examples):
-            nd = np.random.randint(min_digits, max_digits+1)
-
-            indices = np.random.choice(size, nd+1, replace=False)
-
-            if op_loc is not None and show_op:
-                indices[indices == _op_loc] = indices[0]
-                indices[0] = _op_loc
-
-            env = np.tile(blank_element, draw_shape)
-            locs = zip(*np.unravel_index(indices, draw_shape))
-            locs = [(slice(i*m, (i+1)*m), slice(j*n, (j+1)*n)) for i, j in locs]
-            op_loc, *digit_locs = locs
-
-            symbol_x, symbol_y = symbol_reps.get_random()
-            func = functions[int(symbol_y)]
-
-            if show_op:
-                env[op_loc] = symbol_x
-
-            ys = []
-
-            for loc in digit_locs:
-                x, y = digit_reps.get_random()
-                ys.append(y)
-                env[loc] = x
-
-            if draw_shape != env_shape:
-                full_env = np.tile(blank_element, env_shape)
-                start_y = draw_offset[0] * blank_element.shape[0]
-                start_x = draw_offset[1] * blank_element.shape[1]
-                full_env[start_y:start_y+env.shape[0], start_x:start_x+env.shape[1]] = env
-                env = full_env
-
-            new_X.append(env)
-            y = func(ys)
-
-            if one_hot:
-                _y = np.zeros(largest_digit+2)
-                if y > largest_digit:
-                    _y[-1] = 1.0
-                else:
-                    _y[int(y)] = 1.0
-                y = _y
-            else:
-                y = np.minimum(y, largest_digit+1)
-
-            if j % 10000 == 0:
-                print(y)
-                print(image_to_string(env))
-                print("\n")
-
-            new_Y.append(y)
-
-        new_X = np.array(new_X).astype('f')
-
-        if one_hot:
-            new_Y = np.array(new_Y).astype('f')
-        else:
-            new_Y = np.array(new_Y).astype('i').reshape(-1, 1)
-
-        return new_X, new_Y
-
-
-class GridOmniglotDataset(SupervisedDataset):
-    min_digits = Param()
-    max_digits = Param()
-    classes = Param()
-    indices = Param()
-    target_loc = Param()
-    one_hot = Param(False)
-    sub_image_shape = Param((14, 14))
-
-    env_shape = Param()
-    draw_offset = Param(None)
-    draw_shape = Param(None)
-
-    def __init__(self, **kwargs):
-        if not self.draw_shape:
-            self.draw_shape = self.env_shape
-        assert self.min_digits <= self.max_digits
-        assert np.product(self.draw_shape) >= self.max_digits + 1
-
-        omniglot_x, omniglot_y, symbol_map = load_omniglot(
-            cfg.data_dir, self.classes, one_hot=False,
-            indices=list(range(17, 20)), shape=self.sub_image_shape
-        )
-        omniglot_y = np.squeeze(omniglot_y, 1)
-        symbol_reps = DataContainer(omniglot_x, omniglot_y)
-
-        blank_element = np.zeros(self.sub_image_shape)
-
-        x, y = self.make_dataset(
-            self.env_shape, self.min_digits, self.max_digits,
-            blank_element, symbol_reps,
-            self.n_examples, self.target_loc,
-            one_hot=self.one_hot,
-            draw_offset=self.draw_offset, draw_shape=self.draw_shape)
-
-        super(GridOmniglotDataset, self).__init__(x, y)
-
-    @staticmethod
-    def make_dataset(
-            env_shape, min_digits, max_digits, blank_element,
-            symbol_reps, n_examples, target_loc,
-            one_hot, draw_offset, draw_shape):
-
-        new_X, new_Y = [], []
-
-        size = np.product(draw_shape)
-
-        m, n = blank_element.draw_shape
-        _target_loc = np.ravel_multi_index(target_loc, draw_shape)
-
-        # min_digits, max_digits do NOT include target digit.
-        for j in range(n_examples):
-            # Random number of other digits
-            nd = np.random.randint(min_digits, max_digits+1)
-            indices = np.random.choice(size, nd+1, replace=False)
-
-            indices[indices == _target_loc] = indices[0]
-            indices[0] = _target_loc
-
-            env = np.tile(blank_element, draw_shape)
-            locs = zip(*np.unravel_index(indices, draw_shape))
-            target_loc, *other_locs = [(slice(i*m, (i+1)*m), slice(j*n, (j+1)*n)) for i, j in locs]
-
-            target_x, target_y = symbol_reps.get_random()
-            env[target_loc] = target_x
-
-            n_target_repeats = np.random.randint(0, nd)
-
-            for k in range(nd):
-                if k < n_target_repeats:
-                    _x, _y = symbol_reps.get_random_with_label(target_y)
-                else:
-                    _x, _y = symbol_reps.get_random_without_label(target_y)
-                env[other_locs[k]] = _x
-
-            if draw_shape != env_shape:
-                full_env = np.tile(blank_element, env_shape)
-                start_y = draw_offset[0] * blank_element.shape[0]
-                start_x = draw_offset[1] * blank_element.shape[1]
-                full_env[start_y:start_y+env.shape[0], start_x:start_x+env.shape[1]] = env
-                env = full_env
-
-            new_X.append(env)
-            y = n_target_repeats + 1
-
-            if j % 10000 == 0:
-                print(y)
-                print(image_to_string(env))
-                print("\n")
-
-            if one_hot:
-                _y = np.zeros(size)
-                _y[int(y)] = 1.0
-                y = _y
-
-            new_Y.append(y)
-
-        new_X = np.array(new_X).astype('f')
-
-        if one_hot:
-            new_Y = np.array(new_Y).astype('f')
-        else:
-            new_Y = np.array(new_Y).astype('i').reshape(-1, 1)
-
-        return new_X, new_Y
-
-
 def classifier_head(x):
     base = int(x.shape[-1])
     x = tf.stop_gradient(x)
@@ -486,8 +215,7 @@ class GridArithmetic(InternalEnv):
         return len(self.action_names)
 
     arithmetic_actions = Param()
-    env_shape = Param()
-    base = Param()
+    env_shape = Param(aliases="image_shape_grid")
     start_loc = Param()
     sub_image_shape = Param()
     visible_glimpse = Param()
@@ -555,7 +283,7 @@ class GridArithmetic(InternalEnv):
 
     def _init_networks(self):
         digit_config = cfg.emnist_config.copy(
-            classes=list(range(self.base)),
+            classes=list(range(10)),
             build_function=cfg.build_digit_classifier
         )
 
@@ -637,7 +365,7 @@ class GridArithmetic(InternalEnv):
         return salience, salience_input
 
     def _build_update_storage(self, glimpse, prev_digit, classify_digit, prev_op, classify_op):
-        digit = self.classifier_head(self.digit_classifier(glimpse, self.base + 1, False))
+        digit = self.classifier_head(self.digit_classifier(glimpse, 11, False))
         new_digit = (1 - classify_digit) * prev_digit + classify_digit * digit
 
         op = self.classifier_head(self.op_classifier(glimpse, len(self.op_classes) + 1, False))
