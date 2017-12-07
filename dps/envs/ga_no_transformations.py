@@ -157,7 +157,7 @@ class GridArithmeticNoTransformations(GridArithmetic):
         fovea_y, fovea_x = self._build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
         glimpse = self._build_update_glimpse(fovea_y, fovea_x)
 
-        prev_action = tf.argmax(a[..., self.n_discrete_actions], axis=-1)[..., None]
+        prev_action = tf.argmax(a[..., :self.n_discrete_actions], axis=-1)[..., None]
         prev_action = tf.to_float(prev_action)
 
         return self._build_return_values(
