@@ -24,6 +24,8 @@ env_config = grid_arithmetic.config.copy(
     start_loc=(0, 0),
     base=10,
     threshold=0.01,
+    stopping_criteria_name="01_loss",
+    maximize_sc=False,
     largest_digit=100,
 
     salience_action=True,

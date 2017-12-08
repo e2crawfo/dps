@@ -77,6 +77,7 @@ class PatchesDataset(SupervisedDataset):
 
     def __init__(self, **kwargs):
         self.draw_shape = self.draw_shape or self.image_shape
+        self.draw_offset = self.draw_offset or (0, 0)
 
         assert self.draw_offset[0] >= 0
         assert self.draw_offset[1] >= 0

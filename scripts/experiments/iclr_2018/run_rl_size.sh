@@ -1,0 +1,7 @@
+python rl_size.py --name=rl_size_0 --task=0 --wall-time=24hours --n-repeats=4 --ppn=8 --max-hosts=1 --cpp=4 --kind=slurm --cleanup-time=30mins --slack-time=30mins --gpu-set=0,1 --ignore-gpu=True --pmem=3700
+# python rl_size.py --name=rl_size_A --task=A --wall-time=24hours --n-repeats=5 --ppn=8 --max-hosts=4 --cpp=4 --kind=slurm --cleanup-time=30mins --slack-time=30mins --gpu-set=0,1 --ignore-gpu=True --pmem=3700
+# python rl_size.py --name=rl_size_B --task=B --wall-time=24hours --n-repeats=5 --ppn=8 --max-hosts=4 --cpp=4 --kind=slurm --cleanup-time=30mins --slack-time=30mins --gpu-set=0,1 --ignore-gpu=True --pmem=3700
+# python rl_size.py --name=rl_size_C --task=C --wall-time=24hours --n-repeats=5 --ppn=8 --max-hosts=4 --cpp=4 --kind=slurm --cleanup-time=30mins --slack-time=30mins --gpu-set=0,1 --ignore-gpu=True --pmem=3700
+# python rl_size.py --name=rl_size_D --task=D --wall-time=24hours --n-repeats=5 --ppn=8 --max-hosts=4 --cpp=4 --kind=slurm --cleanup-time=30mins --slack-time=30mins --gpu-set=0,1 --ignore-gpu=True --pmem=3700
+# python rl_size.py --name=rl_size_E --task=E --wall-time=24hours --n-repeats=5 --ppn=8 --max-hosts=4 --cpp=4 --kind=slurm --cleanup-time=30mins --slack-time=30mins --gpu-set=0,1 --ignore-gpu=True --pmem=3700
+# python rl_size.py --name=rl_size_F --task=F --wall-time=24hours --n-repeats=5 --ppn=8 --max-hosts=4 --cpp=4 --kind=slurm --cleanup-time=30mins --slack-time=30mins --gpu-set=0,1 --ignore-gpu=True --pmem=3700

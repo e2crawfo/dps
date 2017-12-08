@@ -561,7 +561,7 @@ def _sample_complexity_plot(args):
     plt.ylim((0.0, 100.0))
 
     if args.filename:
-        plt.savefig('{}.pdf'.format(args.filename))
+        plt.savefig('{}'.format(args.filename))
 
     # plt.ylabel("% Incorrect on Test Set")
     # plt.xlabel("# Training Examples")

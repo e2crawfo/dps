@@ -3,28 +3,11 @@ import numpy as np
 
 from dps import cfg
 from dps.register import RegisterBank
-from dps.supervised import IntegerRegressionEnv
-from dps.environment import CompositeEnv
 from dps.utils.tf import LeNet, MLP, CompositeCell
 from dps.utils import Config
 from dps.rl.policy import EpsilonSoftmax, ProductDist, Policy
-
-from dps.datasets import GridArithmeticDataset
 from dps.envs.grid_arithmetic import GridArithmetic, render_rollouts
 from dps.envs.grid_arithmetic import config as ga_config
-
-
-def build_env():
-    internal = GridArithmeticNoClassifiers()
-
-    train = GridArithmeticDataset(n_examples=cfg.n_train, one_hot=False)
-    val = GridArithmeticDataset(n_examples=cfg.n_val, one_hot=False)
-    test = GridArithmeticDataset(n_examples=cfg.n_val, one_hot=False)
-    external = IntegerRegressionEnv(train, val, test)
-
-    env = CompositeEnv(external, internal)
-    env.obs_is_image = True
-    return env
 
 
 def build_policy(env, **kwargs):
@@ -49,17 +32,18 @@ def no_classifiers_inp(obs):
 def build_controller(params_dim, name=None):
     return CompositeCell(
         tf.contrib.rnn.LSTMCell(num_units=cfg.n_controller_units),
-        MLP(), params_dim, inp=no_classifiers_inp, name=name)
+        MLP([cfg.n_output_units, cfg.n_output_units], scope="controller_output"),
+        params_dim, inp=no_classifiers_inp, name=name)
 
 
 config_delta = Config(
     log_name='grid_arithmetic_no_classifiers',
     render_rollouts=render_rollouts,
-    build_env=build_env,
     build_policy=build_policy,
     build_controller=build_controller,
     n_glimpse_features=128,
     n_glimpse_units=128,
+    n_output_units=128,
 )
 
 

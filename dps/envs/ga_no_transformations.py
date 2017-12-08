@@ -6,6 +6,7 @@ from dps.register import RegisterBank
 from dps.supervised import ClassificationEnv
 from dps.environment import CompositeEnv
 from dps.utils import Param, Config
+from dps.utils.tf import MLP, CompositeCell
 from dps.rl.policy import EpsilonSoftmax, ProductDist, Policy, Deterministic
 
 from dps.datasets import GridArithmeticDataset
@@ -33,14 +34,20 @@ def build_policy(env, **kwargs):
     return Policy(action_selection, env.obs_shape, **kwargs)
 
 
+def build_controller(params_dim, name=None):
+    return CompositeCell(
+        tf.contrib.rnn.LSTMCell(num_units=cfg.n_controller_units),
+        MLP([cfg.n_output_units, cfg.n_output_units], scope="controller_output"),
+        params_dim, name=name)
+
+
 config_delta = Config(
     log_name='grid_arithmetic_no_transformations',
     render_rollouts=render_rollouts,
     build_env=build_env,
     build_policy=build_policy,
     largest_digit=99,
-    n_glimpse_features=128,
-    n_glimpse_units=128,
+    n_output_units=128,
     use_differentiable_loss=True,
 )
 

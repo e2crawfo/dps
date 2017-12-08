@@ -1,25 +1,48 @@
 import numpy as np
 import clify
+import argparse
 
 from config import cnn_config as config
 
+parser = argparse.ArgumentParser()
+parser.add_argument("--task", choices="A B C D E F".split(), default='')
 
-A_curric = [dict(shape=(2, 2), n_train=2**17), dict(shape=(3, 3))]
-B_curric = [dict(shape=(3, 3))]
-C_curric = [
-    dict(shape=(2, 2), n_train=2**17),
-    dict(shape=(3, 3), n_train=2**17),
-    dict(shape=(3, 3), min_digits=4, max_digits=4)]
-F_curric = [dict(shape=(3, 3), min_digits=4, max_digits=4)]
-G_curric = [
-    dict(draw_shape=(2, 2), n_train=2**17),
-    dict(draw_shape=(3, 3), n_train=2**17),
-    dict(draw_shape=(3, 3), min_digits=4, max_digits=4, n_train=2**17),
-    dict(draw_shape=(3, 3), min_digits=5, max_digits=5)
-]
+args, _ = parser.parse_known_args()
+
+if args.task == "A":
+    config.curriculum = [
+        dict(draw_shape=(2, 2), n_train=2**17),
+        dict()
+    ]
+elif args.task == "B":
+    config.curriculum = [
+        dict(draw_shape=(2, 2), n_train=2**17),
+        dict(n_train=2**17),
+        dict(min_digits=4, max_digits=4)
+    ]
+elif args.task == "C":
+    config.curriculum = [
+        dict(draw_shape=(2, 2), n_train=2**17),
+        dict(n_train=2**17),
+        dict(n_train=2**17, min_digits=4, max_digits=4),
+        dict(min_digits=5, max_digits=5)
+    ]
+elif args.task == "D":
+    config.curriculum = [
+        dict()
+    ]
+elif args.task == "E":
+    config.curriculum = [
+        dict(min_digits=4, max_digits=4)
+    ]
+elif args.task == "F":
+    config.curriculum = [
+        dict(min_digits=5, max_digits=5)
+    ]
+else:
+    raise Exception()
 
 config.update(
-    curriculum=G_curric,
     n_controller_units=512,
     reductions="sum",
     env_shape=(3, 3),

@@ -8,6 +8,7 @@ from dps.envs import ga_no_modules, ga_no_classifiers, ga_no_transformations
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--ablation", default="no_modules", choices="no_modules no_classifiers no_transformations".split())
+parser.add_argument("--search", action="store_true")
 args, _ = parser.parse_known_args()
 
 if args.ablation == 'no_modules':
@@ -22,10 +23,14 @@ elif args.ablation == 'no_transformations':
 else:
     raise Exception("NotImplemented")
 
-config.update(ablations=args.ablation)
+config.update(ablations=args.ablation, reductions="sum")
 
 
-grid = dict(n_train=2**np.arange(6, 18, 2))
+if args.search:
+    config.n_train = 2**10
+    grid = dict(lr_schedule=[1e-3, 1e-4, 1e-5], value_weight=[0, 1])
+else:
+    grid = dict(n_train=2**np.arange(6, 18, 2))
 
 
 from dps.parallel.hyper import build_and_submit, default_host_pool

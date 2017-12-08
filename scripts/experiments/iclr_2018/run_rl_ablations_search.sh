@@ -1,0 +1,5 @@
+python rl_ablations.py --search --name=no_transformations_sum --reductions=sum --ablation=no_transformations --wall-time=24hours --n-repeats=5 --ppn=8 --max-hosts=4 --cpp=4 --kind=slurm --cleanup-time=30mins --gpu-set=0,1 --ignore-gpu=True --slack-time=30mins --pmem=3700 --max-steps=325000
+
+python rl_ablations.py --search --name=no_classifiers_sum --reductions=sum --ablation=no_classifiers --wall-time=24hours --n-repeats=5 --ppn=8 --max-hosts=4 --cpp=4 --kind=slurm --cleanup-time=30mins --gpu-set=0,1 --ignore-gpu=True --slack-time=30mins --pmem=3700 --max-steps=325000
+
+python rl_ablations.py --search --name=no_modules_sum --reductions=sum --ablation=no_modules --wall-time=24hours --n-repeats=5 --ppn=8 --max-hosts=4 --cpp=4 --kind=slurm --cleanup-time=30mins --gpu-set=0,1 --ignore-gpu=True --slack-time=30mins --pmem=3700 --max-steps=325000

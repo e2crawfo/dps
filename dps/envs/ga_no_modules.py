@@ -8,7 +8,6 @@ from dps.environment import CompositeEnv
 from dps.utils.tf import LeNet, MLP, CompositeCell
 from dps.utils import Param, Config
 from dps.rl.policy import EpsilonSoftmax, ProductDist, Policy, Deterministic
-
 from dps.datasets import GridArithmeticDataset
 from dps.envs.grid_arithmetic import GridArithmetic, render_rollouts
 from dps.envs.grid_arithmetic import config as ga_config
@@ -49,7 +48,8 @@ def no_modules_inp(obs):
 def build_controller(params_dim, name=None):
     return CompositeCell(
         tf.contrib.rnn.LSTMCell(num_units=cfg.n_controller_units),
-        MLP(), params_dim, inp=no_modules_inp, name=name)
+        MLP([cfg.n_output_units, cfg.n_output_units], scope="controller_output"),
+        params_dim, inp=no_modules_inp, name=name)
 
 
 config_delta = Config(
@@ -61,6 +61,7 @@ config_delta = Config(
     largest_digit=99,
     n_glimpse_features=128,
     n_glimpse_units=128,
+    n_output_units=128,
     use_differentiable_loss=True,
 )
 
