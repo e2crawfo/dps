@@ -8,7 +8,7 @@ from dps.rl import algorithms as algorithms_module
 from dps import envs as envs_module
 
 
-def parse_env_alg(env, alg):
+def parse_env_alg(env, alg=None):
     try:
         env_config = getattr(envs_module, env).config
     except AttributeError:
@@ -16,29 +16,34 @@ def parse_env_alg(env, alg):
         assert len(envs) == 1, "Ambiguity in env selection, possibilities are: {}.".format(envs)
         env_config = getattr(envs_module, envs[0]).config
 
-    try:
-        alg_config = getattr(algorithms_module, alg).config
-    except AttributeError:
-        algs = [a for a in dir(algorithms_module) if a.startswith(alg)]
-        assert len(algs) == 1, "Ambiguity in alg selection, possibilities are: {}.".format(algs)
-        alg_config = getattr(algorithms_module, algs[0]).config
+    alg_config = {}
+
+    if alg:
+        try:
+            alg_config = getattr(algorithms_module, alg).config
+        except AttributeError:
+            algs = [a for a in dir(algorithms_module) if a.startswith(alg)]
+            assert len(algs) == 1, "Ambiguity in alg selection, possibilities are: {}.".format(algs)
+            alg_config = getattr(algorithms_module, algs[0]).config
 
     return env_config, alg_config
 
 
 def run():
     parser = argparse.ArgumentParser(allow_abbrev=False)
-    parser.add_argument('env')
-    parser.add_argument('alg')
+    parser.add_argument('args', nargs='+')
     parser.add_argument('--pdb', action='store_true',
                         help="If supplied, enter post-mortem debugging on error.")
     args, _ = parser.parse_known_args()
 
+    env = args.args[0]
+    alg = args.args[1] if len(args.args) > 1 else ""
+
     if args.pdb:
         with pdb_postmortem():
-            _run(args.env, args.alg)
+            _run(env, alg)
     else:
-        _run(args.env, args.alg)
+        _run(env, alg)
 
 
 def _run(env_str, alg_str, _config=None, **kwargs):

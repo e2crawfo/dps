@@ -68,9 +68,9 @@ config = Config(
     arithmetic_actions="+,*,max,min,+1",
 
     curriculum=[
-        dict(env_shape=(28, 28), draw_shape=(14, 14), draw_offset=(7, 7)),
-        dict(env_shape=(28, 28), draw_shape=(20, 20), draw_offset=(4, 4)),
-        dict(env_shape=(28, 28), draw_shape=(28, 28), draw_offset=(0, 0)),
+        # dict(env_shape=(28, 28), draw_shape=(14, 14), draw_offset=(7, 7)),
+        # dict(env_shape=(28, 28), draw_shape=(20, 20), draw_offset=(4, 4)),
+        dict(env_shape=(42, 42), draw_shape=(42, 42), draw_offset=(0, 0)),
     ],
     stopping_criteria_name="01_loss",
     maximize_sc=False,

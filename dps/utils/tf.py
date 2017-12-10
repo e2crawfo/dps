@@ -102,6 +102,15 @@ def uninitialized_variables_initializer():
     return uninit_init
 
 
+NOT_TRAINABLE_COLLECTION = "NOT_TRAINABLE_COLLECTION"
+
+
+def trainable_variables(scope=None):
+    variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope)
+    not_trainable = set(tf.get_collection(NOT_TRAINABLE_COLLECTION, scope=scope))
+    return [v for v in variables if v not in not_trainable]
+
+
 class ScopedFunction(object):
     """
     Parameters
@@ -131,6 +140,8 @@ class ScopedFunction(object):
 
         self.do_pretraining = False
 
+        self.trainable = True
+
     def resolve_scope(self):
         if self.scope is None:
             with tf.variable_scope(self.scope_name):
@@ -154,7 +165,12 @@ class ScopedFunction(object):
     def _maybe_initialize(self):
         if not self.initialized and (self.n_builds > 0 and self.do_pretraining):
             from dps.train import load_or_train
-            self.was_loaded = load_or_train(self.train_config, self.scope, self.path)
+
+            filename = "{}_{}.chk".format(self.scope_name, self.param_hash)
+            self.path = os.path.join(self.directory, filename)
+
+            target_scope = os.path.split(self.scope_name)[1]
+            self.was_loaded = load_or_train(self.train_config, self.scope, self.path, target_var_scope=target_scope)
             self.initialized = True
 
             param_path = os.path.join(
@@ -163,6 +179,10 @@ class ScopedFunction(object):
                 with open(param_path, 'w') as f:
                     f.write(str(self.param_dict))
 
+            if not self.trainable:
+                my_trainable_variables = trainable_variables(self.scope_name)
+                tf.add_to_collections(NOT_TRAINABLE_COLLECTION, my_trainable_variables)
+
     def set_pretraining_params(self, train_config, name_params=None, directory=None):
         assert train_config is not None
         self.directory = str(directory or Path(dps.cfg.log_dir))
@@ -170,13 +190,14 @@ class ScopedFunction(object):
             name_params = name_params.split()
         name_params = sorted(name_params or [])
         self.param_hash = get_param_hash(train_config, name_params)
-        filename = "{}_{}.chk".format(self.scope_name, self.param_hash)
-        self.path = os.path.join(self.directory, filename)
         self.train_config = train_config
         self.do_pretraining = True
         self.param_dict = OrderedDict((key, train_config[key]) for key in name_params)
 
         self._maybe_initialize()
+
+    def make_not_trainable(self):
+        self.trainable = False
 
 
 def get_param_hash(train_config, name_params):
@@ -684,10 +705,6 @@ def vec_to_lst(vec, reference):
         return [tf.reshape(v, tf.shape(r)) for v, r in zip(splits, reference)]
     else:
         raise Exception()
-
-
-def trainable_variables(scope=None):
-    return tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope)
 
 
 def build_scheduled_value(schedule, name=None, global_step=None, dtype=None):

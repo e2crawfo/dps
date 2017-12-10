@@ -17,7 +17,7 @@ env_config = grid_arithmetic.config.copy(
     T=30,
     min_digits=2,
     max_digits=3,
-    env_shape=(2, 2),
+    image_shape_grid=(2, 2),
     draw_shape=None,
     draw_offset=None,
     op_loc=(0, 0),
@@ -121,7 +121,5 @@ cnn_config.update(
     log_name="cnn_grid_arithmetic",
     patience=5000,
     reward_window=0.499,
-    one_hot_output=True,
-    loss_type="xent",
     preserve_policy=True,
 )

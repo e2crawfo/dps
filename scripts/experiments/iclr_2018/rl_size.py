@@ -6,7 +6,7 @@ import argparse
 from config import rl_config as config
 
 config.update(
-    env_shape=(3, 3),
+    image_shape_grid=(3, 3),
     reductions="sum",
 )
 
@@ -23,7 +23,7 @@ stage_3 = dict(min_digits=5, max_digits=5)
 
 if args.task == "0":
     grid = dict(n_train=2**np.arange(14, 18, 2))
-    config.update(draw_shape=(2, 2), env_shape=(2, 2))
+    config.update(image_shape_grid=(2, 2))
 
 elif args.task == "A":
     zero_dir = "/home/e2crawfo/rl_size_0/"

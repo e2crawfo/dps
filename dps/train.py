@@ -501,7 +501,7 @@ class EarlyStopHook(object):
         self._early_stopped = 0
 
 
-def load_or_train(train_config, var_scope, path, sess=None):
+def load_or_train(train_config, var_scope, path, target_var_scope=None, sess=None):
     """ Attempts to load variables into ``var_scope`` from checkpoint stored at ``path``.
 
     If said checkpoint is not found, trains a model using the function
@@ -509,11 +509,25 @@ def load_or_train(train_config, var_scope, path, sess=None):
 
     Returns True iff model was successfully loaded, False otherwise.
 
+    If `target_var_scope` is not None, look for the variables under that scope name in the file
+    that we load from, instead of `var_scope`.
+
     """
     sess = sess or tf.get_default_session()
 
     to_be_loaded = trainable_variables(var_scope.name)
-    saver = tf.train.Saver(var_list=to_be_loaded)
+    if target_var_scope is not None:
+        _tbl = {}
+        for var in to_be_loaded:
+            assert var.name.startswith(var_scope.name)
+            bare_name = var.name[len(var_scope.name):]
+            while bare_name.startswith('/'):
+                bare_name = bare_name[1:]
+            name_in_file = target_var_scope + '/' + bare_name
+            _tbl[name_in_file] = var
+        to_be_loaded = _tbl
+
+    saver = tf.train.Saver(to_be_loaded)
 
     if path is not None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)

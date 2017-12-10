@@ -68,13 +68,13 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
         raise Exception("AbstractMethod")
 
     def save(self, session, filename):
-        updater_variables = self.trainable_variables()
+        updater_variables = {v.name: v for v in self.trainable_variables()}
         saver = tf.train.Saver(updater_variables)
         path = saver.save(tf.get_default_session(), filename)
         return path
 
     def restore(self, session, path):
-        updater_variables = self.trainable_variables()
+        updater_variables = {v.name: v for v in self.trainable_variables()}
         saver = tf.train.Saver(updater_variables)
         saver.restore(tf.get_default_session(), path)
 
@@ -88,7 +88,7 @@ class DifferentiableUpdater(Updater):
     ----------
     env: gym Env
         The environment we're trying to learn about.
-    f: (differentiable) callable
+    f: An instance of ScopedFunction
         Accepts a tensor (input), returns a tensor (inference).
 
     """

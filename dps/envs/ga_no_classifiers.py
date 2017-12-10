@@ -6,8 +6,24 @@ from dps.register import RegisterBank
 from dps.utils.tf import LeNet, MLP, CompositeCell
 from dps.utils import Config
 from dps.rl.policy import EpsilonSoftmax, ProductDist, Policy
+from dps.datasets import GridArithmeticDataset
+from dps.supervised import ClassificationEnv
+from dps.environment import CompositeEnv
 from dps.envs.grid_arithmetic import GridArithmetic, render_rollouts
 from dps.envs.grid_arithmetic import config as ga_config
+
+
+def build_env():
+    internal = GridArithmeticNoClassifiers()
+
+    train = GridArithmeticDataset(n_examples=cfg.n_train, one_hot=False)
+    val = GridArithmeticDataset(n_examples=cfg.n_val, one_hot=False)
+    test = GridArithmeticDataset(n_examples=cfg.n_val, one_hot=False)
+    external = ClassificationEnv(train, val, test, one_hot=False)
+
+    env = CompositeEnv(external, internal)
+    env.obs_is_image = True
+    return env
 
 
 def build_policy(env, **kwargs):
@@ -18,7 +34,7 @@ def build_policy(env, **kwargs):
 
 
 def no_classifiers_inp(obs):
-    glimpse_start = 3 + 14**2
+    glimpse_start = 5 + 14**2
     glimpse_end = glimpse_start + 14 ** 2
     glimpse = obs[..., glimpse_start:glimpse_end]
     glimpse_processor = LeNet(cfg.n_glimpse_units, scope="glimpse_classifier")
@@ -44,6 +60,7 @@ config_delta = Config(
     n_glimpse_features=128,
     n_glimpse_units=128,
     n_output_units=128,
+    build_env=build_env,
 )
 
 
