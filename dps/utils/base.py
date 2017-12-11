@@ -82,6 +82,22 @@ def one_hot(indices, depth):
 
 
 @contextmanager
+def remove(filenames):
+    try:
+        yield
+    finally:
+        if isinstance(filenames, str):
+            filenames = filenames.split()
+        for fn in filenames:
+            try:
+                shutil.rmtree(fn)
+            except NotADirectoryError:
+                os.remove(fn)
+            except FileNotFoundError:
+                pass
+
+
+@contextmanager
 def modify_env(*remove, **update):
     """
     Temporarily updates the ``os.environ`` dictionary in-place.
@@ -614,8 +630,11 @@ def camel_to_snake(name):
     return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
 
 
-def process_path(path):
-    return os.path.expandvars(os.path.expanduser(str(path)))
+def process_path(path, real_path=False):
+    path = os.path.expandvars(os.path.expanduser(str(path)))
+    if real_path:
+        path = os.path.realpath(path)
+    return path
 
 
 @contextmanager

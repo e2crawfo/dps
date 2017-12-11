@@ -1,11 +1,12 @@
 #!/usr/bash
 set -ev
 pip install -r requirements_dev.txt
+pip install -e .
 mkdir data
 
 echo "\nDownloading and processing emnist data..."
 time python scripts/download.py emnist data -q
-rm matlab.zip
+rm data/matlab.zip
 
 echo "\nDownloading and processing omniglot data..."
 time python scripts/download.py omniglot data -q

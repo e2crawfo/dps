@@ -23,8 +23,5 @@ cache:
 before_install:
   - sh travis-setup.sh
 
-install:
-  - pip install -e .
-
 script:
   - py.test --durations=0 --skip-slow --capture=no

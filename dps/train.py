@@ -526,6 +526,8 @@ def load_or_train(train_config, var_scope, path, target_var_scope=None, sess=Non
             name_in_file = target_var_scope + '/' + bare_name
             _tbl[name_in_file] = var
         to_be_loaded = _tbl
+    else:
+        to_be_loaded = {v.name: v for v in to_be_loaded}
 
     saver = tf.train.Saver(to_be_loaded)
 
