@@ -98,8 +98,7 @@ class DifferentiableUpdater(Updater):
     max_grad_norm = Param()
     l2_weight = Param(None)
 
-    stopping_criteria_name = "loss"
-    maximize = False
+    stopping_criteria = "loss,min"
 
     def __init__(self, env, f, **kwargs):
         assert hasattr(env, 'build_loss'), (

@@ -120,8 +120,7 @@ DEFAULT_CONFIG = SystemConfig(
     get_experiment_name=get_experiment_name,
     error_on_timeout=False,
 
-    stopping_criteria_name="",
-    maximize_sc=None,
+    stopping_criteria="",
 
     tee=True,  # If True, output of training run (stdout and stderr) will is written to screen as
                # well as a file. If False, only written to the file.

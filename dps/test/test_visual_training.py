@@ -64,7 +64,7 @@ def test_emnist_load_or_train(build_function, test_config):
             build_function=build_function,
             classes=classes,
             threshold=0.1,
-            stopping_criteria_name="01_loss",
+            stopping_criteria="01_loss,min",
             n_controller_units=100,
             n_train=10000
         )
@@ -120,7 +120,7 @@ def test_emnist_pretrained(build_function, test_config):
             build_function=build_function,
             classes=classes,
             threshold=0.1,
-            stopping_criteria_name="01_loss",
+            stopping_criteria="01_loss,min",
             n_controller_units=100,
             n_train=10000
         )
@@ -180,7 +180,7 @@ def test_omniglot(build_function, test_config):
             classes=classes,
             n_controller_units=100,
             threshold=0.2,
-            stopping_criteria_name="01_loss",
+            stopping_criteria="01_loss,min",
             train_indices=list(range(15)),
             val_indices=list(range(15, 20)),
             test_indices=list(range(15, 20)),
@@ -335,7 +335,7 @@ def test_determinism(dataset, test_config):
             classes=classes,
             n_controller_units=100,
             threshold=0.2,
-            stopping_criteria_name="01_loss",
+            stopping_criteria="01_loss,min",
             seed=334324923,
             display_step=100,
             eval_step=100,

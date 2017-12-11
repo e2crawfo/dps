@@ -305,15 +305,20 @@ class TrainingLoop(object):
         self.threshold_reached = False
         self.reason = ""
 
-        stopping_criteria_name = cfg.get("stopping_criteria_name", "")
-        if not stopping_criteria_name:
-            stopping_criteria_name = updater.stopping_criteria_name
-        self.stopping_criteria_name = stopping_criteria_name
+        stopping_criteria = cfg.get("stopping_criteria", "")
+        if not stopping_criteria:
+            stopping_criteria = updater.stopping_criteria
 
-        maximize_sc = cfg.get("maximize_sc", None)
-        if maximize_sc is None:
-            maximize_sc = updater.maximize
-        self.maximize_sc = maximize_sc
+        if isinstance(stopping_criteria, str):
+            stopping_criteria = stopping_criteria.split(",")
+
+        self.stopping_criteria_name = stopping_criteria[0]
+        if "max" in stopping_criteria[1]:
+            self.maximize_sc = True
+        elif "min" in stopping_criteria[1]:
+            self.maximize_sc = False
+        else:
+            raise Exception("Ambiguous stopping criteria specification: {}".format(stopping_criteria[1]))
 
         early_stop = EarlyStopHook(patience=cfg.patience, maximize=self.maximize_sc)
         time_remaining = self.time_remaining
