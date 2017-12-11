@@ -3,6 +3,7 @@ import subprocess
 from collections import defaultdict
 
 from dps.run import _run
+from dps.utils import Config
 
 
 def _get_deterministic_output(filename):
@@ -17,7 +18,7 @@ def _get_deterministic_output(filename):
 
 
 def test_simple_add(test_config):
-    _config = dict(
+    _config = Config(
         log_name="test_simple_add_a2c", render_step=0,
         value_weight=0.0, opt_steps_per_update=20,
         max_steps=501, use_gpu=False, seed=1034340)
@@ -41,3 +42,26 @@ def test_simple_add(test_config):
             print("The following occurred {} times:\n".format(results[r]))
             print(r)
         raise Exception("Results were not deterministic.")
+
+    assert len(output['config'].curriculum) == 3
+    _config.load_path = os.path.join(output['exp_dir'], 'best_of_stage_2')
+    assert os.path.exists(_config.load_path + ".index")
+    assert os.path.exists(_config.load_path + ".meta")
+
+    # Load one of the hypotheses, train it for a bit, make sure the accuracy is still high.
+    _config.curriculum = [output['config'].curriculum[-1]]
+    config = _config.copy()
+    output = _run("simple_addition", "a2c", _config=config)
+    stdout = os.path.join(output['exp_dir'], 'stdout')
+    result = _get_deterministic_output(stdout)
+    results[result] += 1
+    assert output['history'][-1]['best_01_loss'] < 0.1
+
+    # Load one of the hypotheses, don't train it at all, make sure the accuracy is still high.
+    _config.do_train = False
+    config = _config.copy()
+    output = _run("simple_addition", "a2c", _config=config)
+    stdout = os.path.join(output['exp_dir'], 'stdout')
+    result = _get_deterministic_output(stdout)
+    results[result] += 1
+    assert output['history'][-1]['best_01_loss'] < 0.1
