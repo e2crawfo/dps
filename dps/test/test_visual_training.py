@@ -228,13 +228,13 @@ def test_omniglot(build_function, test_config):
             _eval_model(test_dataset, inference, x_ph)
 
 
-@pytest.mark.slow
 def test_salience_pretrained(test_config):
     with NumpySeed(83849):
         config = SALIENCE_CONFIG.copy(
             classes=list(range(10)),
-            threshold=0.01,  # Can get down to 0.005, but takes too long for a test
-            n_sub_image_examples=2000,
+            threshold=0.016,
+            n_sub_image_examples=200,
+            n_train=10000,
         )
         config.update(test_config)
 

@@ -457,6 +457,12 @@ class SalienceDataset(PatchesDataset):
             y = y.reshape(y.shape[0], -1)
         self.y = y
 
+        for j in range(self.y.shape[0]):
+            if j % 10000 == 0:
+                print(image_to_string(self.y[j, ...]))
+                print(image_to_string(self.x[j, ...]))
+                print("\n")
+
     def _sample_patches(self):
         n = np.random.randint(self.min_digits, self.max_digits+1)
         indices = np.random.randint(0, self.X.shape[0], n)
@@ -487,10 +493,10 @@ def gaussian_kernel(shape, mu, std):
 
 
 if __name__ == "__main__":
-    dset = VisualArithmeticDataset(n_examples=10, draw_shape=(50, 50), draw_offset=(50, 50))
-    dset = GridArithmeticDataset(
-        n_examples=10, draw_shape_grid=(3, 3), image_shape_grid=(3, 3), sub_image_shape=(28, 28), op_scale=0.5)
+    # dset = VisualArithmeticDataset(n_examples=10, draw_shape=(50, 50), draw_offset=(50, 50))
+    # dset = GridArithmeticDataset(
+    #     n_examples=10, draw_shape_grid=(3, 3), image_shape_grid=(3, 3), sub_image_shape=(28, 28), op_scale=0.5)
 
-    dset = OmniglotCountingDataset(classes=classes, n_examples=10, sub_image_shape=(28, 28))
+    # dset = OmniglotCountingDataset(classes=classes, n_examples=10, sub_image_shape=(28, 28))
     dset = SalienceDataset(min_digits=1, max_digits=4, sub_image_n_exmaples=100, n_examples=10)
     dset.visualize()
