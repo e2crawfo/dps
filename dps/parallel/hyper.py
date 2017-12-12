@@ -24,10 +24,10 @@ import dps
 from dps import cfg
 from dps.utils.base import (
     gen_seed, Config, cd, ExperimentStore, edit_text)
-from dps.parallel.submit_job import ParallelSession
+from dps.parallel.submit_job import ParallelSession, DEFAULT_HOST_POOL
 from dps.parallel.base import Job, ReadOnlyJob
 
-default_host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
+default_host_pool = DEFAULT_HOST_POOL
 
 
 def nested_map(d, f):
@@ -640,10 +640,50 @@ def _sample_complexity_plot_core(path, style, spread_measure):
     return label_order
 
 
-def _zip_search(args):
-    job = Job(args.to_zip)
-    archive_name = args.name or Path(args.to_zip).stem
-    job.zip(archive_name, delete=args.delete)
+def _ssh_execute(command, host):
+    ssh_options = (
+        "-oPasswordAuthentication=no "
+        "-oStrictHostKeyChecking=no "
+        "-oConnectTimeout=5 "
+        "-oServerAliveInterval=2"
+    )
+    cmd = "ssh {ssh_options} -T {host} \"{command}\"".format(ssh_options=ssh_options, host=host, command=command)
+    return subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+
+def _probe_hosts(args):
+    n_connected = 0
+    n_idle = 0
+
+    for host in DEFAULT_HOST_POOL:
+        if host is not ':':
+            print("\n" + "*" * 80)
+            print("Testing connection to host {}...".format(host))
+            p = _ssh_execute("echo Connected to \$HOSTNAME", host)
+            if p.returncode:
+                print("Could not connect:")
+                print(p.stdout.decode())
+            else:
+                n_connected += 1
+                print("\nTOP:")
+                p = _ssh_execute("top -bn2 | head -n 5", host)
+                top_output = p.stdout.decode()
+                print(top_output)
+
+                cpu = top_output.split('\n')[2]
+                start = cpu.find('ni')
+                end = cpu.find('id')
+                idle_cpu = float(cpu[start:end].split()[1])
+
+                if idle_cpu > 95:
+                    n_idle += 1
+
+                print("\nWHO:")
+                p = _ssh_execute("who", host)
+                print(p.stdout.decode())
+
+    print("Was able to connect to {} hosts.".format(n_connected))
+    print("{} of those hosts have idle cpu percent > 95.".format(n_idle))
 
 
 def dps_hyper_cl():
@@ -680,16 +720,13 @@ def dps_hyper_cl():
             default="std_err")),
     )
 
-    zip_cmd = (
-        'zip', 'Zip up a job.', _zip_search,
-        ('to_zip', dict(help="Path to the job we want to zip.", type=str)),
-        ('name', dict(help="Optional path where archive should be created.", type=str, default='', nargs='?')),
-        ('--delete', dict(help="If True, delete the original.", action='store_true'))
+    probe_hosts_cmd = (
+        'probe_hosts', 'Check the status of the hosts in host_pool.', _probe_hosts,
     )
 
     parallel_cl(
         'Build, run, plot and view results of hyper-parameter searches.',
-        [config_cmd, summary_cmd, traj_plot_cmd, sc_plot_cmd, zip_cmd])
+        [config_cmd, summary_cmd, traj_plot_cmd, sc_plot_cmd, probe_hosts_cmd])
 
 
 def build_and_submit(

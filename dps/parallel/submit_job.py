@@ -16,7 +16,7 @@ from dps.parallel.base import ReadOnlyJob, zip_root
 from dps.utils import cd, parse_timedelta, make_symlink, ExperimentStore
 
 
-DEFAULT_HOST_POOL = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 32)]
+DEFAULT_HOST_POOL = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
 
 
 class ParallelSession(object):
@@ -54,6 +54,8 @@ class ParallelSession(object):
         Path to the `gnu-parallel` executable to use.
     host_pool: list of str
         A list of names of hosts to use to execute the job.
+    load_avg_threshold: float
+        If a host exhibits a load average greater than this, it will not be used.
     max_hosts: int
         Maximum number of hosts to use.
     env_vars: dict (str -> str)
@@ -81,8 +83,8 @@ class ParallelSession(object):
     def __init__(
             self, name, input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', ppn=12, cpp=1,
             pmem=None, wall_time="1hour", cleanup_time="1min", slack_time="1min", add_date=True, dry_run=0,
-            parallel_exe=None, kind="parallel", host_pool=None,
-            min_hosts=1, max_hosts=1, env_vars=None, redirect=False, n_retries=0, gpu_set="",
+            parallel_exe=None, kind="parallel", host_pool=None, load_avg_threshold=8.,
+            min_hosts=None, max_hosts=1, env_vars=None, redirect=False, n_retries=0, gpu_set="",
             step_time_limit="", ignore_gpu=False, store_experiments=True, ssh_options=None, readme=""):
 
         if not parallel_exe:
@@ -219,8 +221,36 @@ class ParallelSession(object):
         print("Time-limit passed to dps-hyper is {python_seconds_per_step}.".format(**self.__dict__))
 
     def recruit_hosts(self, hpc, min_hosts, max_hosts, host_pool, ppn, max_procs):
+
+        if getattr(self, 'candidate_hosts', None) is None:
+            print("Ranking hosts by suitability...")
+            candidate_hosts = {}
+            for host in host_pool:
+                if host is not ':':
+                    print("\n" + "~" * 40)
+                    print("Testing connection to host {}...".format(host))
+                    failed = self.ssh_execute("echo Connected to \$HOSTNAME", host, robust=True)
+                    if failed:
+                        print("Could not connect.")
+                        continue
+
+                    # print("\nTOP:")
+                    # return_code = self.ssh_execute("top -bn2 | head -n 5", host, output='loud')
+
+                    return_code, stdout = self.ssh_execute("cat /proc/loadavg", host, output='get')
+                    load_avg = float(stdout.split()[2])
+                    print("15 minute load average: {}".format(load_avg))
+
+                    if load_avg < self.load_avg_threshold:
+                        candidate_hosts[host] = load_avg
+                else:
+                    candidate_hosts[host] = 0.0
+            self.candidate_hosts = candidate_hosts
+
         hosts = []
-        for host in host_pool:
+        candidate_hosts = sorted(self.candidate_hosts, key=self.candidate_hosts.__getitem__)
+
+        for host in candidate_hosts:
             n_hosts_recruited = len(hosts)
             if n_hosts_recruited >= max_hosts:
                 break
@@ -231,12 +261,12 @@ class ParallelSession(object):
             print("\n" + ("~" * 40))
             print("Recruiting host {}...".format(host))
 
-            if host is not ':':
-                print("Testing connection...")
-                failed = self.ssh_execute("echo Connected to \$HOSTNAME", host, robust=True)
-                if failed:
-                    print("Could not connect.")
-                    continue
+            return_code, stdout = self.ssh_execute("cat /proc/loadavg", host, output='get')
+            load_avg = float(stdout.split()[2])
+            print("Previous 15 minute load average: {}".format(self.candidate_hosts[host]))
+            print("Recalculated 15 minute load average: {}".format(load_avg))
+
+            self.candidate_hosts[host] = load_avg
 
             print("Preparing host...")
             try:
@@ -301,7 +331,7 @@ class ParallelSession(object):
             except subprocess.CalledProcessError:
                 print("Preparation of host failed.")
 
-        if len(hosts) < min_hosts:
+        if len(hosts) < (min_hosts if min_hosts is not None else max_hosts):
             raise Exception(
                 "Found only {} usable hosts, but minimum "
                 "required hosts is {}.".format(len(hosts), min_hosts))
@@ -318,7 +348,7 @@ class ParallelSession(object):
 
     def execute_command(
             self, command, frmt=True, shell=True, robust=False, max_seconds=None,
-            progress=False, verbose=False, quiet=True):
+            progress=False, verbose=False, output='quiet'):
         """ Uses `subprocess` to execute `command`. """
 
         p = None
@@ -334,8 +364,14 @@ class ParallelSession(object):
             if not shell:
                 command = command.split()
 
-            stdout = subprocess.DEVNULL if quiet else None
-            stderr = subprocess.DEVNULL if quiet else None
+            if output == 'quiet':
+                stdout = subprocess.DEVNULL
+            elif output == 'get':
+                stdout = subprocess.PIPE
+            elif output == 'loud':
+                stdout = None
+
+            stderr = subprocess.STDOUT
 
             start = time.time()
 
@@ -375,11 +411,19 @@ class ParallelSession(object):
                 print("The following command returned with non-zero exit code {}:\n    {}".format(p.returncode, command))
 
                 if robust:
-                    return p.returncode
+                    if output == 'get':
+                        stdout = p.stdout.read()
+                        return p.returncode, stdout
+                    else:
+                        return p.returncode
                 else:
                     raise subprocess.CalledProcessError(p.returncode, command)
 
-            return p.returncode
+            if output == 'get':
+                stdout = p.stdout.read()
+                return p.returncode, stdout
+            else:
+                return p.returncode
         except BaseException as e:
             if p is not None:
                 p.terminate()
@@ -436,7 +480,7 @@ class ParallelSession(object):
         self.execute_command(
             command, frmt=False, robust=True,
             max_seconds=self.parallel_seconds_per_step, progress=not self.hpc,
-            quiet=False, verbose=True)
+            output='loud', verbose=True)
 
     def _checkpoint(self, i):
         print("Fetching results of step {} at: ".format(i))
@@ -474,7 +518,7 @@ class ParallelSession(object):
 
         self.execute_command("zip -rq results {archive_root}", robust=True)
         self.execute_command(
-            "dps-hyper summary --no-config results.zip | tee results.txt", robust=True, quiet=False)
+            "dps-hyper summary --no-config results.zip | tee results.txt", robust=True, output='loud')
 
     def run(self):
         if self.dry_run:
