@@ -44,7 +44,8 @@ EMNIST_CONFIG = DEFAULT_CONFIG.copy(
     n_controller_units=100,
     use_gpu=True,
     gpu_allow_growth=True,
-    seed=347405995
+    seed=347405995,
+    stopping_criteria="01_loss,min",
 )
 
 
@@ -81,7 +82,8 @@ OMNIGLOT_CONFIG = DEFAULT_CONFIG.copy(
     n_controller_units=100,
     use_gpu=True,
     gpu_allow_growth=True,
-    seed=936416219
+    seed=936416219,
+    stopping_criteria="01_loss,min",
 )
 
 
