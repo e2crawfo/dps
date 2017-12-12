@@ -212,6 +212,10 @@ class ParallelSession(object):
         # Create convenience `latest` symlinks
         make_symlink(job_directory, os.path.join(scratch, 'latest'))
 
+    def get_load_avg(self, host, ):
+        return_code, stdout = self.ssh_execute("uptime", host, output='get')
+        return [float(s) for s in stdout.split(':')[-1].split(',')]
+
     def print_time_limits(self):
         print("We have {wall_time_seconds} seconds to complete {n_jobs_to_run} "
               "sub-jobs (grouped into {n_steps} steps) using {n_procs} processors.".format(**self.__dict__))
@@ -236,13 +240,13 @@ class ParallelSession(object):
 
                     # print("\nTOP:")
                     # return_code = self.ssh_execute("top -bn2 | head -n 5", host, output='loud')
-
-                    return_code, stdout = self.ssh_execute("cat /proc/loadavg", host, output='get')
-                    load_avg = float(stdout.split()[2])
-                    print("15 minute load average: {}".format(load_avg))
+                    _, load_avg, _ = self.get_load_avg(host)
+                    print("5 minute load average: {}".format(load_avg))
 
                     if load_avg < self.load_avg_threshold:
                         candidate_hosts[host] = load_avg
+                    else:
+                        print("`load_avg` above threshold of {}, discarding host.".format(self.load_avg_threshold))
                 else:
                     candidate_hosts[host] = 0.0
             self.candidate_hosts = candidate_hosts
@@ -261,10 +265,9 @@ class ParallelSession(object):
             print("\n" + ("~" * 40))
             print("Recruiting host {}...".format(host))
 
-            return_code, stdout = self.ssh_execute("cat /proc/loadavg", host, output='get')
-            load_avg = float(stdout.split()[2])
-            print("Previous 15 minute load average: {}".format(self.candidate_hosts[host]))
-            print("Recalculated 15 minute load average: {}".format(load_avg))
+            _, load_avg, _ = self.get_load_avg(host)
+            print("Previous 5 minute load average: {}".format(self.candidate_hosts[host]))
+            print("Recalculated 5 minute load average: {}".format(load_avg))
 
             self.candidate_hosts[host] = load_avg
 
