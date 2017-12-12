@@ -24,4 +24,5 @@ before_install:
   - sh travis-setup.sh
 
 script:
-  - py.test --durations=0 --skip-slow --capture=no
+  - py.test --durations=0 -k test_hyper --capture=no
+    # - py.test --durations=0 --skip-slow --capture=no

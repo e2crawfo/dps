@@ -17,6 +17,15 @@ from dps.rl.policy import EpsilonSoftmax, Beta, ProductDist, Policy, SigmoidNorm
 digit_map = dict(both=list(range(10)), even=[0, 2, 4, 6, 8], odd=[1, 3, 5, 7, 9])
 
 
+class ResizeSalienceDetector(object):
+    def __init__(self, method=tf.image.ResizeMethod.BILINEAR, **kwargs):
+        kwargs['method'] = method
+        self.kwargs = kwargs
+
+    def __call__(self, glimpse, output_shape, is_training):
+        return tf.image.resize_images(glimpse, output_shape, **self.kwargs)
+
+
 def sl_build_env():
     digits = digit_map[cfg.parity]
     train = VisualArithmeticDataset(n_examples=cfg.n_train, one_hot=True, digits=digits)
@@ -98,6 +107,7 @@ config = Config(
     show_op=True,
     reward_window=0.4999,
     salience_action=True,
+    salience_model=True,
     salience_input_shape=(3*14, 3*14),
     salience_output_shape=(14, 14),
     initial_salience=False,
@@ -151,6 +161,7 @@ class VisualArithmetic(InternalEnv):
 
     visible_glimpse = Param()
     salience_action = Param()
+    salience_model = Param()
     salience_input_shape = Param()
     salience_output_shape = Param()
     initial_salience = Param()
@@ -245,28 +256,31 @@ class VisualArithmetic(InternalEnv):
 
     def maybe_build_salience_detector(self):
         if self.salience_action:
-            def _build_salience_detector(output_shape=self.salience_output_shape):
-                return SalienceMap(
-                    2 * cfg.max_digits,
-                    MLP([cfg.n_units, cfg.n_units, cfg.n_units], scope="salience_detector"),
-                    output_shape, std=cfg.std, flatten_output=True
+            if self.salience_model:
+                def _build_salience_detector(output_shape=self.salience_output_shape):
+                    return SalienceMap(
+                        2 * cfg.max_digits,
+                        MLP([cfg.n_units, cfg.n_units, cfg.n_units], scope="salience_detector"),
+                        output_shape, std=cfg.std, flatten_output=True
+                    )
+
+                salience_config = cfg.salience_config.copy(
+                    output_shape=self.salience_output_shape,
+                    image_shape=self.salience_input_shape,
+                    build_function=_build_salience_detector,
                 )
 
-            salience_config = cfg.salience_config.copy(
-                output_shape=self.salience_output_shape,
-                image_shape=self.salience_input_shape,
-                build_function=_build_salience_detector,
-            )
+                with salience_config:
+                    self.salience_detector = _build_salience_detector()
 
-            with salience_config:
-                self.salience_detector = _build_salience_detector()
-
-            self.salience_detector.set_pretraining_params(
-                salience_config,
-                name_params='classes std min_digits max_digits n_units '
-                            'sub_image_shape image_shape output_shape',
-                directory=cfg.model_dir + '/salience_pretrained'
-            )
+                self.salience_detector.set_pretraining_params(
+                    salience_config,
+                    name_params='classes std min_digits max_digits n_units '
+                                'sub_image_shape image_shape output_shape',
+                    directory=cfg.model_dir + '/salience_pretrained'
+                )
+            else:
+                self.salience_detector = ResizeSalienceDetector()
         else:
             self.salience_detector = None
 

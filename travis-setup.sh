@@ -1,5 +1,6 @@
 #!/usr/bash
 set -ev
+
 pip install -r requirements_dev.txt
 pip install -e .
 mkdir data

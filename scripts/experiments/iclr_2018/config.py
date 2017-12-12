@@ -9,6 +9,7 @@ env_config = grid_arithmetic.config.copy(
     reductions="A:sum,M:prod,X:max,N:min",
     arithmetic_actions='+,*,max,min,+1',
     ablation='easy',
+    parity='both',
     render_rollouts=None,
 
     curriculum=[
@@ -30,6 +31,7 @@ env_config = grid_arithmetic.config.copy(
     salience_action=True,
     visible_glimpse=False,
     initial_salience=False,
+    salience_model=True,
     salience_input_shape=(3*14, 3*14),
     salience_output_shape=(14, 14),
     sub_image_shape=(14, 14),

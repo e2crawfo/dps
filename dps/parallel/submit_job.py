@@ -212,8 +212,11 @@ class ParallelSession(object):
         # Create convenience `latest` symlinks
         make_symlink(job_directory, os.path.join(scratch, 'latest'))
 
-    def get_load_avg(self, host, ):
-        return_code, stdout = self.ssh_execute("uptime", host, output='get')
+    def get_load_avg(self, host):
+        return_code, stdout = self.ssh_execute("uptime", host, output='get', robust=True)
+        print(stdout)
+        if return_code:
+            return 1000.0, 1000.0, 1000.0
         return [float(s) for s in stdout.split(':')[-1].split(',')]
 
     def print_time_limits(self):
@@ -334,7 +337,7 @@ class ParallelSession(object):
             except subprocess.CalledProcessError:
                 print("Preparation of host failed.")
 
-        if len(hosts) < (min_hosts if min_hosts is not None else max_hosts):
+        if min_hosts is not None and len(hosts) < min_hosts:
             raise Exception(
                 "Found only {} usable hosts, but minimum "
                 "required hosts is {}.".format(len(hosts), min_hosts))
