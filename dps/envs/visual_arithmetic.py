@@ -5,7 +5,6 @@ import numpy as np
 from dps import cfg
 from dps.register import RegisterBank
 from dps.environment import CompositeEnv, InternalEnv
-from dps.envs.grid_arithmetic import render_rollouts
 from dps.supervised import ClassificationEnv, IntegerRegressionEnv
 from dps.vision.train import EMNIST_CONFIG, SALIENCE_CONFIG
 from dps.datasets import VisualArithmeticDataset
@@ -15,10 +14,14 @@ from dps.updater import DifferentiableUpdater
 from dps.rl.policy import EpsilonSoftmax, Beta, ProductDist, Policy, SigmoidNormal, SigmoidBeta
 
 
+digit_map = dict(both=list(range(10)), even=[0, 2, 4, 6, 8], odd=[1, 3, 5, 7, 9])
+
+
 def sl_build_env():
-    train = VisualArithmeticDataset(n_examples=cfg.n_train, one_hot=True)
-    val = VisualArithmeticDataset(n_examples=cfg.n_val, one_hot=True)
-    test = VisualArithmeticDataset(n_examples=cfg.n_val, one_hot=True)
+    digits = digit_map[cfg.parity]
+    train = VisualArithmeticDataset(n_examples=cfg.n_train, one_hot=True, digits=digits)
+    val = VisualArithmeticDataset(n_examples=cfg.n_val, one_hot=True, digits=digits)
+    test = VisualArithmeticDataset(n_examples=cfg.n_val, one_hot=True, digits=digits)
     return ClassificationEnv(train, val, test, one_hot=True)
 
 
@@ -30,11 +33,12 @@ def sl_get_updater(env):
 def build_env():
     internal = VisualArithmetic()
 
-    train = VisualArithmeticDataset(n_examples=cfg.n_train, one_hot=False, image_shape=cfg.env_shape)
+    digits = digit_map[cfg.parity]
+    train = VisualArithmeticDataset(n_examples=cfg.n_train, one_hot=False, image_shape=cfg.env_shape, digits=digits)
     for i in range(10):
         print(image_to_string(train.x[i, ...]))
-    val = VisualArithmeticDataset(n_examples=cfg.n_val, one_hot=False, image_shape=cfg.env_shape)
-    test = VisualArithmeticDataset(n_examples=cfg.n_val, one_hot=False, image_shape=cfg.env_shape)
+    val = VisualArithmeticDataset(n_examples=cfg.n_val, one_hot=False, image_shape=cfg.env_shape, digits=digits)
+    test = VisualArithmeticDataset(n_examples=cfg.n_val, one_hot=False, image_shape=cfg.env_shape, digits=digits)
 
     external = IntegerRegressionEnv(train, val, test)
 
@@ -60,7 +64,6 @@ def build_policy(env, **kwargs):
 
 config = Config(
     log_name='visual_arithmetic',
-    render_rollouts=render_rollouts,
     build_env=build_env,
     build_policy=build_policy,
 
@@ -70,7 +73,7 @@ config = Config(
     curriculum=[
         # dict(env_shape=(28, 28), draw_shape=(14, 14), draw_offset=(7, 7)),
         # dict(env_shape=(28, 28), draw_shape=(20, 20), draw_offset=(4, 4)),
-        dict(env_shape=(42, 42), draw_shape=(42, 42), draw_offset=(0, 0)),
+        dict(env_shape=(42, 42), draw_shape=(28, 28), draw_offset=(0, 0)),
     ],
     stopping_criteria="01_loss,min",
     threshold=0.1,

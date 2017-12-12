@@ -13,12 +13,14 @@ from dps.utils.tf import LeNet, MLP, SalienceMap, extract_glimpse_numpy_like
 from dps.utils import Param, Config, image_to_string
 from dps.updater import DifferentiableUpdater
 from dps.rl.policy import EpsilonSoftmax, DiscretePolicy
+from dps.envs.visual_arithmetic import digit_map
 
 
 def sl_build_env():
-    train = GridArithmeticDataset(n_examples=cfg.n_train, one_hot=True)
-    val = GridArithmeticDataset(n_examples=cfg.n_val, one_hot=True)
-    test = GridArithmeticDataset(n_examples=cfg.n_val, one_hot=True)
+    digits = digit_map[cfg.parity]
+    train = GridArithmeticDataset(n_examples=cfg.n_train, one_hot=True, digits=digits)
+    val = GridArithmeticDataset(n_examples=cfg.n_val, one_hot=True, digits=digits)
+    test = GridArithmeticDataset(n_examples=cfg.n_val, one_hot=True, digits=digits)
     return ClassificationEnv(train, val, test, one_hot=True)
 
 
@@ -41,9 +43,10 @@ def build_env():
             val = GridOmniglotDataset(n_examples=cfg.n_val, indices=range(15))
             test = GridOmniglotDataset(n_examples=cfg.n_val, indices=range(15, 20))
     else:
-        train = GridArithmeticDataset(n_examples=cfg.n_train, one_hot=False)
-        val = GridArithmeticDataset(n_examples=cfg.n_val, one_hot=False)
-        test = GridArithmeticDataset(n_examples=cfg.n_val, one_hot=False)
+        digits = digit_map[cfg.parity]
+        train = GridArithmeticDataset(n_examples=cfg.n_train, one_hot=False, digits=digits)
+        val = GridArithmeticDataset(n_examples=cfg.n_val, one_hot=False, digits=digits)
+        test = GridArithmeticDataset(n_examples=cfg.n_val, one_hot=False, digits=digits)
 
     external = IntegerRegressionEnv(train, val, test)
 
