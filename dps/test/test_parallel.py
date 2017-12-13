@@ -92,7 +92,7 @@ def test_hyper(test_config):
     session = build_and_submit(
         name="test_hyper", config=config, distributions=distributions, n_repeats=2,
         kind='parallel', host_pool=':', wall_time='1year', cleanup_time='10mins',
-        slack_time='10mins', ppn=2)
+        slack_time='10mins', ppn=2, load_avg_threshold=100000.0)
 
     path = session.exp_dir.path
     files = os.listdir(path)

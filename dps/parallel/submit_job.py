@@ -228,8 +228,7 @@ class ParallelSession(object):
         print("Time-limit passed to dps-hyper is {python_seconds_per_step}.".format(**self.__dict__))
 
     def recruit_hosts(self, hpc, min_hosts, max_hosts, host_pool, ppn, max_procs):
-
-        if getattr(self, 'candidate_hosts', None) is None:
+        if not hpc and getattr(self, 'candidate_hosts', None) is None:
             print("Ranking hosts by suitability...")
             candidate_hosts = {}
             for host in host_pool:
@@ -254,7 +253,11 @@ class ParallelSession(object):
             self.candidate_hosts = candidate_hosts
 
         hosts = []
-        candidate_hosts = sorted(self.candidate_hosts, key=self.candidate_hosts.__getitem__)
+
+        if hpc:
+            candidate_hosts = host_pool
+        else:
+            candidate_hosts = sorted(self.candidate_hosts, key=self.candidate_hosts.__getitem__)
 
         for host in candidate_hosts:
             n_hosts_recruited = len(hosts)
@@ -267,11 +270,11 @@ class ParallelSession(object):
             print("\n" + ("~" * 40))
             print("Recruiting host {}...".format(host))
 
-            _, load_avg, _ = self.get_load_avg(host)
-            print("Previous 5 minute load average: {}".format(self.candidate_hosts[host]))
-            print("Recalculated 5 minute load average: {}".format(load_avg))
-
-            self.candidate_hosts[host] = load_avg
+            if not hpc:
+                _, load_avg, _ = self.get_load_avg(host)
+                print("Previous 5 minute load average: {}".format(self.candidate_hosts[host]))
+                print("Recalculated 5 minute load average: {}".format(load_avg))
+                self.candidate_hosts[host] = load_avg
 
             print("Preparing host...")
             try:
@@ -281,8 +284,8 @@ class ParallelSession(object):
                 if create_local_scratch:
                     print("Creating local scratch directory...")
                     command = "mkdir -p {local_scratch}"
-                    self.dirty_hosts.add(host)
                     self.ssh_execute(command, host, robust=False)
+                    self.dirty_hosts.add(host)
 
                 command = "cd {local_scratch} && stat {archive_root}"
                 missing_archive = self.ssh_execute(command, host, robust=True)
@@ -293,7 +296,7 @@ class ParallelSession(object):
 
                     if missing_zip:
                         print("Copying zip to local scratch...")
-                        if host is ':':
+                        if host == ':':
                             command = "cp {input_zip_abs} {local_scratch}".format(**self.__dict__)
                         else:
                             command = (

@@ -730,20 +730,36 @@ def dps_hyper_cl():
 
 
 def build_and_submit(
-        name, config, distributions=None, wall_time="1year", cleanup_time="1hour",
-        slack_time="1hour", step_time_limit="", max_hosts=1, ppn=1, cpp=1,
-        n_param_settings=0, n_repeats=1, n_retries=0, host_pool=None, pmem=0,
-        queue="", do_local_test=False, kind="local", gpu_set="", ignore_gpu=False,
-        store_experiments=True, readme=""):
+        name, config, distributions=None, wall_time="1year", n_param_settings=0, n_repeats=1,
+        do_local_test=False, kind="local", readme="", **run_kwargs):
     """ Meant to be called from within a script.
 
     Parameters
     ----------
+    name: str
+        Name of the experiment.
+    config: Config instance or dict
+        Configuration to use as the base config for all jobs.
+    distributions: dict
+        Object used to generate variations of the base config (so that different jobs test different parameters).
+    wall_time: str
+        Maximum amount of time that is to be used to complete jobs.
+    n_param_settings: int
+        Number of different configurations to sample from `distributions`. If not supplied, it is assumed
+        that `distributions` actually specifies a grid search, and an attempt is made to generate
+        all possible configurations in that grid search.
+    n_repeats: int
+        Number of experiments to run (with different random seeds) for each generated configuration.
+    do_local_test: bool
+        If True, sample one of the generated configurations and use it to run a short test locally,
+        to ensure that the jobs will run properly.
     kind: str
+        One of pbs, slurm, slurm-local, parallel, local. Specifies which method should be
+        used to run the jobs in parallel.
     readme: str
         A string outlining the purpose/context for the created search.
-    cpp: int
-        Number of CPUs per process. Only has an effect when `"slurm" in kind` is True.
+    **run_kwargs:
+        Additional arguments that are ultimately passed to `ParallelSession` in order to run the job.
 
     """
     with config:
@@ -789,9 +805,12 @@ def build_and_submit(
                 add_date=1, _zip=True, do_local_test=do_local_test,
                 n_param_settings=n_param_settings, n_repeats=n_repeats,
                 readme=readme)
-        kwargs = locals().copy()
-        kwargs['parallel_exe'] = config['parallel_exe']
-        parallel_session = submit_job(**kwargs)
+
+        run_kwargs.update(
+            archive_path=archive_path, name=name, wall_time=wall_time,
+            kind=kind, parallel_exe=config['parallel_exe'])
+
+        parallel_session = submit_job(**run_kwargs)
 
         os.remove(str(archive_path))
         shutil.rmtree(str(archive_path).split('.')[0])
@@ -804,26 +823,19 @@ def dps_submit_cl():
 
 
 def submit_job(
-        archive_path, name, wall_time="1year", cleanup_time="1hour", slack_time="1hour",
-        max_hosts=1, ppn=1, cpp=1, n_retries=0, host_pool=None, pmem=0, queue="", kind="local", gpu_set="",
-        step_time_limit="", ignore_gpu=False, store_experiments=True, readme="", parallel_exe=None, **kwargs):
-
-    os.nice(10)
+        archive_path, name, wall_time="1year", ppn=1, cpp=1, pmem=0,
+        queue="", kind="local", gpu_set="", **run_kwargs):
 
     assert kind in "pbs slurm slurm-local parallel".split()
 
     if "slurm" in kind and not pmem:
         raise Exception("Must supply a value for pmem (per-process-memory in mb) when using SLURM")
 
-    run_params = dict(
-        wall_time=wall_time, cleanup_time=cleanup_time, slack_time=slack_time,
-        max_hosts=max_hosts, ppn=ppn, cpp=cpp, n_retries=n_retries, host_pool=host_pool,
-        kind=kind, gpu_set=gpu_set, step_time_limit=step_time_limit, ignore_gpu=ignore_gpu,
-        store_experiments=store_experiments, readme=readme, pmem=pmem, parallel_exe=parallel_exe)
+    run_kwargs.update(wall_time=wall_time, ppn=ppn, cpp=cpp, kind=kind, gpu_set=gpu_set, pmem=pmem)
 
     session = ParallelSession(
         name, archive_path, 'map', cfg.run_experiments_dir, dry_run=False, redirect=True,
-        env_vars=dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1'), **run_params)
+        env_vars=dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1'), **run_kwargs)
 
     if kind in "parallel slurm-local".split():
         session.run()
