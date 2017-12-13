@@ -241,17 +241,16 @@ class ParallelSession(object):
                         print("Could not connect.")
                         continue
 
-                    # print("\nTOP:")
-                    # return_code = self.ssh_execute("top -bn2 | head -n 5", host, output='loud')
-                    _, load_avg, _ = self.get_load_avg(host)
-                    print("5 minute load average: {}".format(load_avg))
+                # print("\nTOP:")
+                # return_code = self.ssh_execute("top -bn2 | head -n 5", host, output='loud')
+                _, load_avg, _ = self.get_load_avg(host)
+                print("5 minute load average: {}".format(load_avg))
 
-                    if load_avg < self.load_avg_threshold:
-                        candidate_hosts[host] = load_avg
-                    else:
-                        print("`load_avg` above threshold of {}, discarding host.".format(self.load_avg_threshold))
+                if load_avg < self.load_avg_threshold:
+                    candidate_hosts[host] = load_avg
                 else:
-                    candidate_hosts[host] = 0.0
+                    print("`load_avg` above threshold of {}, discarding host.".format(self.load_avg_threshold))
+
             self.candidate_hosts = candidate_hosts
 
         hosts = []
@@ -276,60 +275,36 @@ class ParallelSession(object):
 
             print("Preparing host...")
             try:
-                if host is ':':
-                    command = "stat {local_scratch}"
-                    create_local_scratch = self.execute_command(command, robust=True)
+                command = "stat {local_scratch}"
+                create_local_scratch = self.ssh_execute(command, host, robust=True)
 
-                    if create_local_scratch:
-                        print("Creating local scratch directory...")
-                        self.dirty_hosts.add(host)
-                        command = "mkdir -p {local_scratch}"
-                        self.execute_command(command, robust=False)
+                if create_local_scratch:
+                    print("Creating local scratch directory...")
+                    command = "mkdir -p {local_scratch}"
+                    self.dirty_hosts.add(host)
+                    self.ssh_execute(command, host, robust=False)
 
-                    command = "cd {local_scratch} && stat {archive_root}"
-                    missing_archive = self.execute_command(command, robust=True)
+                command = "cd {local_scratch} && stat {archive_root}"
+                missing_archive = self.ssh_execute(command, host, robust=True)
 
-                    if missing_archive:
-                        command = "cd {local_scratch} && stat {input_zip_base}"
-                        missing_zip = self.execute_command(command, robust=True)
+                if missing_archive:
+                    command = "cd {local_scratch} && stat {input_zip_base}"
+                    missing_zip = self.ssh_execute(command, host, robust=True)
 
-                        if missing_zip:
-                            print("Copying zip to local scratch...")
+                    if missing_zip:
+                        print("Copying zip to local scratch...")
+                        if host is ':':
                             command = "cp {input_zip_abs} {local_scratch}".format(**self.__dict__)
-                            self.execute_command(command, frmt=False, robust=False)
-
-                        print("Unzipping...")
-                        command = "cd {local_scratch} && unzip -ouq {input_zip_base}"
-                        self.execute_command(command, robust=False)
-
-                else:
-                    command = "stat {local_scratch}"
-                    create_local_scratch = self.ssh_execute(command, host, robust=True)
-
-                    if create_local_scratch:
-                        print("Creating local scratch directory...")
-                        command = "mkdir -p {local_scratch}"
-                        self.dirty_hosts.add(host)
-                        self.ssh_execute(command, host, robust=False)
-
-                    command = "cd {local_scratch} && stat {archive_root}"
-                    missing_archive = self.ssh_execute(command, host, robust=True)
-
-                    if missing_archive:
-                        command = "cd {local_scratch} && stat {input_zip_base}"
-                        missing_zip = self.ssh_execute(command, host, robust=True)
-
-                        if missing_zip:
-                            print("Copying zip to local scratch...")
+                        else:
                             command = (
                                 "rsync -av -e \"ssh {ssh_options}\" "
                                 "{input_zip_abs} {host}:{local_scratch}".format(host=host, **self.__dict__)
                             )
-                            self.execute_command(command, frmt=False, robust=False)
+                        self.execute_command(command, frmt=False, robust=False)
 
-                        print("Unzipping...")
-                        command = "cd {local_scratch} && unzip -ouq {input_zip_base}"
-                        self.ssh_execute(command, host, robust=False)
+                    print("Unzipping...")
+                    command = "cd {local_scratch} && unzip -ouq {input_zip_base}"
+                    self.ssh_execute(command, host, robust=False)
 
                 print("Host successfully prepared.")
                 hosts.append(host)
@@ -439,8 +414,11 @@ class ParallelSession(object):
             raise_with_traceback(e)
 
     def ssh_execute(self, command, host, **kwargs):
-        cmd = "ssh {ssh_options} -T {host} \"{command}\"".format(
-            ssh_options=self.ssh_options, host=host, command=command)
+        if host == ":":
+            cmd = command
+        else:
+            cmd = "ssh {ssh_options} -T {host} \"{command}\"".format(
+                ssh_options=self.ssh_options, host=host, command=command)
         return self.execute_command(cmd, **kwargs)
 
     def _step(self, i, indices_for_step):
@@ -596,7 +574,4 @@ class ParallelSession(object):
         command = "rm -rf {local_scratch}"
         for host in self.dirty_hosts:
             print("Cleaning host {}...".format(host))
-            if host is ':':
-                self.execute_command(command, robust=True)
-            else:
-                self.ssh_execute(command, host, robust=True)
+            self.ssh_execute(command, host, robust=True)
