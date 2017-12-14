@@ -47,7 +47,6 @@ class SupervisedDataset(Parameterized):
 
         if batch_size is None:
             batch_size = self.n_examples - start
-        batch_size = min(batch_size, self.n_examples)
 
         # Shuffle for the first epoch
         if self._epochs_completed == 0 and start == 0 and self.shuffle:
@@ -55,6 +54,14 @@ class SupervisedDataset(Parameterized):
             np.random.shuffle(perm0)
             self._x = self.x[perm0]
             self._y = self.y[perm0]
+
+        if batch_size > self.n_examples:
+            if advance:
+                self._epochs_completed += batch_size / self.n_examples
+                self._index_in_epoch = 0
+            indices = np.random.choice(self.n_examples, batch_size, replace=True)
+            x, y = self._x[indices, ...], self._y[indices, ...]
+            return x, y
 
         if start + batch_size >= self.n_examples:
             # Finished epoch

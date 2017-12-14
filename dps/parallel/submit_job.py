@@ -87,6 +87,13 @@ class ParallelSession(object):
             min_hosts=None, max_hosts=1, env_vars=None, redirect=False, n_retries=0, gpu_set="",
             step_time_limit="", ignore_gpu=False, store_experiments=True, ssh_options=None, readme=""):
 
+        args = locals().copy()
+        del args['self']
+        del args['host_pool']
+        print("\nParallelSession args:")
+        print(args)
+        del args
+
         if not parallel_exe:
             parallel_exe = "$HOME/.local/bin/parallel"
 

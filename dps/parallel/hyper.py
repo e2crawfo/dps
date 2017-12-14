@@ -17,6 +17,7 @@ import subprocess
 import matplotlib.pyplot as plt
 from scipy import stats
 from io import StringIO
+import inspect
 
 import clify
 
@@ -764,6 +765,14 @@ def build_and_submit(
     """
     with config:
         cfg.update_from_command_line()
+
+    sig = inspect.signature(ParallelSession.__init__)
+    session_args = sig.bind_partial()
+    session_args.apply_defaults()
+
+    _run_kwargs = clify.command_line(session_args.arguments).parse()
+    _run_kwargs.update(run_kwargs)
+    run_kwargs = _run_kwargs
 
     if config.seed is None or config.seed < 0:
         config.seed = gen_seed()
