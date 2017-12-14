@@ -10,15 +10,17 @@ from dps.updater import DifferentiableUpdater
 
 
 def sl_build_env():
-    train = VisualArithmeticDataset(n_examples=cfg.n_train, one_hot=True, min_digits=1, max_digits=1, largest_digit=9)
-    val = VisualArithmeticDataset(n_examples=cfg.n_val, one_hot=True, min_digits=1, max_digits=1, largest_digit=9)
-    test = VisualArithmeticDataset(n_examples=cfg.n_val, one_hot=True, min_digits=1, max_digits=1, largest_digit=9)
+    largest_digit = max(int(i) for i in cfg.digits)
+    train = VisualArithmeticDataset(n_examples=cfg.n_train, one_hot=True, min_digits=1, max_digits=1, largest_digit=largest_digit)
+    val = VisualArithmeticDataset(n_examples=cfg.n_val, one_hot=True, min_digits=1, max_digits=1, largest_digit=largest_digit)
+    test = VisualArithmeticDataset(n_examples=cfg.n_val, one_hot=True, min_digits=1, max_digits=1, largest_digit=largest_digit)
 
     return ClassificationEnv(train, val, test, one_hot=True)
 
 
 def sl_get_updater(env):
-    return DifferentiableUpdater(env, AttentionClassifier())
+    f = AttentionClassifier(pretrain_classifier=cfg.pretrain_classifier, fix_classifier=cfg.fix_classifier)
+    return DifferentiableUpdater(env, f)
 
 
 def per_minibatch_conv2d(inp, F, padding="VALID"):
@@ -68,18 +70,26 @@ class Attention(object):
 
 
 class AttentionClassifier(ScopedFunction):
+    def __init__(self, pretrain_classifier=True, fix_classifier=True, scope=None):
+        self.pretrain_classifier = pretrain_classifier
+        self.fix_classifier = fix_classifier
+        super(AttentionClassifier, self).__init__(scope)
+
     def _call(self, images, output_size, is_training):
         attention = Attention()
         attended = attention(images, cfg.sub_image_shape, is_training)
 
         config = cfg.emnist_config.copy(shape=cfg.sub_image_shape)
-
         classifier = cfg.emnist_config.build_function()
-        classifier.set_pretraining_params(
-            config, name_params='classes include_blank shape n_controller_units',
-            directory=cfg.model_dir + '/emnist_pretrained'
-        )
-        # classifier.make_not_trainable()
+
+        if self.pretrain_classifier:
+            classifier.set_pretraining_params(
+                config, name_params='classes include_blank shape n_controller_units',
+                directory=cfg.model_dir + '/emnist_pretrained'
+            )
+
+        if self.fix_classifier:
+            classifier.fix_variables()
 
         out = classifier(attended, output_size, is_training)
         return out
@@ -91,20 +101,22 @@ config = Config(
     build_env=sl_build_env,
     get_updater=sl_get_updater,
 
+    fix_classifier=True,
+    pretrain_classifier=True,
+
     curriculum=[dict()],
     reductions="sum",
     threshold=0.04,
     T=30,
 
-    op_loc=(0, 0),  # With respect to draw_shape
-    start_loc=(0, 0),  # With respect to env_shape
     image_shape=(42, 42),
     draw_offset=(0, 0),
     draw_shape=None,
     sub_image_shape=(14, 14),
 
-    n_train=1000,
+    n_train=10000,
     n_val=100,
+    stopping_criteria="01_loss,min",
 
     emnist_config=EMNIST_CONFIG.copy(
         build_function=lambda: LeNet(128, scope="digit_classifier")

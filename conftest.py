@@ -56,4 +56,5 @@ def test_config(request):
         use_gpu=False,
         show_plots=request.config.getoption("--show-plots"),
         save_plots=request.config.getoption("--save-plots"),
+        render_step=0,
     )

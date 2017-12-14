@@ -29,8 +29,8 @@ class AgentHead(RLObject):
     def set_agent(self, agent):
         self.agent = agent
 
-    def trainable_variables(self):
-        return self.agent.trainable_variables()
+    def trainable_variables(self, for_opt):
+        return self.agent.trainable_variables(for_opt=for_opt)
 
     @property
     def size(self):
@@ -77,8 +77,8 @@ class Agent(RLObject):
 
         self.build_started = False
 
-    def trainable_variables(self):
-        return trainable_variables(self.controller.scope.name)
+    def trainable_variables(self, for_opt):
+        return trainable_variables(self.controller.scope.name, for_opt=for_opt)
 
     def build_core_signals(self, context):
         context.get_signal('utils', self)
@@ -158,7 +158,7 @@ class Agent(RLObject):
     def build_set_params(self):
         self.build_started = True
         if self.set_params_op is None:
-            variables = self.trainable_variables()
+            variables = self.trainable_variables(for_opt=False)
             self.flat_params_ph = tf.placeholder(
                 tf.float32, lst_to_vec(variables).shape, name="{}_flat_params_ph".format(self.name))
             params_lst = vec_to_lst(self.flat_params_ph, variables)
@@ -177,7 +177,7 @@ class Agent(RLObject):
     def build_get_params(self):
         self.build_started = True
         if self.flat_params is None:
-            variables = self.trainable_variables()
+            variables = self.trainable_variables(for_opt=False)
             self.flat_params = tf.identity(lst_to_vec(variables), name="{}_flat_params".format(self.name))
 
     def get_params_flat(self):

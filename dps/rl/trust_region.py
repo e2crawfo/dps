@@ -18,7 +18,7 @@ class TrustRegionOptimizer(Optimizer):
     def build_update(self, context):
         self.delta = build_scheduled_value(self.delta_schedule, "delta")
 
-        tvars = self.trainable_variables()
+        tvars = self.trainable_variables(for_opt=True)
         self.gradient = tf.gradients(context.objective, tvars)
 
         mask = context.get_signal('mask')

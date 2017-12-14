@@ -50,6 +50,7 @@ class TrainingLoop(object):
         if latest:
             history = [self.latest]
         else:
+            s += "Stage-by-stage summary " + ">" * 30 + "\n"
             history = self.history
 
         for stage, d in enumerate(history):
@@ -107,7 +108,7 @@ class TrainingLoop(object):
         history = copy.deepcopy(self.history)
         for kind in 'train update val test'.split():
             key = kind + '_data'
-            if key in self.latest:
+            if key in self.latest:
                 history[-1][key] = pd.DataFrame.from_records(self.latest[key]).to_csv(index=False)
 
         result = dict(
@@ -136,18 +137,22 @@ class TrainingLoop(object):
             stack.enter_context(redirect_stream('stdout', exp_dir.path_for('stdout'), tee=cfg.tee))
             stack.enter_context(redirect_stream('stderr', exp_dir.path_for('stderr'), tee=cfg.tee))
 
-            print("Scratch directory for this training run is {}.".format(exp_dir.path))
+            if self.start_time is None:
+                self.start_time = time.time()
+            print("\n\n" + "=" * 80)
+            print("Starting training run (name={}) at {}, {} seconds after given start time.".format(cfg.name, datetime.datetime.now(), time.time() - self.start_time))
+
+            print("\nScratch directory for this training run is {}.".format(exp_dir.path))
             cfg.path = exp_dir.path
 
             stack.enter_context(NumpySeed(cfg.seed))
 
             print("Set numpy random seed to {}.".format(cfg.seed))
 
-            if self.start_time is None:
-                self.start_time = time.time()
-            print("Starting training {} seconds after given start time.".format(time.time() - self.start_time))
-
             yield from self._run()
+            print("Done training run (name={}) at {}, {} seconds after given start time.".format(cfg.name, datetime.datetime.now(), time.time() - self.start_time))
+            print("=" * 80)
+            print("\n\n")
 
     def _run(self):
         print(cfg)
@@ -156,6 +161,10 @@ class TrainingLoop(object):
         self.global_step = 0
 
         for stage, stage_config in enumerate(self.curriculum):
+            print("\n" + "=" * 50)
+            print("Starting stage {} at {}, {} seconds after given start time.\n".format(stage, datetime.datetime.now(), time.time() - self.start_time))
+            print("\n")
+
             stage_config = Config(stage_config)
 
             if self.time_remaining <= 1:
@@ -218,9 +227,7 @@ class TrainingLoop(object):
                 if memory_limit_mb is not None:
                     stack.enter_context(memory_limit(cfg.memory_limit_mb))
 
-                print("\nStarting stage {} of the curriculum at {}.\n"
-                      "New config values for this stage are: \n{}\n".format(
-                          stage, datetime.datetime.now(), pformat(stage_config)))
+                print("New config values for this stage are: \n{}\n".format(pformat(stage_config)))
 
                 stack.enter_context(stage_config)
 
@@ -287,6 +294,9 @@ class TrainingLoop(object):
                     break
 
                 self.record(stage_duration=time.time()-stage_start)
+
+                print("Done stage {} at {}, {} seconds after given start time.".format(stage, datetime.datetime.now(), time.time() - self.start_time))
+                print("=" * 50)
 
         print(self.summarize(latest=False))
 
@@ -443,6 +453,8 @@ class TrainingLoop(object):
 
                 if display:
                     print(self.summarize(latest=True))
+                    print("\nPhysical memory use: {}mb".format(memory_usage(physical=True)))
+                    print("Virtual memory use: {}mb".format(memory_usage(physical=False)))
 
             if render and cfg.render_hook is not None:
                 cfg.render_hook(updater)
@@ -454,10 +466,6 @@ class TrainingLoop(object):
             total_train_time += update_duration
             time_per_example = total_train_time / ((self.local_step+1) * cfg.batch_size)
             time_per_batch = total_train_time / (self.local_step+1)
-
-            if self.global_step % 100 == 0:
-                print("\nPhysical memory use: {}mb".format(memory_usage(physical=True)))
-                print("Virtual memory use: {}mb".format(memory_usage(physical=False)))
 
             self.local_step += 1
             self.global_step += 1
@@ -520,7 +528,7 @@ def load_or_train(train_config, var_scope, path, target_var_scope=None, sess=Non
     """
     sess = sess or tf.get_default_session()
 
-    to_be_loaded = trainable_variables(var_scope.name)
+    to_be_loaded = trainable_variables(var_scope, for_opt=False)
     if target_var_scope is not None:
         _tbl = {}
         for var in to_be_loaded:

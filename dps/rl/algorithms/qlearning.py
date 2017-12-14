@@ -50,8 +50,8 @@ class AgentUpdater(RLObject):
         return v_target.assign(v_source)
 
     def build_core_signals(self, context):
-        main_agent_variables = self.main_agent.trainable_variables()
-        target_agent_variables = self.target_agent.trainable_variables()
+        main_agent_variables = self.main_agent.trainable_variables(for_opt=False)
+        target_agent_variables = self.target_agent.trainable_variables(for_opt=False)
 
         with tf.name_scope(self.name):
             target_agent_update = []

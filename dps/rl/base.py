@@ -123,8 +123,8 @@ class RLContext(Parameterized):
     def __exit__(self, type_, value, tb):
         RLContext.active_context = None
 
-    def trainable_variables(self):
-        return [v for agent in self.agents for v in agent.trainable_variables()]
+    def trainable_variables(self, for_opt):
+        return [v for agent in self.agents for v in agent.trainable_variables(for_opt=for_opt)]
 
     def add_rl_object(self, obj):
         if isinstance(obj, ObjectiveFunctionTerm):
@@ -512,8 +512,8 @@ class RLUpdater(Updater):
 
         super(RLUpdater, self).__init__(env, **kwargs)
 
-    def trainable_variables(self):
-        return [v for learner in self.learners for v in learner.trainable_variables()]
+    def trainable_variables(self, for_opt):
+        return [v for learner in self.learners for v in learner.trainable_variables(for_opt=for_opt)]
 
     def _build_graph(self):
         for learner in self.learners:

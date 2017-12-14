@@ -64,17 +64,17 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
         assert mode in 'val test'.split()
         raise Exception("NotImplemented")
 
-    def trainable_variables(self):
+    def trainable_variables(self, for_opt):
         raise Exception("AbstractMethod")
 
     def save(self, session, filename):
-        updater_variables = {v.name: v for v in self.trainable_variables()}
+        updater_variables = {v.name: v for v in self.trainable_variables(for_opt=False)}
         saver = tf.train.Saver(updater_variables)
         path = saver.save(tf.get_default_session(), filename)
         return path
 
     def restore(self, session, path):
-        updater_variables = {v.name: v for v in self.trainable_variables()}
+        updater_variables = {v.name: v for v in self.trainable_variables(for_opt=False)}
         saver = tf.train.Saver(updater_variables)
         saver.restore(tf.get_default_session(), path)
 
@@ -115,8 +115,8 @@ class DifferentiableUpdater(Updater):
         tf.get_default_session().run(
             self._assign_is_training, feed_dict={self._set_is_training: is_training})
 
-    def trainable_variables(self):
-        return trainable_variables(self.f.scope_name)
+    def trainable_variables(self, for_opt):
+        return trainable_variables(self.f.scope, for_opt=for_opt)
 
     def _build_graph(self):
         self.is_training = tf.Variable(False, trainable=False, name="is_training")
@@ -133,7 +133,7 @@ class DifferentiableUpdater(Updater):
             for name in self.env.recorded_names
         ]
 
-        tvars = trainable_variables()
+        tvars = self.trainable_variables(for_opt=True)
         if self.l2_weight is not None:
             self.loss += self.l2_weight * sum(tf.nn.l2_loss(v) for v in tvars if 'weights' in v.name)
 

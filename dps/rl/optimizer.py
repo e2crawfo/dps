@@ -9,8 +9,8 @@ class Optimizer(Parameterized):
     def __init__(self, agents):
         self.agents = agents
 
-    def trainable_variables(self):
-        return [v for agent in self.agents for v in agent.trainable_variables()]
+    def trainable_variables(self, for_opt):
+        return [v for agent in self.agents for v in agent.trainable_variables(for_opt=for_opt)]
 
 
 class StochasticGradientDescent(Optimizer):
@@ -25,7 +25,7 @@ class StochasticGradientDescent(Optimizer):
         self.alg = alg
 
     def build_update(self, context):
-        tvars = self.trainable_variables()
+        tvars = self.trainable_variables(for_opt=True)
 
         # `context.objective` is the quantity we want to maximize, but TF minimizes.
         self.train_op, train_summaries = build_gradient_train_op(

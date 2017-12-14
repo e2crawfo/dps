@@ -13,6 +13,7 @@ from tensorflow.contrib.slim import fully_connected
 
 import dps
 from dps.utils.base import Schedule, _bool, popleft, eval_schedule
+from dps.utils.inspect_checkpoint import get_tensors_from_checkpoint_file  # noqa: F401
 
 
 if tf.__version__ >= "1.2":
@@ -102,13 +103,20 @@ def uninitialized_variables_initializer():
     return uninit_init
 
 
-NOT_TRAINABLE_COLLECTION = "NOT_TRAINABLE_COLLECTION"
+FIXED_COLLECTION = "FIXED_COLLECTION"
 
 
-def trainable_variables(scope=None):
+def trainable_variables(scope, for_opt):
+    if isinstance(scope, tf.VariableScope):
+        scope = scope.name
+
     variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope)
-    not_trainable = set(tf.get_collection(NOT_TRAINABLE_COLLECTION, scope=scope))
-    return [v for v in variables if v not in not_trainable]
+
+    if for_opt:
+        fixed = set(tf.get_collection(FIXED_COLLECTION, scope=scope))
+        variables = [v for v in variables if v not in fixed]
+
+    return variables
 
 
 class ScopedFunction(object):
@@ -117,17 +125,18 @@ class ScopedFunction(object):
     ----------
     scope: string or VariableScope instance
         The scope where we will build the variables, or a string giving the name of a variable
-        scope to be created.
+        scope to be created within the variable scope where this function is first called.
 
     """
     def __init__(self, scope=None):
         if scope is None:
             scope = self.__class__.__name__
+
         if isinstance(scope, tf.VariableScope):
-            self.scope_name = scope.name
+            self.name = scope.name.split("/")[-1]
             self.scope = scope
         else:
-            self.scope_name = scope
+            self.name = scope
             self.scope = None
 
         self.n_builds = 0
@@ -140,11 +149,11 @@ class ScopedFunction(object):
 
         self.do_pretraining = False
 
-        self.trainable = True
+        self.fixed_variables = False
 
     def resolve_scope(self):
         if self.scope is None:
-            with tf.variable_scope(self.scope_name):
+            with tf.variable_scope(self.name):
                 self.scope = tf.get_variable_scope()
 
     def _call(self, inp, output_size, is_training):
@@ -163,27 +172,34 @@ class ScopedFunction(object):
         return outp
 
     def _maybe_initialize(self):
-        if not self.initialized and (self.n_builds > 0 and self.do_pretraining):
-            from dps.train import load_or_train
+        """ Initialize the network once it has been built. """
 
-            filename = "{}_{}.chk".format(self.scope_name, self.param_hash)
-            self.path = os.path.join(self.directory, filename)
+        if not self.initialized:
+            if self.do_pretraining:
+                from dps.train import load_or_train
 
-            target_scope = os.path.split(self.scope_name)[1]
-            self.was_loaded = load_or_train(self.train_config, self.scope, self.path, target_var_scope=target_scope)
-            self.initialized = True
+                filename = "{}_{}.chk".format(self.name, self.param_hash)
+                self.path = os.path.join(self.directory, filename)
 
-            param_path = os.path.join(
-                self.directory, "{}_{}.params".format(self.scope_name, self.param_hash))
-            if not os.path.exists(param_path):
-                with open(param_path, 'w') as f:
-                    f.write(str(self.param_dict))
+                self.was_loaded = load_or_train(self.train_config, self.scope, self.path, target_var_scope=self.name)
+                self.initialized = True
 
-            if not self.trainable:
-                my_trainable_variables = trainable_variables(self.scope_name)
-                tf.add_to_collections(NOT_TRAINABLE_COLLECTION, my_trainable_variables)
+                param_path = os.path.join(
+                    self.directory, "{}_{}.params".format(self.name, self.param_hash))
+                if not os.path.exists(param_path):
+                    with open(param_path, 'w') as f:
+                        f.write(str(self.param_dict))
+
+            if self.fixed_variables:
+                my_trainable_variables = trainable_variables(self.scope.name, False)
+                for v in my_trainable_variables:
+                    tf.add_to_collection(FIXED_COLLECTION, v)
 
     def set_pretraining_params(self, train_config, name_params=None, directory=None):
+        if self.initialized:
+            raise Exception("ScopedFunction with scope {} has already been initialized, "
+                            "it is an error to call `set_pretraining_params` at this point")
+
         assert train_config is not None
         self.directory = str(directory or Path(dps.cfg.log_dir))
         if isinstance(name_params, str):
@@ -194,10 +210,11 @@ class ScopedFunction(object):
         self.do_pretraining = True
         self.param_dict = OrderedDict((key, train_config[key]) for key in name_params)
 
-        self._maybe_initialize()
-
-    def make_not_trainable(self):
-        self.trainable = False
+    def fix_variables(self):
+        if self.initialized:
+            raise Exception("ScopedFunction with scope {} has already been initialized, "
+                            "it is an error to call `fix_variables` at this point")
+        self.fixed_variables = True
 
 
 def get_param_hash(train_config, name_params):
