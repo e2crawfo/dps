@@ -17,7 +17,6 @@ setup(
     install_requires=[
         "numpy>=1.7",
         "scipy",
-        "tensorflow",
         "pandas",
         "pytest",
         "future",
