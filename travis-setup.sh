@@ -14,7 +14,7 @@ echo "\nDownloading and processing omniglot data..."
 time python scripts/download.py omniglot data -q
 
 echo "\nDownloading and installing gnu-parallel..."
-wget http://mirror.sergal.org/gnu/parallel/parallel-20170622.tar.bz2
+wget https://mirror.csclub.uwaterloo.ca/gnu/parallel/parallel-20170622.tar.bz2
 tar -xjvf parallel-20170622.tar.bz2
 cd parallel-20170622
 ./configure --prefix="$TRAVIS_BUILD_DIR" && make && make install
