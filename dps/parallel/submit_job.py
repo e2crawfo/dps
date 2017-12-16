@@ -107,8 +107,6 @@ class ParallelSession(object):
 
         if kind == "pbs":
             local_scratch_prefix = "\\$RAMDISK"
-        elif "slurm" in kind:
-            local_scratch_prefix = "/tmp/dps/hyper"
 
         assert kind in "parallel pbs slurm slurm-local".split()
         hpc = kind != "parallel"
@@ -515,6 +513,15 @@ class ParallelSession(object):
             "dps-hyper summary --no-config results.zip | tee results.txt", robust=True, output='loud')
 
     def run(self):
+        if "slurm" in self.kind:
+            # Have to jump through a hoop to get the proper node-local storage on cedar/graham.
+            parallel_command = "printenv | grep SLURM_TMPDIR"
+            command = 'srun --ntasks 1 --no-kill sh -c "{parallel_command}"'.format(parallel_command=parallel_command)
+            returncode, output = self.execute_command(
+                command, frmt=False, robust=False, progress=False, output='get')
+            self.local_scratch_prefix = output.split('=')[-1].strip()
+            self.local_scratch = str(Path(self.local_scratch_prefix) / Path(self.job_directory).name)
+
         if self.dry_run:
             print("Dry run, so not running.")
             return
