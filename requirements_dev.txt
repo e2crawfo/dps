@@ -1,4 +1,4 @@
--e git+https://github.com/e2crawfo/clify.git@v0.2#egg=clify
+-e git+https://github.com/e2crawfo/clify.git@d236061#egg=clify
 dill==0.2.6
 future==0.16.0
 gym==0.9.4
