@@ -1,46 +1,68 @@
 from dps.utils import Config
+from dps.utils.tf import LeNet
 from dps.envs import grid_arithmetic
 from dps.rl.algorithms import a2c
 from dps.rl.policy import BuildEpsilonSoftmaxPolicy, BuildLstmController
 from dps.config import RL_EXPERIMENT_CONFIG, SL_EXPERIMENT_CONFIG
+from dps.vision.train import SALIENCE_CONFIG, EMNIST_CONFIG
 
 
-env_config = grid_arithmetic.config.copy(
+env_config = Config(
+    log_name='grid_arithmetic',
+    render_rollouts=grid_arithmetic.config.render_rollouts,
+    build_env=grid_arithmetic.config.build_env,
+    build_policy=grid_arithmetic.config.build_policy,
+
     reductions="A:sum,M:prod,X:max,N:min",
-    arithmetic_actions='+,*,max,min,+1',
-    ablation='easy',
-    parity='both',
-    render_rollouts=None,
+    arithmetic_actions="+,*,max,min,+1",
 
-    curriculum=[
-        dict(),
-    ],
+    curriculum=[dict()],
+    base=10,
+    threshold=0.04,
     T=30,
     min_digits=2,
     max_digits=3,
-    image_shape_grid=(2, 2),
-    draw_shape=None,
-    draw_offset=None,
-    op_loc=(0, 0),
-    start_loc=(0, 0),
-    base=10,
-    threshold=0.01,
-    stopping_criteria_name="01_loss,min",
-    largest_digit=100,
-
-    salience_action=True,
-    visible_glimpse=False,
-    initial_salience=False,
-    salience_model=False,
-    salience_input_shape=(3*14, 3*14),
-    salience_output_shape=(14, 14),
-    sub_image_shape=(14, 14),
-
     final_reward=True,
+    parity='both',
+
+    op_loc=(0, 0),  # With respect to draw_shape
+    start_loc=(0, 0),  # With respect to env_shape
+    image_shape_grid=(2, 2),
+    draw_offset=(0, 0),
+    draw_shape_grid=None,
+    sub_image_shape=(14, 14),
 
     n_train=10000,
     n_val=100,
     max_steps=300001,
+    use_gpu=False,
+
+    reward_window=0.4999,
+    salience_action=True,
+    salience_input_shape=(3*14, 3*14),
+    salience_output_shape=(14, 14),
+    initial_salience=False,
+    salience_model=True,
+    visible_glimpse=False,
+    stopping_criteria_name="01_loss,min",
+
+    ablation='easy',
+
+    build_digit_classifier=lambda: LeNet(128, scope="digit_classifier"),
+    build_op_classifier=lambda: LeNet(128, scope="op_classifier"),
+    build_omniglot_classifier=lambda: LeNet(128, scope="omniglot_classifier"),
+
+    emnist_config=EMNIST_CONFIG.copy(),
+    salience_config=SALIENCE_CONFIG.copy(
+        min_digits=0,
+        max_digits=4,
+        std=0.05,
+        n_units=100
+    ),
+
+    largest_digit=1000,
+
+    n_glimpse_features=128,
 )
 
 alg_config = Config(

@@ -158,7 +158,7 @@ config = Config(
     start_loc=(0, 0),  # With respect to env_shape
     image_shape_grid=(2, 2),
     draw_offset=(0, 0),
-    draw_shape_grid=(2, 2),
+    draw_shape_grid=None,
     sub_image_shape=(14, 14),
 
     n_train=10000,

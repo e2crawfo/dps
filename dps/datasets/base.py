@@ -283,6 +283,9 @@ class GridArithmeticDataset(VisualArithmeticDataset):
 
     def __init__(self, **kwargs):
         self.image_shape = tuple(gs*s for gs, s in zip(self.image_shape_grid, self.sub_image_shape))
+
+        if self.draw_shape_grid is None:
+            self.draw_shape_grid = self.image_shape_grid
         self.draw_shape = tuple(gs*s for gs, s in zip(self.draw_shape_grid, self.sub_image_shape))
 
         self.grid_size = np.product(self.draw_shape_grid)
@@ -381,12 +384,15 @@ class OmniglotCountingDataset(PatchesDataset):
 
 
 class GridOmniglotDataset(OmniglotCountingDataset):
-    image_shape_grid = Param((2, 2))
-    draw_shape_grid = Param((2, 2))
-    target_loc = Param(None)
+    image_shape_grid = Param()
+    draw_shape_grid = Param()
+    target_loc = Param()
 
     def __init__(self, **kwargs):
         self.image_shape = tuple(gs*s for gs, s in zip(self.image_shape_grid, self.sub_image_shape))
+
+        if self.draw_shape_grid is None:
+            self.draw_shape_grid = self.image_shape_grid
         self.draw_shape = tuple(gs*s for gs, s in zip(self.draw_shape_grid, self.sub_image_shape))
 
         self.grid_size = np.product(self.draw_shape_grid)
