@@ -106,7 +106,7 @@ def generate_all(distributions):
     return configs
 
 
-def sample_configs(distributions, base_config, n_repeats, n_samples=None):
+def sample_configs(distributions, n_repeats, n_samples=None):
     """
     Parameters
     ----------
@@ -114,8 +114,6 @@ def sample_configs(distributions, base_config, n_repeats, n_samples=None):
         Mapping from parameter names to distributions (objects with
         member function ``rvs`` which accepts a shape and produces
         an array of samples with that shape).
-    base_config: Config instance
-        The base config, supplies any parameters not covered in ``distribution``.
     n_repeats: int > 0
         Number of different seeds to use for each sampled configuration.
     n_samples: int > 0
@@ -150,6 +148,10 @@ def sample_configs(distributions, base_config, n_repeats, n_samples=None):
     return configs
 
 
+def sanitize_string(s):
+    return str(s).replace('_', '').replace(' ', '').replace('/', ',')
+
+
 class RunTrainingLoop(object):
     def __init__(self, base_config):
         self.base_config = base_config
@@ -163,6 +165,9 @@ class RunTrainingLoop(object):
         print("Sampled values: ")
         pprint(new)
 
+        keys = [k for k in sorted(new.keys()) if k not in 'seed idx repeat'.split()]
+        exp_name = '_'.join("{}={}".format(sanitize_string(k), sanitize_string(new[k])) for k in keys)
+
         config = copy.copy(self.base_config)
         config.update(new)
 
@@ -170,7 +175,7 @@ class RunTrainingLoop(object):
             cfg.update_from_command_line()
 
             from dps.train import training_loop
-            yield from training_loop(start_time=start_time)
+            yield from training_loop(exp_name=exp_name, start_time=start_time)
 
 
 def build_search(
@@ -229,7 +234,7 @@ def build_search(
 
     job = Job(exp_dir.path)
 
-    new_configs = sample_configs(distributions, config, n_repeats, n_param_settings)
+    new_configs = sample_configs(distributions, n_repeats, n_param_settings)
 
     print("{} configs were sampled for parameter search.".format(len(new_configs)))
 
@@ -767,12 +772,9 @@ def build_and_submit(
         cfg.update_from_command_line()
 
     sig = inspect.signature(ParallelSession.__init__)
-    session_args = sig.bind_partial()
-    session_args.apply_defaults()
-
-    _run_kwargs = clify.command_line(session_args.arguments).parse()
-    _run_kwargs.update(run_kwargs)
-    run_kwargs = _run_kwargs
+    run_kwargs = sig.bind_partial(**run_kwargs)
+    run_kwargs.apply_defaults()
+    run_kwargs = clify.command_line(run_kwargs.arguments).parse()
 
     if config.seed is None or config.seed < 0:
         config.seed = gen_seed()
