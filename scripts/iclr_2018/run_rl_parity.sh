@@ -1,0 +1,3 @@
+python rl_parity.py --name=rl_parity_A --task=A --wall-time=24hours --n-repeats=4 --ppn=8 --max-hosts=1 --cpp=4 --kind=slurm --cleanup-time=30mins --slack-time=30mins --pmem=3700
+# python rl_parity.py --name=rl_parity_B --task=B --wall-time=24hours --n-repeats=5 --ppn=8 --max-hosts=7 --cpp=4 --kind=slurm --cleanup-time=30mins --slack-time=30mins --pmem=3700
+python rl_parity.py --name=rl_parity_C --task=C --wall-time=24hours --n-repeats=5 --ppn=8 --max-hosts=7 --cpp=4 --kind=slurm --cleanup-time=30mins --slack-time=30mins --pmem=3700

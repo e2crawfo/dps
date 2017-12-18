@@ -1,27 +1,39 @@
 import numpy as np
 import os
 import clify
+import argparse
 
 from config import rl_config as config
 
-A_dir = "/home/2014/ecrawf6/rl_parity_A_models"
-A_load_paths = [
-    os.path.join(A_dir, str(i), "best_of_stage_0")
-    for i in range(18)]
-
-A_curric = [dict(parity='even')]
-B_curric = [dict(parity='odd', load_path=A_load_paths)]
-C_curric = [dict(parity='odd')]
-
 config.update(
-    load_path="",
-    curriculum=C_curric,
+    image_shape_grid=(2, 2),
     reductions="sum",
 )
 
+grid = [dict(n_train=1, do_train=False)] + [dict(n_train=x) for x in 2**np.arange(0, 18, 2)]
 
-# grid = dict(n_train=2**np.arange(14, 18, 2))
-grid = dict(n_train=2**np.arange(6, 18, 2))
+parser = argparse.ArgumentParser()
+parser.add_argument("--task", choices="A B C".split(), default='')
+
+args, _ = parser.parse_known_args()
+
+
+if args.task == "A":
+    grid = dict(n_train=2**np.arange(14, 18, 2))
+    config.update(parity='even')
+
+elif args.task == "B":
+    A_dir = "/home/e2crawfo/rl_parity_A/"
+    config.load_path = [
+        os.path.join(A_dir, d, 'best_of_stage_0') for d in os.listdir(A_dir)
+    ]
+    config.update(parity='odd')
+
+elif args.task == "C":
+    config.update(parity='odd')
+
+else:
+    raise Exception()
 
 
 from dps.parallel.hyper import build_and_submit, default_host_pool

@@ -10,7 +10,7 @@ config.update(
     reductions="sum",
 )
 
-grid = dict(n_train=2**np.arange(6, 18, 2))
+grid = [dict(n_train=1, do_train=False)] + [dict(n_train=x) for x in 2**np.arange(0, 18, 2)]
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--task", choices="A B C D E F 0".split(), default='')

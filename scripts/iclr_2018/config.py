@@ -24,27 +24,27 @@ env_config = Config(
     max_digits=3,
     final_reward=True,
     parity='both',
+    reward_window=0.4999,
 
-    op_loc=(0, 0),  # With respect to draw_shape
-    start_loc=(0, 0),  # With respect to env_shape
+    op_loc=(0, 0),  # With respect to draw_shape_grid
+    start_loc=(0, 0),  # With respect to env_shape_grid
     image_shape_grid=(2, 2),
     draw_offset=(0, 0),
     draw_shape_grid=None,
     sub_image_shape=(14, 14),
 
-    n_train=10000,
-    n_val=100,
-    max_steps=300001,
-    use_gpu=False,
-
-    reward_window=0.4999,
     salience_action=True,
+    visible_glimpse=False,
     salience_input_shape=(3*14, 3*14),
     salience_output_shape=(14, 14),
     initial_salience=False,
     salience_model=True,
-    visible_glimpse=False,
+
+    n_train=10000,
+    n_val=100,
+    max_steps=300001,
     stopping_criteria_name="01_loss,min",
+    use_gpu=False,
 
     ablation='easy',
 
