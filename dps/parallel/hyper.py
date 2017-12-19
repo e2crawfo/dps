@@ -772,9 +772,12 @@ def build_and_submit(
         cfg.update_from_command_line()
 
     sig = inspect.signature(ParallelSession.__init__)
-    run_kwargs = sig.bind_partial(**run_kwargs)
-    run_kwargs.apply_defaults()
-    run_kwargs = clify.command_line(run_kwargs.arguments).parse()
+
+    default_run_kwargs = sig.bind_partial()
+    default_run_kwargs.apply_defaults()
+
+    cl_run_kwargs = clify.command_line(default_run_kwargs.arguments).parse()
+    run_kwargs.update(cl_run_kwargs)
 
     if config.seed is None or config.seed < 0:
         config.seed = gen_seed()
