@@ -1,0 +1,5 @@
+python rl_main.py --name=rl_combined --wall-time=24hours --n-repeats=5 --ppn=8 --max-hosts=4 --cpp=4 --kind=slurm --cleanup-time=30mins --slack-time=30mins --pmem=3700
+python rl_main.py --name=rl_sum --reductions=sum --wall-time=24hours --n-repeats=5 --ppn=8 --max-hosts=4 --cpp=4 --kind=slurm --cleanup-time=30mins --slack-time=30mins --pmem=3700
+python rl_main.py --name=rl_prod --reductions=prod --wall-time=24hours --n-repeats=5 --ppn=8 --max-hosts=4 --cpp=4 --kind=slurm --cleanup-time=30mins --slack-time=30mins --pmem=3700
+python rl_main.py --name=rl_max --reductions=max --wall-time=24hours --n-repeats=5 --ppn=8 --max-hosts=4 --cpp=4 --kind=slurm --cleanup-time=30mins --slack-time=30mins --pmem=3700
+python rl_main.py --name=rl_min --reductions=min --wall-time=24hours --n-repeats=5 --ppn=8 --max-hosts=4 --cpp=4 --kind=slurm --cleanup-time=30mins --slack-time=30mins --pmem=3700
