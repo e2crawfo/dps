@@ -2,6 +2,7 @@ import time
 import os
 import shutil
 import subprocess
+import pytest
 
 from dps.run import _run
 from dps.rl.algorithms.a2c import reinforce_config
@@ -12,6 +13,7 @@ from dps.config import DEFAULT_CONFIG
 from dps.utils.tf import get_tensors_from_checkpoint_file
 
 
+@pytest.mark.slow
 def test_time_limit(test_config):
     config = DEFAULT_CONFIG.copy()
     config.update(simple_addition.config)
@@ -30,12 +32,13 @@ def grep(pattern, filename, options=""):
     return subprocess.check_output('grep {} "{}" {}'.format(options, pattern, filename), shell=True).decode()
 
 
-def test_no_train(test_config):
+@pytest.mark.slow
+def test_fixed_variables(test_config):
     """ Test that variables stay fixed when we use use `ScopedFunction.fix_variables`. """
 
     digits = [0, 1]
     config = translated_mnist.config.copy(
-        log_name="test_no_train", render_step=0, n_sub_image_examples=1000,
+        log_name="test_fixed_variables", render_step=0, n_sub_image_examples=1000,
         value_weight=0.0, opt_steps_per_update=20, image_shape=(20, 20),
         max_steps=101, eval_step=10, use_gpu=False, seed=1034340,
         model_dir="/tmp/dps_test/models", n_train=100, digits=digits

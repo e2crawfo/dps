@@ -1,6 +1,7 @@
 import os
 import subprocess
 from collections import defaultdict
+import pytest
 
 from dps.run import _run
 from dps.utils import Config
@@ -17,6 +18,7 @@ def _get_deterministic_output(filename):
         shell=True).decode()
 
 
+@pytest.mark.slow
 def test_simple_add(test_config):
     _config = Config(
         log_name="test_simple_add_a2c", render_step=0,

@@ -21,6 +21,8 @@ import pandas as pd
 import errno
 from tempfile import NamedTemporaryFile
 import dill
+from functools import wraps
+import inspect
 
 import clify
 import dps
@@ -693,6 +695,24 @@ class time_limit(object):
         else:
             signal.alarm(0)  # Cancel the alarm.
         return False
+
+
+def timed_func(func):
+    @wraps(func)
+    def f(*args, **kwargs):
+        with timed_block(func.__name__):
+            return func(*args, **kwargs)
+    return f
+
+
+@contextmanager
+def timed_block(name=None):
+    if name is None:
+        frame = inspect.stack()[1]
+        name = "{}:{}".format(frame.filename, frame.lineno)
+    start_time = time.time()
+    yield
+    print("Call to block <{}> took {} seconds.".format(name, time.time() - start_time))
 
 
 # From py.test

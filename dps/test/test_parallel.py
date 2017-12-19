@@ -81,6 +81,7 @@ def remove_tree(path):
         shutil.rmtree(str(path), ignore_errors=True)
 
 
+@pytest.mark.slow
 def test_hyper(test_config):
     config = DEFAULT_CONFIG.copy()
     config.update(a2c.config)

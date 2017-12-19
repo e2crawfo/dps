@@ -1,4 +1,5 @@
 import pytest
+import time
 
 
 def pytest_addoption(parser):
@@ -6,6 +7,7 @@ def pytest_addoption(parser):
     parser.addoption("--show-plots", action='store_true', help="Display any graphs that are created.")
     parser.addoption("--save-plots", action='store_true', help="Save any graphs that are created.")
     parser.addoption("--skip-slow", action="store_true", help="Skip slow tests.")
+    parser.addoption("--skip-fast", action="store_true", help="Skip fast tests.")
     parser.addoption(
         "--tf-log-level", type=int, default=3,
         help="Quietness of tensorflow logging; 3 (default) is most quiet, 0 is least quiet.")
@@ -17,6 +19,15 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "slow" in item.keywords:
                 item.add_marker(skip_slow)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_protocol(item, nextitem):
+    start = time.time()
+    try:
+        yield
+    finally:
+        print("- Took {:.3f}s.".format(time.time() - start))
 
 
 @pytest.fixture

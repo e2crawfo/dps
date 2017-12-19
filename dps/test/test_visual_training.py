@@ -321,6 +321,7 @@ determinism_info = dict(
 )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("dataset", "emnist omni".split())
 def test_determinism(dataset, test_config):
     build_function = build_mlp  # Can't use build_lenet here as it is slightly non-deterministic for reasons unknown.
