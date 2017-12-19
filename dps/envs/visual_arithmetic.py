@@ -40,7 +40,10 @@ def sl_get_updater(env):
 
 
 def build_env():
-    internal = VisualArithmetic()
+    if cfg.ablation == 'easy':
+        internal = VisualArithmeticEasy()
+    else:
+        internal = VisualArithmetic()
 
     digits = digit_map[cfg.parity]
     train = VisualArithmeticDataset(n_examples=cfg.n_train, one_hot=False, image_shape=cfg.env_shape, digits=digits)
@@ -229,8 +232,9 @@ class VisualArithmetic(InternalEnv):
 
     def _init_networks(self):
         digit_config = cfg.emnist_config.copy(
-            classes=list(range(self.base)),
-            build_function=cfg.build_digit_classifier
+            classes=list(range(10)),
+            build_function=cfg.build_digit_classifier,
+            include_blank=True
         )
 
         self.digit_classifier = cfg.build_digit_classifier()
@@ -238,6 +242,7 @@ class VisualArithmetic(InternalEnv):
             digit_config, name_params='classes include_blank shape n_controller_units',
             directory=cfg.model_dir + '/emnist_pretrained'
         )
+        self.digit_classifier.fix_variables()
 
         op_config = cfg.emnist_config.copy(
             classes=list(self.op_classes),
@@ -249,6 +254,7 @@ class VisualArithmetic(InternalEnv):
             op_config, name_params='classes include_blank shape n_controller_units',
             directory=cfg.model_dir + '/emnist_pretrained',
         )
+        self.op_classifier.fix_variables()
 
         self.classifier_head = classifier_head
 
@@ -279,6 +285,7 @@ class VisualArithmetic(InternalEnv):
                                 'sub_image_shape image_shape output_shape',
                     directory=cfg.model_dir + '/salience_pretrained'
                 )
+                self.salience_detector.fix_variables()
             else:
                 self.salience_detector = ResizeSalienceDetector()
         else:
@@ -306,7 +313,7 @@ class VisualArithmetic(InternalEnv):
         glimpse = extract_glimpse_numpy_like(
             inp, self.salience_input_shape, salience_input_top_left_px, fill_value=0.0)
 
-        new_salience = self.salience_detector(glimpse, self.salience_output_shape, False)
+        new_salience = tf.stop_gradient(self.salience_detector(glimpse, self.salience_output_shape, False))
         new_salience = tf.reshape(new_salience, (-1, self.salience_output_size))
 
         new_salience_input = tf.reshape(glimpse, (-1, self.salience_input_size))
@@ -317,7 +324,7 @@ class VisualArithmetic(InternalEnv):
         return salience, salience_input
 
     def _build_update_storage(self, glimpse, prev_digit, classify_digit, prev_op, classify_op):
-        digit = self.classifier_head(self.digit_classifier(glimpse, self.base + 1, False))
+        digit = self.classifier_head(self.digit_classifier(glimpse, 11, False))
         new_digit = (1 - classify_digit) * prev_digit + classify_digit * digit
 
         op = self.classifier_head(self.op_classifier(glimpse, len(self.op_classes) + 1, False))
@@ -419,7 +426,7 @@ class VisualArithmeticEasy(VisualArithmetic):
         for action in arithmetic_actions:
             new_digit_factor += action
 
-        digit = self.classifier_head(self.digit_classifier(_glimpse, self.base + 1, False))
+        digit = self.classifier_head(self.digit_classifier(_glimpse, 11, False))
         digit = (1 - new_digit_factor) * _digit + new_digit_factor * digit
 
         new_acc_factor = tf.zeros_like(classify_digit)

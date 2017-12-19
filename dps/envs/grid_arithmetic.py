@@ -34,6 +34,8 @@ def build_env():
         if not cfg.omniglot_classes:
             cfg.omniglot_classes = OmniglotDataset.sample_classes(10)
         internal = OmniglotCounting()
+    elif cfg.ablation == 'easy':
+        internal = GridArithmeticEasy()
     else:
         internal = GridArithmetic()
 
@@ -146,7 +148,6 @@ config = Config(
     arithmetic_actions="+,*,max,min,+1",
 
     curriculum=[dict()],
-    base=10,
     threshold=0.04,
     T=30,
     min_digits=2,
@@ -280,7 +281,8 @@ class GridArithmetic(InternalEnv):
     def _init_networks(self):
         digit_config = cfg.emnist_config.copy(
             classes=list(range(10)),
-            build_function=cfg.build_digit_classifier
+            build_function=cfg.build_digit_classifier,
+            include_blank=True
         )
 
         self.digit_classifier = cfg.build_digit_classifier()
@@ -288,6 +290,7 @@ class GridArithmetic(InternalEnv):
             digit_config, name_params='classes include_blank shape n_controller_units',
             directory=cfg.model_dir + '/emnist_pretrained'
         )
+        self.digit_classifier.fix_variables()
 
         op_config = cfg.emnist_config.copy(
             classes=list(self.op_classes),
@@ -299,6 +302,7 @@ class GridArithmetic(InternalEnv):
             op_config, name_params='classes include_blank shape n_controller_units',
             directory=cfg.model_dir + '/emnist_pretrained',
         )
+        self.op_classifier.fix_variables()
 
         self.classifier_head = classifier_head
 
@@ -330,6 +334,7 @@ class GridArithmetic(InternalEnv):
                                 'sub_image_shape image_shape output_shape',
                     directory=cfg.model_dir + '/salience_pretrained'
                 )
+                self.salience_detector.fix_variables()
             else:
                 self.salience_detector = ResizeSalienceDetector()
         else:
@@ -354,7 +359,7 @@ class GridArithmetic(InternalEnv):
         glimpse = extract_glimpse_numpy_like(
             inp, self.salience_input_shape, top_left, fill_value=0.0)
 
-        new_salience = self.salience_detector(glimpse, self.salience_output_shape, False)
+        new_salience = tf.stop_gradient(self.salience_detector(glimpse, self.salience_output_shape, False))
         new_salience = tf.reshape(new_salience, (-1, self.salience_output_size))
 
         new_salience_input = tf.reshape(glimpse, (-1, self.salience_input_size))
@@ -482,7 +487,7 @@ class GridArithmeticEasy(GridArithmetic):
         for action in arithmetic_actions:
             new_digit_factor += action
 
-        digit = self.classifier_head(self.digit_classifier(_glimpse, self.base + 1, False))
+        digit = self.classifier_head(self.digit_classifier(_glimpse, 11, False))
         digit = (1 - new_digit_factor) * _digit + new_digit_factor * digit
 
         new_acc_factor = tf.zeros_like(right)
@@ -555,7 +560,7 @@ class OmniglotCounting(GridArithmeticEasy):
         for action in arithmetic_actions:
             new_digit_factor += action
 
-        digit = self.classifier_head(self.digit_classifier(_glimpse, self.base + 1, False))
+        digit = self.classifier_head(self.digit_classifier(_glimpse, 11, False))
         digit = (1 - new_digit_factor) * _digit + new_digit_factor * digit
 
         new_acc_factor = tf.zeros_like(right)
@@ -590,6 +595,7 @@ class OmniglotCounting(GridArithmeticEasy):
             name_params='classes include_blank shape n_controller_units',
             directory=cfg.model_dir + '/omniglot_pretrained',
         )
+        self.omniglot_classifier.fix_variables()
 
     def build_init(self, r):
         self.maybe_build_placeholders()
