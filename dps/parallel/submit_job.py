@@ -245,10 +245,8 @@ class ParallelSession(object):
                         print("Could not connect.")
                         continue
 
-                # print("\nTOP:")
-                # return_code = self.ssh_execute("top -bn2 | head -n 5", host, output='loud')
-                _, load_avg, _ = self.get_load_avg(host)
-                print("5 minute load average: {}".format(load_avg))
+                load_avg, _, _ = self.get_load_avg(host)
+                print("1 minute load average: {}".format(load_avg))
 
                 if load_avg < self.load_avg_threshold:
                     candidate_hosts[host] = load_avg
@@ -276,9 +274,9 @@ class ParallelSession(object):
             print("Recruiting host {}...".format(host))
 
             if not hpc:
-                _, load_avg, _ = self.get_load_avg(host)
-                print("Previous 5 minute load average: {}".format(self.candidate_hosts[host]))
-                print("Recalculated 5 minute load average: {}".format(load_avg))
+                load_avg, _, _ = self.get_load_avg(host)
+                print("Previous 1 minute load average: {}".format(self.candidate_hosts[host]))
+                print("Recalculated 1 minute load average: {}".format(load_avg))
                 self.candidate_hosts[host] = load_avg
 
             print("Preparing host...")
