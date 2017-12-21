@@ -21,8 +21,6 @@ config = Config(
     n_val=100,
 )
 
-test_config = Config()
-
 
 class Grid(TensorFlowEnv):
     action_names = '^ > v <'.split()

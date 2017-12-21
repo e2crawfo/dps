@@ -10,15 +10,19 @@ from dps import envs as envs_module
 
 def parse_env_alg(env, alg=None):
     try:
-        env_config = getattr(envs_module, env).config
+        env_module = getattr(envs_module, env)
     except AttributeError:
         envs = [e for e in dir(envs_module) if e.startswith(env)]
         assert len(envs) == 1, "Ambiguity in env selection, possibilities are: {}.".format(envs)
-        env_config = getattr(envs_module, envs[0]).config
+        env_module = getattr(envs_module, envs[0])
+
+    env_config = env_module.config
 
     alg_config = {}
 
-    if alg:
+    if alg == "feedforward":
+        env_config = env_module.feedforward_config
+    else:
         try:
             alg_config = getattr(algorithms_module, alg).config
         except AttributeError:
@@ -37,7 +41,7 @@ def run():
     args, _ = parser.parse_known_args()
 
     env = args.args[0]
-    alg = args.args[1] if len(args.args) > 1 else ""
+    alg = args.args[1]
 
     if args.pdb:
         with pdb_postmortem():

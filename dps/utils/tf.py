@@ -12,7 +12,7 @@ from tensorflow.contrib.slim.python.slim.nets.vgg import vgg_a, vgg_16, vgg_19
 from tensorflow.contrib.slim import fully_connected
 
 import dps
-from dps.utils.base import Schedule, _bool, popleft, eval_schedule
+from dps.utils.base import Schedule, _bool, popleft, eval_schedule, Parameterized
 from dps.utils.inspect_checkpoint import get_tensors_from_checkpoint_file  # noqa: F401
 
 
@@ -119,7 +119,7 @@ def trainable_variables(scope, for_opt):
     return variables
 
 
-class ScopedFunction(object):
+class ScopedFunction(Parameterized):
     """
     Parameters
     ----------

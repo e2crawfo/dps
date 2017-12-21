@@ -23,9 +23,48 @@ from tempfile import NamedTemporaryFile
 import dill
 from functools import wraps
 import inspect
+import hashlib
 
 import clify
 import dps
+
+
+def get_param_hash(d, name_params=None):
+    if not name_params:
+        name_params = d.keys()
+    param_str = []
+    for name in name_params:
+        value = d[name]
+
+        if callable(value):
+            value = inspect.getsource(value)
+
+        param_str.append("{}={}".format(name, value))
+    param_str = "_".join(param_str)
+    param_hash = hashlib.sha1(param_str.encode()).hexdigest()
+    return param_hash
+
+
+def sha_cache(directory, recurse=False):
+    os.makedirs(directory, exist_ok=True)
+
+    def decorator(func):
+        sig = inspect.signature(func)
+
+        def new_f(*args, **kwargs):
+            bound_args = sig.bind(*args, **kwargs)
+            param_hash = get_param_hash(bound_args.arguments)
+            filename = os.path.join(directory, "{}_{}.cache".format(func.__name__, param_hash))
+            try:
+                with open(filename, 'rb') as f:
+                    value = dill.load(f)
+            except Exception:
+                value = func(**bound_args.arguments)
+                with open(filename, 'wb') as f:
+                    dill.dump(value, f, protocol=dill.HIGHEST_PROTOCOL, recurse=recurse)
+            return value
+        return new_f
+    return decorator
 
 
 def _run_cmd(cmd):
@@ -562,7 +601,8 @@ class Parameterized(object):
 
     def _resolve_params(self, **kwargs):
         if not self._resolved:
-            for name in self.param_names():
+            param_names = self.param_names()
+            for name in param_names:
                 param = getattr(self.__class__, name)
 
                 aliases = list([name] + param.aliases)
@@ -977,6 +1017,19 @@ def nested_update(d, other):
 
 
 class Config(dict, MutableMapping):
+    """ Note: multi-level setting will succeed more often with __setitem__ than __setattr__.
+
+    This doesn't work:
+
+    c = Config()
+    c.a.b = 1
+
+    But this does:
+
+    c = Config()
+    c["a:b"] = 1
+
+    """
     _reserved_keys = None
 
     def __init__(self, _d=None, **kwargs):

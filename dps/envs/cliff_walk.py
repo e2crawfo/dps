@@ -22,8 +22,6 @@ config = Config(
 
 config.threshold = 0.01 - config.T / config.width
 
-test_config = Config()
-
 
 class CliffWalk(TensorFlowEnv):
 

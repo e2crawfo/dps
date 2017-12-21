@@ -1,19 +1,66 @@
 from cycler import cycler
 import os
 import argparse
-import dill
 import numpy as np
-from collections import defaultdict
-import hashlib
-import inspect
 
 from scipy import stats
 
 import matplotlib.pyplot as plt
 from dps.parallel.hyper import extract_data_from_job
+from dps.utils import process_path, Config, sha_cache
 
 
+cache_dir = process_path('/home/eric/.cache/dps_plots')
 plot_dir = './plots'
+
+single_op_paths = Config()
+single_op_paths['sum:dps'] = 'sample_efficiency_single_op/dps/sum/exp_grid_arith_sum_2017_10_23_03_08_50.zip'
+single_op_paths['sum:cnn'] = 'sample_efficiency_single_op/cnn/sum/exp_cnn_sum_12hours_2017_10_21_00_54_52.zip'
+
+single_op_paths['prod:dps'] = 'sample_efficiency_single_op/dps/prod/exp_grid_arith_prod_2017_10_23_03_10_48.zip'
+single_op_paths['prod:cnn'] = 'sample_efficiency_single_op/cnn/prod/exp_cnn_prod_12hours_2017_10_21_00_55_50.zip'
+
+single_op_paths['max:dps'] = 'sample_efficiency_single_op/dps/max/exp_grid_arith_max_2017_10_23_03_13_24.zip'
+single_op_paths['max:cnn'] = 'sample_efficiency_single_op/cnn/max/exp_cnn_max_12hours_2017_10_21_00_56_53.zip'
+
+single_op_paths['min:dps'] = 'sample_efficiency_single_op/dps/min/exp_grid_arith_min_2017_10_23_03_14_42.zip'
+single_op_paths['min:cnn'] = 'sample_efficiency_single_op/cnn/min/exp_cnn_min_12hours_2017_10_21_00_57_32.zip'
+
+combined_paths = Config()
+combined_paths['dps'] = 'sample_efficiency_combined/dps/exp_grid_arith_all_2017_10_24_05_51_25.zip'
+combined_paths['cnn'] = 'sample_efficiency_combined/cnn/exp_cnn_all_2017_10_23_01_22_58.zip'
+
+parity_paths = Config()
+parity_paths['B:dps'] = 'curriculum_parity/dps_fixed/B/results.zip'
+parity_paths['B:cnn'] = 'curriculum_parity/cnn/A/exp_final_cnn_parity_A_2017_10_26_23_08_20.zip'
+
+parity_paths['C:dps'] = 'curriculum_parity/dps_fixed/C/results.zip'
+parity_paths['C:cnn'] = 'curriculum_parity/cnn/B/exp_final_cnn_parity_B_2017_10_26_23_07_11.zip'
+
+size_paths = Config()
+size_paths["A:dps"] = ''
+size_paths["A:cnn"] = 'curriculum_size/cnn/A/results.zip'
+
+size_paths["B:dps"] = ''
+size_paths["B:cnn"] = 'curriculum_size/cnn/B/results.zip'
+
+size_paths["C:dps"] = ''
+size_paths["C:cnn"] = 'curriculum_size/cnn/C/results.zip'
+
+size_paths["D:dps"] = ''
+size_paths["D:cnn"] = 'curriculum_size/cnn/D/results.zip'
+
+size_paths["E:dps"] = ''
+size_paths["E:cnn"] = 'curriculum_size/cnn/E/results.zip'
+
+size_paths["F:dps"] = ''
+size_paths["F:cnn"] = 'curriculum_size/cnn/F/results.zip'
+
+ablation_paths = Config()
+ablation_paths['full_interface'] = 'sample_efficiency_combined/dps/results.zip'
+ablation_paths['no_modules'] = 'ablations/no_modules/results.zip'
+ablation_paths['no_transformations'] = 'ablations/no_transformations/results.zip'
+ablation_paths['no_classifiers'] = 'ablations/no_classifiers/results.zip'
 
 
 def std_dev(ys):
@@ -42,45 +89,7 @@ def std_err(ys):
 spread_measures = {func.__name__: func for func in [std_dev, ci95, std_err]}
 
 
-def get_param_hash(d, name_params=None):
-    if not name_params:
-        name_params = d.keys()
-    param_str = []
-    for name in name_params:
-        value = d[name]
-
-        if callable(value):
-            value = inspect.getsource(value)
-
-        param_str.append("{}={}".format(name, value))
-    param_str = "_".join(param_str)
-    param_hash = hashlib.sha1(param_str.encode()).hexdigest()
-    return param_hash
-
-
-def sha_cache(directory, recurse=False):
-    os.makedirs(directory, exist_ok=True)
-
-    def decorator(func):
-        sig = inspect.signature(func)
-
-        def new_f(*args, **kwargs):
-            bound_args = sig.bind(*args, **kwargs)
-            param_hash = get_param_hash(bound_args.arguments)
-            filename = os.path.join(directory, "{}_{}.cache".format(func.__name__, param_hash))
-            try:
-                with open(filename, 'rb') as f:
-                    value = dill.load(f)
-            except Exception:
-                value = func(**bound_args.arguments)
-                with open(filename, 'wb') as f:
-                    dill.dump(value, f, protocol=dill.HIGHEST_PROTOCOL, recurse=recurse)
-            return value
-        return new_f
-    return decorator
-
-
-@sha_cache('.cache')
+@sha_cache(cache_dir)
 def _extract_cnn_data(f, n_controller_units, spread_measure, y_func, groupby='n_train'):
     flat = False
     if isinstance(n_controller_units, int):
@@ -107,7 +116,7 @@ def _extract_cnn_data(f, n_controller_units, spread_measure, y_func, groupby='n_
     return data
 
 
-@sha_cache('.cache')
+@sha_cache(cache_dir)
 def _extract_rl_data(f, spread_measure, y_func):
     data = {}
     df = extract_data_from_job(f, 'n_train')
@@ -124,20 +133,6 @@ def _extract_rl_data(f, spread_measure, y_func):
 
 
 def gen_sample_efficiency_single_op():
-    paths = defaultdict(dict)
-
-    paths['sum']['dps'] = 'sample_efficiency_single_op/dps/sum/exp_grid_arith_sum_2017_10_23_03_08_50.zip'
-    paths['sum']['cnn'] = 'sample_efficiency_single_op/cnn/sum/exp_cnn_sum_12hours_2017_10_21_00_54_52.zip'
-
-    paths['prod']['dps'] = 'sample_efficiency_single_op/dps/prod/exp_grid_arith_prod_2017_10_23_03_10_48.zip'
-    paths['prod']['cnn'] = 'sample_efficiency_single_op/cnn/prod/exp_cnn_prod_12hours_2017_10_21_00_55_50.zip'
-
-    paths['max']['dps'] = 'sample_efficiency_single_op/dps/max/exp_grid_arith_max_2017_10_23_03_13_24.zip'
-    paths['max']['cnn'] = 'sample_efficiency_single_op/cnn/max/exp_cnn_max_12hours_2017_10_21_00_56_53.zip'
-
-    paths['min']['dps'] = 'sample_efficiency_single_op/dps/min/exp_grid_arith_min_2017_10_23_03_14_42.zip'
-    paths['min']['cnn'] = 'sample_efficiency_single_op/cnn/min/exp_cnn_min_12hours_2017_10_21_00_57_32.zip'
-
     fig, axes = plt.subplots(2, 2, sharex=True, sharey=True, figsize=(10, 7))
 
     fig.text(0.52, 0.01, '# Training Examples', ha='center', fontsize=12)
@@ -156,12 +151,12 @@ def gen_sample_efficiency_single_op():
     for i, (ax, p) in enumerate(zip(axes.flatten(), pp)):
         label_order = []
 
-        x, y, *yerr = _extract_dps_data(paths[p['key']]['dps'], spread_measure)
+        x, y, *yerr = _extract_rl_data(single_op_paths[p['key']]['dps'], spread_measure)
         label = 'RL + Interface'
         ax.errorbar(x, y, yerr=yerr, label=label, ls='--')
         label_order.append(label)
 
-        cnn_sum_data = _extract_cnn_data(paths[p['key']]['cnn'], cnn_n_train, spread_measure)
+        cnn_sum_data = _extract_cnn_data(single_op_paths[p['key']]['cnn'], cnn_n_train, spread_measure)
 
         for k, v in cnn_sum_data.items():
             x, y, *yerr = v
@@ -186,11 +181,6 @@ def gen_sample_efficiency_single_op():
 
 
 def gen_sample_efficiency_combined():
-    paths = defaultdict(dict)
-
-    paths['dps'] = 'sample_efficiency_combined/dps/exp_grid_arith_all_2017_10_24_05_51_25.zip'
-    paths['cnn'] = 'sample_efficiency_combined/cnn/exp_cnn_all_2017_10_23_01_22_58.zip'
-
     plt.figure(figsize=(5, 3.5))
 
     ax = plt.gca()
@@ -206,12 +196,12 @@ def gen_sample_efficiency_combined():
 
     label_order = []
 
-    x, y, *yerr = _extract_dps_data(paths['dps'], spread_measure)
+    x, y, *yerr = _extract_rl_data(combined_paths['dps'], spread_measure)
     label = 'RL + Interface'
     ax.errorbar(x, y, yerr=yerr, label=label, ls='--')
     label_order.append(label)
 
-    cnn_all_data = _extract_cnn_data(paths['cnn'], cnn_n_train, spread_measure)
+    cnn_all_data = _extract_cnn_data(combined_paths['cnn'], cnn_n_train, spread_measure)
 
     for k, v in cnn_all_data.items():
         x, y, *yerr = v
@@ -229,23 +219,6 @@ def gen_sample_efficiency_combined():
 
 
 def gen_super_sample_efficiency():
-    paths = defaultdict(dict)
-
-    paths['sum']['dps'] = 'sample_efficiency_single_op/dps/sum/exp_grid_arith_sum_2017_10_23_03_08_50.zip'
-    paths['sum']['cnn'] = 'sample_efficiency_single_op/cnn/sum/exp_cnn_sum_12hours_2017_10_21_00_54_52.zip'
-
-    paths['prod']['dps'] = 'sample_efficiency_single_op/dps/prod/exp_grid_arith_prod_2017_10_23_03_10_48.zip'
-    paths['prod']['cnn'] = 'sample_efficiency_single_op/cnn/prod/exp_cnn_prod_12hours_2017_10_21_00_55_50.zip'
-
-    paths['max']['dps'] = 'sample_efficiency_single_op/dps/max/exp_grid_arith_max_2017_10_23_03_13_24.zip'
-    paths['max']['cnn'] = 'sample_efficiency_single_op/cnn/max/exp_cnn_max_12hours_2017_10_21_00_56_53.zip'
-
-    paths['min']['dps'] = 'sample_efficiency_single_op/dps/min/exp_grid_arith_min_2017_10_23_03_14_42.zip'
-    paths['min']['cnn'] = 'sample_efficiency_single_op/cnn/min/exp_cnn_min_12hours_2017_10_21_00_57_32.zip'
-
-    paths['dps'] = 'sample_efficiency_combined/dps/exp_grid_arith_all_2017_10_24_05_51_25.zip'
-    paths['cnn'] = 'sample_efficiency_combined/cnn/exp_cnn_all_2017_10_23_01_22_58.zip'
-
     fig, _ = plt.subplots(2, 4, sharex=True, sharey=True, figsize=(10.7, 5.5))
 
     fig.text(0.52, 0.01, '# Training Examples', ha='center', fontsize=12)
@@ -270,11 +243,11 @@ def gen_super_sample_efficiency():
     spread_measure = 'std_err'
 
     for i, (ax, p) in enumerate(zip(indi_axes, pp)):
-        x, y, *yerr = _extract_dps_data(paths[p['key']]['dps'], spread_measure)
+        x, y, *yerr = _extract_rl_data(single_op_paths[p['key']]['dps'], spread_measure)
         label = 'RL + Interface'
         ax.errorbar(x, y, yerr=yerr, label=label, ls='--')
 
-        cnn_sum_data = _extract_cnn_data(paths[p['key']]['cnn'], cnn_n_train, spread_measure)
+        cnn_sum_data = _extract_cnn_data(single_op_paths[p['key']]['cnn'], cnn_n_train, spread_measure)
 
         for k, v in cnn_sum_data.items():
             x, y, *yerr = v
@@ -294,12 +267,12 @@ def gen_super_sample_efficiency():
 
     label_order = []
 
-    x, y, *yerr = _extract_dps_data(paths['dps'], spread_measure)
+    x, y, *yerr = _extract_rl_data(combined_paths['dps'], spread_measure)
     label = 'RL + Interface'
     combined_ax.errorbar(x, y, yerr=yerr, label=label, ls='--')
     label_order.append(label)
 
-    cnn_all_data = _extract_cnn_data(paths['cnn'], cnn_n_train, spread_measure)
+    cnn_all_data = _extract_cnn_data(combined_paths['cnn'], cnn_n_train, spread_measure)
 
     for k, v in cnn_all_data.items():
         x, y, *yerr = v
@@ -318,54 +291,11 @@ def gen_super_sample_efficiency():
     plt.savefig(os.path.join(plot_dir, 'sample_efficiency_super.pdf'))
 
 
-size_paths = defaultdict(dict)
-
-# size_paths['A']['dps'] = 'curriculum_size/dps/A_better/results.zip'
-# size_paths['A']['cnn'] = 'curriculum_size/cnn/A/exp_final_cnn_size_A_2017_10_26_23_11_28.zip'
-# 
-# size_paths['C']['dps'] = 'curriculum_size/dps/C/exp_grid_size_curric_C_2017_10_24_02_09_10.zip'
-# size_paths['C']['cnn'] = 'curriculum_size/cnn/C/exp_final_cnn_size_B_2017_10_26_23_12_15.zip'
-# 
-# size_paths['B']['dps'] = 'curriculum_size/dps/B/exp_grid_size_curric_B_2017_10_26_00_00_43.zip'
-# size_paths['B']['cnn'] = 'curriculum_size/cnn/B/exp_final_cnn_size_C_2017_10_26_23_13_35.zip'
-# 
-# size_paths['F']['dps'] = 'curriculum_size/dps/F/exp_grid_size_curric_F_2017_10_24_03_27_08.zip'
-# size_paths['F']['cnn'] = 'curriculum_size/cnn/F/exp_final_cnn_size_F_2017_10_26_23_14_54.zip'
-
-size_paths = dict(
-    A=dict(
-        dps='',
-        cnn='curriculum_size/cnn/A/results.zip'
-    ),
-    B=dict(
-        dps='',
-        cnn='curriculum_size/cnn/B/results.zip'
-    ),
-    C=dict(
-        dps='',
-        cnn='curriculum_size/cnn/C/results.zip'
-    ),
-    D=dict(
-        dps='',
-        cnn='curriculum_size/cnn/D/results.zip'
-    ),
-    E=dict(
-        dps='',
-        cnn='curriculum_size/cnn/E/results.zip'
-    ),
-    F=dict(
-        dps='',
-        cnn='curriculum_size/cnn/F/results.zip'
-    ),
-)
-
-
 def y_func(r):
     return 100 * r['test_01_loss']
 
 
 def gen_size_curriculum():
-    paths = size_paths
     fig, axes = plt.subplots(1, 3, sharex=True, sharey=True, figsize=(10, 5))
     spread_measure = 'std_err'
     fig.text(0.52, 0.01, '# Training Examples on Test Task', ha='center', fontsize=12)
@@ -381,26 +311,26 @@ def gen_size_curriculum():
 
     label_order = []
 
-    # x, y, *yerr = _extract_dps_data(paths['A']['dps'], spread_measure)
+    # x, y, *yerr = _extract_rl_data(size_paths['A']['dps'], spread_measure)
     # label = 'RL + Interface - With Curric'
     # line, _, _ = ax.errorbar(x, y, yerr=yerr, label=label, ls='-')
     # label_order.append(label)
 
     # rl_colour = line.get_c()
 
-    # x, y, *yerr = _extract_dps_data(paths['D']['dps'], spread_measure)
+    # x, y, *yerr = _extract_rl_data(size_paths['D']['dps'], spread_measure)
     # label = 'RL + Interface - No Curric'
     # ax.errorbar(x, y, yerr=yerr, label=label, ls='--', c=rl_colour)
     # label_order.append(label)
 
-    x, y, *yerr = _extract_cnn_data(paths['A']['cnn'], 512, spread_measure, y_func, 'curriculum:-1:n_train')
+    x, y, *yerr = _extract_cnn_data(size_paths['A']['cnn'], 512, spread_measure, y_func, 'curriculum:-1:n_train')
     label = 'CNN - With Curric'
     line, _, _ = ax.errorbar(x, y, yerr=yerr, label=label, ls='-')
     label_order.append(label)
 
     cnn_colour = line.get_c()
 
-    x, y, *yerr = _extract_cnn_data(paths['D']['cnn'], 512, spread_measure, y_func, 'curriculum:-1:n_train')
+    x, y, *yerr = _extract_cnn_data(size_paths['D']['cnn'], 512, spread_measure, y_func, 'curriculum:-1:n_train')
     label = 'CNN - No Curric'
     ax.errorbar(x, y, yerr=yerr, label=label, ls='--', c=cnn_colour)
     label_order.append(label)
@@ -418,16 +348,16 @@ def gen_size_curriculum():
     ax.set_ylim((0.0, 100.0))
     ax.set_xscale('log', basex=2)
 
-    # x, y, *yerr = _extract_dps_data(paths['B']['dps'], spread_measure,)
+    # x, y, *yerr = _extract_rl_data(size_paths['B']['dps'], spread_measure,)
     # ax.errorbar(x, y, yerr=yerr, ls='-', c=rl_colour)
 
-    # x, y, *yerr = _extract_dps_data(paths['E']['dps'], spread_measure,)
+    # x, y, *yerr = _extract_rl_data(size_paths['E']['dps'], spread_measure,)
     # ax.errorbar(x, y, yerr=yerr, ls='--', c=rl_colour)
 
-    x, y, *yerr = _extract_cnn_data(paths['B']['cnn'], 512, spread_measure, y_func, 'curriculum:-1:n_train')
+    x, y, *yerr = _extract_cnn_data(size_paths['B']['cnn'], 512, spread_measure, y_func, 'curriculum:-1:n_train')
     ax.errorbar(x, y, yerr=yerr, ls='-', c=cnn_colour)
 
-    x, y, *yerr = _extract_cnn_data(paths['E']['cnn'], 512, spread_measure, y_func, 'curriculum:-1:n_train')
+    x, y, *yerr = _extract_cnn_data(size_paths['E']['cnn'], 512, spread_measure, y_func, 'curriculum:-1:n_train')
     ax.errorbar(x, y, yerr=yerr, ls='--', c=cnn_colour)
 
     # ********************************************************************************
@@ -438,16 +368,16 @@ def gen_size_curriculum():
     ax.set_ylim((0.0, 100.0))
     ax.set_xscale('log', basex=2)
 
-    # x, y, *yerr = _extract_dps_data(paths['B']['dps'], spread_measure,)
+    # x, y, *yerr = _extract_rl_data(size_paths['B']['dps'], spread_measure,)
     # ax.errorbar(x, y, yerr=yerr, ls='-', c=rl_colour)
 
-    # x, y, *yerr = _extract_dps_data(paths['E']['dps'], spread_measure,)
+    # x, y, *yerr = _extract_rl_data(size_paths['E']['dps'], spread_measure,)
     # ax.errorbar(x, y, yerr=yerr, ls='--', c=rl_colour)
 
-    x, y, *yerr = _extract_cnn_data(paths['C']['cnn'], 512, spread_measure, y_func, 'curriculum:-1:n_train')
+    x, y, *yerr = _extract_cnn_data(size_paths['C']['cnn'], 512, spread_measure, y_func, 'curriculum:-1:n_train')
     ax.errorbar(x, y, yerr=yerr, ls='-', c=cnn_colour)
 
-    x, y, *yerr = _extract_cnn_data(paths['F']['cnn'], 512, spread_measure, y_func, 'curriculum:-1:n_train')
+    x, y, *yerr = _extract_cnn_data(size_paths['F']['cnn'], 512, spread_measure, y_func, 'curriculum:-1:n_train')
     ax.errorbar(x, y, yerr=yerr, ls='--', c=cnn_colour)
 
     plt.subplots_adjust(
@@ -456,17 +386,7 @@ def gen_size_curriculum():
     plt.savefig(os.path.join(plot_dir, 'size_curriculum.pdf'))
 
 
-parity_paths = defaultdict(dict)
-parity_paths['B']['dps'] = 'curriculum_parity/dps_fixed/B/results.zip'
-parity_paths['B']['cnn'] = 'curriculum_parity/cnn/A/exp_final_cnn_parity_A_2017_10_26_23_08_20.zip'
-
-parity_paths['C']['dps'] = 'curriculum_parity/dps_fixed/C/results.zip'
-parity_paths['C']['cnn'] = 'curriculum_parity/cnn/B/exp_final_cnn_parity_B_2017_10_26_23_07_11.zip'
-
-
 def gen_parity_curriculum():
-    paths = parity_paths
-
     fig, ax = plt.subplots(1, 1, sharex=True, sharey=True, figsize=(10, 5))
     spread_measure = 'std_err'
     fig.text(0.52, 0.01, '# Training Examples on Test Task', ha='center', fontsize=12)
@@ -479,12 +399,12 @@ def gen_parity_curriculum():
 
     label_order = []
 
-    x, y, *yerr = _extract_rl_data(paths['B']['dps'], spread_measure, lambda r: -100 * r['test_reward_per_ep'])
+    x, y, *yerr = _extract_rl_data(parity_paths['B']['dps'], spread_measure, lambda r: -100 * r['test_reward_per_ep'])
     label = 'RL + Interface - With Curric'
     line, _, _ = ax.errorbar(x, y, yerr=yerr, label=label, ls='-')
     label_order.append(label)
 
-    # records = extract_verbose_data_from_job(paths['B']['dps'], 'n_train')
+    # records = extract_verbose_data_from_job(parity_paths['B']['dps'], 'n_train')
     # initial_error = [-100.0 * r['test_data'].loc[0]['reward_per_ep'] for r in records]
     # y = np.mean(initial_error)
     # l = ax.axhline(y)
@@ -493,7 +413,7 @@ def gen_parity_curriculum():
 
     rl_colour = line.get_c()
 
-    x, y, *yerr = _extract_rl_data(paths['C']['dps'], spread_measure, lambda r: -100 * r['test_reward_per_ep'])
+    x, y, *yerr = _extract_rl_data(parity_paths['C']['dps'], spread_measure, lambda r: -100 * r['test_reward_per_ep'])
     label = 'RL + Interface - No Curric'
     ax.errorbar(x, y, yerr=yerr, label=label, ls='--', c=rl_colour)
     label_order.append(label)
@@ -501,14 +421,14 @@ def gen_parity_curriculum():
     def y_func(r):
         return -100 * r['test_reward']
 
-    x, y, *yerr = _extract_cnn_data(paths['B']['cnn'], 512, spread_measure, y_func, 'curriculum:-1:n_train')
+    x, y, *yerr = _extract_cnn_data(parity_paths['B']['cnn'], 512, spread_measure, y_func, 'curriculum:-1:n_train')
     label = 'CNN - With Curric'
     line, _, _ = ax.errorbar(x, y, yerr=yerr, label=label, ls='-')
     label_order.append(label)
 
     cnn_colour = line.get_c()
 
-    x, y, *yerr = _extract_cnn_data(paths['C']['cnn'], 512, spread_measure, y_func, 'curriculum:-1:n_train')
+    x, y, *yerr = _extract_cnn_data(parity_paths['C']['cnn'], 512, spread_measure, y_func, 'curriculum:-1:n_train')
     label = 'CNN - No Curric'
     ax.errorbar(x, y, yerr=yerr, label=label, ls='--', c=cnn_colour)
     label_order.append(label)
@@ -527,7 +447,6 @@ def gen_parity_curriculum():
 
 
 def gen_curric():
-    paths = size_paths
     fig, axes = plt.subplots(1, 3, sharex=True, sharey=True, figsize=(10, 3.7))
     spread_measure = 'std_err'
     fig.text(0.52, 0.01, '# Training Examples on Test Task', ha='center', fontsize=12)
@@ -542,26 +461,26 @@ def gen_curric():
 
     label_order = []
 
-    x, y, *yerr = _extract_dps_data(paths['A']['dps'], spread_measure)
+    x, y, *yerr = _extract_rl_data(size_paths['A']['dps'], spread_measure)
     label = 'RL + Interface - With Curric'
     line, _, _ = ax.errorbar(x, y, yerr=yerr, label=label, ls='-')
     label_order.append(label)
 
     rl_colour = line.get_c()
 
-    x, y, *yerr = _extract_dps_data(paths['C']['dps'], spread_measure)
+    x, y, *yerr = _extract_rl_data(size_paths['C']['dps'], spread_measure)
     label = 'RL + Interface - No Curric'
     ax.errorbar(x, y, yerr=yerr, label=label, ls='--', c=rl_colour)
     label_order.append(label)
 
-    x, y, *yerr = _extract_cnn_data(paths['A']['cnn'], 512, spread_measure, 'curriculum:-1:n_train')
+    x, y, *yerr = _extract_cnn_data(size_paths['A']['cnn'], 512, spread_measure, 'curriculum:-1:n_train')
     label = 'CNN - With Curric'
     line, _, _ = ax.errorbar(x, y, yerr=yerr, label=label, ls='-')
     label_order.append(label)
 
     cnn_colour = line.get_c()
 
-    x, y, *yerr = _extract_cnn_data(paths['C']['cnn'], 512, spread_measure, 'curriculum:-1:n_train')
+    x, y, *yerr = _extract_cnn_data(size_paths['C']['cnn'], 512, spread_measure, 'curriculum:-1:n_train')
     label = 'CNN - No Curric'
     ax.errorbar(x, y, yerr=yerr, label=label, ls='--', c=cnn_colour)
     label_order.append(label)
@@ -572,22 +491,20 @@ def gen_curric():
     ax.set_ylim((0.0, 100.0))
     ax.set_xscale('log', basex=2)
 
-    x, y, *yerr = _extract_dps_data(paths['B']['dps'], spread_measure)
+    x, y, *yerr = _extract_rl_data(size_paths['B']['dps'], spread_measure)
     ax.errorbar(x, y, yerr=yerr, ls='-', c=rl_colour)
 
-    x, y, *yerr = _extract_dps_data(paths['F']['dps'], spread_measure)
+    x, y, *yerr = _extract_rl_data(size_paths['F']['dps'], spread_measure)
     ax.errorbar(x, y, yerr=yerr, ls='--', c=rl_colour)
 
-    x, y, *yerr = _extract_cnn_data(paths['B']['cnn'], 512, spread_measure, 'curriculum:-1:n_train')
+    x, y, *yerr = _extract_cnn_data(size_paths['B']['cnn'], 512, spread_measure, 'curriculum:-1:n_train')
     ax.errorbar(x, y, yerr=yerr, ls='-', c=cnn_colour)
 
-    x, y, *yerr = _extract_cnn_data(paths['F']['cnn'], 512, spread_measure, 'curriculum:-1:n_train')
+    x, y, *yerr = _extract_cnn_data(size_paths['F']['cnn'], 512, spread_measure, 'curriculum:-1:n_train')
     ax.errorbar(x, y, yerr=yerr, ls='--', c=cnn_colour)
 
     ax.set_ylim((0.0, 100.0))
     ax.set_xscale('log', basex=2)
-
-    paths = parity_paths
 
     ax = axes[2]
     ax.set_title('even -> odd')
@@ -597,26 +514,26 @@ def gen_curric():
 
     label_order = []
 
-    x, y, *yerr = _extract_dps_data(paths['A']['dps'], spread_measure)
+    x, y, *yerr = _extract_rl_data(parity_paths['A']['dps'], spread_measure)
     label = 'RL + Interface - With Curric'
     line, _, _ = ax.errorbar(x, y, yerr=yerr, label=label, ls='-')
     label_order.append(label)
 
     rl_colour = line.get_c()
 
-    x, y, *yerr = _extract_dps_data(paths['C']['dps'], spread_measure)
+    x, y, *yerr = _extract_rl_data(parity_paths['C']['dps'], spread_measure)
     label = 'RL + Interface - No Curric'
     ax.errorbar(x, y, yerr=yerr, label=label, ls='--', c=rl_colour)
     label_order.append(label)
 
-    x, y, *yerr = _extract_cnn_data(paths['A']['cnn'], 512, spread_measure, 'curriculum:-1:n_train')
+    x, y, *yerr = _extract_cnn_data(parity_paths['A']['cnn'], 512, spread_measure, 'curriculum:-1:n_train')
     label = 'CNN - With Curric'
     line, _, _ = ax.errorbar(x, y, yerr=yerr, label=label, ls='-')
     label_order.append(label)
 
     cnn_colour = line.get_c()
 
-    x, y, *yerr = _extract_cnn_data(paths['C']['cnn'], 512, spread_measure, 'curriculum:-1:n_train')
+    x, y, *yerr = _extract_cnn_data(parity_paths['C']['cnn'], 512, spread_measure, 'curriculum:-1:n_train')
     label = 'CNN - No Curric'
     ax.errorbar(x, y, yerr=yerr, label=label, ls='--', c=cnn_colour)
     label_order.append(label)
@@ -636,13 +553,6 @@ def gen_curric():
 
 
 def gen_ablations():
-    paths = defaultdict(dict)
-
-    paths['full_interface'] = 'sample_efficiency_combined/dps/results.zip'
-    paths['no_modules'] = 'ablations/no_modules/results.zip'
-    paths['no_transformations'] = 'ablations/no_transformations/results.zip'
-    paths['no_classifiers'] = 'ablations/no_classifiers/results.zip'
-
     plt.figure(figsize=(5, 3.5))
 
     ax = plt.gca()
@@ -657,22 +567,22 @@ def gen_ablations():
 
     label_order = []
 
-    x, y, *yerr = _extract_rl_data(paths['full_interface'], spread_measure, lambda r: 100 * r['test_loss'])
+    x, y, *yerr = _extract_rl_data(ablation_paths['full_interface'], spread_measure, lambda r: 100 * r['test_loss'])
     label = 'Full Interface'
     ax.errorbar(x, y, yerr=yerr, label=label, ls='-')
     label_order.append(label)
 
-    x, y, *yerr = _extract_rl_data(paths['no_modules'], spread_measure, lambda r: 100 * r['test_01_loss'])
+    x, y, *yerr = _extract_rl_data(ablation_paths['no_modules'], spread_measure, lambda r: 100 * r['test_01_loss'])
     label = 'No Modules'
     ax.errorbar(x, y, yerr=yerr, label=label, ls='-')
     label_order.append(label)
 
-    x, y, *yerr = _extract_rl_data(paths['no_transformations'], spread_measure, lambda r: 100 * r['test_01_loss'])
+    x, y, *yerr = _extract_rl_data(ablation_paths['no_transformations'], spread_measure, lambda r: 100 * r['test_01_loss'])
     label = 'No Transformations'
     ax.errorbar(x, y, yerr=yerr, label=label, ls='-')
     label_order.append(label)
 
-    x, y, *yerr = _extract_rl_data(paths['no_classifiers'], spread_measure, lambda r: 100 * r['test_01_loss'])
+    x, y, *yerr = _extract_rl_data(ablation_paths['no_classifiers'], spread_measure, lambda r: 100 * r['test_01_loss'])
     label = 'No Classifiers'
     ax.errorbar(x, y, yerr=yerr, label=label, ls='-')
     label_order.append(label)
