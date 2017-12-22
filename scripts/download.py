@@ -10,6 +10,7 @@ import zipfile
 
 from dps.datasets.load import _validate_emnist
 from dps.utils import image_to_string, cd, process_path, remove
+from dps.datasets.load import convert_emnist_and_store
 
 
 emnist_url = 'http://www.itl.nist.gov/iaui/vip/cs_links/EMNIST/matlab.zip'
@@ -217,10 +218,20 @@ if __name__ == "__main__":
     parser.add_argument('kind', type=str, choices=['emnist', 'omniglot'])
     parser.add_argument('path', type=str)
     parser.add_argument('-q', action='count', default=0)
+    parser.add_argument(
+        '--shape', default="", type=str,
+        help="Only valid when kind=='emnist'. If provided, assumes that emnist "
+             "dataset has already been downloaded and processed. Value should be "
+             "comma-separated pair of integers. Creates a copy of the emnist dataset, "
+             "resized to have the given shape")
     args = parser.parse_args()
 
     if args.kind == 'emnist':
-        process_emnist(args.path, args.q)
+        if args.shape:
+            shape = tuple(int(i) for i in args.shape.split(','))
+            convert_emnist_and_store(args.path, shape)
+        else:
+            process_emnist(args.path, args.q)
     elif args.kind == 'omniglot':
         process_omniglot(args.path, args.q)
     else:

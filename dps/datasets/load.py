@@ -6,6 +6,7 @@ import numpy as np
 import os
 import shutil
 import warnings
+from pathlib import Path
 
 from dps import cfg
 from dps.utils import image_to_string, cd
@@ -43,7 +44,8 @@ def convert_emnist_and_store(path, new_image_shape):
         shutil.rmtree(str(new_dir))
     except FileNotFoundError:
         pass
-    new_dir.mkdir(exist_ok=False, parents=False)
+
+    os.mkdir(new_dir)
 
     classes = ''.join(
         [str(i) for i in range(10)] +
