@@ -1,5 +1,6 @@
+from dps import cfg
 from dps.utils import Config
-from dps.utils.tf import LeNet
+from dps.utils.tf import LeNet, MLP
 from dps.envs import grid_arithmetic
 from dps.rl.algorithms import a2c
 from dps.rl.policy import BuildEpsilonSoftmaxPolicy, BuildLstmController
@@ -122,8 +123,6 @@ rl_config.update(
 cnn_config = SL_EXPERIMENT_CONFIG.copy()
 
 cnn_config.update(env_config)
-cnn_config.update(build_env=grid_arithmetic.sl_build_env)
-
 cnn_config.update(
     name="GridArithmeticCNN",
 
@@ -132,6 +131,7 @@ cnn_config.update(
     gpu_allow_growth=True,
     per_process_gpu_memory_fraction=0.22,
 
+    stopping_criteria="01_loss,min",
     get_updater=grid_arithmetic.sl_get_updater,
     optimizer_spec="adam",
     lr_schedule=1e-4,
@@ -146,4 +146,21 @@ cnn_config.update(
     patience=5000,
     reward_window=0.499,
     preserve_policy=True,
+
+    build_env=grid_arithmetic.sl_build_env,
+    build_model=grid_arithmetic.sl_build_model,
+
+    mode="standard",
+    build_convolutional_model=lambda: LeNet(cfg.n_controller_units),
+
+    largest_digit=99,
+
+    # For when mode == "pretrained"
+    fixed=True,
+    pretrain=True,
+    build_feedforward_model=lambda: MLP(
+        [cfg.n_controller_units, cfg.n_controller_units, cfg.n_controller_units]
+    ),
+    include_raw=True,
+    n_raw_features=128,
 )

@@ -9,7 +9,7 @@ from dps.environment import CompositeEnv, InternalEnv
 from dps.supervised import ClassificationEnv, IntegerRegressionEnv
 from dps.vision import EMNIST_CONFIG, SALIENCE_CONFIG, OMNIGLOT_CONFIG
 from dps.datasets import GridArithmeticDataset, GridOmniglotDataset, OmniglotDataset
-from dps.utils.tf import LeNet, MLP, SalienceMap, extract_glimpse_numpy_like
+from dps.utils.tf import LeNet, MLP, SalienceMap, extract_glimpse_numpy_like, ScopedFunction
 from dps.utils import Param, Config, image_to_string
 from dps.updater import DifferentiableUpdater
 from dps.rl.policy import EpsilonSoftmax, DiscretePolicy
@@ -24,9 +24,111 @@ def sl_build_env():
     return ClassificationEnv(train, val, test, one_hot=True)
 
 
+def sl_build_model():
+    if cfg.mode == "standard":
+        return cfg.build_convolutional_model()
+    elif cfg.mode == "pretrained":
+        return FeedforwardPretrained()
+    else:
+        raise Exception()
+
+
 def sl_get_updater(env):
-    build_model = LeNet(n_units=int(cfg.n_controller_units))
-    return DifferentiableUpdater(env, build_model)
+    model = cfg.build_model()
+
+    return DifferentiableUpdater(env, model)
+
+
+class FeedforwardPretrained(ScopedFunction):
+    fixed = Param()
+    pretrain = Param()
+    emnist_config = Param()
+    build_digit_classifier = Param()
+    build_op_classifier = Param()
+    build_feedforward_model = Param()
+
+    include_raw = Param()
+    n_raw_features = Param()
+    build_convolutional_model = Param()
+
+    image_shape_grid = Param()
+    sub_image_shape = Param()
+
+    def __init__(self, **kwargs):
+        super(FeedforwardPretrained, self).__init__(**kwargs)
+
+        self.digit_classifier = None
+        self.op_classifier = None
+        self.feedforward_model = None
+
+    def _call(self, inp, output_size, is_training):
+        if self.digit_classifier is None:
+
+            self.digit_classifier = self.build_digit_classifier()
+
+            if self.pretrain:
+                digit_config = self.emnist_config.copy(
+                    classes=list(range(10)),
+                    build_function=self.build_digit_classifier,
+                    include_blank=True
+                )
+                self.digit_classifier.set_pretraining_params(
+                    digit_config, name_params='classes include_blank shape n_controller_units',
+                    directory=cfg.model_dir + '/emnist_pretrained'
+                )
+
+            if self.fixed:
+                self.digit_classifier.fix_variables()
+
+        if self.op_classifier is None:
+
+            self.op_classifier = self.build_op_classifier()
+
+            if self.pretrain:
+                op_config = self.emnist_config.copy(
+                    classes=list(GridArithmetic.op_classes),
+                    build_function=self.build_op_classifier
+                )
+
+                self.op_classifier.set_pretraining_params(
+                    op_config, name_params='classes include_blank shape n_controller_units',
+                    directory=cfg.model_dir + '/emnist_pretrained'
+                )
+
+            if self.fixed:
+                self.op_classifier.fix_variables()
+
+        def head(inp):
+            if self.fixed:
+                return tf.stop_gradient(inp)
+            else:
+                return inp
+
+        # Assume inp is of shape (batch_size, h, w, d)
+        rows = tf.split(inp, self.image_shape_grid[0], axis=1)
+        _rows = [tf.split(row, self.image_shape_grid[1], axis=2) for row in rows]
+
+        digit_classifications, op_classifications = [], []
+        for row in _rows:
+            digit_classifications.append(
+                [head(self.digit_classifier(img, 11, is_training)) for img in row])
+            op_classifications.append(
+                [head(self.op_classifier(img, len(GridArithmetic.op_classes) + 1, is_training)) for img in row])
+
+        if self.feedforward_model is None:
+            self.feedforward_model = cfg.build_feedforward_model()
+
+        tensors = (
+            [c for row in digit_classifications for c in row] +
+            [c for row in op_classifications for c in row])
+        model_input = tf.concat(tensors, axis=-1, name="feedforward_pretrained_output_flattened")
+
+        if self.include_raw:
+            self.convolutional_model = self.build_convolutional_model()
+            raw_features = self.convolutional_model(inp, self.n_raw_features, is_training)
+            model_input = tf.concat([model_input, raw_features], axis=-1)
+
+        return self.feedforward_model(model_input, output_size, is_training)
 
 
 def build_env():
@@ -144,28 +246,29 @@ config = Config(
     build_env=build_env,
     build_policy=build_policy,
 
-    reductions="A:sum,M:prod,X:max,N:min",
-    arithmetic_actions="+,*,max,min,+1",
-
-    curriculum=[dict()],
+    # Traing specific
     threshold=0.04,
-    T=30,
-    min_digits=2,
-    max_digits=3,
-    final_reward=True,
-    parity='both',
-
-    op_loc=(0, 0),  # With respect to draw_shape
-    start_loc=(0, 0),  # With respect to env_shape
-    image_shape_grid=(2, 2),
-    draw_offset=(0, 0),
-    draw_shape_grid=None,
-    sub_image_shape=(14, 14),
-
+    curriculum=[dict()],
     n_train=10000,
     n_val=100,
     use_gpu=False,
 
+    # env-specific
+    reductions="A:sum,M:prod,X:max,N:min",
+    op_loc=(0, 0),  # With respect to draw_shape_grid
+    start_loc=(0, 0),  # With respect to image_shape_grid
+    image_shape_grid=(2, 2),
+    draw_offset=(0, 0),
+    draw_shape_grid=None,
+    sub_image_shape=(14, 14),
+    min_digits=2,
+    max_digits=3,
+    parity='both',
+    largest_digit=1000,
+
+    # RL-specific
+    ablation='easy',
+    arithmetic_actions="+,*,max,min,+1",
     reward_window=0.4999,
     salience_action=True,
     salience_input_shape=(3*14, 3*14),
@@ -173,9 +276,10 @@ config = Config(
     initial_salience=False,
     salience_model=True,
     visible_glimpse=False,
+    final_reward=True,
+    T=30,
 
-    ablation='easy',
-
+    # Pre-trained modules
     build_digit_classifier=lambda: LeNet(128, scope="digit_classifier"),
     build_op_classifier=lambda: LeNet(128, scope="op_classifier"),
     build_omniglot_classifier=lambda: LeNet(128, scope="omniglot_classifier"),
@@ -192,10 +296,33 @@ config = Config(
         'Cyrillic,17', 'Mkhedruli_(Georgian),5', 'Bengali,23', 'Mongolian,19',
         'Malayalam,3', 'Ge_ez,15', 'Glagolitic,33', 'Tagalog,11', 'Gujarati,23',
         'Old_Church_Slavonic_(Cyrillic),7'],  # Chosen randomly from set of all omniglot symbols.
+)
 
-    largest_digit=1000,
 
-    n_glimpse_features=128,
+feedforward_config = config.copy(
+    get_updater=sl_get_updater,
+    build_model=sl_build_model,
+    build_env=sl_build_env,
+
+    use_gpu=False,
+    per_process_gpu_memory_fraction=0.2,
+
+    largest_digit=99,
+    batch_size=16,
+    optimizer_spec="adam",
+    opt_steps_per_update=1,
+    lr_schedule="1e-4",
+
+    mode="standard",
+    build_convolutional_model=lambda: LeNet(cfg.n_controller_units),
+
+    # For when mode == "pretrained"
+    fixed=True,
+    pretrain=True,
+    build_feedforward_model=lambda: MLP(
+        [cfg.n_controller_units, cfg.n_controller_units, cfg.n_controller_units]),
+    include_raw=True,
+    n_raw_features=128,
 )
 
 
