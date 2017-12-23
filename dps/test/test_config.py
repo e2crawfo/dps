@@ -30,7 +30,7 @@ def test_basic():
 
 def test_config_stack():
     old_stack = cfg._stack + []
-    cfg.clear_stack()
+    cfg.clear_stack(None)
 
     try:
         with pytest.raises(KeyError):

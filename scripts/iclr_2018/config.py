@@ -161,6 +161,5 @@ cnn_config.update(
     build_feedforward_model=lambda: MLP(
         [cfg.n_controller_units, cfg.n_controller_units, cfg.n_controller_units]
     ),
-    include_raw=True,
     n_raw_features=128,
 )

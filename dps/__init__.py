@@ -1,10 +1,8 @@
-from .utils import ConfigStack, Config
+from .utils import ConfigStack, Config, SystemConfig
 
 cfg = ConfigStack()
 
-from .config import SystemConfig
-
 def reset_config():
-    cfg.clear_stack(SystemConfig())
+    cfg.clear_stack()
 
 reset_config()

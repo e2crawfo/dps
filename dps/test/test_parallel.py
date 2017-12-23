@@ -90,8 +90,9 @@ def test_hyper(test_config):
     config['max_steps'] = 101
 
     distributions = dict(n_train=2**np.array([5, 6, 7]))
+    n_repeats = 2
     session = build_and_submit(
-        name="test_hyper", config=config, distributions=distributions, n_repeats=2,
+        name="test_hyper", config=config, distributions=distributions, n_repeats=n_repeats,
         kind='parallel', host_pool=':', wall_time='1year', cleanup_time='10mins',
         slack_time='10mins', ppn=2, load_avg_threshold=100000.0)
 
@@ -101,6 +102,11 @@ def test_hyper(test_config):
         ['orig.zip', 'experiments', 'os_environ.txt', 'results.zip', 'pip_freeze.txt',
          'dps_git_summary.txt', 'nodefile.txt', 'results.txt', 'job_log.txt']
     )
+    experiments = os.listdir(os.path.join(path, 'experiments'))
+    for exp in experiments:
+        assert exp.startswith('exp_')
+        assert os.path.isdir(os.path.join(path, 'experiments', exp))
+    assert len(experiments) == n_repeats * len(distributions['n_train'])
 
     with open(os.path.join(path, 'results.txt'), 'r') as f:
         results = f.read()

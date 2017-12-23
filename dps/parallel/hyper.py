@@ -149,7 +149,7 @@ def sample_configs(distributions, n_repeats, n_samples=None):
 
 
 def sanitize_string(s):
-    return str(s).replace('_', '').replace(' ', '').replace('/', ',')
+    return str(s).replace('_', '-').replace(' ', '').replace('/', ',')
 
 
 class RunTrainingLoop(object):
@@ -164,9 +164,13 @@ class RunTrainingLoop(object):
         print(datetime.datetime.now())
         print("Sampled values: ")
         pprint(new)
+        print("Base config: ")
+        print(self.base_config)
 
         keys = [k for k in sorted(new.keys()) if k not in 'seed idx repeat'.split()]
         exp_name = '_'.join("{}={}".format(sanitize_string(k), sanitize_string(new[k])) for k in keys)
+
+        dps.reset_config()
 
         config = copy.copy(self.base_config)
         config.update(new)
@@ -227,7 +231,6 @@ def build_search(
             f.write(readme)
 
     print(str(config))
-
     exp_dir.record_environment(config=config, git_modules=[dps])
 
     print("Building parameter search at {}.".format(exp_dir.path))
@@ -248,7 +251,7 @@ def build_search(
         RunTrainingLoop(config)(test_config)
         print("Done local test " + ("=" * 80) + "\n")
 
-    job.map(RunTrainingLoop(config), new_configs)
+    job.map(RunTrainingLoop(config.copy()), new_configs)
 
     job.save_object('metadata', 'distributions', distributions)
     job.save_object('metadata', 'config', config)
@@ -257,7 +260,6 @@ def build_search(
         path = job.zip(delete=False)
     else:
         path = exp_dir.path
-
     return job, path
 
 
@@ -771,11 +773,10 @@ def build_and_submit(
     with config:
         cfg.update_from_command_line()
 
+    # Get run_kwargs from command line
     sig = inspect.signature(ParallelSession.__init__)
-
     default_run_kwargs = sig.bind_partial()
     default_run_kwargs.apply_defaults()
-
     cl_run_kwargs = clify.command_line(default_run_kwargs.arguments).parse()
     run_kwargs.update(cl_run_kwargs)
 
@@ -789,8 +790,8 @@ def build_and_submit(
 
     if kind == "local":
         with config:
-            cfg.update_from_command_line()
             from dps.train import training_loop
+            cfg.update_from_command_line()
             outputs = list(training_loop())
         return outputs[-1]
     else:
@@ -804,25 +805,20 @@ def build_and_submit(
             slim=False,
             max_experiments=np.inf,
         )
-        del config['log_root']
-        del config['build_experiments_dir']
-        del config['data_dir']
-        del config['model_dir']
 
         if readme == "_vim_":
             readme = edit_text(
                 prefix="dps_readme_", editor="vim", initial_text="README.md: \n")
 
-        with config:
-            job, archive_path = build_search(
-                cfg.build_experiments_dir, name, distributions, config,
-                add_date=1, _zip=True, do_local_test=do_local_test,
-                n_param_settings=n_param_settings, n_repeats=n_repeats,
-                readme=readme)
+        job, archive_path = build_search(
+            cfg.build_experiments_dir, name, distributions, config,
+            add_date=1, _zip=True, do_local_test=do_local_test,
+            n_param_settings=n_param_settings, n_repeats=n_repeats,
+            readme=readme)
 
         run_kwargs.update(
             archive_path=archive_path, name=name, wall_time=wall_time,
-            kind=kind, parallel_exe=config['parallel_exe'])
+            kind=kind, parallel_exe=cfg.parallel_exe)
 
         parallel_session = submit_job(**run_kwargs)
 

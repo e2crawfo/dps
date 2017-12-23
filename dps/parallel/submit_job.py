@@ -16,7 +16,8 @@ from dps.parallel.base import ReadOnlyJob, zip_root
 from dps.utils import cd, parse_timedelta, make_symlink, ExperimentStore
 
 
-DEFAULT_HOST_POOL = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
+DEFAULT_HOST_POOL = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 5)]
+# DEFAULT_HOST_POOL = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
 
 
 class ParallelSession(object):

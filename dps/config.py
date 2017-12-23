@@ -1,63 +1,8 @@
 import numpy as np
-import configparser
-import socket
-from pathlib import Path
 
-import dps
 from dps import cfg
-from dps.utils import Config, process_path
+from dps.utils import Config
 from dps.rl import rl_render_hook
-
-
-class SystemConfig(Config):
-    def __init__(self, _d=None, **kwargs):
-        config = _load_system_config()
-        if _d:
-            config.update(_d)
-        config.update(kwargs)
-        super(SystemConfig, self).__init__(**config)
-
-
-def _load_system_config(key=None):
-    _config = configparser.ConfigParser()
-    location = Path(dps.__file__).parent
-    _config.read(str(location / 'config.ini'))
-
-    if not key:
-        key = socket.gethostname()
-
-    if 'travis' in key:
-        key = 'travis'
-
-    if key not in _config:
-        key = 'DEFAULT'
-
-    # Load default configuration from a file
-    config = Config(
-        hostname=socket.gethostname(),
-        start_tensorboard=_config.getboolean(key, 'start_tensorboard'),
-        reload_interval=_config.getint(key, 'reload_interval'),
-        update_latest=_config.getboolean(key, 'update_latest'),
-        save_summaries=_config.getboolean(key, 'save_summaries'),
-        data_dir=process_path(_config.get(key, 'data_dir')),
-        model_dir=process_path(_config.get(key, 'model_dir')),
-        build_experiments_dir=process_path(_config.get(key, 'build_experiments_dir')),
-        run_experiments_dir=process_path(_config.get(key, 'run_experiments_dir')),
-        log_root=process_path(_config.get(key, 'log_root')),
-        show_plots=_config.getboolean(key, 'show_plots'),
-        save_plots=_config.getboolean(key, 'save_plots'),
-        use_gpu=_config.getboolean(key, 'use_gpu'),
-        tbport=_config.getint(key, 'tbport'),
-        verbose=_config.getboolean(key, 'verbose'),
-        per_process_gpu_memory_fraction=_config.getfloat(key, 'per_process_gpu_memory_fraction'),
-        gpu_allow_growth=_config.getboolean(key, 'gpu_allow_growth'),
-        parallel_exe=process_path(_config.get(key, 'parallel_exe')),
-    )
-
-    config.max_experiments = _config.getint(key, 'max_experiments')
-    if config.max_experiments <= 0:
-        config.max_experiments = np.inf
-    return config
 
 
 def get_experiment_name():
@@ -71,7 +16,7 @@ def get_experiment_name():
     return '_'.join(name)
 
 
-DEFAULT_CONFIG = SystemConfig(
+DEFAULT_CONFIG = Config(
     name="Default",
     seed=-1,
 

@@ -47,7 +47,6 @@ class FeedforwardPretrained(ScopedFunction):
     build_op_classifier = Param()
     build_feedforward_model = Param()
 
-    include_raw = Param()
     n_raw_features = Param()
     build_convolutional_model = Param()
 
@@ -123,7 +122,7 @@ class FeedforwardPretrained(ScopedFunction):
             [c for row in op_classifications for c in row])
         model_input = tf.concat(tensors, axis=-1, name="feedforward_pretrained_output_flattened")
 
-        if self.include_raw:
+        if self.n_raw_features > 0:
             self.convolutional_model = self.build_convolutional_model()
             raw_features = self.convolutional_model(inp, self.n_raw_features, is_training)
             model_input = tf.concat([model_input, raw_features], axis=-1)
@@ -321,7 +320,6 @@ feedforward_config = config.copy(
     pretrain=True,
     build_feedforward_model=lambda: MLP(
         [cfg.n_controller_units, cfg.n_controller_units, cfg.n_controller_units]),
-    include_raw=True,
     n_raw_features=128,
 )
 

@@ -24,6 +24,8 @@ import dill
 from functools import wraps
 import inspect
 import hashlib
+import configparser
+import socket
 
 import clify
 import dps
@@ -1190,8 +1192,63 @@ class Config(dict, MutableMapping):
         nested_update(self, _d)
         nested_update(self, kwargs)
 
+    def update_from_command_line(self):
+        cl_args = clify.wrap_object(self).parse()
+        self.update(cl_args)
 
-class ClearConfig(Config):
+
+class SystemConfig(Config):
+    def __init__(self, _d=None, **kwargs):
+        config = _load_system_config()
+        if _d:
+            config.update(_d)
+        config.update(kwargs)
+        super(SystemConfig, self).__init__(**config)
+
+
+def _load_system_config(key=None):
+    _config = configparser.ConfigParser()
+    location = Path(dps.__file__).parent
+    _config.read(str(location / 'config.ini'))
+
+    if not key:
+        key = socket.gethostname()
+
+    if 'travis' in key:
+        key = 'travis'
+
+    if key not in _config:
+        key = 'DEFAULT'
+
+    # Load default configuration from a file
+    config = Config(
+        hostname=socket.gethostname(),
+        start_tensorboard=_config.getboolean(key, 'start_tensorboard'),
+        reload_interval=_config.getint(key, 'reload_interval'),
+        update_latest=_config.getboolean(key, 'update_latest'),
+        save_summaries=_config.getboolean(key, 'save_summaries'),
+        data_dir=process_path(_config.get(key, 'data_dir')),
+        model_dir=process_path(_config.get(key, 'model_dir')),
+        build_experiments_dir=process_path(_config.get(key, 'build_experiments_dir')),
+        run_experiments_dir=process_path(_config.get(key, 'run_experiments_dir')),
+        log_root=process_path(_config.get(key, 'log_root')),
+        show_plots=_config.getboolean(key, 'show_plots'),
+        save_plots=_config.getboolean(key, 'save_plots'),
+        use_gpu=_config.getboolean(key, 'use_gpu'),
+        tbport=_config.getint(key, 'tbport'),
+        verbose=_config.getboolean(key, 'verbose'),
+        per_process_gpu_memory_fraction=_config.getfloat(key, 'per_process_gpu_memory_fraction'),
+        gpu_allow_growth=_config.getboolean(key, 'gpu_allow_growth'),
+        parallel_exe=process_path(_config.get(key, 'parallel_exe')),
+    )
+
+    config.max_experiments = _config.getint(key, 'max_experiments')
+    if config.max_experiments <= 0:
+        config.max_experiments = np.inf
+    return config
+
+
+class ClearConfig(SystemConfig):
     pass
 
 
@@ -1216,21 +1273,51 @@ class ConfigStack(dict, metaclass=Singleton):
         stack = ConfigStack._stack[::-1]
         for i, config in enumerate(stack):
             if isinstance(config, ClearConfig):
-                return stack[:i]
+                return stack[:i+1]
         return stack
 
-    def clear_stack(self, default=None):
+    def clear_stack(self, default=NotSupplied):
         self._stack.clear()
         if default is not None:
-            self._stack.append(default)
+            if default is NotSupplied:
+                self._stack.append(SystemConfig())
+            else:
+                self._stack.append(default)
 
     def __str__(self):
-        items = {k: v for k, v in self.items()}
-        s = "<{} -\n{}\n>".format(self.__class__.__name__, pformat(items))
-        return s
+        return self.to_string(hidden=True)
 
     def __repr__(self):
         return str(self)
+
+    def to_string(self, hidden=False):
+        s = []
+
+        seen_keys = set()
+        reverse_stack = self._stack[::-1]
+        visible_keys = [set() for config in reverse_stack]
+
+        cleared = False
+        for vk, config in zip(visible_keys, reverse_stack):
+            if not cleared:
+                for key in config.keys():
+                    if key not in seen_keys:
+                        vk.add(key)
+                        seen_keys.add(key)
+
+            if isinstance(config, ClearConfig):
+                cleared = True
+
+        for i, (vk, config) in enumerate(zip(visible_keys[::-1], reverse_stack[::-1])):
+            visible_items = {k: v for k, v in config.items() if k in vk}
+            if hidden:
+                hidden_items = {k: v for k, v in config.items() if k not in vk}
+                s.append("# {}: <{} -\nVISIBLE:\n{}\nHIDDEN:\n{}\n>".format(i, config.__class__.__name__, pformat(visible_items), pformat(hidden_items)))
+            else:
+                s.append("# {}: <{} -\n{}\n>".format(i, config.__class__.__name__, pformat(visible_items)))
+
+        s = '\n'.join(s)
+        return "<{} -\n{}\n>".format(self.__class__.__name__, s)
 
     def get(self, key, default=None):
         try:
@@ -1286,13 +1373,13 @@ class ConfigStack(dict, metaclass=Singleton):
         self._stack[-1].update(*args, **kwargs)
 
     def freeze(self, remove_callable=False):
-        cfg = Config()
+        _config = Config()
         for key in self.keys():
             value = self[key]
             if remove_callable and callable(value):
                 value = str(value)
-            cfg[key] = value
-        return cfg
+            _config[key] = value
+        return _config
 
     @property
     def log_dir(self):

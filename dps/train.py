@@ -140,7 +140,8 @@ class TrainingLoop(object):
             if self.start_time is None:
                 self.start_time = time.time()
             print("\n\n" + "=" * 80)
-            print("Starting training run (name={}) at {}, {} seconds after given start time.".format(cfg.name, datetime.datetime.now(), time.time() - self.start_time))
+            print("Starting training run (name={}) at {}, {} seconds after given "
+                  "start time.".format(cfg.name, datetime.datetime.now(), time.time() - self.start_time))
 
             print("\nScratch directory for this training run is {}.".format(exp_dir.path))
             cfg.path = exp_dir.path
@@ -150,19 +151,21 @@ class TrainingLoop(object):
             print("Set numpy random seed to {}.".format(cfg.seed))
 
             yield from self._run()
-            print("Done training run (name={}) at {}, {} seconds after given start time.".format(cfg.name, datetime.datetime.now(), time.time() - self.start_time))
+            print("Done training run (name={}) at {}, {} seconds after given "
+                  "start time.".format(cfg.name, datetime.datetime.now(), time.time() - self.start_time))
             print("=" * 80)
             print("\n\n")
 
     def _run(self):
-        print(cfg)
+        print(cfg.to_string())
 
         threshold_reached = True
         self.global_step = 0
 
         for stage, stage_config in enumerate(self.curriculum):
             print("\n" + "=" * 50)
-            print("Starting stage {} at {}, {} seconds after given start time.\n".format(stage, datetime.datetime.now(), time.time() - self.start_time))
+            print("Starting stage {} at {}, {} seconds after given "
+                  "start time.\n".format(stage, datetime.datetime.now(), time.time() - self.start_time))
             print("\n")
 
             stage_config = Config(stage_config)
@@ -295,7 +298,8 @@ class TrainingLoop(object):
 
                 self.record(stage_duration=time.time()-stage_start)
 
-                print("Done stage {} at {}, {} seconds after given start time.".format(stage, datetime.datetime.now(), time.time() - self.start_time))
+                print("Done stage {} at {}, {} seconds after given "
+                      "start time.".format(stage, datetime.datetime.now(), time.time() - self.start_time))
                 print("=" * 50)
 
         print(self.summarize(latest=False))

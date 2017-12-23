@@ -37,7 +37,7 @@ def _eval_model(test_dataset, inference, x_ph):
 
 
 def make_checkpoint_dir(config, name):
-    checkpoint_dir = os.path.join(config.log_root, name)
+    checkpoint_dir = os.path.join(cfg.log_root, name)
     try:
         shutil.rmtree(checkpoint_dir)
     except FileNotFoundError:
@@ -81,7 +81,7 @@ def test_emnist_load_or_train(build_function, test_config):
             stack.enter_context(config)
 
             f = build_function()
-            x_ph = tf.placeholder(tf.float32, (None,) + config.shape)
+            x_ph = tf.placeholder(tf.float32, (None,) + cfg.shape)
             inference = f(x_ph, output_size, False)
 
             loaded = load_or_train(
@@ -99,7 +99,7 @@ def test_emnist_load_or_train(build_function, test_config):
             stack.enter_context(config)
 
             f = build_function()
-            x_ph = tf.placeholder(tf.float32, (None,) + config.shape)
+            x_ph = tf.placeholder(tf.float32, (None,) + cfg.shape)
             inference = f(x_ph, output_size, False)
 
             loaded = load_or_train(
@@ -140,7 +140,7 @@ def test_emnist_pretrained(build_function, test_config):
 
             f = build_function()
             f.set_pretraining_params(config, name_params, checkpoint_dir)
-            x_ph = tf.placeholder(tf.float32, (None,) + config.shape)
+            x_ph = tf.placeholder(tf.float32, (None,) + cfg.shape)
             inference = f(x_ph, output_size, False)
 
             assert f.was_loaded is False
@@ -158,7 +158,7 @@ def test_emnist_pretrained(build_function, test_config):
 
             f = build_function()
             f.set_pretraining_params(config, name_params, checkpoint_dir)
-            x_ph = tf.placeholder(tf.float32, (None,) + config.shape)
+            x_ph = tf.placeholder(tf.float32, (None,) + cfg.shape)
             inference = f(x_ph, output_size, False)
 
             assert f.was_loaded is True
@@ -202,7 +202,7 @@ def test_omniglot(build_function, test_config):
 
             f = build_function()
             f.set_pretraining_params(config, name_params, checkpoint_dir)
-            x_ph = tf.placeholder(tf.float32, (None,) + config.shape)
+            x_ph = tf.placeholder(tf.float32, (None,) + cfg.shape)
 
             inference = f(x_ph, output_size, False)
 
@@ -219,7 +219,7 @@ def test_omniglot(build_function, test_config):
 
             f = build_function()
             f.set_pretraining_params(config, name_params, checkpoint_dir)
-            x_ph = tf.placeholder(tf.float32, (None,) + config.shape)
+            x_ph = tf.placeholder(tf.float32, (None,) + cfg.shape)
             inference = f(x_ph, output_size, False)
 
             assert f.was_loaded is True
@@ -259,7 +259,7 @@ def test_salience_pretrained(test_config):
 
             f = build_function()
             f.set_pretraining_params(config, name_params, checkpoint_dir)
-            x_ph = tf.placeholder(tf.float32, (None,) + config.image_shape)
+            x_ph = tf.placeholder(tf.float32, (None,) + cfg.image_shape)
             f(x_ph, output_size, False)
 
             assert f.was_loaded is False
@@ -277,7 +277,7 @@ def test_salience_pretrained(test_config):
 
             f = build_function()
             f.set_pretraining_params(config, name_params, checkpoint_dir)
-            x_ph = tf.placeholder(tf.float32, (None,) + config.image_shape)
+            x_ph = tf.placeholder(tf.float32, (None,) + cfg.image_shape)
             f(x_ph, output_size, False)
 
             assert f.was_loaded is True
@@ -298,7 +298,7 @@ def _train_classifier(build_function, config, name_params, output_size, checkpoi
 
         f = build_function()
         f.set_pretraining_params(config, name_params, checkpoint_dir)
-        x_ph = tf.placeholder(tf.float32, (None,) + config.shape)
+        x_ph = tf.placeholder(tf.float32, (None,) + cfg.shape)
 
         # Trigger training
         f(x_ph, output_size, False)
