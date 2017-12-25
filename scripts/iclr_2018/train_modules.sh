@@ -1,0 +1,1 @@
+python rl_main.py --name=train_modules --kind=slurm --wall-time=20mins --cleanup-time=1mins --slack-time=1mins --max-hosts=1 --ppn=1 --cpp=4 --gpu-set=0 --ignore-gpu=False --n-param-settings=1 --n-repeats=1 --pmem=3700

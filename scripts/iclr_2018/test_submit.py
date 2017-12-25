@@ -23,17 +23,17 @@ elif args.kind == "slurm":
         sha = subprocess.check_output("git rev-parse --verify --short HEAD".split()).decode().strip()
 
     hostname = socket.gethostname()
-    if "graham" in hostname:
-        resources = "--max-hosts=4 --ppn=8 --pmem="
+    if "gra" in hostname:
+        resources = "--max-hosts=4 --ppn=8 --pmem=3800"
         gpu = "--gpu-set=0,1 --ignore-gpu=True"
     elif "cedar" in hostname:
         if args.queue == "gpu":
             resources = "--max-hosts=5 --ppn=6 --pmem=7700"
         else:
-            resources = "--max-hosts=4 --ppn=8 --pmem=3700"
+            resources = "--max-hosts=4 --ppn=8 --pmem=3800"
         gpu = "--gpu-set=0,1,2,3 --ignore-gpu=True"
     else:
-        raise Exception()
+        raise Exception("Unknown host: {}".format(hostname))
 
     if args.queue == "cpu":
         gpu = ""
