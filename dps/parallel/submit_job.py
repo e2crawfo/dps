@@ -16,8 +16,7 @@ from dps.parallel.base import ReadOnlyJob, zip_root
 from dps.utils import cd, parse_timedelta, make_symlink, ExperimentStore
 
 
-DEFAULT_HOST_POOL = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 5)]
-# DEFAULT_HOST_POOL = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
+DEFAULT_HOST_POOL = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
 
 
 class ParallelSession(object):
@@ -68,6 +67,8 @@ class ParallelSession(object):
         Number of retries per job.
     gpu_set: str
         Comma-separated list of indices of gpus to use.
+    copy_venv: bool
+        If True, copy the virtualenv from the launching environment and use it to run the simulation.
     step_time_limit: str
         String specifying time limit for each step. If not supplied, a time limit is inferred
         automatically based on wall_time and number of steps (giving each step an equal amount
@@ -85,7 +86,7 @@ class ParallelSession(object):
             self, name, input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', ppn=12, cpp=1,
             pmem=None, wall_time="1hour", cleanup_time="1min", slack_time="1min", add_date=True, dry_run=0,
             parallel_exe=None, kind="parallel", host_pool=None, load_avg_threshold=8.,
-            min_hosts=None, max_hosts=1, env_vars=None, redirect=False, n_retries=0, gpu_set="",
+            min_hosts=None, max_hosts=1, env_vars=None, redirect=False, n_retries=0, gpu_set="", copy_venv="",
             step_time_limit="", ignore_gpu=False, store_experiments=True, ssh_options=None, readme=""):
 
         args = locals().copy()
@@ -94,6 +95,10 @@ class ParallelSession(object):
         print("\nParallelSession args:")
         print(args)
         del args
+
+        launch_venv = os.getenv('VIRTUAL_ENV')
+        if launch_venv:
+            launch_venv = os.path.split(launch_venv)[1]
 
         if not parallel_exe:
             parallel_exe = "$HOME/.local/bin/parallel"
@@ -448,9 +453,10 @@ class ParallelSession(object):
             mem = "--mem-per-cpu={}mb".format(self.pmem) if self.pmem else ""
             command = 'srun --cpus-per-task {cpp} --ntasks {n_tasks} {bind} {mem} --no-kill sh -c "{parallel_command}"'.format(
                 cpp=self.cpp, n_tasks=len(indices_for_step), bind=bind, mem=mem, parallel_command=parallel_command)
-            print(command)
         else:
+            workon = "workon {launch_venv} && " if (self.copy_venv and self.launch_venv) else ""
             parallel_command = (
+                workon +
                 "cd {local_scratch} && "
                 "dps-hyper run {archive_root} {pattern} {{}} --max-time {python_seconds_per_step} "
                 "--log-root {local_scratch} --log-name experiments "

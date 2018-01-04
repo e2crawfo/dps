@@ -8,7 +8,6 @@ import hashlib
 import tensorflow as tf
 from tensorflow.python.ops import random_ops
 from tensorflow.python.framework import ops
-from tensorflow.contrib.slim.python.slim.nets.vgg import vgg_a, vgg_16, vgg_19
 from tensorflow.contrib.slim import fully_connected
 
 import dps
@@ -322,7 +321,7 @@ class VGGNet(ScopedFunction):
             images = tf.reshape(images, (-1, s, s, 1))
         if len(images.shape) == 3:
             images = images[..., None]
-
+        from tensorflow.contrib.slim.python.slim.nets.vgg import vgg_a, vgg_16, vgg_19
         if self.kind == 'a':
             return vgg_a(images, output_size, is_training)
         elif self.kind == '16':
