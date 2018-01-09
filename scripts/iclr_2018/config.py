@@ -141,16 +141,16 @@ cnn_config.update(
     l2_weight=0.0,
 
     batch_size=64,
-    n_controller_units=128,
     log_name="cnn_grid_arithmetic",
     patience=5000,
     reward_window=0.499,
     preserve_policy=True,
 
     build_env=grid_arithmetic.sl_build_env,
-    build_model=grid_arithmetic.sl_build_model,
+    build_model=grid_arithmetic.feedforward_build_model,
 
     mode="standard",
+    n_controller_units=128,
     build_convolutional_model=lambda: LeNet(cfg.n_controller_units),
 
     largest_digit=99,
@@ -162,4 +162,52 @@ cnn_config.update(
         [cfg.n_controller_units, cfg.n_controller_units, cfg.n_controller_units]
     ),
     n_raw_features=128,
+)
+
+
+rnn_config = SL_EXPERIMENT_CONFIG.copy()
+
+rnn_config.update(env_config)
+rnn_config.update(
+    name="GridArithmeticRNN",
+
+    memory_limit_mb=12*1024,
+    use_gpu=True,
+    gpu_allow_growth=True,
+    per_process_gpu_memory_fraction=0.22,
+
+    stopping_criteria="01_loss,min",
+    get_updater=grid_arithmetic.sl_get_updater,
+    optimizer_spec="adam",
+    lr_schedule=1e-4,
+    power_through=True,
+    noise_schedule=0.0,
+    max_grad_norm=None,
+    l2_weight=0.0,
+
+    batch_size=64,
+    log_name="rnn_grid_arithmetic",
+    patience=5000,
+    reward_window=0.499,
+    preserve_policy=True,
+
+    build_env=grid_arithmetic.sl_build_env,
+    build_model=grid_arithmetic.recurrent_build_model,
+
+    largest_digit=99,
+
+    n_controller_units=128,
+    build_recurrent_model=BuildLstmController(),
+
+    pretrain=True,
+
+    n_raw_features=128,
+    build_convolutional_model=lambda: LeNet(cfg.n_raw_features),
+
+    # For when pretrain == True
+    fixed=True,
+
+    # For when pretrain == False
+    n_glimpse_features=64,
+    build_glimpse_processor=lambda: LeNet(cfg.n_glimpse_features),
 )

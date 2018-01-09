@@ -1,4 +1,5 @@
 import tensorflow as tf
+from tensorflow.python.ops.rnn import dynamic_rnn
 import numpy as np
 import os
 from collections import OrderedDict
@@ -12,7 +13,7 @@ from dps.datasets import GridArithmeticDataset, GridOmniglotDataset, OmniglotDat
 from dps.utils.tf import LeNet, MLP, SalienceMap, extract_glimpse_numpy_like, ScopedFunction
 from dps.utils import Param, Config, image_to_string
 from dps.updater import DifferentiableUpdater
-from dps.rl.policy import EpsilonSoftmax, DiscretePolicy
+from dps.rl.policy import EpsilonSoftmax, DiscretePolicy, BuildLstmController
 from dps.envs.visual_arithmetic import digit_map, classifier_head, ResizeSalienceDetector
 
 
@@ -24,7 +25,12 @@ def sl_build_env():
     return ClassificationEnv(train, val, test, one_hot=True)
 
 
-def sl_build_model():
+def sl_get_updater(env):
+    model = cfg.build_model()
+    return DifferentiableUpdater(env, model)
+
+
+def feedforward_build_model():
     if cfg.mode == "standard":
         return cfg.build_convolutional_model()
     elif cfg.mode == "pretrained":
@@ -33,10 +39,8 @@ def sl_build_model():
         raise Exception()
 
 
-def sl_get_updater(env):
-    model = cfg.build_model()
-
-    return DifferentiableUpdater(env, model)
+def recurrent_build_model():
+    return Recurrent()
 
 
 class FeedforwardPretrained(ScopedFunction):
@@ -128,6 +132,110 @@ class FeedforwardPretrained(ScopedFunction):
             model_input = tf.concat([model_input, raw_features], axis=-1)
 
         return self.feedforward_model(model_input, output_size, is_training)
+
+
+class Recurrent(ScopedFunction):
+    fixed = Param()
+    pretrain = Param()
+
+    emnist_config = Param()
+    build_digit_classifier = Param()
+    build_op_classifier = Param()
+
+    build_recurrent_model = Param()
+
+    n_raw_features = Param()
+    build_convolutional_model = Param()
+
+    n_glimpse_features = Param()
+    build_glimpse_processor = Param()
+
+    image_shape_grid = Param()
+    sub_image_shape = Param()
+
+    def __init__(self, **kwargs):
+        super(Recurrent, self).__init__(**kwargs)
+
+        self.digit_classifier = None
+        self.op_classifier = None
+        self.fovea_processor = None
+        self.full_convolutional_model = None
+
+    def _call(self, inp, output_size, is_training):
+        if self.digit_classifier is None and self.pretrain:
+            self.digit_classifier = self.build_digit_classifier()
+
+            digit_config = self.emnist_config.copy(
+                classes=list(range(10)),
+                build_function=self.build_digit_classifier,
+                include_blank=True
+            )
+            self.digit_classifier.set_pretraining_params(
+                digit_config, name_params='classes include_blank shape n_controller_units',
+                directory=cfg.model_dir + '/emnist_pretrained'
+            )
+
+            if self.fixed:
+                self.digit_classifier.fix_variables()
+
+        if self.op_classifier is None and self.pretrain:
+            self.op_classifier = self.build_op_classifier()
+
+            op_config = self.emnist_config.copy(
+                classes=list(GridArithmetic.op_classes),
+                build_function=self.build_op_classifier
+            )
+
+            self.op_classifier.set_pretraining_params(
+                op_config, name_params='classes include_blank shape n_controller_units',
+                directory=cfg.model_dir + '/emnist_pretrained'
+            )
+
+            if self.fixed:
+                self.op_classifier.fix_variables()
+
+        def head(inp):
+            if self.fixed:
+                return tf.stop_gradient(inp)
+            else:
+                return inp
+
+        # Assume inp is of shape (batch_size, h, w, d)
+        rows = tf.split(inp, self.image_shape_grid[0], axis=1)
+        _rows = [tf.split(row, self.image_shape_grid[1], axis=2) for row in rows]
+
+        if self.pretrain:
+            digit_classifications, op_classifications = [], []
+            for row in _rows:
+                digit_classifications.extend(
+                    [head(self.digit_classifier(img, 11, is_training)) for img in row])
+                op_classifications.extend(
+                    [head(self.op_classifier(img, len(GridArithmetic.op_classes) + 1, is_training)) for img in row])
+
+            rnn_input = [tf.concat([dc, oc], axis=-1) for dc, oc in zip(digit_classifications, op_classifications)]
+
+        else:
+            _raw_images = [r for row in _rows for r in row]
+            if self.fovea_processor is None:
+                self.fovea_processor = self.build_glimpse_processor()
+            rnn_input = [self.fovea_processor(img, cfg.n_glimpse_features, is_training) for img in _raw_images]
+
+        if self.n_raw_features > 0:
+            if self.full_convolutional_model is None:
+                self.full_convolutional_model = self.build_convolutional_model()
+
+            raw_features = self.full_convolutional_model(inp, self.n_raw_features, is_training)
+            rnn_input = [tf.concat([ri, raw_features], axis=-1) for ri in rnn_input]
+
+        rnn_input = tf.stack(rnn_input, axis=0)
+        recurrent_model = self.build_recurrent_model(output_size)
+        batch_size = tf.shape(inp)[0]
+
+        output, final_state = dynamic_rnn(
+            recurrent_model, rnn_input, initial_state=recurrent_model.zero_state(batch_size, tf.float32),
+            parallel_iterations=1, swap_memory=False, time_major=True)
+
+        return output[-1, ...]  # Return output at final timestep
 
 
 def build_env():
@@ -300,7 +408,7 @@ config = Config(
 
 feedforward_config = config.copy(
     get_updater=sl_get_updater,
-    build_model=sl_build_model,
+    build_model=feedforward_build_model,
     build_env=sl_build_env,
 
     use_gpu=False,
@@ -321,6 +429,36 @@ feedforward_config = config.copy(
     build_feedforward_model=lambda: MLP(
         [cfg.n_controller_units, cfg.n_controller_units, cfg.n_controller_units]),
     n_raw_features=128,
+)
+
+recurrent_config = config.copy(
+    get_updater=sl_get_updater,
+    build_model=recurrent_build_model,
+    build_env=sl_build_env,
+
+    use_gpu=False,
+    per_process_gpu_memory_fraction=0.2,
+
+    largest_digit=99,
+    batch_size=16,
+    optimizer_spec="adam",
+    opt_steps_per_update=1,
+    lr_schedule="1e-4",
+
+    n_controller_units=128,
+    build_recurrent_model=BuildLstmController(),
+
+    pretrain=True,
+
+    n_raw_features=128,
+    build_convolutional_model=lambda: LeNet(cfg.n_raw_features),
+
+    # For when pretrain == True
+    fixed=True,
+
+    # For when pretrain == False
+    n_glimpse_features=64,
+    build_glimpse_processor=lambda: LeNet(cfg.n_glimpse_features),
 )
 
 

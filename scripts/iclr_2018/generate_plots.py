@@ -69,6 +69,9 @@ size_paths["F:dps"] = 'curriculum_size/dps_new/F/results.zip'
 size_paths["F:cnn"] = 'curriculum_size/cnn/F/results.zip'
 size_paths['F:cnn_pretrained'] = 'curriculum_size/cnn_pretrained/F/results.zip'
 
+size_paths['G:cnn_pretrained'] = 'curriculum_size/cnn_pretrained/G/results.zip'
+size_paths['H:cnn_pretrained'] = 'curriculum_size/cnn_pretrained/H/results.zip'
+
 ablation_paths = Config()
 ablation_paths['full_interface'] = 'sample_efficiency_combined/dps/results.zip'
 ablation_paths['no_modules'] = 'ablations/no_modules/results.zip'
@@ -358,6 +361,19 @@ def gen_size_curriculum():
     label_order.append(label)
     xticks |= set(x)
 
+    if not args.paper:
+        x, y, *yerr = _extract_cnn_data(size_paths['G']['cnn_pretrained'], 512, spread_measure, test_01_loss, 'curriculum:-1:n_train')
+        label = 'CNN - Alternate Curric 1'
+        ax.errorbar(x, y, yerr=yerr, label=label, ls='-.', c=cnn_colour)
+        label_order.append(label)
+        xticks |= set(x)
+
+        x, y, *yerr = _extract_cnn_data(size_paths['H']['cnn_pretrained'], 512, spread_measure, test_01_loss, 'curriculum:-1:n_train')
+        label = 'CNN - Alternate Curric 2'
+        ax.errorbar(x, y, yerr=yerr, label=label, ls=':', c=cnn_colour)
+        label_order.append(label)
+        xticks |= set(x)
+
     legend_handles = {l: h for h, l in zip(*ax.get_legend_handles_labels())}
     ordered_handles = [legend_handles[l] for l in label_order]
 
@@ -636,6 +652,7 @@ if __name__ == "__main__":
     parser.add_argument("--no-block", action="store_true")
     parser.add_argument("--show", action="store_true")
     parser.add_argument("--clear-cache", action="store_true")
+    parser.add_argument("--paper", action="store_true")
     args = parser.parse_args()
     plt.rc('lines', linewidth=1)
 
