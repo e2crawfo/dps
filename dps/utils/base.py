@@ -47,6 +47,17 @@ def get_param_hash(d, name_params=None):
     return param_hash
 
 
+CLEAR_CACHE = False
+
+
+def set_clear_cache(value):
+    """ If called with True, then whenever `sha_cache` function is instantiated, it will ignore
+        any cache saved to disk, and instead just call the function as normal, saving the results
+        as the new cache value. """
+    global CLEAR_CACHE
+    CLEAR_CACHE = value
+
+
 def sha_cache(directory, recurse=False):
     os.makedirs(directory, exist_ok=True)
 
@@ -57,13 +68,20 @@ def sha_cache(directory, recurse=False):
             bound_args = sig.bind(*args, **kwargs)
             param_hash = get_param_hash(bound_args.arguments)
             filename = os.path.join(directory, "{}_{}.cache".format(func.__name__, param_hash))
+
+            loaded = False
             try:
-                with open(filename, 'rb') as f:
-                    value = dill.load(f)
-            except Exception:
-                value = func(**bound_args.arguments)
-                with open(filename, 'wb') as f:
-                    dill.dump(value, f, protocol=dill.HIGHEST_PROTOCOL, recurse=recurse)
+                if not CLEAR_CACHE:
+                    with open(filename, 'rb') as f:
+                        value = dill.load(f)
+                    loaded = True
+            except FileNotFoundError:
+                pass
+            finally:
+                if not loaded:
+                    value = func(**bound_args.arguments)
+                    with open(filename, 'wb') as f:
+                        dill.dump(value, f, protocol=dill.HIGHEST_PROTOCOL, recurse=recurse)
             return value
         return new_f
     return decorator
