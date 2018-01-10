@@ -13,7 +13,7 @@ from dps.datasets import GridArithmeticDataset, GridOmniglotDataset, OmniglotDat
 from dps.utils.tf import LeNet, MLP, SalienceMap, extract_glimpse_numpy_like, ScopedFunction
 from dps.utils import Param, Config, image_to_string
 from dps.updater import DifferentiableUpdater
-from dps.rl.policy import EpsilonSoftmax, DiscretePolicy, BuildLstmController
+from dps.rl.policy import EpsilonSoftmax, Policy, DiscretePolicy, ProductDist, BuildLstmController
 from dps.envs.visual_arithmetic import digit_map, classifier_head, ResizeSalienceDetector
 
 
@@ -245,6 +245,8 @@ def build_env():
         internal = OmniglotCounting()
     elif cfg.ablation == 'easy':
         internal = GridArithmeticEasy()
+    elif cfg.ablation == 'alternate':
+        internal = GridArithmeticAlternate()
     else:
         internal = GridArithmetic()
 
@@ -267,8 +269,15 @@ def build_env():
 
 
 def build_policy(env, **kwargs):
-    action_selection = EpsilonSoftmax(env.actions_dim, one_hot=True)
-    return DiscretePolicy(action_selection, env.obs_shape, **kwargs)
+    if cfg.ablation == "alternate":
+        action_selection = ProductDist(
+            EpsilonSoftmax(5, one_hot=True),
+            EpsilonSoftmax(env.actions_dim - 5, one_hot=True)
+        )
+        return Policy(action_selection, env.obs_shape, **kwargs)
+    else:
+        action_selection = EpsilonSoftmax(env.actions_dim, one_hot=True)
+        return DiscretePolicy(action_selection, env.obs_shape, **kwargs)
 
 
 class _GridArithmeticRenderRollouts(object):
@@ -767,6 +776,52 @@ class GridArithmeticEasy(GridArithmetic):
         glimpse = self._build_update_glimpse(fovea_y, fovea_x)
 
         prev_action = tf.argmax(a, axis=-1)[..., None]
+        prev_action = tf.to_float(prev_action)
+
+        return self._build_return_values(
+            [digit, op, acc, fovea_x, fovea_y, prev_action, salience, glimpse, salience_input],
+            actions)
+
+
+class GridArithmeticAlternate(GridArithmetic):
+    _action_names = ['>', '<', 'v', '^', '_', 'classify_digit', 'classify_op', 'update_salience']
+
+    def build_step(self, t, r, a):
+        _digit, _op, _acc, _fovea_x, _fovea_y, _prev_action, _salience, _glimpse, _salience_input = self.rb.as_tuple(r)
+
+        actions = self.unpack_actions(a)
+        (right, left, down, up, stay, classify_digit, classify_op, update_salience, *arithmetic_actions) = actions
+
+        salience = _salience
+        salience_input = _salience_input
+        if self.salience_action:
+            salience, salience_input = self._build_update_salience(
+                update_salience, _salience, _salience_input, _fovea_y, _fovea_x)
+
+        op = self.classifier_head(self.op_classifier(_glimpse, len(self.op_classes) + 1, False))
+        op = (1 - classify_op) * _op + classify_op * op
+
+        new_digit_factor = classify_digit
+        for action in arithmetic_actions:
+            new_digit_factor += action
+
+        digit = self.classifier_head(self.digit_classifier(_glimpse, 11, False))
+        digit = (1 - new_digit_factor) * _digit + new_digit_factor * digit
+
+        new_acc_factor = tf.zeros_like(right)
+        acc = tf.zeros_like(_acc)
+        for key, action in zip(sorted(self.arithmetic_actions), arithmetic_actions):
+            new_acc_factor += action
+            # Its crucial that we use `digit` here and not `_digit`
+            acc += action * self.arithmetic_actions[key](_acc, digit)
+        acc += (1 - new_acc_factor) * _acc
+
+        acc = tf.clip_by_value(acc, -1000.0, 1000.0)
+
+        fovea_y, fovea_x = self._build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
+        glimpse = self._build_update_glimpse(fovea_y, fovea_x)
+
+        prev_action = tf.argmax(a[..., 5:], axis=-1)[..., None]
         prev_action = tf.to_float(prev_action)
 
         return self._build_return_values(

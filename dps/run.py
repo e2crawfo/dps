@@ -35,13 +35,14 @@ def parse_env_alg(env, alg=None):
 
 def run():
     parser = argparse.ArgumentParser(allow_abbrev=False)
-    parser.add_argument('args', nargs='+')
+    parser.add_argument('env')
+    parser.add_argument('alg')
     parser.add_argument('--pdb', action='store_true',
                         help="If supplied, enter post-mortem debugging on error.")
     args, _ = parser.parse_known_args()
 
-    env = args.args[0]
-    alg = args.args[1]
+    env = args.env
+    alg = args.alg
 
     if args.pdb:
         with pdb_postmortem():

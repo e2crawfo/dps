@@ -86,8 +86,7 @@ class _DoWeightingActionValue(object):
 
 class Policy(AgentHead):
     def __init__(
-            self, action_selection, obs_shape,
-            exploration_schedule,
+            self, action_selection, obs_shape, exploration_schedule,
             val_exploration_schedule=None, name=None):
 
         self.action_selection = action_selection
