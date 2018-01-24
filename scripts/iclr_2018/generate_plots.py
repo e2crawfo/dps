@@ -14,26 +14,41 @@ cache_dir = process_path('/home/eric/.cache/dps_plots')
 plot_dir = './plots'
 
 single_op_paths = Config()
-single_op_paths['sum:dps'] = 'sample_efficiency_single_op/dps_new/sum/results.zip'
-single_op_paths['sum:cnn_pretrained'] = 'sample_efficiency_single_op/cnn_pretrained/sum/results.zip'
-single_op_paths['sum:cnn'] = 'sample_efficiency_single_op/cnn/sum/exp_cnn_sum_12hours_2017_10_21_00_54_52.zip'
+single_op_paths['sum:dps'] = 'sample_efficiency/dps_new/sum/results.zip'
+single_op_paths['sum:cnn_pretrained'] = 'sample_efficiency/cnn_pretrained/sum/results.zip'
+single_op_paths['sum:cnn'] = 'sample_efficiency/cnn/sum/exp_cnn_sum_12hours_2017_10_21_00_54_52.zip'
+single_op_paths['sum:cnn_pretrained_pure'] = 'sample_efficiency/cnn_pretrained_pure/sum/results.zip'
+single_op_paths['sum:rnn_pure'] = 'sample_efficiency/rnn_pure/sum/results.zip'
+single_op_paths['sum:rnn_pretrained_pure'] = 'sample_efficiency/rnn_pretrained_pure/sum/results.zip'
 
-single_op_paths['prod:dps'] = 'sample_efficiency_single_op/dps_new/prod/results.zip'
-single_op_paths['prod:cnn_pretrained'] = 'sample_efficiency_single_op/cnn_pretrained/prod/results.zip'
-single_op_paths['prod:cnn'] = 'sample_efficiency_single_op/cnn/prod/exp_cnn_prod_12hours_2017_10_21_00_55_50.zip'
+single_op_paths['prod:dps'] = 'sample_efficiency/dps_new/prod/results.zip'
+single_op_paths['prod:cnn_pretrained'] = 'sample_efficiency/cnn_pretrained/prod/results.zip'
+single_op_paths['prod:cnn'] = 'sample_efficiency/cnn/prod/exp_cnn_prod_12hours_2017_10_21_00_55_50.zip'
+single_op_paths['prod:cnn_pretrained_pure'] = 'sample_efficiency/cnn_pretrained_pure/prod/results.zip'
+single_op_paths['prod:rnn_pure'] = 'sample_efficiency/rnn_pure/prod/results.zip'
+single_op_paths['prod:rnn_pretrained_pure'] = 'sample_efficiency/rnn_pretrained_pure/prod/results.zip'
 
-single_op_paths['max:dps'] = 'sample_efficiency_single_op/dps_new/max/results.zip'
-single_op_paths['max:cnn_pretrained'] = 'sample_efficiency_single_op/cnn_pretrained/max/results.zip'
-single_op_paths['max:cnn'] = 'sample_efficiency_single_op/cnn/max/exp_cnn_max_12hours_2017_10_21_00_56_53.zip'
+single_op_paths['max:dps'] = 'sample_efficiency/dps_new/max/results.zip'
+single_op_paths['max:cnn_pretrained'] = 'sample_efficiency/cnn_pretrained/max/results.zip'
+single_op_paths['max:cnn'] = 'sample_efficiency/cnn/max/exp_cnn_max_12hours_2017_10_21_00_56_53.zip'
+single_op_paths['max:cnn_pretrained_pure'] = 'sample_efficiency/cnn_pretrained_pure/max/results.zip'
+single_op_paths['max:rnn_pure'] = 'sample_efficiency/rnn_pure/max/results.zip'
+single_op_paths['max:rnn_pretrained_pure'] = 'sample_efficiency/rnn_pretrained_pure/max/results.zip'
 
-single_op_paths['min:dps'] = 'sample_efficiency_single_op/dps_new/min/results.zip'
-single_op_paths['min:cnn_pretrained'] = 'sample_efficiency_single_op/cnn_pretrained/min/results.zip'
-single_op_paths['min:cnn'] = 'sample_efficiency_single_op/cnn/min/exp_cnn_min_12hours_2017_10_21_00_57_32.zip'
+single_op_paths['min:dps'] = 'sample_efficiency/dps_new/min/results.zip'
+single_op_paths['min:cnn_pretrained'] = 'sample_efficiency/cnn_pretrained/min/results.zip'
+single_op_paths['min:cnn'] = 'sample_efficiency/cnn/min/exp_cnn_min_12hours_2017_10_21_00_57_32.zip'
+single_op_paths['min:cnn_pretrained_pure'] = 'sample_efficiency/cnn_pretrained_pure/min/results.zip'
+single_op_paths['min:rnn_pure'] = 'sample_efficiency/rnn_pure/min/results.zip'
+single_op_paths['min:rnn_pretrained_pure'] = 'sample_efficiency/rnn_pretrained_pure/min/results.zip'
 
 combined_paths = Config()
-combined_paths['dps'] = 'sample_efficiency_combined/dps_new/results.zip'
-combined_paths['cnn_pretrained'] = 'sample_efficiency_combined/cnn_pretrained/results.zip'
-combined_paths['cnn'] = 'sample_efficiency_combined/cnn/exp_cnn_all_2017_10_23_01_22_58.zip'
+combined_paths['dps'] = 'sample_efficiency/dps_new/combined/results.zip'
+combined_paths['cnn_pretrained'] = 'sample_efficiency/cnn_pretrained/combined/results.zip'
+combined_paths['cnn'] = 'sample_efficiency/cnn/combined/exp_cnn_all_2017_10_23_01_22_58.zip'
+combined_paths['cnn_pretrained_pure'] = 'sample_efficiency/cnn_pretrained_pure/combined/results.zip'
+combined_paths['rnn_pure'] = 'sample_efficiency/rnn_pure/combined/results.zip'
+combined_paths['rnn_pretrained_pure'] = 'sample_efficiency/rnn_pretrained_pure/combined/results.zip'
 
 parity_paths = Config()
 parity_paths['B:dps'] = 'curriculum_parity/dps_new/B/results.zip'
@@ -48,32 +63,62 @@ size_paths = Config()
 size_paths["A:dps"] = 'curriculum_size/dps_new/A/results.zip'
 size_paths["A:cnn"] = 'curriculum_size/cnn/A/results.zip'
 size_paths['A:cnn_pretrained'] = 'curriculum_size/cnn_pretrained/A/results.zip'
+size_paths['A:cnn_pretrained_pure'] = 'curriculum_size/cnn_pretrained_pure/A/results.zip'
+size_paths['A:rnn_pure'] = 'curriculum_size/rnn_pure/A/results.zip'
+size_paths['A:rnn_pretrained_pure'] = 'curriculum_size/rnn_pretrained_pure/A/results.zip'
 
 size_paths["B:dps"] = 'curriculum_size/dps_new/B/results.zip'
 size_paths["B:cnn"] = 'curriculum_size/cnn/B/results.zip'
 size_paths['B:cnn_pretrained'] = 'curriculum_size/cnn_pretrained/B/results.zip'
+size_paths['B:cnn_pretrained_pure'] = 'curriculum_size/cnn_pretrained_pure/B/results.zip'
+size_paths['B:rnn_pure'] = 'curriculum_size/rnn_pure/B/results.zip'
+size_paths['B:rnn_pretrained_pure'] = 'curriculum_size/rnn_pretrained_pure/B/results.zip'
 
 size_paths["C:dps"] = 'curriculum_size/dps_new/C/results.zip'
 size_paths["C:cnn"] = 'curriculum_size/cnn/C/results.zip'
 size_paths['C:cnn_pretrained'] = 'curriculum_size/cnn_pretrained/C/results.zip'
+size_paths['C:cnn_pretrained_pure'] = 'curriculum_size/cnn_pretrained_pure/C/results.zip'
+size_paths['C:rnn_pure'] = 'curriculum_size/rnn_pure/C/results.zip'
+size_paths['C:rnn_pretrained_pure'] = 'curriculum_size/rnn_pretrained_pure/C/results.zip'
 
 size_paths["D:dps"] = 'curriculum_size/dps_new/D/results.zip'
 size_paths["D:cnn"] = 'curriculum_size/cnn/D/results.zip'
 size_paths['D:cnn_pretrained'] = 'curriculum_size/cnn_pretrained/D/results.zip'
+size_paths['D:cnn_pretrained_pure'] = 'curriculum_size/cnn_pretrained_pure/D/results.zip'
+size_paths['D:rnn_pure'] = 'curriculum_size/rnn_pure/D/results.zip'
+size_paths['D:rnn_pretrained_pure'] = 'curriculum_size/rnn_pretrained_pure/D/results.zip'
 
 size_paths["E:dps"] = 'curriculum_size/dps_new/E/results.zip'
 size_paths["E:cnn"] = 'curriculum_size/cnn/E/results.zip'
 size_paths['E:cnn_pretrained'] = 'curriculum_size/cnn_pretrained/E/results.zip'
+size_paths['E:cnn_pretrained_pure'] = 'curriculum_size/cnn_pretrained_pure/E/results.zip'
+size_paths['E:rnn_pure'] = 'curriculum_size/rnn_pure/E/results.zip'
+size_paths['E:rnn_pretrained_pure'] = 'curriculum_size/rnn_pretrained_pure/E/results.zip'
 
 size_paths["F:dps"] = 'curriculum_size/dps_new/F/results.zip'
 size_paths["F:cnn"] = 'curriculum_size/cnn/F/results.zip'
 size_paths['F:cnn_pretrained'] = 'curriculum_size/cnn_pretrained/F/results.zip'
+size_paths['F:cnn_pretrained_pure'] = 'curriculum_size/cnn_pretrained_pure/F/results.zip'
+size_paths['F:rnn_pure'] = 'curriculum_size/rnn_pure/F/results.zip'
+size_paths['F:rnn_pretrained_pure'] = 'curriculum_size/rnn_pretrained_pure/F/results.zip'
 
 size_paths['G:cnn_pretrained'] = 'curriculum_size/cnn_pretrained/G/results.zip'
+size_paths['G:cnn_pretrained_pure'] = 'curriculum_size/cnn_pretrained_pure/G/results.zip'
+
 size_paths['H:cnn_pretrained'] = 'curriculum_size/cnn_pretrained/H/results.zip'
+size_paths['G:cnn_pretrained_pure'] = 'curriculum_size/cnn_pretrained_pure/G/results.zip'
+
+op_paths = Config()
+op_paths['B:dps'] = 'curriculum_op/dps_new/B/results.zip'
+op_paths['B:cnn'] = 'curriculum_op/cnn/A/exp_final_cnn_op_A_2017_10_26_23_08_20.zip'
+op_paths['B:cnn_pretrained'] = 'curriculum_op/cnn_pretrained/B/results.zip'
+
+op_paths['C:dps'] = 'curriculum_op/dps_new/C/results.zip'
+op_paths['C:cnn'] = 'curriculum_op/cnn/B/exp_final_cnn_op_B_2017_10_26_23_07_11.zip'
+op_paths['C:cnn_pretrained'] = 'curriculum_op/cnn_pretrained/C/results.zip'
 
 ablation_paths = Config()
-ablation_paths['full_interface'] = 'sample_efficiency_combined/dps/results.zip'
+ablation_paths['full_interface'] = 'sample_efficiency/dps/combined/results.zip'
 ablation_paths['no_modules'] = 'ablations/no_modules/results.zip'
 ablation_paths['no_transformations'] = 'ablations/no_transformations/results.zip'
 ablation_paths['no_classifiers'] = 'ablations/no_classifiers/results.zip'
@@ -181,14 +226,39 @@ def gen_sample_efficiency_single_op():
         ax.errorbar(x, y, yerr=yerr, label=label, ls='--')
         label_order.append(label)
 
-        cnn_sum_data = _extract_cnn_data(
+        data = _extract_cnn_data(
             single_op_paths[p['key']]['cnn_pretrained'], cnn_n_train, spread_measure, test_01_loss, 'n_train')
 
-        for k, v in cnn_sum_data.items():
+        for k, v in data.items():
             x, y, *yerr = v
-            label = "CNN - {} hidden units".format(k)
+            label = "CNN Pretrained - {} hidden units".format(k)
             ax.errorbar(x, y, yerr=yerr, label=label)
             label_order.append(label)
+
+        data = _extract_cnn_data(
+            single_op_paths[p['key']]['cnn_pretrained_pure'], cnn_n_train, spread_measure, test_01_loss, 'n_train')
+
+        for k, v in data.items():
+            x, y, *yerr = v
+            label = "CNN Pretrained Pure - {} hidden units".format(k)
+            ax.errorbar(x, y, yerr=yerr, label=label)
+            label_order.append(label)
+
+        data = _extract_cnn_data(
+            single_op_paths[p['key']]['rnn_pure'], 128, spread_measure, test_01_loss, 'n_train')
+
+        x, y, *yerr = data
+        label = "RNN - 128 hidden units".format(k)
+        ax.errorbar(x, y, yerr=yerr, label=label)
+        label_order.append(label)
+
+        data = _extract_cnn_data(
+            single_op_paths[p['key']]['rnn_pretrained_pure'], 128, spread_measure, test_01_loss, 'n_train')
+
+        x, y, *yerr = data
+        label = "RNN Pretrained - 128 hidden units".format(k)
+        ax.errorbar(x, y, yerr=yerr, label=label)
+        label_order.append(label)
 
         ax.set_title(p['title'])
         ax.tick_params(axis='both', labelsize=14)
@@ -223,13 +293,36 @@ def gen_sample_efficiency_combined():
     ax.errorbar(x, y, yerr=yerr, label=label, ls='--')
     label_order.append(label)
 
-    cnn_all_data = _extract_cnn_data(combined_paths['cnn_pretrained'], cnn_n_train, spread_measure, test_01_loss, 'n_train')
+    data = _extract_cnn_data(combined_paths['cnn_pretrained'], cnn_n_train, spread_measure, test_01_loss, 'n_train')
 
-    for k, v in cnn_all_data.items():
+    for k, v in data.items():
         x, y, *yerr = v
         label = "CNN - {} hidden units".format(k)
         label_order.append(label)
         ax.errorbar(x, y, yerr=yerr, label=label)
+
+    data = _extract_cnn_data(
+        combined_paths['cnn_pretrained_pure'], cnn_n_train, spread_measure, test_01_loss, 'n_train')
+
+    for k, v in data.items():
+        x, y, *yerr = v
+        label = "CNN Pretrained Pure - {} hidden units".format(k)
+        ax.errorbar(x, y, yerr=yerr, label=label)
+        label_order.append(label)
+
+    data = _extract_cnn_data(
+        combined_paths['rnn_pure'], 128, spread_measure, test_01_loss, 'n_train')
+    x, y, *yerr = data
+    label = "RNN - 128 hidden units".format(k)
+    ax.errorbar(x, y, yerr=yerr, label=label)
+    label_order.append(label)
+
+    data = _extract_cnn_data(
+        combined_paths['rnn_pretrained_pure'], 128, spread_measure, test_01_loss, 'n_train')
+    x, y, *yerr = data
+    label = "RNN Pretrained - 128 hidden units".format(k)
+    ax.errorbar(x, y, yerr=yerr, label=label)
+    label_order.append(label)
 
     ax.set_ylabel('% Test Error', fontsize=12)
     ax.set_xlabel('# Training Examples', fontsize=12)
@@ -361,6 +454,52 @@ def gen_size_curriculum():
     label_order.append(label)
     xticks |= set(x)
 
+
+    x, y, *yerr = _extract_cnn_data(size_paths['A']['cnn_pretrained_pure'], 512, spread_measure, test_01_loss, 'curriculum:-1:n_train')
+    label = 'CNN Pretrained Pure - With Curric'
+    line, _, _ = ax.errorbar(x, y, yerr=yerr, label=label, ls='-')
+    label_order.append(label)
+    xticks |= set(x)
+
+    cnn_pretrained_pure_colour = line.get_c()
+
+    x, y, *yerr = _extract_cnn_data(size_paths['D']['cnn_pretrained_pure'], 512, spread_measure, test_01_loss, 'curriculum:-1:n_train')
+    label = 'CNN Pretrained Pure - No Curric'
+    ax.errorbar(x, y, yerr=yerr, label=label, ls='--', c=cnn_pretrained_pure_colour)
+    label_order.append(label)
+    xticks |= set(x)
+
+
+    x, y, *yerr = _extract_cnn_data(size_paths['A']['rnn_pure'], 128, spread_measure, test_01_loss, 'curriculum:-1:n_train')
+    label = 'RNN Pure - With Curric'
+    line, _, _ = ax.errorbar(x, y, yerr=yerr, label=label, ls='-')
+    label_order.append(label)
+    xticks |= set(x)
+
+    rnn_pure_colour = line.get_c()
+
+    x, y, *yerr = _extract_cnn_data(size_paths['D']['rnn_pure'], 128, spread_measure, test_01_loss, 'curriculum:-1:n_train')
+    label = 'RNN Pure - No Curric'
+    ax.errorbar(x, y, yerr=yerr, label=label, ls='--', c=rnn_pure_colour)
+    label_order.append(label)
+    xticks |= set(x)
+
+
+    x, y, *yerr = _extract_cnn_data(size_paths['A']['rnn_pretrained_pure'], 128, spread_measure, test_01_loss, 'curriculum:-1:n_train')
+    label = 'RNN Pretrained Pure - With Curric'
+    line, _, _ = ax.errorbar(x, y, yerr=yerr, label=label, ls='-')
+    label_order.append(label)
+    xticks |= set(x)
+
+    rnn_pretrained_pure_colour = line.get_c()
+
+    x, y, *yerr = _extract_cnn_data(size_paths['D']['rnn_pretrained_pure'], 128, spread_measure, test_01_loss, 'curriculum:-1:n_train')
+    label = 'RNN Pretrained Pure - No Curric'
+    ax.errorbar(x, y, yerr=yerr, label=label, ls='--', c=rnn_pretrained_pure_colour)
+    label_order.append(label)
+    xticks |= set(x)
+
+
     if not args.paper:
         x, y, *yerr = _extract_cnn_data(size_paths['G']['cnn_pretrained'], 512, spread_measure, test_01_loss, 'curriculum:-1:n_train')
         label = 'CNN - Alternate Curric 1'
@@ -398,12 +537,40 @@ def gen_size_curriculum():
     ax.errorbar(x, y, yerr=yerr, ls='--', c=rl_colour)
     xticks |= set(x)
 
+
     x, y, *yerr = _extract_cnn_data(size_paths['B']['cnn_pretrained'], 512, spread_measure, test_01_loss, 'curriculum:-1:n_train')
     ax.errorbar(x, y, yerr=yerr, ls='-', c=cnn_colour)
     xticks |= set(x)
 
     x, y, *yerr = _extract_cnn_data(size_paths['E']['cnn_pretrained'], 512, spread_measure, test_01_loss, 'curriculum:-1:n_train')
     ax.errorbar(x, y, yerr=yerr, ls='--', c=cnn_colour)
+    xticks |= set(x)
+
+
+    x, y, *yerr = _extract_cnn_data(size_paths['B']['cnn_pretrained_pure'], 512, spread_measure, test_01_loss, 'curriculum:-1:n_train')
+    ax.errorbar(x, y, yerr=yerr, ls='-', c=cnn_pretrained_pure_colour)
+    xticks |= set(x)
+
+    x, y, *yerr = _extract_cnn_data(size_paths['E']['cnn_pretrained_pure'], 512, spread_measure, test_01_loss, 'curriculum:-1:n_train')
+    ax.errorbar(x, y, yerr=yerr, ls='--', c=cnn_pretrained_pure_colour)
+    xticks |= set(x)
+
+
+    x, y, *yerr = _extract_cnn_data(size_paths['B']['rnn_pure'], 128, spread_measure, test_01_loss, 'curriculum:-1:n_train')
+    ax.errorbar(x, y, yerr=yerr, ls='-', c=rnn_pure_colour)
+    xticks |= set(x)
+
+    x, y, *yerr = _extract_cnn_data(size_paths['E']['rnn_pure'], 128, spread_measure, test_01_loss, 'curriculum:-1:n_train')
+    ax.errorbar(x, y, yerr=yerr, ls='--', c=rnn_pure_colour)
+    xticks |= set(x)
+
+
+    x, y, *yerr = _extract_cnn_data(size_paths['B']['rnn_pretrained_pure'], 128, spread_measure, test_01_loss, 'curriculum:-1:n_train')
+    ax.errorbar(x, y, yerr=yerr, ls='-', c=rnn_pretrained_pure_colour)
+    xticks |= set(x)
+
+    x, y, *yerr = _extract_cnn_data(size_paths['E']['rnn_pretrained_pure'], 128, spread_measure, test_01_loss, 'curriculum:-1:n_train')
+    ax.errorbar(x, y, yerr=yerr, ls='--', c=rnn_pretrained_pure_colour)
     xticks |= set(x)
 
     ax.set_title('3x3, 4 digits')
