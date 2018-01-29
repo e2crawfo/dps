@@ -12,7 +12,7 @@ class ValueFunction(AgentHead):
         super(ValueFunction, self).__init__(name)
 
     @property
-    def size(self):
+    def n_params(self):
         return self._size
 
     def generate_signal(self, key, context, **kwargs):
@@ -71,7 +71,7 @@ class ActionValueFunction(AgentHead):
         super(ActionValueFunction, self).__init__(name)
 
     @property
-    def size(self):
+    def n_params(self):
         return self._size
 
     def generate_signal(self, key, context):

@@ -2,35 +2,42 @@ import copy
 import numpy as np
 import tensorflow as tf
 
+import gym
 from gym.spaces import Discrete, Box
 
 from dps import cfg
-from dps.environment import Env
+from dps.envs import Env
 from dps.rl import RolloutBatch
-from dps.utils import gen_seed
+from dps.utils import gen_seed, Param
 
 
-class GymEnvWrapper(Env):
-    def __init__(self, gym_env):
-        self.gym_env = gym_env
+class BatchGymEnv(Env):
+    gym_env = Param(help="Either an instance of gym's Env class, or a string specifying an env to create.")
+
+    def __init__(self, **kwargs):
+        if isinstance(self.gym_env, str):
+            self.env_string = self.gym_env
+            self.gym_env = gym.make(self.env_string)
+        else:
+            self.env_string = ""
+
         self._env_copies = []
         self._active_envs = []
-        self.batch_size = None
 
-        assert isinstance(gym_env.observation_space, Box)
-        self.obs_shape = gym_env.observation_space.shape
+        assert isinstance(self.gym_env.observation_space, Box)
+        self.obs_shape = self.gym_env.observation_space.shape
 
-        assert isinstance(gym_env.action_space, Discrete)
-        self.actions_dim = 1
-        self.n_actions = gym_env.action_space.n
+        assert isinstance(self.gym_env.action_space, Discrete)  # Only works for discrete action spaces for now.
+        self.action_shape = (1,)
+        self.n_actions = self.gym_env.action_space.n
 
         self._obs = np.zeros((0,)+self.obs_shape)
         self._done = np.ones((0, 1)).astype('bool')
 
     def set_mode(self, mode, batch_size):
         assert mode in 'train val test'.split(), "Unknown mode: {}.".format(mode)
-        self.mode = mode
-        self.batch_size = batch_size
+        self._mode = mode
+        self._batch_size = batch_size
 
         n_needed = batch_size - len(self._env_copies)
 
@@ -62,7 +69,7 @@ class GymEnvWrapper(Env):
         rewards = []
         info = []
 
-        assert len(actions) == self.batch_size
+        assert len(actions) == self._batch_size
 
         for idx, (a, env) in enumerate(zip(actions, self._active_envs)):
             a = np.squeeze(np.array(a))
@@ -95,9 +102,6 @@ class GymEnvWrapper(Env):
             s = gen_seed()
             env.seed(s)
 
-    def completion(self):
-        return 0.0
-
     def visualize(self, render_rollouts=None, **rollout_kwargs):
         if cfg.show_plots or cfg.save_plots:
             self.do_rollouts(render_mode="human", **rollout_kwargs)
@@ -105,9 +109,11 @@ class GymEnvWrapper(Env):
     def do_rollouts(
             self, policy, n_rollouts=None, T=None, exploration=None,
             mode='train', render_mode=None):
+
         T = T or cfg.T
 
         self.set_mode(mode, n_rollouts)
+
         obs = self.reset()
         batch_size = obs.shape[0]
 

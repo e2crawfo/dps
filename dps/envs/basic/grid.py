@@ -2,7 +2,7 @@ import tensorflow as tf
 import numpy as np
 
 from dps.register import RegisterBank
-from dps.environment import TensorFlowEnv
+from dps.envs import TensorFlowEnv
 from dps.utils import Param, Config
 
 
@@ -34,20 +34,12 @@ class Grid(TensorFlowEnv):
     def __init__(self, **kwargs):
         self.val_input = self._make_input(self.n_val)
         self.test_input = self._make_input(self.n_val)
-        self.input_ph = None
 
         self.rb = RegisterBank(
-            'GridRB', 'x y r dx dy', 'goal_x goal_y',
-            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 'x y',
-            min_values=[0, 0, -1/self.T, 0, 0],
-            max_values=[self.shape[1], self.shape[0], 0, self.shape[1], self.shape[0]]
+            'GridRB', 'x y r dx dy', 'goal_x goal_y', [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 'x y',
         )
 
         super(Grid, self).__init__()
-
-    @property
-    def completion(self):
-        return 0.0
 
     def _make_input(self, batch_size):
         start_x = np.random.randint(self.shape[0], size=(batch_size, 1))
@@ -62,28 +54,27 @@ class Grid(TensorFlowEnv):
 
         return np.concatenate([start_x, start_y, goal_x, goal_y], axis=1).astype('f')
 
-    def start_episode(self, n_rollouts):
-        if self.mode == 'train':
+    def _build_placeholders(self):
+        self.input = tf.placeholder(tf.float32, (None, 4), name="input")
+
+    def _make_feed_dict(self, n_rollouts, T, mode):
+        if mode == 'train':
             inp = self._make_input(n_rollouts)
-        elif self.mode == 'val':
+        elif mode == 'val':
             inp = self.val_input
-        elif self.mode == 'test':
+        elif mode == 'test':
             inp = self.test_input
         else:
-            raise Exception("Unknown mode: {}.".format(self.mode))
+            raise Exception("Unknown mode: {}.".format(mode))
         if n_rollouts is not None:
             inp = inp[:n_rollouts, :]
-        return inp.shape[0], {self.input_ph: inp}
+        return {self.input: inp}
 
     def build_init(self, r):
         batch_size = tf.shape(r)[0]
-
-        if self.input_ph is None:
-            self.input_ph = tf.placeholder(tf.float32, (None, 4), name="grid_input_ph")
-
         return self.rb.wrap(
-            x=self.input_ph[:, 0:1], y=self.input_ph[:, 1:2],
-            goal_x=self.input_ph[:, 2:3], goal_y=self.input_ph[:, 3:4],
+            x=self.input[:, 0:1], y=self.input[:, 1:2],
+            goal_x=self.input[:, 2:3], goal_y=self.input[:, 3:4],
             dx=tf.fill((batch_size, 1), 0.0),
             dy=tf.fill((batch_size, 1), 0.0),
             r=tf.fill((batch_size, 1), 0.0))

@@ -3,3 +3,4 @@ from .base import (
     EmnistDataset, PatchesDataset, VisualArithmeticDataset, GridArithmeticDataset,
     OmniglotDataset, OmniglotCountingDataset, GridOmniglotDataset, SalienceDataset
 )
+from .atari import AtariAutoEncodeDataset

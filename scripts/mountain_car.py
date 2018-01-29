@@ -1,17 +1,15 @@
 from gym.envs.classic_control import MountainCarEnv
 
-import clify
-
 from dps import cfg
 from dps.config import DEFAULT_CONFIG, PPO_CONFIG, PE_CONFIG
-from dps.gym_env import GymEnvWrapper
+from dps.gym_env import BatchGymEnv
 from dps.train import training_loop
 from dps.rl.policy import Softmax
 from dps.utils.tf import MLP, FeedforwardCell
 
 
 def build_env():
-    return GymEnvWrapper(MountainCarEnv())
+    return BatchGymEnv('MountainCar-v0')
 
 
 controller = lambda params_dim, name: FeedforwardCell(
@@ -39,4 +37,4 @@ config = DEFAULT_CONFIG.copy(
 
 with config:
     cfg.update_from_command_line()
-    list(training_loop())
+    training_loop()

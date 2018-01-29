@@ -401,7 +401,7 @@ class GetActionsCell(RNNCell):
     def __init__(self, policy):
         self.policy = policy
         self._state_size = self.policy.state_size
-        self._output_size = self.policy.actions_dim
+        self._output_shape = self.policy.action_shape
 
     def __call__(self, obs, policy_state, scope=None):
         with tf.name_scope(scope or 'get_actions_cell'):
@@ -415,7 +415,7 @@ class GetActionsCell(RNNCell):
 
     @property
     def output_size(self):
-        return self._output_size
+        return self._output_shape
 
     def zero_state(self, batch_size, dtype):
         return self.policy.zero_state(batch_size, dtype)

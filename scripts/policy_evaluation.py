@@ -108,4 +108,4 @@ else:
 
 with config:
     cfg.update_from_command_line()
-    list(training_loop())
+    training_loop()

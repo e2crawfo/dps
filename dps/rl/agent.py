@@ -33,7 +33,7 @@ class AgentHead(RLObject):
         return self.agent.trainable_variables(for_opt=for_opt)
 
     @property
-    def size(self):
+    def n_params(self):
         raise Exception("NotImplemented")
 
 
@@ -64,7 +64,7 @@ class Agent(RLObject):
         for k, head in self.heads.items():
             head.set_agent(self)
             start = offset
-            offset += head.size
+            offset += head.n_params
             end = offset
             self._head_offsets[k] = (start, end)
 
@@ -196,22 +196,3 @@ class Agent(RLObject):
         if hasattr(new_agent.controller, 'name'):
             new_agent.controller.name = "copy_of_" + self.controller.name
         return new_agent
-
-        # Should work in TF 1.1, will need to be changed in TF 1.2.
-        # new_controller = deepcopy(self.controller)
-        # if hasattr(new_controller, '_scope'):
-        #     del new_controller._scope
-
-        # new_as = deepcopy(self.action_selection)
-        # if hasattr(new_as, '_scope'):
-        #     del new_as._scope
-
-        # new = Policy(
-        #     deepcopy(self.controller),
-        #     deepcopy(self.action_selection),
-        #     self.actions_dim, self.obs_shape, new_name)
-
-        # if hasattr(new, '_scope'):
-        #     del new._scope
-
-        # return new

@@ -33,9 +33,7 @@ class BuildDuelingLstmController(object):
     def __call__(self, params_dim, name=None):
         return CompositeCell(
             tf.contrib.rnn.LSTMCell(num_units=cfg.n_controller_units),
-            DuelingHead(MLP(), MLP()),
-            params_dim,
-            name=name)
+            DuelingHead(MLP(), MLP()), params_dim, name=name)
 
 
 class AgentUpdater(RLObject):
@@ -104,7 +102,7 @@ def QLearning(env):
 
         agent = Agent("agent", cfg.build_controller, [policy])
 
-        action_value_function = ActionValueFunction(env.actions_dim, policy, "q")
+        action_value_function = ActionValueFunction(env.n_actions, policy, "q")
         agent.add_head(action_value_function, existing_head=policy)
 
         target_agent = agent.deepcopy("target_agent")

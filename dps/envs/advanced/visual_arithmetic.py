@@ -4,8 +4,8 @@ import numpy as np
 
 from dps import cfg
 from dps.register import RegisterBank
-from dps.environment import CompositeEnv, InternalEnv
-from dps.supervised import ClassificationEnv, IntegerRegressionEnv
+from dps.envs import CompositeEnv, InternalEnv
+from dps.envs.supervised import ClassificationEnv, IntegerRegressionEnv
 from dps.vision.train import EMNIST_CONFIG, SALIENCE_CONFIG
 from dps.datasets import VisualArithmeticDataset
 from dps.utils.tf import LeNet, MLP, SalienceMap, extract_glimpse_numpy_like
@@ -61,7 +61,7 @@ def build_env():
 
 def build_policy(env, **kwargs):
     action_selection = ProductDist(
-        EpsilonSoftmax(env.actions_dim-2, one_hot=True),
+        EpsilonSoftmax(env.action_shape[0]-2, one_hot=True),
         # Beta(),
         # Beta()
         SigmoidBeta(c0_bounds=(1, 100), c1_bounds=(1, 100)),
@@ -199,8 +199,8 @@ class VisualArithmetic(InternalEnv):
             'fovea_x fovea_y'.split()
         )
 
-        self.actions_dim = len(self.action_names)
-        self.action_sizes = [1] * self.actions_dim
+        self.action_shape = (len(self.action_names),)
+        self.action_sizes = [1] * self.action_shape[0]
 
         self._init_networks()
         self._init_rb()

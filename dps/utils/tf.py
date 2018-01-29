@@ -485,7 +485,7 @@ class FixedController(ScopedCell):
 
     Parameters
     ----------
-    action_sequence: ndarray (n_timesteps, actions_dim)
+    action_sequence: ndarray (n_timesteps,) + action_shape
         t-th row gives the action this controller will select at time t.
 
     """
@@ -522,20 +522,20 @@ class FixedDiscreteController(ScopedCell):
     ----------
     action_sequence: list of int
         t-th entry gives the idx of the action this controller will select at time t.
-    actions_dim: int
+    n_actions: int
         Number of actions.
 
     """
-    def __init__(self, action_sequence, actions_dim, name="fixed_discrete_controller"):
+    def __init__(self, action_sequence, n_actions, name="fixed_discrete_controller"):
         self.action_sequence = np.array(action_sequence)
-        self.actions_dim = actions_dim
+        self.n_actions = n_actions
         super(FixedDiscreteController, self).__init__(name)
 
     def _call(self, inp, state):
         action_seq = tf.constant(self.action_sequence, tf.int32)
         int_state = tf.cast(state, tf.int32)
         action_idx = tf.gather(action_seq, int_state)
-        actions = tf.one_hot(tf.reshape(action_idx, (-1,)), self.actions_dim)
+        actions = tf.one_hot(tf.reshape(action_idx, (-1,)), self.n_actions)
         return actions, state + 1
 
     def __len__(self):
@@ -547,7 +547,7 @@ class FixedDiscreteController(ScopedCell):
 
     @property
     def output_size(self):
-        return self.actions_dim
+        return self.n_actions
 
     def zero_state(self, batch_size, dtype):
         return tf.cast(tf.fill((batch_size, 1), 0), dtype)

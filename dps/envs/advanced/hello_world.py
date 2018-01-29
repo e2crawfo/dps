@@ -4,8 +4,8 @@ import numpy as np
 from dps import cfg
 from dps.utils import Param, Config
 from dps.register import RegisterBank
-from dps.environment import CompositeEnv, InternalEnv
-from dps.supervised import SupervisedDataset, RegressionEnv
+from dps.envs import CompositeEnv, InternalEnv
+from dps.envs.supervised import SupervisedDataset, RegressionEnv
 
 
 def build_env():

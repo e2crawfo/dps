@@ -599,13 +599,14 @@ NotSupplied = object()
 
 
 class Param(object):
-    def __init__(self, default=NotSupplied, aliases=None):
+    def __init__(self, default=NotSupplied, aliases=None, help=""):
         """ aliases are different ways to fill the value (i.e. from config or kwargs),
             but should not be used to access the value as a class attribute. """
         self.default = default
         if isinstance(aliases, str):
             aliases = aliases.split()
         self.aliases = aliases or []
+        self.help = help
 
 
 class Parameterized(object):

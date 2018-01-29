@@ -25,9 +25,20 @@ from dps.utils.tf import (
 )
 
 
-def training_loop(exp_name='', start_time=None):
+def stepped_training_loop(exp_name='', start_time=None):
+    """ A generator that runs a training loop. Every `checkpoint_step` steps,
+        this generator yields an output that summarizes the state of the
+        training run so far, acting as a checkpointing mechanism.
+
+    """
     loop = TrainingLoop(exp_name, start_time)
     yield from loop.run()
+
+
+def training_loop(exp_name='', start_time=None):
+    """ Run a training loop without checkpointing,
+        returning a summary only at the end of training. """
+    return list(training_loop())[-1]
 
 
 class TrainingLoop(object):
@@ -560,7 +571,7 @@ def load_or_train(train_config, var_scope, path, target_var_scope=None, sess=Non
             stack.enter_context(ClearConfig())
             stack.enter_context(train_config.copy(save_path=path))
 
-            output = list(training_loop(var_scope.name))[-1]
+            output = training_loop(var_scope.name)
 
             stem = os.path.splitext(path)[0]
             shutil.copyfile(os.path.join(output['exp_dir'], 'stdout'), stem + '.stdout')

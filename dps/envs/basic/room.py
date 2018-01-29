@@ -2,8 +2,8 @@ import tensorflow as tf
 import numpy as np
 
 from dps import cfg
+from dps.envs import TensorFlowEnv
 from dps.register import RegisterBank
-from dps.environment import TensorFlowEnv
 from dps.utils import Param, Config
 from dps.rl.policy import ProductDist, Normal, Gamma, Policy
 
@@ -25,16 +25,15 @@ def build_policy(env, **kwargs):
 
 config = Config(
     build_env=build_env,
-    curriculum=[dict(T=20)],
-    n_controller_units=32,
+    n_controller_units=128,
     build_policy=build_policy,
     log_name='room',
     T=20,
     restart_prob=0.0,
-    max_step=0.1,
+    max_step=0.3,
     room_angular=False,
     l2l=False,
-    reward_radius=0.2,
+    reward_radius=0.5,
     n_val=100,
 )
 
@@ -54,15 +53,10 @@ class Room(TensorFlowEnv):
         self.test_input = self._make_input(self.n_val)
 
         self.rb = RegisterBank(
-            'RoomRB', 'x y r dx dy', 'goal_x goal_y',
-            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 'x y'
+            'RoomRB', 'x y r dx dy', 'goal_x goal_y', [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 'x y'
         )
 
         super(Room, self).__init__()
-
-    @property
-    def completion(self):
-        return 0.0
 
     def _make_input(self, batch_size):
         if self.l2l:
@@ -70,39 +64,42 @@ class Room(TensorFlowEnv):
         else:
             return np.concatenate(
                 [np.random.uniform(low=-1.0, high=1.0, size=(batch_size, 2)),
-                 np.zeros((batch_size, 2))],
-                axis=1)
+                 np.zeros((batch_size, 2))], axis=1)
 
-    def start_episode(self, n_rollouts):
-        if self.mode == 'train':
+    def _build_placeholders(self):
+        self.input = tf.placeholder(tf.float32, (None, 4))
+
+    def _make_feed_dict(self, n_rollouts, T, mode):
+        if mode == 'train':
             inp = self._make_input(n_rollouts)
-        elif self.mode == 'val':
+        elif mode == 'val':
             inp = self.val_input
-        elif self.mode == 'test':
+        elif mode == 'test':
             inp = self.test_input
         else:
-            raise Exception("Unknown mode: {}.".format(self.mode))
+            raise Exception("Unknown mode: {}.".format(mode))
+
         if n_rollouts is not None:
             inp = inp[:n_rollouts, :]
-        return inp.shape[0], {self.input_ph: inp}
+
+        return {self.input: inp}
 
     def build_init(self, r):
         batch_size = tf.shape(r)[0]
-        self.input_ph = tf.placeholder(tf.float32, (None, 4))
         return self.rb.wrap(
-            x=self.input_ph[:, 0:1], y=self.input_ph[:, 1:2],
-            goal_x=self.input_ph[:, 2:3], goal_y=self.input_ph[:, 3:4],
+            x=self.input[:, 0:1], y=self.input[:, 1:2],
+            goal_x=self.input[:, 2:3], goal_y=self.input[:, 3:4],
             dx=tf.fill((batch_size, 1), 0.0),
             dy=tf.fill((batch_size, 1), 0.0),
             r=tf.fill((batch_size, 1), 0.0))
 
-    def process_actions(self, a):
+    def _process_actions(self, a):
         delta_x, delta_y = tf.split(a, 2, axis=1)
         return delta_x, delta_y
 
     def build_step(self, t, r, a):
         x, y, _, _, _, goal_x, goal_y = self.rb.as_tuple(r)
-        delta_x, delta_y = self.process_actions(a)
+        delta_x, delta_y = self._process_actions(a)
 
         if self.max_step > 0:
             delta_x = tf.clip_by_value(delta_x, -self.max_step, self.max_step)
@@ -134,7 +131,7 @@ class Room(TensorFlowEnv):
 class RoomAngular(Room):
     action_names = ['delta_x', 'delta_y', 'mag']
 
-    def process_actions(self, a):
+    def _process_actions(self, a):
         delta_x, delta_y, mag = tf.split(a, 3, axis=1)
         norm = tf.sqrt(delta_x**2 + delta_y**2)
         norm = tf.where(norm > 1e-6, norm, tf.zeros_like(norm))

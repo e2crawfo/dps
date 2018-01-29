@@ -3,11 +3,11 @@ import numpy as np
 
 from dps import cfg
 from dps.register import RegisterBank
-from dps.environment import CompositeEnv, InternalEnv
-from dps.supervised import SupervisedDataset, IntegerRegressionEnv
+from dps.envs import CompositeEnv, InternalEnv
+from dps.envs.supervised import SupervisedDataset, IntegerRegressionEnv
 from dps.utils import DataContainer, Param, Config
 from dps.utils.tf import extract_glimpse_numpy_like, resize_image_with_crop_or_pad
-from dps.envs.grid_arithmetic import GridArithmeticDataset
+from dps.envs.advanced.grid_arithmetic import GridArithmeticDataset
 
 
 def build_env():
@@ -182,7 +182,7 @@ class SimpleGridArithmetic(InternalEnv):
         else:
             self.action_names = self._action_names + sorted(self.arithmetic_actions.keys())
 
-        self.actions_dim = len(self.action_names)
+        self.action_shape = (len(self.action_names),)
         self._init_rb()
 
         super(SimpleGridArithmetic, self).__init__()

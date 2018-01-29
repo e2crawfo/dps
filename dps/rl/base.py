@@ -169,7 +169,7 @@ class RLContext(Parameterized):
     def build_graph(self, env):
         self.env = env
         self.obs_shape = env.obs_shape
-        self.actions_dim = env.actions_dim
+        self.action_shape = env.action_shape
 
         with ExitStack() as stack:
             if self.name:
@@ -207,7 +207,7 @@ class RLContext(Parameterized):
         self._signals['hidden'] = tf.placeholder(
             tf.float32, shape=(cfg.T, None) + (self.env.rb.hidden_width,), name="_hidden")
         self._signals['actions'] = tf.placeholder(
-            tf.float32, shape=(cfg.T, None, self.actions_dim), name="_actions")
+            tf.float32, shape=(cfg.T, None) + self.action_shape, name="_actions")
         self._signals['gamma'] = tf.constant(self.gamma)
         self._signals['batch_size'] = tf.shape(self._signals['obs'])[1]
         self._signals['batch_size_float'] = tf.cast(self._signals['batch_size'], tf.float32)
@@ -287,7 +287,7 @@ class RLContext(Parameterized):
 
         # off-policy
         self._signals['mu_utils'] = tf.placeholder(
-            tf.float32, shape=(cfg.T, None, self.mu.params_dim), name="_mu_log_probs")
+            tf.float32, shape=(cfg.T, None,) + self.mu.param_shape, name="_mu_log_probs")
         self._signals['mu_exploration'] = tf.placeholder(
             tf.float32, shape=(None,), name="_mu_exploration")
         self._signals['mu_log_probs'] = tf.placeholder(

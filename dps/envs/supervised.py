@@ -1,10 +1,12 @@
+""" Datasets and environments for supervised learning. """
+
 import numpy as np
 import tensorflow as tf
 from scipy.misc import logsumexp
-
 from gym.utils import seeding
+
 from dps.utils import Parameterized, Param, one_hot
-from dps.environment import Env
+from dps.envs import Env
 
 
 class SupervisedDataset(Parameterized):
@@ -110,10 +112,10 @@ class SupervisedEnv(Env):
         }
 
         self.obs_shape = self.train.x.shape[1:]
-        self.actions_dim = self.train.y.shape[1]
+        self.action_shape = self.train.y.shape[1:]
 
-        self.mode = 'train'
-        self.batch_size = None
+        self._mode = 'train'
+        self._batch_size = None
         self.t = 0
 
     def __str__(self):
@@ -125,6 +127,9 @@ class SupervisedEnv(Env):
         return self.datasets[mode].next_batch(batch_size=batch_size, advance=advance)
 
     def build_loss(self, actions, targets):
+        raise Exception("NotImplemented")
+
+    def get_reward(self, actions, targets):
         raise Exception("NotImplemented")
 
     @property
@@ -148,8 +153,8 @@ class SupervisedEnv(Env):
 
     def _reset(self):
         self.t = 0
-        advance = self.mode == 'train'
-        self.x, self.y = self.datasets[self.mode].next_batch(self.batch_size, advance=advance)
+        advance = self._mode == 'train'
+        self.x, self.y = self.datasets[self._mode].next_batch(self._batch_size, advance=advance)
         return self.x
 
     def _render(self, mode='human', close=False):
@@ -183,8 +188,11 @@ class ClassificationEnv(SupervisedEnv):
 
     def build_xent_loss(self, actions, targets):
         if not self.one_hot:
-            targets = tf.one_hot(tf.squeeze(tf.cast(targets, tf.int32), axis=-1), depth=tf.shape(actions)[-1])
-        return tf.nn.softmax_cross_entropy_with_logits(labels=targets, logits=actions)[..., None]
+            targets = tf.one_hot(
+                tf.squeeze(tf.cast(targets, tf.int32), axis=-1),
+                depth=tf.shape(actions)[-1])
+        return tf.nn.softmax_cross_entropy_with_logits(
+            labels=targets, logits=actions)[..., None]
 
     def build_01_loss(self, actions, targets):
         action_argmax = tf.argmax(actions, axis=-1)
@@ -231,6 +239,48 @@ class RegressionEnv(SupervisedEnv):
 
     def get_2norm_loss(self, actions, targets):
         return np.mean((actions - targets)**2, axis=-1, keepdims=True)
+
+
+class BernoulliSigmoid(SupervisedEnv):
+    """ Assumes that `targets` is in th range [0, 1]. """
+    reward_range = (-np.inf, 0)
+    recorded_names = ["xent_loss", "2norm_loss", "1norm_loss"]
+
+    def build_loss(self, logits, targets):
+        return self.build_xent_loss(logits, targets)
+
+    def build_xent_loss(self, logits, targets):
+        return tf.reduce_mean(
+            tf.nn.sigmoid_cross_entropy_with_logits(labels=targets, logits=logits),
+            keep_dims=True, axis=-1
+        )
+
+    def build_2norm_loss(self, logits, targets):
+        actions = tf.sigmoid(logits)
+        return tf.reduce_mean((actions - targets)**2, keep_dims=True)
+
+    def build_1norm_loss(self, logits, targets):
+        actions = tf.sigmoid(logits)
+        return tf.reduce_mean(tf.abs(actions - targets), keep_dims=True)
+
+    def get_reward(self, logits, targets):
+        return -self.get_xent_loss(logits, targets)
+
+    def get_xent_loss(self, logits, targets):
+        loss = (
+            np.max(logits, 0) -
+            logits * targets +
+            np.log(1 + np.exp(-np.abs(logits)))
+        )
+        return np.mean(loss, axis=-1, keepdims=True)
+
+    def get_2norm_loss(self, logits, targets):
+        actions = tf.sigmoid(logits)
+        return np.mean((actions - targets)**2, axis=-1, keepdims=True)
+
+    def get_1norm_loss(self, logits, targets):
+        actions = tf.sigmoid(logits)
+        return np.mean(np.abs(actions - targets), axis=-1, keepdims=True)
 
 
 class IntegerRegressionEnv(RegressionEnv):

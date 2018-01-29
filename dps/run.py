@@ -64,6 +64,4 @@ def _run(env_str, alg_str, _config=None, **kwargs):
 
     with config:
         cfg.update_from_command_line()
-
-        # Force generator evaluation.
-        return list(training_loop())[-1]
+        return training_loop()

@@ -168,7 +168,9 @@ class RunTrainingLoop(object):
         print(self.base_config)
 
         keys = [k for k in sorted(new.keys()) if k not in 'seed idx repeat'.split()]
-        exp_name = '_'.join("{}={}".format(sanitize_string(k), sanitize_string(new[k])) for k in keys)
+        exp_name = '_'.join(
+            "{}={}".format(sanitize_string(k), sanitize_string(new[k]))
+            for k in keys)
 
         dps.reset_config()
 
@@ -178,8 +180,8 @@ class RunTrainingLoop(object):
         with config:
             cfg.update_from_command_line()
 
-            from dps.train import training_loop
-            yield from training_loop(exp_name=exp_name, start_time=start_time)
+            from dps.train import stepped_training_loop
+            yield from stepped_training_loop(exp_name=exp_name, start_time=start_time)
 
 
 def build_search(
@@ -790,10 +792,9 @@ def build_and_submit(
 
     if kind == "local":
         with config:
-            from dps.train import training_loop
             cfg.update_from_command_line()
-            outputs = list(training_loop())
-        return outputs[-1]
+            from dps.train import training_loop
+            return training_loop()
     else:
         config.name = name
 

@@ -7,10 +7,10 @@ from dps.utils.tf import LeNet, MLP, CompositeCell
 from dps.utils import Config
 from dps.rl.policy import EpsilonSoftmax, ProductDist, Policy
 from dps.datasets import GridArithmeticDataset
-from dps.supervised import ClassificationEnv
-from dps.environment import CompositeEnv
-from dps.envs.grid_arithmetic import GridArithmetic, render_rollouts
-from dps.envs.grid_arithmetic import config as ga_config
+from dps.envs.supervised import ClassificationEnv
+from dps.envs import CompositeEnv
+from dps.envs.advanced.grid_arithmetic import GridArithmetic, render_rollouts
+from dps.envs.advanced.grid_arithmetic import config as ga_config
 
 
 def build_env():
@@ -81,7 +81,7 @@ class GridArithmeticNoClassifiers(GridArithmetic):
 
         self.action_names.append('digit')
         self.action_sizes.append(1)
-        self.actions_dim = sum(self.action_sizes)
+        self.action_shape = (sum(self.action_sizes),)
 
     def build_init(self, r):
         self.maybe_build_placeholders()

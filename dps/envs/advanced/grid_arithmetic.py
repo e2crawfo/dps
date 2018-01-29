@@ -6,15 +6,15 @@ from collections import OrderedDict
 
 from dps import cfg
 from dps.register import RegisterBank
-from dps.environment import CompositeEnv, InternalEnv
-from dps.supervised import ClassificationEnv, IntegerRegressionEnv
+from dps.envs import CompositeEnv, InternalEnv
+from dps.envs.supervised import ClassificationEnv, IntegerRegressionEnv
 from dps.vision import EMNIST_CONFIG, SALIENCE_CONFIG, OMNIGLOT_CONFIG
 from dps.datasets import GridArithmeticDataset, GridOmniglotDataset, OmniglotDataset
 from dps.utils.tf import LeNet, MLP, SalienceMap, extract_glimpse_numpy_like, ScopedFunction
 from dps.utils import Param, Config, image_to_string
 from dps.updater import DifferentiableUpdater
 from dps.rl.policy import EpsilonSoftmax, Policy, DiscretePolicy, ProductDist, BuildLstmController
-from dps.envs.visual_arithmetic import digit_map, classifier_head, ResizeSalienceDetector
+from dps.envs.advanced.visual_arithmetic import digit_map, classifier_head, ResizeSalienceDetector
 
 
 def sl_build_env():
@@ -272,11 +272,11 @@ def build_policy(env, **kwargs):
     if cfg.ablation == "alternate":
         action_selection = ProductDist(
             EpsilonSoftmax(5, one_hot=True),
-            EpsilonSoftmax(env.actions_dim - 5, one_hot=True)
+            EpsilonSoftmax(env.action_shape[0] - 5, one_hot=True)
         )
         return Policy(action_selection, env.obs_shape, **kwargs)
     else:
-        action_selection = EpsilonSoftmax(env.actions_dim, one_hot=True)
+        action_selection = EpsilonSoftmax(env.action_shape[0], one_hot=True)
         return DiscretePolicy(action_selection, env.obs_shape, **kwargs)
 
 
@@ -522,8 +522,8 @@ class GridArithmetic(InternalEnv):
             sorted(self.arithmetic_actions.keys())
         )
 
-        self.actions_dim = len(self.action_names)
-        self.action_sizes = [1] * self.actions_dim
+        self.action_shape = (len(self.action_names),)
+        self.action_sizes = [1] * self.action_shape[0]
         self._init_networks()
         self._init_rb()
 

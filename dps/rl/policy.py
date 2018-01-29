@@ -10,62 +10,6 @@ from dps.utils.tf import (
 )
 
 
-class BuildLstmController(object):
-    def __call__(self, params_dim, name=None):
-        return CompositeCell(
-            tf.contrib.rnn.LSTMCell(num_units=cfg.n_controller_units),
-            MLP(), params_dim, name=name)
-
-
-class BuildFeedforwardController(object):
-    def __init__(self, *args, **kwargs):
-        self.args, self.kwargs = args, kwargs
-
-    def __call__(self, params_dim, name=None):
-        return FeedforwardCell(MLP(*self.args, **self.kwargs), params_dim, name=name)
-
-
-class BuildLinearController(object):
-    def __init__(self):
-        pass
-
-    def __call__(self, params_dim, name=None):
-        return FeedforwardCell(MLP(), params_dim, name=name)
-
-
-class BuildSoftmaxPolicy(object):
-    def __init__(self, one_hot=True):
-        self.one_hot = one_hot
-
-    def __call__(self, env, **kwargs):
-        n_actions = env.actions_dim if self.one_hot else env.n_actions
-        if not self.one_hot:
-            assert env.actions_dim == 1
-        return DiscretePolicy(Softmax(n_actions, one_hot=self.one_hot), env.obs_shape, **kwargs)
-
-
-class BuildEpsilonGreedyPolicy(object):
-    def __init__(self, one_hot=True):
-        self.one_hot = one_hot
-
-    def __call__(self, env, **kwargs):
-        n_actions = env.actions_dim if self.one_hot else env.n_actions
-        if not self.one_hot:
-            assert env.actions_dim == 1
-        return DiscretePolicy(EpsilonGreedy(n_actions, one_hot=self.one_hot), env.obs_shape, **kwargs)
-
-
-class BuildEpsilonSoftmaxPolicy(object):
-    def __init__(self, one_hot=True):
-        self.one_hot = one_hot
-
-    def __call__(self, env, **kwargs):
-        n_actions = env.actions_dim if self.one_hot else env.n_actions
-        if not self.one_hot:
-            assert env.actions_dim == 1
-        return DiscretePolicy(EpsilonSoftmax(n_actions, one_hot=self.one_hot), env.obs_shape, **kwargs)
-
-
 class _DoWeightingValue(object):
     def __init__(self, gamma):
         self.gamma = gamma
@@ -90,8 +34,8 @@ class Policy(AgentHead):
             val_exploration_schedule=None, name=None):
 
         self.action_selection = action_selection
-        self.params_dim = self.action_selection.params_dim
-        self.actions_dim = self.action_selection.actions_dim
+        self.param_shape = self.action_selection.param_shape
+        self.action_shape = self.action_selection.action_shape
         self.obs_shape = obs_shape
 
         self.act_is_built = False
@@ -103,8 +47,9 @@ class Policy(AgentHead):
         super(Policy, self).__init__(name)
 
     @property
-    def size(self):
-        return self.action_selection.params_dim
+    def n_params(self):
+        assert len(self.action_selection.param_shape) == 1
+        return self.action_selection.param_shape[0]
 
     def __call__(self, obs, controller_state):
         utils, next_controller_state = self.agent.get_one_step_utils(obs, controller_state, self.name)
@@ -288,9 +233,9 @@ def rnn_cell_placeholder(state_size, batch_size=None, dtype=tf.float32, name='')
 
 
 class ActionSelection(object):
-    def __init__(self, actions_dim):
-        self.actions_dim = actions_dim
-        self.params_dim = actions_dim
+    def __init__(self, action_shape):
+        self.action_shape = action_shape
+        self.param_shape = action_shape
 
     def sample(self, utils, exploration):
         s = self._sample(utils, exploration)
@@ -329,30 +274,38 @@ def final_d(tensor):
 class ProductDist(ActionSelection):
     def __init__(self, *components):
         self.components = components
-        self.params_dim_vector = [c.params_dim for c in components]
-        self.params_dim = sum(self.params_dim_vector)
-        self.actions_dim_vector = [c.actions_dim for c in components]
-        self.actions_dim = sum(self.actions_dim_vector)
+
+        for c in components:
+            assert len(c.param_shape) == 1
+            assert len(c.action_shape) == 1
+
+        self.param_dim_vector = [c.param_shape[0] for c in components]
+        self.param_dim = sum(self.param_dim_vector)
+        self.action_dim_vector = [c.action_shape[0] for c in components]
+        self.action_dim = sum(self.action_dim_vector)
+
+        self.param_shape = (self.param_dim,)
+        self.action_shape = (self.action_dim,)
 
     def _sample(self, utils, exploration):
-        _utils = tf.split(utils, self.params_dim_vector, axis=final_d(utils))
+        _utils = tf.split(utils, self.param_dim_vector, axis=final_d(utils))
         _samples = [tf.to_float(c.sample(u, exploration)) for u, c in zip(_utils, self.components)]
         return tf.concat(_samples, axis=1)
 
     def _log_probs(self, utils, actions, exploration):
-        _utils = tf.split(utils, self.params_dim_vector, axis=final_d(utils))
-        _actions = tf.split(actions, self.actions_dim_vector, axis=final_d(actions))
+        _utils = tf.split(utils, self.param_dim_vector, axis=final_d(utils))
+        _actions = tf.split(actions, self.action_dim_vector, axis=final_d(actions))
         _log_probs = [c.log_probs(u, a, exploration) for u, a, c in zip(_utils, _actions, self.components)]
         return tf.reduce_sum(tf.concat(_log_probs, axis=-1), axis=-1, keep_dims=True)
 
     def _entropy(self, utils, exploration):
-        _utils = tf.split(utils, self.params_dim_vector, axis=final_d(utils))
+        _utils = tf.split(utils, self.param_dim_vector, axis=final_d(utils))
         _entropies = [c.entropy(u, exploration) for u, c in zip(_utils, self.components)]
         return tf.reduce_sum(tf.concat(_entropies, axis=-1), axis=-1, keep_dims=True)
 
     def _kl(self, utils1, utils2, e1, e2=None):
-        _utils1 = tf.split(utils1, self.params_dim_vector, axis=final_d(utils1))
-        _utils2 = tf.split(utils2, self.params_dim_vector, axis=final_d(utils2))
+        _utils1 = tf.split(utils1, self.param_dim_vector, axis=final_d(utils1))
+        _utils2 = tf.split(utils2, self.param_dim_vector, axis=final_d(utils2))
 
         _splitwise_kl = tf.concat(
             [c.kl(u1, u2, e1, e2)
@@ -390,9 +343,9 @@ class TensorFlowSelection(ActionSelection):
 
 
 class Deterministic(TensorFlowSelection):
-    def __init__(self, params_dim, actions_dim=None, func=None):
-        self.params_dim = params_dim
-        self.actions_dim = actions_dim or params_dim
+    def __init__(self, param_shape, action_shape=None, func=None):
+        self.param_shape = param_shape
+        self.action_shape = action_shape or param_shape
         self.func = func or (lambda x: tf.identity(x))
 
     def _dist(self, utils, exploration):
@@ -413,8 +366,8 @@ def softplus(x):
 class SigmoidNormal(TensorFlowSelection):
     def __init__(self, scale=None):
         self.scale = scale
-        self.actions_dim = 1
-        self.params_dim = 1 if self.scale else 2
+        self.action_shape = (1,)
+        self.param_shape = (1,) if self.scale else (2,)
 
     def _dist(self, utils, exploration):
         mean = tf.nn.sigmoid(utils[..., 0])
@@ -429,8 +382,8 @@ class SigmoidNormal(TensorFlowSelection):
 
 class SigmoidBeta(TensorFlowSelection):
     def __init__(self, c0_bounds, c1_bounds):
-        self.actions_dim = 1
-        self.params_dim = 2
+        self.action_shape = (1,)
+        self.param_shape = (2,)
         self.c0_bounds = c0_bounds
         self.c1_bounds = c1_bounds
 
@@ -442,8 +395,8 @@ class SigmoidBeta(TensorFlowSelection):
 
 class Normal(TensorFlowSelection):
     def __init__(self):
-        self.actions_dim = 1
-        self.params_dim = 2
+        self.action_shape = (1,)
+        self.param_shape = (2,)
 
     def _dist(self, utils, exploration):
         mean = utils[..., 0]
@@ -455,8 +408,8 @@ class Normal(TensorFlowSelection):
 
 class NormalWithFixedScale(TensorFlowSelection):
     def __init__(self, scale):
-        self.actions_dim = 1
-        self.params_dim = 1
+        self.action_shape = (1,)
+        self.param_shape = (1,)
         self.scale = scale
 
     def _dist(self, utils, exploration):
@@ -465,8 +418,8 @@ class NormalWithFixedScale(TensorFlowSelection):
 
 class NormalWithExploration(TensorFlowSelection):
     def __init__(self):
-        self.actions_dim = 1
-        self.params_dim = 1
+        self.action_shape = (1,)
+        self.param_shape = (1,)
 
     def _dist(self, utils, exploration):
         return tf_dists.Normal(loc=utils[..., 0], scale=exploration)
@@ -475,8 +428,8 @@ class NormalWithExploration(TensorFlowSelection):
 class Gamma(TensorFlowSelection):
     """ alpha, beta """
     def __init__(self):
-        self.actions_dim = 1
-        self.params_dim = 2
+        self.action_shape = (1,)
+        self.param_shape = (2,)
 
     def _dist(self, utils, exploration):
         concentration = softplus(utils[..., 0])
@@ -487,8 +440,8 @@ class Gamma(TensorFlowSelection):
 
 class Beta(TensorFlowSelection):
     def __init__(self, offset=None, maximum=None):
-        self.actions_dim = 1
-        self.params_dim = 2
+        self.action_shape = (1,)
+        self.param_shape = (2,)
         self.offset = offset
         self.maximum = maximum
 
@@ -511,8 +464,8 @@ class BetaMeanESS(TensorFlowSelection):
     """ A Beta distribution parameterized by mean and effective sample size. """
 
     def __init__(self):
-        self.actions_dim = 1
-        self.params_dim = 2
+        self.action_shape = (1,)
+        self.param_shape = (2,)
 
     def _dist(self, utils, exploration):
         mean = tf.nn.sigmoid(utils[..., 0])
@@ -526,25 +479,18 @@ class BetaMeanESS(TensorFlowSelection):
 
 class Bernoulli(TensorFlowSelection):
     def __init__(self):
-        self.actions_dim = self.params_dim = 1
+        self.action_shape = self.param_shape = (1,)
 
     def _dist(self, utils, exploration):
         return tf_dists.BernoulliWithSigmoidProbs(utils[..., 0])
 
 
-def build_categorical_dist(*args, probs=None, **kwargs):
-    if tf.__version__ < "1.1":
-        return tf_dists.Categorical(*args, p=probs, **kwargs)
-    else:
-        return tf_dists.Categorical(*args, probs=probs, **kwargs)
-
-
 class Categorical(TensorFlowSelection):
-    """ Don't use tf_dists.OneHotCategorical even if `one_hot` is True, because it doesn't work in tf versions <= 1.0.0 """
+    def __init__(self, n_actions, one_hot=True):
+        self.param_shape = (n_actions,)
+        self.action_shape = (n_actions,) if one_hot else (1,)
+        self.n_actions = n_actions
 
-    def __init__(self, actions_dim, one_hot=True):
-        self.params_dim = actions_dim
-        self.actions_dim = actions_dim if one_hot else 1
         self.one_hot = one_hot
 
     def _sample(self, utils, exploration):
@@ -570,8 +516,8 @@ class Categorical(TensorFlowSelection):
         dist = self._dist(utils, exploration)
 
         batch_rank = len(utils.shape)-1
-        sample_shape = (self.actions_dim,) + (1,) * batch_rank
-        sample = tf.reshape(tf.range(self.actions_dim), sample_shape)
+        sample_shape = self.action_shape + (1,) * batch_rank
+        sample = tf.reshape(tf.range(self.action_shape), sample_shape)
         log_probs = dist.log_prob(sample)
         axis_perm = tuple(range(1, batch_rank+1)) + (0,)
         log_probs = tf.transpose(log_probs, perm=axis_perm)
@@ -590,23 +536,36 @@ class Categorical(TensorFlowSelection):
     def _dist(self, utils, exploration):
         raise Exception("NotImplemented")
 
+    @staticmethod
+    def _build_categorical_dist(*args, probs=None, **kwargs):
+        """ Build a non-one-hot categorical distribution.
+
+        Do this to avoid using tf_dists.OneHotCategorical even if `one_hot` is True,
+        because it doesn't work in tf versions <= 1.0.0.
+
+        """
+        if tf.__version__ < "1.1":
+            return tf_dists.Categorical(*args, p=probs, **kwargs)
+        else:
+            return tf_dists.Categorical(*args, probs=probs, **kwargs)
+
 
 class FixedCategorical(Categorical):
-    def __init__(self, actions_dim, probs=None, logits=None, one_hot=True):
+    def __init__(self, action_shape, probs=None, logits=None, one_hot=True):
         assert (probs is None) != (logits is None)
-        self.params_dim = 0
-        self.actions_dim = actions_dim if one_hot else 1
+        self.param_shape = 0
+        self.action_shape = action_shape if one_hot else 1
         self.probs = probs
         self.logits = logits
         self.one_hot = one_hot
 
     def _dist(self, utils, exploration):
-        return build_categorical_dist(logits=utils/exploration)
+        return self._build_categorical_dist(logits=utils/exploration)
 
 
 class Softmax(Categorical):
     def _dist(self, utils, exploration):
-        return build_categorical_dist(logits=utils/exploration)
+        return self._build_categorical_dist(logits=utils/exploration)
 
 
 class EpsilonSoftmax(Categorical):
@@ -620,10 +579,59 @@ class EpsilonSoftmax(Categorical):
         super(EpsilonSoftmax, self).__init__(*args, **kwargs)
 
     def _dist(self, utils, epsilon):
-        probs = (1 - epsilon) * tf.nn.softmax(utils) + epsilon / self.params_dim
-        return build_categorical_dist(probs=probs)
+        probs = (1 - epsilon) * tf.nn.softmax(utils/self.softmax_temp) + epsilon / self.n_actions
+        return self._build_categorical_dist(probs=probs)
 
 
 class EpsilonGreedy(EpsilonSoftmax):
     def __init__(self, *args, **kwargs):
         super(EpsilonGreedy, self).__init__(*args, softmax_temp=0.1, **kwargs)
+
+
+class BuildLstmController(object):
+    def __call__(self, param_shape, name=None):
+        return CompositeCell(
+            tf.contrib.rnn.LSTMCell(num_units=cfg.n_controller_units),
+            MLP(), param_shape, name=name)
+
+
+class BuildFeedforwardController(object):
+    def __init__(self, *args, **kwargs):
+        self.args, self.kwargs = args, kwargs
+
+    def __call__(self, param_shape, name=None):
+        return FeedforwardCell(MLP(*self.args, **self.kwargs), param_shape, name=name)
+
+
+class BuildLinearController(object):
+    def __init__(self):
+        pass
+
+    def __call__(self, param_shape, name=None):
+        return FeedforwardCell(MLP(), param_shape, name=name)
+
+
+class _BuildDiscretePolicy(object):
+    def __init__(self, one_hot=True):
+        self.one_hot = one_hot
+
+    def __call__(self, env, **kwargs):
+        if self.one_hot:
+            n_actions = env.action_shape[0]
+        else:
+            n_actions = env.n_actions
+            assert env.action_shape == (1,)
+        action_selection = self.action_selection_klass(n_actions, one_hot=self.one_hot)
+        return DiscretePolicy(action_selection, env.obs_shape, **kwargs)
+
+
+class BuildSoftmaxPolicy(_BuildDiscretePolicy):
+    action_selection_klass = Softmax
+
+
+class BuildEpsilonSoftmaxPolicy(_BuildDiscretePolicy):
+    action_selection_klass = EpsilonSoftmax
+
+
+class BuildEpsilonGreedyPolicy(_BuildDiscretePolicy):
+    action_selection_klass = EpsilonGreedy

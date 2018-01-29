@@ -107,7 +107,7 @@ class DifferentiableUpdater(Updater):
             "loss function.")
         self.f = f
         self.obs_shape = env.obs_shape
-        self.actions_dim = env.actions_dim
+        self.action_shape = env.action_shape
 
         super(DifferentiableUpdater, self).__init__(env, **kwargs)
 
@@ -124,8 +124,8 @@ class DifferentiableUpdater(Updater):
         self._assign_is_training = tf.assign(self.is_training, self._set_is_training)
 
         self.x_ph = tf.placeholder(tf.float32, (None,) + self.obs_shape, name="x_ph")
-        self.target_ph = tf.placeholder(tf.float32, (None, self.actions_dim), name="target_ph")
-        self.output = self.f(self.x_ph, self.actions_dim, self.is_training)
+        self.target_ph = tf.placeholder(tf.float32, (None,) + self.action_shape, name="target_ph")
+        self.output = self.f(self.x_ph, self.action_shape, self.is_training)
         self.loss = tf.reduce_mean(self.env.build_loss(self.output, self.target_ph))
 
         self.recorded_tensors = [

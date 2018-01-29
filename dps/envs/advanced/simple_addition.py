@@ -3,8 +3,8 @@ import numpy as np
 
 from dps import cfg
 from dps.register import RegisterBank
-from dps.environment import CompositeEnv, InternalEnv
-from dps.supervised import SupervisedDataset, IntegerRegressionEnv
+from dps.envs import CompositeEnv, InternalEnv
+from dps.envs.supervised import SupervisedDataset, IntegerRegressionEnv
 from dps.vision.attention import apply_gaussian_filter
 from dps.utils import Param, Config
 

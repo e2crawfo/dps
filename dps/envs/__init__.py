@@ -1,6 +1,9 @@
-from . import (
-    cliff_walk, grid, hello_world, path_discovery, room,
-    grid_arithmetic, ga_no_classifiers, ga_no_modules, ga_no_transformations,
-    gym_env, pointer_following, simple_addition, grid_bandit, hard_addition, visual_arithmetic,
-    simple_grid_arithmetic, translated_mnist
+from .environment import Env, BatchBox
+from .tensorflow_env import TensorFlowEnv, InternalEnv, CompositeEnv
+from .gym import BatchGymEnv
+from .advanced import (
+    atari_autoencode, ga_no_transformations, hello_world, simple_grid_arithmetic,
+    ga_no_classifiers, grid_arithmetic, pointer_following, translated_mnist,
+    ga_no_modules, hard_addition, simple_addition, visual_arithmetic,
 )
+from .basic import cliff_walk, grid, grid_bandit, grid, path_discovery, room

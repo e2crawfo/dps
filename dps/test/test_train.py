@@ -23,7 +23,7 @@ def test_time_limit(test_config):
 
     start = time.time()
     with config:
-        list(training_loop())
+        training_loop()
     elapsed = start - time.time()
     assert elapsed < config.max_time + 1
 

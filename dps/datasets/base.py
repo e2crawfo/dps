@@ -1,7 +1,7 @@
 import numpy as np
 
 from dps import cfg
-from dps.supervised import SupervisedDataset
+from dps.envs.supervised import SupervisedDataset
 from dps.utils import image_to_string, Param, DataContainer
 from dps.datasets import load_emnist, load_omniglot, emnist_classes, omniglot_classes
 
