@@ -7,10 +7,10 @@ from dps.utils.tf import LeNet, MLP, CompositeCell
 from dps.utils import Config
 from dps.rl.policy import EpsilonSoftmax, ProductDist, Policy
 from dps.datasets import GridArithmeticDataset
-from dps.envs.supervised import ClassificationEnv
-from dps.envs import CompositeEnv
-from dps.envs.advanced.grid_arithmetic import GridArithmetic, render_rollouts
-from dps.envs.advanced.grid_arithmetic import config as ga_config
+from dps.env.supervised import ClassificationEnv
+from dps.env import CompositeEnv
+from dps.env.advanced.grid_arithmetic import GridArithmetic, render_rollouts
+from dps.env.advanced.grid_arithmetic import config as ga_config
 
 
 def build_env():
@@ -88,7 +88,7 @@ class GridArithmeticNoClassifiers(GridArithmetic):
 
         _prev_digit, _acc, _fovea_x, _fovea_y, _prev_action, _salience, _glimpse, _salience_input = self.rb.as_tuple(r)
 
-        batch_size = tf.shape(self.input_ph)[0]
+        batch_size = tf.shape(self.input)[0]
 
         # init fovea
         if self.start_loc is not None:

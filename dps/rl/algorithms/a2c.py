@@ -111,9 +111,9 @@ config = Config(
     build_policy=BuildEpsilonSoftmaxPolicy(),
     build_controller=BuildLstmController(),
 
-    exploration_schedule="0.1",
+    exploration_schedule="1.0",
     actor_exploration_schedule=None,
-    val_exploration_schedule="0.0",
+    val_exploration_schedule="0.1",
 
     policy_weight=1.0,
     value_reg_weight=0.0,
@@ -148,7 +148,7 @@ ppo_config = config.copy(
 
 reinforce_config = config.copy(
     name="REINFORCE",
-    epsilon=None,
+    epsilon=0.0,
     opt_steps_per_update=1,
     value_weight=0.0,
 )

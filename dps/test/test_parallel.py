@@ -7,7 +7,7 @@ import numpy as np
 
 from dps.parallel.base import FileSystemObjectStore, ZipObjectStore
 from dps.parallel.hyper import build_and_submit
-from dps.envs import simple_addition
+from dps.env.advanced import simple_addition
 from dps.rl.algorithms import a2c
 from dps.config import DEFAULT_CONFIG
 

@@ -3,7 +3,7 @@ import numpy as np
 import clify
 
 from dps.utils import Config
-from dps.envs import simple_grid_arithmetic
+from dps.env import simple_grid_arithmetic
 from dps.rl.algorithms import a2c
 from dps.rl.policy import BuildEpsilonSoftmaxPolicy, BuildLstmController
 from dps.config import RL_EXPERIMENT_CONFIG

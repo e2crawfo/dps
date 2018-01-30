@@ -124,7 +124,7 @@ def load_emnist(
     for i, cls in enumerate(sorted(list(classes))):
         with gzip.open(os.path.join(emnist_dir, str(cls) + '.pklz'), 'rb') as f:
             _x = dill.load(f)
-            x.append(np.float32(np.uint8(255*np.minimum(_x, 1))))
+            x.append(np.uint8(255*np.minimum(_x, 1)))
             y.extend([i] * x[-1].shape[0])
         if show:
             print(cls)
@@ -135,7 +135,7 @@ def load_emnist(
 
     if include_blank:
         class_count = min([(y == class_map[c]).sum() for c in classes])
-        blanks = np.zeros((class_count,) + x.shape[1:])
+        blanks = np.zeros((class_count,) + x.shape[1:], 'uint8')
         x = np.concatenate((x, blanks), axis=0)
         blank_idx = len(class_map)
         y = np.concatenate((y, blank_idx * np.ones((class_count, 1), dtype=y.dtype)), axis=0)
@@ -254,12 +254,12 @@ def load_omniglot(
             print(image_to_string(x[-1]))
         class_map[cls] = i
 
-    x = np.array(x)
+    x = np.array(x, 'uint8')
     y = np.array(y).reshape(-1, 1)
 
     if include_blank:
         class_count = min([(y == class_map[c]).sum() for c in classes])
-        blanks = np.zeros((class_count,) + shape)
+        blanks = np.zeros((class_count,) + shape, 'uint8')
         x = np.concatenate((x, blanks), axis=0)
         blank_idx = len(class_map)
         y = np.concatenate((y, blank_idx * np.ones((class_count, 1), dtype=y.dtype)), axis=0)

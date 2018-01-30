@@ -38,7 +38,7 @@ def stepped_training_loop(exp_name='', start_time=None):
 def training_loop(exp_name='', start_time=None):
     """ Run a training loop without checkpointing,
         returning a summary only at the end of training. """
-    return list(training_loop())[-1]
+    return list(stepped_training_loop())[-1]
 
 
 class TrainingLoop(object):
@@ -74,7 +74,7 @@ class TrainingLoop(object):
 
             items = sorted(d.items(), key=lambda x: x[0])
             for k, v in items:
-                if k in 'train_data update_data val_data test_data'.split() and len(v) > 0:
+                if k in 'train_data off_policy_data val_data test_data'.split() and len(v) > 0:
                     if isinstance(v, pd.DataFrame):
                         s += "* {} (final_step): {}\n".format(k, v.iloc[-1].to_dict())
                     elif isinstance(v, str):
@@ -117,7 +117,7 @@ class TrainingLoop(object):
 
     def _build_return_value(self):
         history = copy.deepcopy(self.history)
-        for kind in 'train update val test'.split():
+        for kind in 'train off_policy val test'.split():
             key = kind + '_data'
             if key in self.latest:
                 history[-1][key] = pd.DataFrame.from_records(self.latest[key]).to_csv(index=False)
@@ -187,7 +187,7 @@ class TrainingLoop(object):
 
             stage_start = time.time()
 
-            self.history.append(dict(stage=stage, train_data=[], update_data=[], val_data=[], test_data=[]))
+            self.history.append(dict(stage=stage, train_data=[], off_policy_data=[], val_data=[], test_data=[]))
 
             with ExitStack() as stack:
                 session_config = tf.ConfigProto()
@@ -221,8 +221,8 @@ class TrainingLoop(object):
                 if cfg.save_summaries:
                     self.train_writer = tf.summary.FileWriter(
                         self.exp_dir.path_for('train'), graph, flush_secs=cfg.reload_interval)
-                    self.update_writer = tf.summary.FileWriter(
-                        self.exp_dir.path_for('update'), flush_secs=cfg.reload_interval)
+                    self.off_policy_writer = tf.summary.FileWriter(
+                        self.exp_dir.path_for('off_policy'), flush_secs=cfg.reload_interval)
                     self.val_writer = tf.summary.FileWriter(
                         self.exp_dir.path_for('val'), flush_secs=cfg.reload_interval)
                     self.test_writer = tf.summary.FileWriter(
@@ -359,6 +359,10 @@ class TrainingLoop(object):
             except KeyboardInterrupt:
                 self.threshold_reached = False
                 self.reason = "User interrupt"
+            except NotImplementedError as e:
+                # There is a bug that prevents instances of `NotImplementedError`
+                # from being handled properly, so replace it with an instance of `Exception`.
+                raise Exception("NotImplemented") from e
 
         phys_memory_after = memory_usage(physical=True)
 
@@ -376,7 +380,6 @@ class TrainingLoop(object):
 
     def _run_stage(self, stage, updater, early_stop):
         """ Run a stage of a curriculum. """
-
         self.local_step = 0
         threshold_reached = False
         reason = None
@@ -393,7 +396,7 @@ class TrainingLoop(object):
                 reason = "Maximum number of experiences reached"
                 break
 
-            if self.local_step % cfg.checkpoint_step == 0:
+            if self.local_step > 0 and self.local_step % cfg.checkpoint_step == 0:
                 yield self._build_return_value()
 
             evaluate = self.local_step % cfg.eval_step == 0
@@ -402,16 +405,16 @@ class TrainingLoop(object):
 
             start_time = time.time()
             train_summaries = b""
-            update_summaries = b""
+            off_policy_summaries = b""
             train_record = {}
-            update_record = {}
+            off_policy_record = {}
             if cfg.do_train:
-                train_summaries, update_summaries, train_record, update_record = updater.update(
+                train_summaries, off_policy_summaries, train_record, off_policy_record = updater.update(
                     cfg.batch_size, collect_summaries=evaluate and cfg.save_summaries)
             update_duration = time.time() - start_time
 
             self.latest['train_data'].append(train_record)
-            self.latest['update_data'].append(update_record)
+            self.latest['off_policy_data'].append(off_policy_record)
 
             if evaluate or display:
                 val_summaries, val_record = updater.evaluate(cfg.n_val, 'val')
@@ -422,7 +425,7 @@ class TrainingLoop(object):
 
                 if evaluate and cfg.save_summaries:
                     self.train_writer.add_summary(train_summaries, (self.global_step + 1) * cfg.batch_size)
-                    self.update_writer.add_summary(update_summaries, (self.global_step + 1) * cfg.batch_size)
+                    self.off_policy_writer.add_summary(off_policy_summaries, (self.global_step + 1) * cfg.batch_size)
                     self.val_writer.add_summary(val_summaries, (self.global_step + 1) * cfg.batch_size)
                     self.test_writer.add_summary(test_summaries, (self.global_step + 1) * cfg.batch_size)
 

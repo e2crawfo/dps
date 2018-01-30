@@ -2,7 +2,7 @@ import tensorflow as tf
 
 from dps import cfg
 from dps.config import Config
-from dps.envs.supervised import ClassificationEnv
+from dps.env.supervised import ClassificationEnv
 from dps.vision import EMNIST_CONFIG
 from dps.datasets import VisualArithmeticDataset
 from dps.utils.tf import LeNet, ScopedFunction

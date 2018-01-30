@@ -3,7 +3,7 @@ import tensorflow as tf
 
 from dps import cfg
 from dps.updater import DifferentiableUpdater
-from dps.envs.supervised import ClassificationEnv, RegressionEnv
+from dps.env.supervised import ClassificationEnv, RegressionEnv
 from dps.config import DEFAULT_CONFIG
 from dps.datasets import EmnistDataset, OmniglotDataset, SalienceDataset
 

@@ -79,7 +79,7 @@ class Policy(AgentHead):
             self.exploration = tf.cond(
                 tf.logical_or(
                     tf.equal(self.mode, "train"),
-                    tf.equal(self.mode, "update"),
+                    tf.equal(self.mode, "off_policy"),
                 ),
                 lambda: self.train_exploration,
                 lambda: self.val_exploration
@@ -497,7 +497,7 @@ class Categorical(TensorFlowSelection):
         dist = self._dist(utils, exploration)
         sample = dist.sample()
         if self.one_hot:
-            sample = tf.one_hot(sample, depth=int(utils.shape[-1]), axis=-1)
+            sample = tf.one_hot(sample, depth=self.n_actions, axis=-1)
         else:
             sample = sample[..., None]
         return sample
@@ -595,7 +595,7 @@ class BuildLstmController(object):
             MLP(), param_shape, name=name)
 
 
-class BuildFeedforwardController(object):
+class BuildMlpController(object):
     def __init__(self, *args, **kwargs):
         self.args, self.kwargs = args, kwargs
 

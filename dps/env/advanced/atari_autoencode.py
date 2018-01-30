@@ -3,15 +3,15 @@ import tensorflow as tf
 from dps import cfg
 from dps.utils import Config
 from dps.utils.tf import ScopedFunction
-from dps.datasets import AtariAutoEncodeDataset
-from dps.envs.supervised import BernoulliSigmoid
+from dps.datasets import AtariAutoencodeDataset
+from dps.env.supervised import BernoulliSigmoid
 from dps.updater import DifferentiableUpdater
 
 
 def build_env():
-    train = AtariAutoEncodeDataset(n_examples=cfg.n_train, policy=cfg.train_policy)
-    val = AtariAutoEncodeDataset(n_examples=cfg.n_val, policy=cfg.val_policy)
-    test = AtariAutoEncodeDataset(n_examples=cfg.n_val, policy=cfg.test_policy)
+    train = AtariAutoencodeDataset(n_examples=cfg.n_train, policy=cfg.train_policy)
+    val = AtariAutoencodeDataset(n_examples=cfg.n_val, policy=cfg.val_policy)
+    test = AtariAutoencodeDataset(n_examples=cfg.n_val, policy=cfg.test_policy)
     return BernoulliSigmoid(train, val, test)
 
 

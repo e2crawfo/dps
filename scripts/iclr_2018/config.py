@@ -1,7 +1,7 @@
 from dps import cfg
 from dps.utils import Config
 from dps.utils.tf import LeNet, MLP
-from dps.envs import grid_arithmetic
+from dps.env import grid_arithmetic
 from dps.rl.algorithms import a2c
 from dps.rl.policy import BuildEpsilonSoftmaxPolicy, BuildLstmController
 from dps.config import RL_EXPERIMENT_CONFIG, SL_EXPERIMENT_CONFIG

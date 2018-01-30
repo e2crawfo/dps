@@ -1,7 +1,7 @@
 import gym
 import numpy as np
 
-from dps.envs.supervised import SupervisedDataset
+from dps.datasets import SupervisedDataset
 from dps.utils import Param
 
 
@@ -48,14 +48,14 @@ def gather_atari_frames(game, policy, n_frames, density=1.0, render=False):
     return np.array(frames[:n_frames])
 
 
-class AtariAutoEncodeDataset(SupervisedDataset):
+class AtariAutoencodeDataset(SupervisedDataset):
     game = Param(aliases="atari_game")
     policy = Param()
 
     def __init__(self, **kwargs):
         frames = gather_atari_frames(self.game, self.policy, self.n_examples)
-        super(AtariAutoEncodeDataset, self).__init__(frames, frames)
+        super(AtariAutoencodeDataset, self).__init__(frames, frames)
 
 
 if __name__ == "__main__":
-    dset = AtariAutoEncodeDataset(game="AsteroidsNoFrameskip-v4", policy=None, n_examples=1000)
+    dset = AtariAutoencodeDataset(game="AsteroidsNoFrameskip-v4", policy=None, n_examples=1000)

@@ -44,7 +44,7 @@ class Agent(RLObject):
     ----------
     name: str
         Name for the agent.
-    controller_func: function(int) -> RNNCell
+    controller_func: function(int, str) -> RNNCell
         A function that accepts an integer representing an output size,
         as well as a string giving a scope name, and returns an instance
         of RNNCell that accepts observations as input and outputs utilities.

@@ -3,18 +3,18 @@ import numpy as np
 
 from dps import cfg
 from dps.register import RegisterBank
-from dps.envs.supervised import ClassificationEnv
-from dps.envs import CompositeEnv
-from dps.utils.tf import LeNet, MLP, CompositeCell
+from dps.env.supervised import ClassificationEnv
+from dps.env import CompositeEnv
 from dps.utils import Param, Config
+from dps.utils.tf import MLP, CompositeCell
 from dps.rl.policy import EpsilonSoftmax, ProductDist, Policy, Deterministic
 from dps.datasets import GridArithmeticDataset
-from dps.envs.advanced.grid_arithmetic import GridArithmetic, render_rollouts
-from dps.envs.advanced.grid_arithmetic import config as ga_config
+from dps.env.advanced.grid_arithmetic import GridArithmetic, render_rollouts
+from dps.env.advanced.grid_arithmetic import config as ga_config
 
 
 def build_env():
-    internal = GridArithmeticNoModules()
+    internal = GridArithmeticNoTransformations()
 
     train = GridArithmeticDataset(n_examples=cfg.n_train, one_hot=False)
     val = GridArithmeticDataset(n_examples=cfg.n_val, one_hot=False)
@@ -33,34 +33,19 @@ def build_policy(env, **kwargs):
     return Policy(action_selection, env.obs_shape, **kwargs)
 
 
-def no_modules_inp(obs):
-    glimpse_start = 3 + 14**2
-    glimpse_end = glimpse_start + 14 ** 2
-    glimpse = obs[..., glimpse_start:glimpse_end]
-    glimpse_processor = LeNet(cfg.n_glimpse_units, scope="glimpse_classifier")
-    glimpse_features = glimpse_processor(glimpse, cfg.n_glimpse_features, False)
-    return tf.concat(
-        [obs[..., :glimpse_start], glimpse_features, obs[..., glimpse_end:]],
-        axis=-1
-    )
-
-
 def build_controller(params_dim, name=None):
     return CompositeCell(
         tf.contrib.rnn.LSTMCell(num_units=cfg.n_controller_units),
         MLP([cfg.n_output_units, cfg.n_output_units], scope="controller_output"),
-        params_dim, inp=no_modules_inp, name=name)
+        params_dim, name=name)
 
 
 config_delta = Config(
-    log_name='grid_arithmetic_no_modules',
+    log_name='grid_arithmetic_no_transformations',
     render_rollouts=render_rollouts,
     build_env=build_env,
     build_policy=build_policy,
-    build_controller=build_controller,
     largest_digit=99,
-    n_glimpse_features=128,
-    n_glimpse_units=128,
     n_output_units=128,
     use_differentiable_loss=True,
 )
@@ -70,23 +55,15 @@ config = ga_config.copy()
 config.update(config_delta)
 
 
-class GridArithmeticNoModules(GridArithmetic):
+class GridArithmeticNoTransformations(GridArithmetic):
     has_differentiable_loss = True
-    _action_names = ['>', '<', 'v', '^', 'update_salience', 'output']
+    _action_names = ['>', '<', 'v', '^', 'classify_digit', 'classify_op', 'update_salience', 'output']
 
     largest_digit = Param()
 
-    def __init__(self, **kwargs):
-        super(GridArithmeticNoModules, self).__init__()
-
-        self.action_names = self._action_names
-        self.n_classes = self.largest_digit + 2
-        self.action_sizes = [1, 1, 1, 1, 1, self.n_classes]
-        self.action_shape = (sum(self.action_sizes),)
-
     @property
     def n_discrete_actions(self):
-        return 5
+        return 7
 
     def build_reward(self, registers, actions):
         loss = tf.cond(
@@ -114,13 +91,21 @@ class GridArithmeticNoModules(GridArithmetic):
         loss *= multiplier
         return loss
 
+    def __init__(self, **kwargs):
+        super(GridArithmeticNoTransformations, self).__init__()
+
+        self.action_names = self._action_names
+        self.n_classes = self.largest_digit + 2
+        self.action_sizes = [1, 1, 1, 1, 1, 1, 1, self.n_classes]
+        self.action_shape = (sum(self.action_sizes),)
+
     def build_init(self, r):
         self.maybe_build_placeholders()
-        self.targets_one_hot = tf.one_hot(tf.cast(tf.squeeze(self.target_ph, axis=-1), tf.int32), self.n_classes)
+        self.targets_one_hot = tf.one_hot(tf.cast(tf.squeeze(self.target, axis=-1), tf.int32), self.n_classes)
 
-        _fovea_x, _fovea_y, _prev_action, _salience, _glimpse, _salience_input, _y = self.rb.as_tuple(r)
+        _prev_digit, _acc, _fovea_x, _fovea_y, _prev_action, _salience, _glimpse, _salience_input, _y = self.rb.as_tuple(r)
 
-        batch_size = tf.shape(self.input_ph)[0]
+        batch_size = tf.shape(self.input)[0]
 
         # init fovea
         if self.start_loc is not None:
@@ -143,14 +128,14 @@ class GridArithmeticNoModules(GridArithmetic):
             salience, salience_input = self._build_update_salience(
                 1.0, _salience, _salience_input, _fovea_y, _fovea_x)
 
-        return self.rb.wrap(fovea_x, fovea_y, _prev_action, salience, glimpse, salience_input, self.target_ph)
+        digit = -1 * tf.ones((batch_size, 1), dtype=tf.float32)
+        op = -1 * tf.ones((batch_size, 1), dtype=tf.float32)
 
-    def _init_networks(self):
-        self.maybe_build_salience_detector()
+        return self.rb.wrap(digit, op, fovea_x, fovea_y, _prev_action, salience, glimpse, salience_input, self.target)
 
     def _init_rb(self):
         values = (
-            [0., 0., -1.] +
+            [-1., -1., 0., 0., -1.] +
             [np.zeros(self.salience_output_size, dtype='f')] +
             [np.zeros(self.sub_image_size, dtype='f')] +
             [np.zeros(self.salience_input_size, dtype='f')] +
@@ -158,31 +143,32 @@ class GridArithmeticNoModules(GridArithmetic):
         )
 
         self.rb = RegisterBank(
-            'GridArithmeticNoModulesRB',
-            'fovea_x fovea_y prev_action salience glimpse', 'salience_input y', values=values,
+            'GridArithmeticNoTransformationsRB',
+            'digit op fovea_x fovea_y prev_action salience glimpse', 'salience_input y', values=values,
             no_display='glimpse salience salience_input y',
         )
 
     def build_step(self, t, r, a):
-        _fovea_x, _fovea_y, _prev_action, _salience, _glimpse, _salience_input, _y = self.rb.as_tuple(r)
+        _digit, _op, _fovea_x, _fovea_y, _prev_action, _salience, _glimpse, _salience_input, _y = self.rb.as_tuple(r)
 
         actions = self.unpack_actions(a)
-        right, left, down, up, update_salience, output = actions
-
-        fovea_y, fovea_x = self._build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
-        glimpse = self._build_update_glimpse(fovea_y, fovea_x)
+        (right, left, down, up, classify_digit, classify_op, update_salience, output) = actions
 
         salience = _salience
         salience_input = _salience_input
         if self.salience_action:
             salience, salience_input = self._build_update_salience(
-                update_salience, _salience, _salience_input, fovea_y, fovea_x)
+                update_salience, _salience, _salience_input, _fovea_y, _fovea_x)
+
+        digit, op = self._build_update_storage(_glimpse, _digit, classify_digit, _op, classify_op)
+        fovea_y, fovea_x = self._build_update_fovea(right, left, down, up, _fovea_y, _fovea_x)
+        glimpse = self._build_update_glimpse(fovea_y, fovea_x)
 
         prev_action = tf.argmax(a[..., :self.n_discrete_actions], axis=-1)[..., None]
         prev_action = tf.to_float(prev_action)
 
         return self._build_return_values(
-            [fovea_x, fovea_y, prev_action, salience, glimpse, salience_input, _y], actions)
+            [digit, op, fovea_x, fovea_y, prev_action, salience, glimpse, salience_input, _y], actions)
 
     def get_output(self, registers, actions):
         return actions[..., self.n_discrete_actions:]

@@ -11,7 +11,7 @@ from .agent import AgentHead, Agent
 from .optimizer import Optimizer, StochasticGradientDescent
 from .trust_region import TrustRegionOptimizer
 from .policy import (
-    BuildLstmController, BuildFeedforwardController, BuildLinearController,
+    BuildLstmController, BuildMlpController, BuildLinearController,
     BuildSoftmaxPolicy, BuildEpsilonGreedyPolicy, BuildEpsilonSoftmaxPolicy,
     Policy, DiscretePolicy, Softmax, EpsilonGreedy, EpsilonSoftmax, Deterministic,
     ProductDist, Normal, NormalWithFixedScale, NormalWithExploration, Gamma,

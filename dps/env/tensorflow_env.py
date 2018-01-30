@@ -5,7 +5,7 @@ import tensorflow as tf
 from tensorflow.python.ops.rnn import dynamic_rnn
 
 from dps import cfg
-from dps.envs import Env
+from dps.env import Env
 from dps.rl import RolloutBatch
 from dps.utils import Param
 from dps.utils.tf import RNNCell
@@ -234,15 +234,15 @@ class InternalEnv(TensorFlowEnv):
         self.input = tf.placeholder(tf.float32, (None,) + self.input_shape, name="input")
         self.target = tf.placeholder(tf.float32, (None,) + self.target_shape, name="target")
 
-    def _make_feed_dict(self, n_rollouts, T, mode, inp, targets):
-        return {self.input: inp, self.targets: targets}
+    def _make_feed_dict(self, n_rollouts, T, mode, inp, target):
+        return {self.input: inp, self.target: target}
 
     def build_reward(self, registers, actions):
         rewards = tf.cond(
             self.is_testing,
             lambda: tf.zeros(tf.shape(registers)[:-1])[..., None],
             lambda: -tf.reduce_sum(
-                tf.to_float(tf.abs(self.rb.get_output(registers) - self.targets) > cfg.reward_window),
+                tf.to_float(tf.abs(self.rb.get_output(registers) - self.target) > cfg.reward_window),
                 axis=-1, keep_dims=True
             ),
         )

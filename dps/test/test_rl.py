@@ -3,8 +3,11 @@ import subprocess
 from collections import defaultdict
 import pytest
 
-from dps.run import _run
+from dps.run import _raw_run
 from dps.utils import Config
+from dps.rl.policy import BuildEpsilonSoftmaxPolicy, BuildLstmController
+from dps.rl.algorithms import a2c
+from dps.env.advanced import simple_addition
 
 
 def _get_deterministic_output(filename):
@@ -20,19 +23,69 @@ def _get_deterministic_output(filename):
 
 @pytest.mark.slow
 def test_simple_add(test_config):
-    _config = Config(
-        log_name="test_simple_add_a2c", render_step=0,
-        value_weight=0.0, opt_steps_per_update=20,
-        max_steps=501, use_gpu=False, seed=1034340)
-    _config.update(test_config)
+    # Fully specify the config here so that this test is not affected by config changes external to this file.
+    config = Config(
+        log_name="test_simple_add_a2c",
+        name="test_simple_add_a2c",
+        get_updater=a2c.A2C,
+        n_controller_units=32,
+        batch_size=16,
+        optimizer_spec="adam",
+        opt_steps_per_update=20,
+        sub_batch_size=0,
+        epsilon=0.2,
+        lr_schedule=1e-4,
+
+        max_steps=501,
+
+        build_policy=BuildEpsilonSoftmaxPolicy(),
+        build_controller=BuildLstmController(),
+
+        exploration_schedule=0.1,
+        val_exploration_schedule=0.0,
+        actor_exploration_schedule=None,
+
+        policy_weight=1.0,
+        value_weight=0.0,
+        value_reg_weight=0.0,
+        entropy_weight=0.01,
+
+        split=False,
+        q_lmbda=1.0,
+        v_lmbda=1.0,
+        policy_importance_c=0,
+        q_importance_c=None,
+        v_importance_c=None,
+        max_grad_norm=None,
+        gamma=1.0,
+
+        use_differentiable_loss=False,
+
+        use_gpu=False,
+        render_step=0,
+        seed=1034340,
+
+        # env-specific
+        build_env=simple_addition.build_env,
+        T=30,
+        curriculum=[
+            dict(width=1),
+            dict(width=2),
+            dict(width=3),
+        ],
+        base=10,
+        final_reward=True,
+    )
+
+    config.update(test_config)
 
     n_repeats = 1  # Haven't made it completely deterministic yet, so keep it at 1.
 
     results = defaultdict(int)
 
     for i in range(n_repeats):
-        config = _config.copy()
-        output = _run("simple_addition", "a2c", _config=config)
+        config = config.copy()
+        output = _raw_run(config)
         stdout = os.path.join(output['exp_dir'], 'stdout')
         result = _get_deterministic_output(stdout)
         results[result] += 1
@@ -46,23 +99,23 @@ def test_simple_add(test_config):
         raise Exception("Results were not deterministic.")
 
     assert len(output['config'].curriculum) == 3
-    _config.load_path = os.path.join(output['exp_dir'], 'best_of_stage_2')
-    assert os.path.exists(_config.load_path + ".index")
-    assert os.path.exists(_config.load_path + ".meta")
+    config.load_path = os.path.join(output['exp_dir'], 'best_of_stage_2')
+    assert os.path.exists(config.load_path + ".index")
+    assert os.path.exists(config.load_path + ".meta")
 
     # Load one of the hypotheses, train it for a bit, make sure the accuracy is still high.
-    _config.curriculum = [output['config'].curriculum[-1]]
-    config = _config.copy()
-    output = _run("simple_addition", "a2c", _config=config)
+    config.curriculum = [output['config'].curriculum[-1]]
+    config = config.copy()
+    output = _raw_run(config)
     stdout = os.path.join(output['exp_dir'], 'stdout')
     result = _get_deterministic_output(stdout)
     results[result] += 1
     assert output['history'][-1]['best_01_loss'] < 0.1
 
     # Load one of the hypotheses, don't train it at all, make sure the accuracy is still high.
-    _config.do_train = False
-    config = _config.copy()
-    output = _run("simple_addition", "a2c", _config=config)
+    config.do_train = False
+    config = config.copy()
+    output = _raw_run(config)
     stdout = os.path.join(output['exp_dir'], 'stdout')
     result = _get_deterministic_output(stdout)
     results[result] += 1

@@ -3,8 +3,9 @@ import numpy as np
 
 from dps import cfg
 from dps.register import RegisterBank
-from dps.envs.supervised import SupervisedDataset, IntegerRegressionEnv
-from dps.envs import CompositeEnv, InternalEnv
+from dps.env import CompositeEnv, InternalEnv
+from dps.env.supervised import IntegerRegressionEnv
+from dps.datasets import SupervisedDataset
 from dps.vision.attention import gaussian_filter
 from dps.utils import Param, digits_to_numbers, numbers_to_digits, Config
 
@@ -94,7 +95,7 @@ class HardAddition(InternalEnv):
         # Read input
         fovea = tf.concat([fovea_y, fovea_x], 1)
         std = tf.fill(tf.shape(fovea), 0.01)
-        static_inp = tf.reshape(self.input_ph, (-1, self.height, self.width))
+        static_inp = tf.reshape(self.input, (-1, self.height, self.width))
         x_filter = gaussian_filter(fovea[:, 1:], std[:, 1:], np.arange(self.width, dtype='f'))
         y_filter = gaussian_filter(fovea[:, :1], std[:, :1], np.arange(self.height, dtype='f'))
         vision = tf.matmul(y_filter, tf.matmul(static_inp, x_filter, adjoint_b=True))
@@ -131,7 +132,7 @@ class HardAddition(InternalEnv):
         # Read input
         fovea = tf.concat([fovea_y, fovea_x], 1)
         std = tf.fill(tf.shape(fovea), 0.01)
-        static_inp = tf.reshape(self.input_ph, (-1, self.height, self.width))
+        static_inp = tf.reshape(self.input, (-1, self.height, self.width))
         x_filter = gaussian_filter(fovea[:, 1:], std[:, 1:], np.arange(self.width, dtype='f'))
         y_filter = gaussian_filter(fovea[:, :1], std[:, :1], np.arange(self.height, dtype='f'))
         vision = tf.matmul(y_filter, tf.matmul(static_inp, x_filter, adjoint_b=True))

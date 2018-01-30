@@ -204,8 +204,11 @@ class RLContext(Parameterized):
             tf.float32, shape=(cfg.T, None, 1), name="_mask")
         self._signals['obs'] = tf.placeholder(
             tf.float32, shape=(cfg.T, None) + self.obs_shape, name="_obs")
-        self._signals['hidden'] = tf.placeholder(
-            tf.float32, shape=(cfg.T, None) + (self.env.rb.hidden_width,), name="_hidden")
+
+        if hasattr(self.env, 'rb'):
+            self._signals['hidden'] = tf.placeholder(
+                tf.float32, shape=(cfg.T, None, self.env.rb.hidden_width,), name="_hidden")
+
         self._signals['actions'] = tf.placeholder(
             tf.float32, shape=(cfg.T, None) + self.action_shape, name="_actions")
         self._signals['gamma'] = tf.constant(self.gamma)
@@ -227,10 +230,10 @@ class RLContext(Parameterized):
         self._signals['train_reward_per_ep_avg'] = (
             self._signals['train_cumulative_reward'] / self._signals['train_n_episodes'])
 
-        self._signals['update_n_episodes'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
-        self._signals['update_cumulative_reward'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
-        self._signals['update_reward_per_ep_avg'] = (
-            self._signals['update_cumulative_reward'] / self._signals['update_n_episodes'])
+        self._signals['off_policy_n_episodes'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
+        self._signals['off_policy_cumulative_reward'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
+        self._signals['off_policy_reward_per_ep_avg'] = (
+            self._signals['off_policy_cumulative_reward'] / self._signals['off_policy_n_episodes'])
 
         self._signals['val_n_episodes'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
         self._signals['val_cumulative_reward'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
@@ -245,9 +248,9 @@ class RLContext(Parameterized):
                     tf.assign_add(self._signals['train_n_episodes'], self._signals['batch_size_float']),
                     tf.assign_add(self._signals['train_cumulative_reward'], tf.reduce_sum(self._signals['rewards']))
                 )),
-                (tf.equal(mode, 'update'), lambda: tf.group(
-                    tf.assign_add(self._signals['update_n_episodes'], self._signals['batch_size_float']),
-                    tf.assign_add(self._signals['update_cumulative_reward'], tf.reduce_sum(self._signals['rewards']))
+                (tf.equal(mode, 'off_policy'), lambda: tf.group(
+                    tf.assign_add(self._signals['off_policy_n_episodes'], self._signals['batch_size_float']),
+                    tf.assign_add(self._signals['off_policy_cumulative_reward'], tf.reduce_sum(self._signals['rewards']))
                 )),
                 (tf.equal(mode, 'val'), lambda: tf.group(
                     tf.assign_add(self._signals['val_n_episodes'], self._signals['batch_size_float']),
@@ -261,7 +264,7 @@ class RLContext(Parameterized):
         self._signals['reward_per_ep_avg'] = tf.case(
             [
                 (tf.equal(mode, 'train'), lambda: self._signals['train_reward_per_ep_avg']),
-                (tf.equal(mode, 'update'), lambda: self._signals['update_reward_per_ep_avg']),
+                (tf.equal(mode, 'off_policy'), lambda: self._signals['off_policy_reward_per_ep_avg']),
                 (tf.equal(mode, 'val'), lambda: self._signals['val_reward_per_ep_avg']),
             ],
             default=lambda: tf.zeros_like(self._signals['train_reward_per_ep_avg']),
@@ -297,6 +300,8 @@ class RLContext(Parameterized):
             obj.build_core_signals(self)
 
     def make_feed_dict(self, rollouts, mode, weights=None):
+        # import pdb; pdb.set_trace()
+
         if weights is None:
             weights = np.ones((rollouts.T, rollouts.batch_size, 1))
         elif weights.ndim == 1:
@@ -305,13 +310,15 @@ class RLContext(Parameterized):
         feed_dict = {
             self._signals['mask']: (1-shift_fill(rollouts.done, 1)).astype('f'),
             self._signals['obs']: rollouts.o,
-            self._signals['hidden']: rollouts.hidden,
             self._signals['actions']: rollouts.a,
             self._signals['rewards']: rollouts.r,
             self._signals['weights']: weights,
             self._signals['mu_log_probs']: rollouts.log_probs,
             self._signals['mode']: mode,
         }
+
+        if hasattr(rollouts, 'hidden'):
+            feed_dict[self._signals['hidden']] = rollouts.hidden
 
         if hasattr(rollouts, 'utils'):
             # utils are not always stored in the rollouts as they can occupy a lot of memory
@@ -418,7 +425,7 @@ class RLContext(Parameterized):
             start = time.time()
             if self.replay_buffer is None or self.on_policy_updates:
                 train_summaries, train_record = self._run_and_record(
-                    rollouts, mode='update', weights=None, do_update=True,
+                    rollouts, mode='train', weights=None, do_update=True,
                     summary_op=self.train_summary_op,
                     collect_summaries=collect_summaries)
             elif collect_summaries:
@@ -426,12 +433,10 @@ class RLContext(Parameterized):
                     rollouts, mode='train', weights=None, do_update=False,
                     summary_op=self.summary_op, collect_summaries=True)
             train_step_duration = time.time() - start
-            train_record.update(
-                step_duration=train_step_duration,
-                rollout_duration=train_rollout_duration)
+            train_record.update(step_duration=train_step_duration, rollout_duration=train_rollout_duration)
 
-            update_summaries = b""
-            update_record = {}
+            off_policy_summaries = b""
+            off_policy_record = {}
 
             if self.replay_buffer is not None:
                 start = time.time()
@@ -449,15 +454,15 @@ class RLContext(Parameterized):
                         i == self.replay_updates_per_sample-1
                     )
 
-                    update_summaries, update_record = self._run_and_record(
-                        off_policy_rollouts, mode='update', weights=weights, do_update=True,
+                    off_policy_summaries, off_policy_record = self._run_and_record(
+                        off_policy_rollouts, mode='off_policy', weights=weights, do_update=True,
                         summary_op=self.train_summary_op,
                         collect_summaries=_collect_summaries)
 
-                update_duration = time.time() - start
-                update_record['step_duration'] = update_duration
+                off_policy_duration = time.time() - start
+                off_policy_record['step_duration'] = off_policy_duration
 
-            return train_summaries, update_summaries, train_record, update_record
+            return train_summaries, off_policy_summaries, train_record, off_policy_record
 
     def evaluate(self, batch_size, mode):
         assert self.pi is not None, "A validation policy must be set using `set_validation_policy` before calling `evaluate`."
@@ -520,13 +525,13 @@ class RLUpdater(Updater):
             learner.build_graph(self.env)
 
     def _update(self, batch_size, collect_summaries):
-        train_summaries, update_summaries = [], []
-        train_record, update_record = {}, {}
+        train_summaries, off_policy_summaries = [], []
+        train_record, off_policy_record = {}, {}
 
         for learner in self.learners:
             ts, us, tr, ur = learner.update(batch_size, collect_summaries)
             train_summaries.append(ts)
-            update_summaries.append(us)
+            off_policy_summaries.append(us)
 
             for k, v in tr.items():
                 if learner.name:
@@ -540,12 +545,12 @@ class RLUpdater(Updater):
                     s = learner.name + ":" + k
                 else:
                     s = k
-                update_record[s] = v
+                off_policy_record[s] = v
 
         train_summaries = (b'').join(train_summaries)
-        update_summaries = (b'').join(update_summaries)
+        off_policy_summaries = (b'').join(off_policy_summaries)
 
-        return train_summaries, update_summaries, train_record, update_record
+        return train_summaries, off_policy_summaries, train_record, off_policy_record
 
     def _evaluate(self, batch_size, mode):
         """ Return list of tf summaries and a dictionary of values to be displayed. """

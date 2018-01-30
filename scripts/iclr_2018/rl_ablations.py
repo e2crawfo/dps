@@ -4,7 +4,7 @@ import argparse
 
 from config import rl_config as config
 
-from dps.envs import ga_no_modules, ga_no_classifiers, ga_no_transformations
+from dps.env import ga_no_modules, ga_no_classifiers, ga_no_transformations
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--ablation", default="no_modules", choices="no_modules no_classifiers no_transformations".split())

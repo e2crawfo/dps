@@ -7,7 +7,7 @@ import sys
 from dps import cfg
 from dps.config import DEFAULT_CONFIG
 from dps.train import training_loop
-from dps.envs.room import Room
+from dps.env.room import Room
 from dps.rl import RLUpdater
 from dps.rl.value import (
     PolicyEvaluation, ProximalPolicyEvaluation, TrustRegionPolicyEvaluation,

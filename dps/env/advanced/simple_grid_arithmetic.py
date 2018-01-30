@@ -3,11 +3,12 @@ import numpy as np
 
 from dps import cfg
 from dps.register import RegisterBank
-from dps.envs import CompositeEnv, InternalEnv
-from dps.envs.supervised import SupervisedDataset, IntegerRegressionEnv
+from dps.env import CompositeEnv, InternalEnv
+from dps.env.supervised import IntegerRegressionEnv
+from dps.datasets import SupervisedDataset
 from dps.utils import DataContainer, Param, Config
 from dps.utils.tf import extract_glimpse_numpy_like, resize_image_with_crop_or_pad
-from dps.envs.advanced.grid_arithmetic import GridArithmeticDataset
+from dps.env.advanced.grid_arithmetic import GridArithmeticDataset
 
 
 def build_env():
@@ -207,7 +208,7 @@ class SimpleGridArithmetic(InternalEnv):
 
     def _build_update_glimpse(self, fovea_y, fovea_x):
         top_left = tf.concat([fovea_y, fovea_x], axis=-1)
-        inp = self.input_ph[..., None]
+        inp = self.input[..., None]
         glimpse = extract_glimpse_numpy_like(inp, (1, 1), top_left)
         glimpse = tf.reshape(glimpse, (-1, 1), name="glimpse")
         return glimpse
@@ -260,14 +261,14 @@ class SimpleGridArithmetic(InternalEnv):
             int(np.floor(self.salience_shape[0] / 2)),
             int(np.floor(self.salience_shape[1] / 2))
         )
-        target_height = int(self.input_ph.shape[1]) + 2 * self.pad_offset[0]
-        target_width = int(self.input_ph.shape[2]) + 2 * self.pad_offset[1]
-        inp = self.input_ph[..., None]
+        target_height = int(self.input.shape[1]) + 2 * self.pad_offset[0]
+        target_width = int(self.input.shape[2]) + 2 * self.pad_offset[1]
+        inp = self.input[..., None]
         self.padded_input = resize_image_with_crop_or_pad(inp, target_height, target_width)
 
         _digit, _op, _acc, _fovea_x, _fovea_y, _prev_action, _salience, _glimpse = self.rb.as_tuple(r)
 
-        batch_size = tf.shape(self.input_ph)[0]
+        batch_size = tf.shape(self.input)[0]
 
         # init fovea
         if self.start_loc is not None:

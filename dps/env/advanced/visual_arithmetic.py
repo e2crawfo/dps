@@ -4,8 +4,8 @@ import numpy as np
 
 from dps import cfg
 from dps.register import RegisterBank
-from dps.envs import CompositeEnv, InternalEnv
-from dps.envs.supervised import ClassificationEnv, IntegerRegressionEnv
+from dps.env import CompositeEnv, InternalEnv
+from dps.env.supervised import ClassificationEnv, IntegerRegressionEnv
 from dps.vision.train import EMNIST_CONFIG, SALIENCE_CONFIG
 from dps.datasets import VisualArithmeticDataset
 from dps.utils.tf import LeNet, MLP, SalienceMap, extract_glimpse_numpy_like
@@ -296,7 +296,7 @@ class VisualArithmetic(InternalEnv):
 
         fovea_top_left_px = fovea_center_px - 0.5 * np.array(self.sub_image_shape)
 
-        inp = self.input_ph[..., None]
+        inp = self.input[..., None]
 
         glimpse = extract_glimpse_numpy_like(
             inp, self.sub_image_shape, fovea_top_left_px, fill_value=0.0)
@@ -308,7 +308,7 @@ class VisualArithmetic(InternalEnv):
 
         salience_input_top_left_px = fovea_center_px - np.array(self.salience_input_shape) / 2.0
 
-        inp = self.input_ph[..., None]
+        inp = self.input[..., None]
 
         glimpse = extract_glimpse_numpy_like(
             inp, self.salience_input_shape, salience_input_top_left_px, fill_value=0.0)
@@ -343,7 +343,7 @@ class VisualArithmetic(InternalEnv):
 
         (_digit, _op, _acc, _fovea_x, _fovea_y, _prev_action,
             _salience, _glimpse, _salience_input) = self.rb.as_tuple(r)
-        batch_size = tf.shape(self.input_ph)[0]
+        batch_size = tf.shape(self.input)[0]
 
         # init fovea
         if self.start_loc is not None:

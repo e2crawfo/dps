@@ -259,7 +259,14 @@ class MLP(ScopedFunction):
 
         fc_kwargs = self.fc_kwargs.copy()
         fc_kwargs['activation_fn'] = None
-        return fully_connected(hidden, output_size, **fc_kwargs)
+
+        try:
+            _output_size = output_size[0]
+            assert len(output_size) == 1
+        except Exception:
+            _output_size = output_size
+
+        return fully_connected(hidden, _output_size, **fc_kwargs)
 
 
 class LeNet(ScopedFunction):
@@ -274,7 +281,6 @@ class LeNet(ScopedFunction):
         super(LeNet, self).__init__(scope)
 
     def _call(self, images, output_size, is_training):
-        output_size = int(output_size)
         if len(images.shape) <= 1:
             raise Exception()
 
@@ -301,7 +307,13 @@ class LeNet(ScopedFunction):
         fc_kwargs = self.fc_kwargs.copy()
         fc_kwargs['activation_fn'] = None
 
-        net = slim.fully_connected(net, output_size, scope='fc4', **fc_kwargs)
+        try:
+            _output_size = output_size[0]
+            assert len(output_size) == 1
+        except Exception:
+            _output_size = output_size
+
+        net = slim.fully_connected(net, _output_size, scope='fc4', **fc_kwargs)
         return net
 
 
@@ -313,7 +325,6 @@ class VGGNet(ScopedFunction):
         super(VGGNet, self).__init__(scope)
 
     def _call(self, images, output_size, is_training):
-        output_size = int(output_size)
         if len(images.shape) <= 1:
             raise Exception()
         if len(images.shape) == 2:
@@ -322,12 +333,19 @@ class VGGNet(ScopedFunction):
         if len(images.shape) == 3:
             images = images[..., None]
         from tensorflow.contrib.slim.python.slim.nets.vgg import vgg_a, vgg_16, vgg_19
+
+        try:
+            _output_size = output_size[0]
+            assert len(output_size) == 1
+        except IndexError:
+            _output_size = output_size
+
         if self.kind == 'a':
-            return vgg_a(images, output_size, is_training)
+            return vgg_a(images, _output_size, is_training)
         elif self.kind == '16':
-            return vgg_16(images, output_size, is_training)
+            return vgg_16(images, _output_size, is_training)
         elif self.kind == '19':
-            return vgg_19(images, output_size, is_training)
+            return vgg_19(images, _output_size, is_training)
         else:
             raise Exception()
 
@@ -341,7 +359,6 @@ class FullyConvolutional(ScopedFunction):
         super(FullyConvolutional, self).__init__(scope)
 
     def _call(self, images, output_size, is_training):
-        output_size = int(output_size)
         if len(images.shape) <= 1:
             raise Exception()
 
@@ -639,7 +656,7 @@ class FeedforwardCell(ScopedCell):
         super(FeedforwardCell, self).__init__(name)
 
     def _call(self, inp, state):
-        output = self.ff(inp, self._output_size)
+        output = self.ff(inp, self._output_size, False)
         return output, tf.zeros((tf.shape(inp)[0], 1))
 
     @property

@@ -1,15 +1,114 @@
 import numpy as np
 
 from dps import cfg
-from dps.envs.supervised import SupervisedDataset
-from dps.utils import image_to_string, Param, DataContainer
+from dps.utils import image_to_string, Param, Parameterized, DataContainer
 from dps.datasets import load_emnist, load_omniglot, emnist_classes, omniglot_classes
+
+
+class SupervisedDataset(Parameterized):
+    n_examples = Param()
+
+    def __init__(self, x, y, shuffle=True, **kwargs):
+        self.x = x
+        self.y = y
+        self.n_examples = self.x.shape[0]
+        self.shuffle = shuffle
+
+        self._epochs_completed = 0
+        self._index_in_epoch = 0
+
+        super(SupervisedDataset, self).__init__(**kwargs)
+
+    @property
+    def obs_shape(self):
+        return self.x.shape[1:]
+
+    @property
+    def epochs_completed(self):
+        return self._epochs_completed
+
+    @property
+    def index_in_epoch(self):
+        return self._index_in_epoch
+
+    @property
+    def completion(self):
+        return self.epochs_completed + self.index_in_epoch / self.n_examples
+
+    def next_batch(self, batch_size=None, advance=True):
+        """ Return the next ``batch_size`` examples from this data set.
+
+        If ``batch_size`` not specified, return rest of the examples in the current epoch.
+
+        """
+        start = self._index_in_epoch
+
+        if batch_size is None:
+            batch_size = self.n_examples - start
+
+        # Shuffle for the first epoch
+        if self._epochs_completed == 0 and start == 0 and self.shuffle:
+            perm0 = np.arange(self.n_examples)
+            np.random.shuffle(perm0)
+            self._x = self.x[perm0]
+            self._y = self.y[perm0]
+
+        if batch_size > self.n_examples:
+            if advance:
+                self._epochs_completed += batch_size / self.n_examples
+                self._index_in_epoch = 0
+            indices = np.random.choice(self.n_examples, batch_size, replace=True)
+            x, y = self._x[indices, ...], self._y[indices, ...]
+            return x, y
+
+        if start + batch_size >= self.n_examples:
+            # Finished epoch
+
+            # Get the remaining examples in this epoch
+            x_rest_part = self._x[start:]
+            y_rest_part = self._y[start:]
+
+            # Shuffle the data
+            if self.shuffle and advance:
+                perm = np.arange(self.n_examples)
+                np.random.shuffle(perm)
+                self._x = self.x[perm]
+                self._y = self.y[perm]
+
+            # Start next epoch
+            end = batch_size - len(x_rest_part)
+            x_new_part = self._x[:end]
+            y_new_part = self._y[:end]
+            x = np.concatenate((x_rest_part, x_new_part), axis=0)
+            y = np.concatenate((y_rest_part, y_new_part), axis=0)
+
+            if advance:
+                self._index_in_epoch = end
+                self._epochs_completed += 1
+        else:
+            # Middle of epoch
+            end = start + batch_size
+            x, y = self._x[start:end], self._y[start:end]
+
+            if advance:
+                self._index_in_epoch = end
+
+        return x, y
+
+
+class ImageDataset(SupervisedDataset):
+    """ When calling `next_batch`, x output will have dtype np.float32, and its elements will take on values in [0, 1]. """
+    def next_batch(self, batch_size=None, advance=True):
+        x, y = super(ImageDataset, self).next_batch(batch_size=batch_size, advance=advance)
+        assert x.dtype == np.uint8
+        x = (x / 255.).astype('f')
+        return x, y
 
 
 # EMNIST ***************************************
 
 
-class EmnistDataset(SupervisedDataset):
+class EmnistDataset(ImageDataset):
     """
     Download and pre-process EMNIST dataset:
     python scripts/download.py emnist <desired location>
@@ -68,12 +167,13 @@ class Rect(object):
         return "<%d:%d %d:%d>" % (self.top, self.bottom, self.left, self.right)
 
 
-class PatchesDataset(SupervisedDataset):
+class PatchesDataset(ImageDataset):
     n_examples = Param()
     max_overlap = Param(10)
     image_shape = Param((100, 100))
     draw_shape = Param(None)
     draw_offset = Param((0, 0))
+    depth = Param(None)
 
     def __init__(self, **kwargs):
         self.draw_shape = self.draw_shape or self.image_shape
@@ -101,8 +201,8 @@ class PatchesDataset(SupervisedDataset):
                 Rect(
                     np.random.randint(0, self.draw_shape[0]-m+1),
                     np.random.randint(0, self.draw_shape[1]-n+1), m, n)
-                for m, n in sub_image_shapes]
-            area = np.zeros(self.draw_shape, 'f')
+                for m, n, *_ in sub_image_shapes]
+            area = np.zeros(self.draw_shape, 'uint8')
 
             for rect in rects:
                 area[rect.top:rect.bottom, rect.left:rect.right] += 1
@@ -121,7 +221,7 @@ class PatchesDataset(SupervisedDataset):
 
     def _make_dataset(self, n_examples):
         if n_examples == 0:
-            return np.zeros((0,) + self.image_shape).astype('f'), np.zeros((0, 1)).astype('i')
+            return np.zeros((0,) + self.image_shape).astype('uint8'), np.zeros((0, 1)).astype('i')
 
         new_X, new_Y = [], []
         patch_centres = []
@@ -133,17 +233,26 @@ class PatchesDataset(SupervisedDataset):
 
             patch_centres.append([r.centre() for r in rects])
 
+            draw_shape = self.draw_shape
+            if self.depth is not None:
+                draw_shape = draw_shape + (self.depth,)
+
+            x = np.zeros(draw_shape, 'uint8')
+
             # Populate rectangles
-            x = np.zeros(self.draw_shape, 'f')
             for image, rect in zip(sub_images, rects):
-                patch = x[rect.top:rect.bottom, rect.left:rect.right]
-                x[rect.top:rect.bottom, rect.left:rect.right] = np.maximum(image, patch)
+                patch = x[rect.top:rect.bottom, rect.left:rect.right, ...]
+                x[rect.top:rect.bottom, rect.left:rect.right, ...] = np.maximum(image, patch)
 
             if self.draw_shape != self.image_shape or self.draw_offset != (0, 0):
-                _x = np.zeros(self.image_shape, 'f')
+                image_shape = self.image_shape
+                if self.depth is not None:
+                    image_shape = image_shape + (self.depth,)
+
+                _x = np.zeros(image_shape, 'uint8')
                 y_start, x_start = self.draw_offset
                 y_end, x_end = y_start + self.draw_shape[0], x_start + self.draw_shape[1]
-                _x[y_start:y_end, x_start:x_end] = x
+                _x[y_start:y_end, x_start:x_end, ...] = x
                 x = _x
 
             new_X.append(x)
@@ -154,7 +263,7 @@ class PatchesDataset(SupervisedDataset):
                 print(image_to_string(x))
                 print("\n")
 
-        new_X = np.array(new_X).astype('f')
+        new_X = np.array(new_X).astype('uint8')
         new_Y = np.array(new_Y).astype('i')
         if new_Y.ndim == 1:
             new_Y = new_Y[..., None]
@@ -276,6 +385,57 @@ class VisualArithmeticDataset(PatchesDataset):
         return images, y
 
 
+class VisualArithmeticDatasetColour(VisualArithmeticDataset):
+    colours = Param('red green blue')
+
+    def __init__(self, **kwargs):
+        self.depth = 3
+        colours = self.colours
+        if isinstance(colours, str):
+            colours = colours.split(' ')
+
+        import matplotlib as mpl
+        colour_map = mpl.colors.get_named_colors_mapping()
+        self._colours = [np.array(mpl.colors.to_rgb(colour_map[cn]))[None, None, :] for cn in colours]
+
+        super(VisualArithmeticDatasetColour, self).__init__(**kwargs)
+
+    def colourize(self, img, colour_idx=None):
+        if colour_idx is None:
+            colour_idx = np.random.randint(len(self._colours))
+        colour = self._colours[colour_idx]
+        colourized = np.array(img[..., None] * colour, 'uint8')
+        return colourized
+
+    def _sample_patches(self):
+        n = np.random.randint(self.min_digits, self.max_digits+1)
+        digits = [self.digit_reps.get_random() for i in range(n)]
+        digit_x, digit_y = zip(*digits)
+
+        digit_x = [self.colourize(dx) for dx in digit_x]
+
+        if self.op_reps is not None:
+            op_x, op_y = self.op_reps.get_random()
+            op_x = self.colourize(op_x)
+            func = self._remapped_reductions[int(op_y)]
+            images = [op_x, *digit_x]
+        else:
+            func = self.func
+            images = list(digit_x)
+
+        y = func(digit_y)
+
+        if self.one_hot:
+            _y = np.zeros(self.largest_digit + 2)
+            hot_idx = min(int(y), self.largest_digit + 1)
+            _y[hot_idx] = 1.0
+            y = _y
+        else:
+            y = np.minimum(y, self.largest_digit)
+
+        return images, y
+
+
 class GridArithmeticDataset(VisualArithmeticDataset):
     image_shape_grid = Param((2, 2))
     draw_shape_grid = Param((2, 2))
@@ -312,7 +472,7 @@ class GridArithmeticDataset(VisualArithmeticDataset):
 # OMNIGLOT ***************************************
 
 
-class OmniglotDataset(SupervisedDataset):
+class OmniglotDataset(ImageDataset):
     shape = Param()
     include_blank = Param()
     one_hot = Param()

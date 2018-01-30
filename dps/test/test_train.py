@@ -6,9 +6,9 @@ import pytest
 
 from dps.run import _run
 from dps.rl.algorithms.a2c import reinforce_config
-from dps.envs import translated_mnist
 from dps.train import training_loop
-from dps.envs import simple_addition
+from dps.env.advanced import translated_mnist
+from dps.env.advanced import simple_addition
 from dps.config import DEFAULT_CONFIG
 from dps.utils.tf import get_tensors_from_checkpoint_file
 

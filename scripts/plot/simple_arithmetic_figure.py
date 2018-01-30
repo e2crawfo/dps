@@ -1,6 +1,6 @@
 from dps.config import SystemConfig
 from dps.utils.tf import MLP, CompositeCell
-from dps.envs.simple_arithmetic import render_rollouts_static
+from dps.env.simple_arithmetic import render_rollouts_static
 from dps.vision import LeNet
 from dps.run import _run
 from dps.rl.policy import Softmax

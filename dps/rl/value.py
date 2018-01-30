@@ -53,7 +53,7 @@ class ValueFunction(AgentHead):
 
         elif key == 'monte_carlo_td_errors':
             if context.truncated_rollouts:
-                raise NotImplemented()
+                raise Exceltion("NotImplemented")
 
             discounted_returns = context.get_signal('discounted_returns', self.policy)
             values = context.get_signal('values', self, gradient=True)

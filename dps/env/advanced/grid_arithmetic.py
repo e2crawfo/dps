@@ -6,15 +6,15 @@ from collections import OrderedDict
 
 from dps import cfg
 from dps.register import RegisterBank
-from dps.envs import CompositeEnv, InternalEnv
-from dps.envs.supervised import ClassificationEnv, IntegerRegressionEnv
+from dps.env import CompositeEnv, InternalEnv
+from dps.env.supervised import ClassificationEnv, IntegerRegressionEnv
 from dps.vision import EMNIST_CONFIG, SALIENCE_CONFIG, OMNIGLOT_CONFIG
 from dps.datasets import GridArithmeticDataset, GridOmniglotDataset, OmniglotDataset
 from dps.utils.tf import LeNet, MLP, SalienceMap, extract_glimpse_numpy_like, ScopedFunction
 from dps.utils import Param, Config, image_to_string
 from dps.updater import DifferentiableUpdater
 from dps.rl.policy import EpsilonSoftmax, Policy, DiscretePolicy, ProductDist, BuildLstmController
-from dps.envs.advanced.visual_arithmetic import digit_map, classifier_head, ResizeSalienceDetector
+from dps.env.advanced.visual_arithmetic import digit_map, classifier_head, ResizeSalienceDetector
 
 
 def sl_build_env():
@@ -615,7 +615,7 @@ class GridArithmetic(InternalEnv):
     def _build_update_glimpse(self, fovea_y, fovea_x):
         top_left = tf.concat([fovea_y, fovea_x], axis=-1) * self.sub_image_shape
 
-        inp = self.input_ph[..., None]
+        inp = self.input[..., None]
 
         glimpse = extract_glimpse_numpy_like(
             inp, self.sub_image_shape, top_left, fill_value=0.0)
@@ -626,7 +626,7 @@ class GridArithmetic(InternalEnv):
         top_left = tf.concat([fovea_y, fovea_x], axis=-1) * self.sub_image_shape
         top_left -= (np.array(self.salience_input_shape) - np.array(self.sub_image_shape)) / 2.0
 
-        inp = self.input_ph[..., None]
+        inp = self.input[..., None]
 
         glimpse = extract_glimpse_numpy_like(
             inp, self.salience_input_shape, top_left, fill_value=0.0)
@@ -671,7 +671,7 @@ class GridArithmetic(InternalEnv):
 
         (_digit, _op, _acc, _fovea_x, _fovea_y, _prev_action,
             _salience, _glimpse, _salience_input) = self.rb.as_tuple(r)
-        batch_size = tf.shape(self.input_ph)[0]
+        batch_size = tf.shape(self.input)[0]
 
         # init fovea
         if self.start_loc is not None:
@@ -921,7 +921,7 @@ class OmniglotCounting(GridArithmeticEasy):
         (_omniglot, _digit, _op, _acc, _fovea_x, _fovea_y,
             _prev_action, _salience, _glimpse, _salience_input) = self.rb.as_tuple(r)
 
-        batch_size = tf.shape(self.input_ph)[0]
+        batch_size = tf.shape(self.input)[0]
 
         # init fovea
         if self.start_loc is not None:

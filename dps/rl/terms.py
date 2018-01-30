@@ -58,7 +58,7 @@ class PolicyGradient(ObjectiveFunctionTerm):
 
             prev_advantage = context.get_signal('prev_advantage', self)
 
-            if self.epsilon is None:
+            if self.epsilon is None or self.epsilon <= 0:
                 adv_times_ratio = ratio * prev_advantage
             else:
                 adv_times_ratio = tf.minimum(

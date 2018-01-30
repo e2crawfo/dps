@@ -532,6 +532,8 @@ def char_map(value):
 
 def image_to_string(array):
     """ Convert an image stored as an array to an ascii art string """
+    if array.ndim == 3:
+        array = array.mean(-1)
     if array.ndim == 1:
         array = array.reshape(-1, int(np.sqrt(array.shape[0])))
     if not np.isclose(array.max(), 0.0):

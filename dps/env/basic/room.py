@@ -2,7 +2,7 @@ import tensorflow as tf
 import numpy as np
 
 from dps import cfg
-from dps.envs import TensorFlowEnv
+from dps.env import TensorFlowEnv
 from dps.register import RegisterBank
 from dps.utils import Param, Config
 from dps.rl.policy import ProductDist, Normal, Gamma, Policy

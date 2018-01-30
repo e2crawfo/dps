@@ -3,7 +3,7 @@ import numpy as np
 import clify
 
 from dps.utils import Config
-from dps.envs import simple_addition
+from dps.env import simple_addition
 from dps.rl.algorithms import a2c
 from dps.rl.policy import BuildEpsilonSoftmaxPolicy, BuildLstmController
 from dps.config import DEFAULT_CONFIG

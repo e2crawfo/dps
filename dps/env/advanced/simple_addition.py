@@ -3,8 +3,9 @@ import numpy as np
 
 from dps import cfg
 from dps.register import RegisterBank
-from dps.envs import CompositeEnv, InternalEnv
-from dps.envs.supervised import SupervisedDataset, IntegerRegressionEnv
+from dps.env import CompositeEnv, InternalEnv
+from dps.env.supervised import IntegerRegressionEnv
+from dps.datasets import SupervisedDataset
 from dps.vision.attention import apply_gaussian_filter
 from dps.utils import Param, Config
 
@@ -69,7 +70,7 @@ class SimpleAddition(InternalEnv):
         locations = tf.constant(
             np.linspace(-self.width, self.width, 2*self.width+1, dtype='f'),
             dtype=tf.float32)
-        vision = apply_gaussian_filter(fovea, std, locations, self.input_ph)
+        vision = apply_gaussian_filter(fovea, std, locations, self.input)
 
         new_registers = self.rb.wrap(
             fovea=fovea, vision=vision, wm1=wm1, wm2=wm2, output=output)
@@ -90,7 +91,7 @@ class SimpleAddition(InternalEnv):
 
         std = tf.fill(tf.shape(fovea), 0.01)
         locations = tf.constant(np.linspace(-self.width, self.width, 2*self.width+1, dtype='f'), dtype=tf.float32)
-        vision = apply_gaussian_filter(fovea, std, locations, self.input_ph)
+        vision = apply_gaussian_filter(fovea, std, locations, self.input)
 
         new_registers = self.rb.wrap(
             fovea=fovea, vision=vision, wm1=wm1, wm2=wm2, output=output)

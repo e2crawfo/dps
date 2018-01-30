@@ -6,13 +6,14 @@ import gym
 from gym.spaces import Discrete, Box
 
 from dps import cfg
-from dps.envs import Env
+from dps.env import Env
 from dps.rl import RolloutBatch
 from dps.utils import gen_seed, Param
 
 
 class BatchGymEnv(Env):
     gym_env = Param(help="Either an instance of gym's Env class, or a string specifying an env to create.")
+    reward_scale = Param(None)
 
     def __init__(self, **kwargs):
         if isinstance(self.gym_env, str):
@@ -83,14 +84,18 @@ class BatchGymEnv(Env):
                 self.done[idx, 0] = d
                 info.append(i)
 
+        rewards = np.array(rewards).reshape(-1, 1)
+        if self.reward_scale:
+            rewards /= self.reward_scale
+
         return (
             self.obs.copy(),
-            np.array(rewards).reshape(-1, 1),
+            rewards,
             self.done.copy(),
             info)
 
-    def render(self, mode='human', close=False):
-        self._active_envs[0].render(mode=mode, close=close)
+    def render(self, mode='human'):
+        self._active_envs[0].render(mode=mode)
 
     def close(self):
         for env in self._env_copies:
@@ -108,7 +113,12 @@ class BatchGymEnv(Env):
 
     def do_rollouts(
             self, policy, n_rollouts=None, T=None, exploration=None,
-            mode='train', render_mode=None):
+            mode='train', render_mode=None, save_utils=False):
+
+        policy.set_mode(mode)
+
+        if save_utils:
+            raise Exception("NotImplemented")
 
         T = T or cfg.T
 
