@@ -2,7 +2,7 @@
 set -ev
 
 pip install -r requirements_dev.txt
-pip install tensorflow
+pip install tensorflow==1.4
 pip install -e .
 mkdir data
 
