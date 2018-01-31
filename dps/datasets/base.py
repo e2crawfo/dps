@@ -263,8 +263,8 @@ class PatchesDataset(ImageDataset):
                 print(image_to_string(x))
                 print("\n")
 
-        new_X = np.array(new_X).astype('uint8')
-        new_Y = np.array(new_Y).astype('i')
+        new_X = np.array(new_X, dtype=np.uint8)
+        new_Y = np.array(new_Y, dtype='i')
         if new_Y.ndim == 1:
             new_Y = new_Y[..., None]
         return new_X, new_Y, patch_centres
@@ -404,7 +404,7 @@ class VisualArithmeticDatasetColour(VisualArithmeticDataset):
         if colour_idx is None:
             colour_idx = np.random.randint(len(self._colours))
         colour = self._colours[colour_idx]
-        colourized = np.array(img[..., None] * colour, 'uint8')
+        colourized = np.array(img[..., None] * colour, np.uint8)
         return colourized
 
     def _sample_patches(self):

@@ -6,7 +6,6 @@ import numpy as np
 import os
 import shutil
 import warnings
-from pathlib import Path
 
 from dps import cfg
 from dps.utils import image_to_string, cd
@@ -33,6 +32,7 @@ def _validate_emnist(path):
 
 
 def convert_emnist_and_store(path, new_image_shape):
+    """ Images are stored on disk in float format. """
     if new_image_shape == (28, 28):
         raise Exception("Original shape of EMNIST is (28, 28).")
 
@@ -64,7 +64,7 @@ def convert_emnist_and_store(path, new_image_shape):
 
             print(cls)
             print(image_to_string(_x[0]))
-            _x = np.array(new_x)
+            _x = np.array(new_x, dtype=_x.dtype)
             print(image_to_string(_x[0]))
 
             path_i = os.path.join(new_dir, cls + '.pklz')
@@ -124,8 +124,10 @@ def load_emnist(
     for i, cls in enumerate(sorted(list(classes))):
         with gzip.open(os.path.join(emnist_dir, str(cls) + '.pklz'), 'rb') as f:
             _x = dill.load(f)
-            x.append(np.uint8(255*np.minimum(_x, 1)))
-            y.extend([i] * x[-1].shape[0])
+
+        x.append(np.uint8(255*np.minimum(_x, 1)))
+        y.extend([i] * x[-1].shape[0])
+
         if show:
             print(cls)
             print(image_to_string(x[-1]))
@@ -135,7 +137,7 @@ def load_emnist(
 
     if include_blank:
         class_count = min([(y == class_map[c]).sum() for c in classes])
-        blanks = np.zeros((class_count,) + x.shape[1:], 'uint8')
+        blanks = np.zeros((class_count,) + x.shape[1:], dtype=np.uint8)
         x = np.concatenate((x, blanks), axis=0)
         blank_idx = len(class_map)
         y = np.concatenate((y, blank_idx * np.ones((class_count, 1), dtype=y.dtype)), axis=0)
@@ -175,8 +177,8 @@ def load_emnist(
                 "consider creating and storing the resized dataset.".format(x.shape[0])
             )
 
-        x = [resize(img, shape, mode='edge') for img in np.uint8(x)]
-        x = np.float32(np.uint8(255*np.minimum(x, 1)))
+        x = [resize(img, shape, mode='edge', preserve_range=True) for img in x]
+        x = np.uint8(x)
 
     return x, y, class_map
 
@@ -243,23 +245,26 @@ def load_omniglot(
         for idx in indices:
             f = os.path.join(char_dir, "{}_{:02d}.png".format(class_id, idx + 1))
             _x = scipy.misc.imread(f)
-            _x = 255. - _x
-            if shape:
-                _x = resize(_x, shape, mode='edge')
 
-            x.append(np.float32(_x))
+            # Convert to white-on-black
+            _x = 255. - _x
+
+            if shape:
+                _x = resize(_x, shape, mode='edge', preserve_range=True)
+
+            x.append(_x)
             y.append(i)
         if show:
             print(cls)
             print(image_to_string(x[-1]))
         class_map[cls] = i
 
-    x = np.array(x, 'uint8')
+    x = np.array(x, dtype=np.uint8)
     y = np.array(y).reshape(-1, 1)
 
     if include_blank:
         class_count = min([(y == class_map[c]).sum() for c in classes])
-        blanks = np.zeros((class_count,) + shape, 'uint8')
+        blanks = np.zeros((class_count,) + shape, dtype=np.uint8)
         x = np.concatenate((x, blanks), axis=0)
         blank_idx = len(class_map)
         y = np.concatenate((y, blank_idx * np.ones((class_count, 1), dtype=y.dtype)), axis=0)
