@@ -20,8 +20,11 @@ class SupervisedEnv(Env):
             'test': self.test,
         }
 
-        self.obs_shape = self.train.x.shape[1:]
-        self.action_shape = self.train.y.shape[1:]
+        if getattr(self, 'obs_shape', None) is None:
+            self.obs_shape = self.train.x.shape[1:]
+
+        if getattr(self, 'action_shape', None) is None:
+            self.action_shape = self.train.y.shape[1:]
 
         self._mode = 'train'
         self._batch_size = None

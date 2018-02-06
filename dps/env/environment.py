@@ -62,9 +62,12 @@ class BatchBox(gym.Space):
 
 class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
     has_differentiable_loss = False
-    recorded_names = []
     action_sizes = None
     action_names = None
+
+    # for every entry {name} in this list, a function called `build_{name}` will be
+    # called at startup time, and the returned tensor will be recorded throughout training
+    recorded_names = []
 
     def set_mode(self, mode, batch_size):
         """ Called at the beginning of `do_rollouts`. """

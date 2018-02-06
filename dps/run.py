@@ -64,8 +64,11 @@ def parse_env_alg(env, alg=None):
 
 def run():
     parser = argparse.ArgumentParser(allow_abbrev=False)
-    parser.add_argument('env')
-    parser.add_argument('alg')
+    parser.add_argument('env', help="Name or prefix of name of environment to run.")
+    parser.add_argument('alg', nargs='?', default=None,
+                        help="Name or prefix of name of algorithm to run. Optional. "
+                             "If not provided, algorithm spec is assumed to be included "
+                             "in the environment spec.")
     parser.add_argument('--pdb', action='store_true',
                         help="If supplied, enter post-mortem debugging on error.")
     args, _ = parser.parse_known_args()

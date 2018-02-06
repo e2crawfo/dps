@@ -117,11 +117,11 @@ def load_emnist(
         else:
             needs_reshape = True
 
-    classes = list(classes)[:]
+    classes = [str(c) for c in classes]
     y = []
     x = []
     class_map = {}
-    for i, cls in enumerate(sorted(list(classes))):
+    for i, cls in enumerate(sorted(classes)):
         with gzip.open(os.path.join(emnist_dir, str(cls) + '.pklz'), 'rb') as f:
             _x = dill.load(f)
 

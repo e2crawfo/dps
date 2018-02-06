@@ -13,10 +13,15 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
         self.scope = scope
         self.env = env
         self._n_experiences = 0
+        self._n_updates = 0
 
     @property
     def n_experiences(self):
         return self._n_experiences
+
+    @property
+    def n_updates(self):
+        return self._n_updates
 
     def build_graph(self):
         with tf.name_scope(self.scope or self.__class__.__name__) as scope:
@@ -38,6 +43,7 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
 
     def update(self, batch_size, collect_summaries):
         self._n_experiences += batch_size
+        self._n_updates += 1
 
         scheduled_value_summaries = \
             tf.get_default_session().run(self.scheduled_value_summaries_op)
@@ -124,6 +130,7 @@ class DifferentiableUpdater(Updater):
         self._assign_is_training = tf.assign(self.is_training, self._set_is_training)
 
         self.x_ph = tf.placeholder(tf.float32, (None,) + self.obs_shape, name="x_ph")
+
         self.target_ph = tf.placeholder(tf.float32, (None,) + self.action_shape, name="target_ph")
         self.output = self.f(self.x_ph, self.action_shape, self.is_training)
         self.loss = tf.reduce_mean(self.env.build_loss(self.output, self.target_ph))

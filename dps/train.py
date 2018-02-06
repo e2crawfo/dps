@@ -148,6 +148,8 @@ class TrainingLoop(object):
             stack.enter_context(redirect_stream('stdout', exp_dir.path_for('stdout'), tee=cfg.tee))
             stack.enter_context(redirect_stream('stderr', exp_dir.path_for('stderr'), tee=cfg.tee))
 
+            exp_dir.make_directory('plots')
+
             if self.start_time is None:
                 self.start_time = time.time()
             print("\n\n" + "=" * 80)
@@ -162,6 +164,7 @@ class TrainingLoop(object):
             print("Set numpy random seed to {}.".format(cfg.seed))
 
             yield from self._run()
+
             print("Done training run (name={}) at {}, {} seconds after given "
                   "start time.".format(cfg.name, datetime.datetime.now(), time.time() - self.start_time))
             print("=" * 80)

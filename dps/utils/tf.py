@@ -351,35 +351,40 @@ class VGGNet(ScopedFunction):
 
 
 class FullyConvolutional(ScopedFunction):
-    def __init__(self, layer_kwargs, pool=True, flatten_output=False, scope=None):
-        self.layer_kwargs = layer_kwargs
-        self.pool = pool
-        self.flatten_output = flatten_output
-        self.scope = scope
-        super(FullyConvolutional, self).__init__(scope)
+    def _call(self, inp, output_size, is_training):
+        # `is_training` is ignored
+        conv2d = tf.layers.conv2d
+        volume = inp
 
-    def _call(self, images, output_size, is_training):
-        if len(images.shape) <= 1:
-            raise Exception()
+        # volume.shape = (*, 210, 160, 3 * n_input_frames)
 
-        if len(images.shape) == 2:
-            s = int(np.sqrt(int(images.shape[1])))
-            images = tf.reshape(images, (-1, s, s, 1))
+        volume = conv2d(volume, filters=64, kernel_size=8, strides=2, padding="valid")
+        volume = tf.nn.relu(volume)
 
-        if len(images.shape) == 3:
-            images = images[..., None]
-        slim = tf.contrib.slim
-        net = images
+        # volume.shape = (*, 102, 77, 64)
 
-        for i, kw in enumerate(self.layer_kwargs):
-            net = slim.conv2d(net, scope='conv'+str(i), **kw)
-            if self.pool:
-                net = slim.max_pool2d(net, 2, 2, scope='pool'+str(i))
+        volume = conv2d(volume, filters=128, kernel_size=6, strides=2, padding="valid")
+        volume = tf.nn.relu(volume)
 
-        if self.flatten_output:
-            net = tf.reshape(net, (tf.shape(net)[0], int(np.prod(net.shape[1:]))))
+        # volume.shape = (*, 49, 36, 128)
 
-        return net
+        volume = conv2d(volume, filters=128, kernel_size=6, strides=2, padding="valid")
+        volume = tf.nn.relu(volume)
+
+        # volume.shape = (*, 22, 16, 128)
+
+        volume = conv2d(volume, filters=128, kernel_size=4, strides=2, padding="valid")
+        volume = tf.nn.relu(volume)
+
+        # volume.shape = (*, 10, 7, 128)
+
+        volume = conv2d(volume, filters=2048, kernel_size=(10, 7), padding="valid")  # fully connected layer
+
+        volume = tf.nn.relu(volume)
+
+        volume = conv2d(volume, filters=output_size, kernel_size=(10, 7), padding="valid")  # fully connected layer
+
+        return volume
 
 
 class SalienceMap(ScopedFunction):

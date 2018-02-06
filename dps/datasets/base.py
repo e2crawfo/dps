@@ -35,6 +35,12 @@ class SupervisedDataset(Parameterized):
     def completion(self):
         return self.epochs_completed + self.index_in_epoch / self.n_examples
 
+    def _do_shuffle(self):
+        perm = np.arange(self.n_examples)
+        np.random.shuffle(perm)
+        self._x = [self.x[i] for i in perm]
+        self._y = [self.y[i] for i in perm]
+
     def next_batch(self, batch_size=None, advance=True):
         """ Return the next ``batch_size`` examples from this data set.
 
@@ -48,17 +54,14 @@ class SupervisedDataset(Parameterized):
 
         # Shuffle for the first epoch
         if self._epochs_completed == 0 and start == 0 and self.shuffle:
-            perm0 = np.arange(self.n_examples)
-            np.random.shuffle(perm0)
-            self._x = self.x[perm0]
-            self._y = self.y[perm0]
+            self._do_shuffle()
 
         if batch_size > self.n_examples:
             if advance:
                 self._epochs_completed += batch_size / self.n_examples
                 self._index_in_epoch = 0
             indices = np.random.choice(self.n_examples, batch_size, replace=True)
-            x, y = self._x[indices, ...], self._y[indices, ...]
+            x, y = self._x[indices], self._y[indices]
             return x, y
 
         if start + batch_size >= self.n_examples:
@@ -70,17 +73,20 @@ class SupervisedDataset(Parameterized):
 
             # Shuffle the data
             if self.shuffle and advance:
-                perm = np.arange(self.n_examples)
-                np.random.shuffle(perm)
-                self._x = self.x[perm]
-                self._y = self.y[perm]
+                self._do_shuffle()
 
             # Start next epoch
             end = batch_size - len(x_rest_part)
             x_new_part = self._x[:end]
             y_new_part = self._y[:end]
-            x = np.concatenate((x_rest_part, x_new_part), axis=0)
-            y = np.concatenate((y_rest_part, y_new_part), axis=0)
+
+            x = x_rest_part
+            if x_new_part:
+                x = [*x, *x_new_part]
+
+            y = y_rest_part
+            if y_new_part:
+                y = [*y, *y_new_part]
 
             if advance:
                 self._index_in_epoch = end
@@ -100,8 +106,8 @@ class ImageDataset(SupervisedDataset):
     """ When calling `next_batch`, x output will have dtype np.float32, and its elements will take on values in [0, 1]. """
     def next_batch(self, batch_size=None, advance=True):
         x, y = super(ImageDataset, self).next_batch(batch_size=batch_size, advance=advance)
-        assert x.dtype == np.uint8
-        x = (x / 255.).astype('f')
+        assert x[0].dtype == np.uint8
+        x = (np.array(x) / 255.).astype('f')
         return x, y
 
 
@@ -219,6 +225,17 @@ class PatchesDataset(ImageDataset):
                         n_rects, self.draw_shape, self.max_overlap))
         return rects
 
+    def _post_process_label(self, label, rects):
+        """ To be used in cases where the labels depend on the locations. """
+        return label
+
+    def _post_process(self, new_X, new_Y):
+        new_X = np.array(new_X, dtype=np.uint8)
+        new_Y = np.array(new_Y, dtype='i')
+        if new_Y.ndim == 1:
+            new_Y = new_Y[..., None]
+        return new_X, new_Y
+
     def _make_dataset(self, n_examples):
         if n_examples == 0:
             return np.zeros((0,) + self.image_shape).astype('uint8'), np.zeros((0, 1)).astype('i')
@@ -230,6 +247,7 @@ class PatchesDataset(ImageDataset):
             sub_images, y = self._sample_patches()
             sub_image_shapes = [img.shape for img in sub_images]
             rects = self._sample_patch_locations(sub_image_shapes)
+            y = self._post_process_label(y, rects)
 
             patch_centres.append([r.centre() for r in rects])
 
@@ -263,10 +281,8 @@ class PatchesDataset(ImageDataset):
                 print(image_to_string(x))
                 print("\n")
 
-        new_X = np.array(new_X, dtype=np.uint8)
-        new_Y = np.array(new_Y, dtype='i')
-        if new_Y.ndim == 1:
-            new_Y = new_Y[..., None]
+        new_X, new_Y = self._post_process(new_X, new_Y)
+
         return new_X, new_Y, patch_centres
 
     def visualize(self, n=9):
@@ -658,11 +674,92 @@ def gaussian_kernel(shape, mu, std):
     return kernel
 
 
+# OBJECT_DETECTION ***************************************
+
+
+class EMNIST_ObjectDetection(PatchesDataset):
+    min_chars = Param(2)
+    max_chars = Param(3)
+    characters = Param(
+        [str(i) for i in range(10)] +
+        [chr(i + ord('A')) for i in range(26)] +
+        [chr(i + ord('a')) for i in range(26)]
+    )
+    sub_image_shape = Param((14, 14))
+    n_sub_image_examples = Param(None)
+    colours = Param('red green blue')
+
+    def __init__(self, **kwargs):
+        self.depth = 3
+
+        colours = self.colours
+        if isinstance(colours, str):
+            colours = colours.split(' ')
+
+        import matplotlib as mpl
+        colour_map = mpl.colors.get_named_colors_mapping()
+        self._colours = [np.array(mpl.colors.to_rgb(colour_map[cn]))[None, None, :] for cn in colours]
+
+        assert self.min_chars <= self.max_chars
+
+        emnist_x, emnist_y, self.classmap = load_emnist(cfg.data_dir, self.characters, balance=True,
+                                                        shape=self.sub_image_shape, one_hot=False,
+                                                        n_examples=self.n_sub_image_examples)
+        emnist_y = np.squeeze(emnist_y, 1)
+
+        self.char_reps = DataContainer(emnist_x, emnist_y)
+
+        super(EMNIST_ObjectDetection, self).__init__(**kwargs)
+
+        del self.char_reps
+
+    def _post_process_label(self, label, rects):
+        """ To be used in cases where the labels depend on the locations. """
+        return [[l, r.top, r.bottom, r.left, r.right] for l, r in zip(label, rects)]
+
+    def _post_process(self, new_X, new_Y):
+        new_X = np.array(new_X, dtype=np.uint8)
+        return new_X, new_Y
+
+    def colourize(self, img, colour_idx=None):
+        if colour_idx is None:
+            colour_idx = np.random.randint(len(self._colours))
+        colour = self._colours[colour_idx]
+        colourized = np.array(img[..., None] * colour, np.uint8)
+        return colourized
+
+    def _sample_patches(self):
+        n = np.random.randint(self.min_chars, self.max_chars+1)
+        chars = [self.char_reps.get_random() for i in range(n)]
+        char_x, char_y = zip(*chars)
+        char_x = [self.colourize(cx) for cx in char_x]
+        return char_x, char_y
+
+    def visualize(self, n=9):
+        import matplotlib.pyplot as plt
+        import matplotlib.patches as patches
+        m = int(np.ceil(np.sqrt(n)))
+        fig, subplots = plt.subplots(m, m)
+
+        height = self.x.shape[1]
+
+        for i, ax in enumerate(subplots.flatten()):
+            ax.imshow(self.x[i, ...])
+            for cls, top, bottom, left, right in self.y[i]:
+                width = bottom - top
+                height = right - left
+                rect = patches.Rectangle(
+                    (left, top), width, height, linewidth=1, edgecolor='r', facecolor='none')
+                ax.add_patch(rect)
+        plt.show()
+
+
 if __name__ == "__main__":
     # dset = VisualArithmeticDataset(n_examples=10, draw_shape=(50, 50), draw_offset=(50, 50))
     # dset = GridArithmeticDataset(
     #     n_examples=10, draw_shape_grid=(3, 3), image_shape_grid=(3, 3), sub_image_shape=(28, 28), op_scale=0.5)
 
     # dset = OmniglotCountingDataset(classes=classes, n_examples=10, sub_image_shape=(28, 28))
-    dset = SalienceDataset(min_digits=1, max_digits=4, sub_image_n_exmaples=100, n_examples=10)
+    # dset = SalienceDataset(min_digits=1, max_digits=4, sub_image_n_exmaples=100, n_examples=10)
+    dset = EMNIST_ObjectDetection(min_chars=1, max_chars=10, n_sub_image_examples=100, n_examples=10)
     dset.visualize()
