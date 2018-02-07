@@ -108,6 +108,8 @@ def load_emnist(
     """
     emnist_dir = os.path.join(path, 'emnist')
 
+    classes = list(classes) + []
+
     needs_reshape = False
     if shape and shape != (28, 28):
         resized_dir = os.path.join(path, 'emnist_{}_by_{}'.format(*shape))
@@ -117,7 +119,6 @@ def load_emnist(
         else:
             needs_reshape = True
 
-    classes = [str(c) for c in classes]
     y = []
     x = []
     class_map = {}

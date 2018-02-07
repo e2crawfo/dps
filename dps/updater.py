@@ -157,7 +157,6 @@ class DifferentiableUpdater(Updater):
         self.set_is_training(True)
         x, y = self.env.next_batch(batch_size, mode='train')
 
-        sess = tf.get_default_session()
         feed_dict = {
             self.x_ph: x,
             self.target_ph: y

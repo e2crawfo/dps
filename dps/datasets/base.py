@@ -41,6 +41,10 @@ class SupervisedDataset(Parameterized):
         self._x = [self.x[i] for i in perm]
         self._y = [self.y[i] for i in perm]
 
+    def post_process_batch(self, x, y):
+        """ x, y are lists of equal length """
+        return np.array(x), np.array(y)
+
     def next_batch(self, batch_size=None, advance=True):
         """ Return the next ``batch_size`` examples from this data set.
 
@@ -99,7 +103,7 @@ class SupervisedDataset(Parameterized):
             if advance:
                 self._index_in_epoch = end
 
-        return x, y
+        return self.post_process_batch(x, y)
 
 
 class ImageDataset(SupervisedDataset):
@@ -108,6 +112,7 @@ class ImageDataset(SupervisedDataset):
         x, y = super(ImageDataset, self).next_batch(batch_size=batch_size, advance=advance)
         assert x[0].dtype == np.uint8
         x = (np.array(x) / 255.).astype('f')
+        y = np.array(y)
         return x, y
 
 
@@ -720,6 +725,10 @@ class EMNIST_ObjectDetection(PatchesDataset):
     def _post_process(self, new_X, new_Y):
         new_X = np.array(new_X, dtype=np.uint8)
         return new_X, new_Y
+
+    def post_process_batch(self, x, y):
+        """ x, y are lists of equal length """
+        return np.array(x), y
 
     def colourize(self, img, colour_idx=None):
         if colour_idx is None:

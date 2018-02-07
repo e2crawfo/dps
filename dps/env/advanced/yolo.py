@@ -7,7 +7,7 @@ from dps.updater import DifferentiableUpdater
 from dps.env.supervised import SupervisedEnv
 from dps.datasets.base import EMNIST_ObjectDetection
 from dps.utils import Config, Param
-from dps.utils.tf import ScopedFunction
+from dps.utils.tf import ScopedFunction, build_gradient_train_op
 
 
 class MODE(object):
@@ -86,11 +86,11 @@ class YOLOv2_SupervisedEnv(SupervisedEnv):
         Parameters
         ----------
         annotations:
-            Batch (list) of annotations to process. Each annotation is
+            List of annotations to process. Each element is
             a list of bounding boxes for a single image (the image itself
             is not required at this point).
 
-            Each annotation has the form:  cls (int), y_min, y_max, x_min, x_max
+            Each annotation has the form:  cls (int), y_min, y_max, x_min, x_max (in pixels)
             The last 4 entries in the annotation have units of pixels.
 
         Returns
@@ -135,8 +135,8 @@ class YOLOv2_SupervisedEnv(SupervisedEnv):
                 if cy >= H or cx >= W:
                     raise Exception()
 
-                bbox_height_target = np.sqrt(float(y_max - y_min) / image_height)
-                bbox_width_target = np.sqrt(float(x_max - x_min) / image_width)
+                bbox_height_target = float(y_max - y_min) / image_height
+                bbox_width_target = float(x_max - x_min) / image_width
 
                 # bbox center in cell coordinates
                 cell_center_y = cy - np.floor(cy)
@@ -179,49 +179,77 @@ class YOLOv2_SupervisedEnv(SupervisedEnv):
         HW = H * W
         D = 4 + 1 + C
 
-        action = tf.reshape(action, [-1, HW, B, D])
-        target = tf.reshape(target, [-1, HW, B, D])
+        self.predictions = {}
 
-        _coords, _confs, _probs = tf.split(target, [4, 1, C], 3)
-        coords, confs, probs = tf.split(action, [4, 1, C], 3)
+        target = tf.reshape(target, [-1, H, W, B, D])
+        action = tf.reshape(action, [-1, H, W, B, D])
+
+        _yx, _hw, _confs, _probs = tf.split(target, [2, 2, 1, C], -1)
+        yx_logits, hw_logits, conf_logits, class_logits = tf.split(action, [2, 2, 1, C], -1)
 
         # predict bbox center in cell coordinates
-        adjusted_coords_yx = tf.nn.sigmoid(coords[..., :2])
+        yx = tf.nn.sigmoid(yx_logits)
 
-        # use anchor boxes to predict sqrt of box height and width (normalized to image size)
-        adjusted_coords_hw = tf.sqrt(tf.exp(coords[..., 2:]) * self._normalized_anchor_boxes)
+        # use anchor boxes to predict box height and width (normalized to image size)
+        hw = tf.exp(hw_logits) * self._normalized_anchor_boxes
 
-        adjusted_coords = tf.concat([adjusted_coords_yx, adjusted_coords_hw], 3)
-        self.adjusted_coords = tf.reshape(adjusted_coords, [-1, H, W, B, 4])
-        coord_loss = self.scale_coord * _confs * (adjusted_coords - _coords)**2
+        yx_loss = self.scale_coord * _confs * (yx - _yx)**2
+        hw_loss = self.scale_coord * _confs * (tf.sqrt(hw) - tf.sqrt(_hw))**2
+
+        # compute iou for conf regression target
+        y, x = tf.split(yx, 2, axis=-1)
+        h, w = tf.split(hw, 2, axis=-1)
+
+        self.predictions.update(cell_y=y, cell_x=x, normalized_h=h, normalized_w=w)
+
+        y_min, y_max = y - 0.5 * h, y + 0.5 * h
+        x_min, x_max = x - 0.5 * w, x + 0.5 * w
+        area = h * w
+
+        _y, _x = tf.split(_yx, 2, axis=-1)
+        _h, _w = tf.split(_hw, 2, axis=-1)
+
+        _y_min, _y_max = _y - 0.5 * _h, _y + 0.5 * _h
+        _x_min, _x_max = _x - 0.5 * _w, _x + 0.5 * _w
+        _area = _h * _w
+
+        top = tf.maximum(y_min, _y_min)
+        bottom = tf.minimum(y_max, _y_max)
+        left = tf.maximum(x_min, _x_min)
+        right = tf.minimum(x_max, _x_max)
+
+        overlap_height = tf.maximum(0., bottom - top)
+        overlap_width = tf.maximum(0., right - left)
+        overlap_area = overlap_height * overlap_width
+
+        iou = 1.0
+        # iou = overlap_area / (area + _area - overlap_area)
+
+        self.predictions.update(iou=iou)
 
         if self.use_squared_loss:
-            adjusted_confs = tf.nn.sigmoid(confs)
-            self.adjusted_confs = tf.reshape(adjusted_confs, [-1, H, W, B, 1])
+            sigmoid = tf.nn.sigmoid(conf_logits)
+            conf_loss = self.scale_obj * _confs * (sigmoid - iou * _confs)**2
+            conf_loss += self.scale_no_obj * (1 - _confs) * (sigmoid - _confs)**2
 
-            conf_loss = self.scale_obj * _confs * (adjusted_confs - _confs)**2
-            conf_loss += self.scale_no_obj * (1 - _confs) * (adjusted_confs - _confs)**2
+            softmax = tf.nn.softmax(class_logits)
+            prob_loss = self.scale_class * _confs * (softmax - _probs)**2
 
-            adjusted_probs = tf.nn.softmax(probs)
-            self.adjusted_probs = tf.reshape(adjusted_probs, [-1, H, W, B, C])
-
-            prob_loss = self.scale_class * _confs * (adjusted_probs - _probs)**2
+            self.predictions.update(confs=sigmoid, probs=softmax)
         else:
             conf_loss = self.scale_obj * _confs * (
-                tf.nn.sigmoid_cross_entropy_with_logits(labels=_confs, logits=confs))
+                tf.nn.sigmoid_cross_entropy_with_logits(labels=iou * _confs, logits=conf_logits))
             conf_loss += self.scale_no_obj * (1 - _confs) * (
-                tf.nn.sigmoid_cross_entropy_with_logits(labels=_confs, logits=confs))
+                tf.nn.sigmoid_cross_entropy_with_logits(labels=_confs, logits=conf_logits))
 
-            self.adjusted_confs = tf.reshape(tf.nn.sigmoid(confs), [-1, H, W, B, 1])
-
-            _prob_loss = tf.nn.softmax_cross_entropy_with_logits(labels=_probs, logits=probs)
+            _prob_loss = tf.nn.softmax_cross_entropy_with_logits(labels=_probs, logits=class_logits)
             prob_loss = self.scale_class * _confs * _prob_loss[..., None]
 
-            self.adjusted_probs = tf.reshape(tf.nn.softmax(probs), [-1, H, W, B, C])
+            self.predictions.update(confs=tf.nn.sigmoid(conf_logits), probs=tf.nn.softmax(class_logits))
 
-        loss_volume = tf.concat([coord_loss, conf_loss, prob_loss], axis=3)  # (batch_dim, HW, B, D)
-
-        return tf.reduce_sum(tf.reshape(loss_volume, [-1, HW*B*D]), axis=1)
+        loss_volume = tf.concat([yx_loss, hw_loss, conf_loss, prob_loss], axis=-1)  # (batch_dim, H, W, B, D)
+        batch_size = tf.shape(target)[0]
+        return tf.reduce_sum(tf.reshape(loss_volume, [batch_size, -1]), axis=1)
 
 
 # def output_channel_dim(self):
@@ -328,16 +356,36 @@ class FullyConvolutional(ScopedFunction):
 #         ]
 #         super(TinyYoloBackbone, self).__init__(layout)
 
+
 class TinyYoloBackbone(FullyConvolutional):
     def __init__(self):
         layout = [
             dict(filters=64, kernel_size=6, strides=1),
-            dict(filters=128, kernel_size=6, strides=1),
-            dict(filters=256, kernel_size=8, strides=1),
+            dict(filters=64, kernel_size=5, strides=1),
+            dict(filters=128, kernel_size=4, strides=1),
+            dict(filters=128, kernel_size=5, strides=1),
+            dict(filters=256, kernel_size=4, strides=1),
+            dict(filters=256, kernel_size=5, strides=1),
             dict(filters=256, kernel_size=6, strides=1),
             dict(filters=512, kernel_size=6, strides=1),
         ]
-        super(TinyYoloBackbone, self).__init__(layout)
+        super(TinyYoloBackbone, self).__init__(layout, check_output_shape=True)
+
+
+class TinyYoloEarly(FullyConvolutional):
+    def __init__(self):
+        layout = [
+            dict(filters=64, kernel_size=8, strides=1),
+            dict(filters=128, kernel_size=8, strides=1),
+            dict(filters=256, kernel_size=8, strides=1),
+            dict(filters=256, kernel_size=8, strides=1),
+            dict(filters=256, kernel_size=6, strides=1),
+            dict(filters=256, kernel_size=1, strides=1),
+            dict(filters=256, kernel_size=1, strides=1),
+            dict(filters=256, kernel_size=1, strides=1),
+            dict(filters=256, kernel_size=1, strides=1),
+        ]
+        super(TinyYoloEarly, self).__init__(layout, check_output_shape=True)
 
 
 class YoloBackbone(FullyConvolutional):
@@ -356,8 +404,9 @@ class YoloBackbone(FullyConvolutional):
 
 
 def build_fcn():
-    return YoloBackbone()
-    # return TinyYoloBackbone()
+    # return YoloBackbone()
+    return TinyYoloEarly()
+    #return TinyYoloBackbone()
 
 
 def get_differentiable_updater(env):
@@ -452,17 +501,23 @@ def yolo_render_hook(updater):
     images, gt_boxes = env.next_batch(N, 'val', process=False)
     sess = tf.get_default_session()
 
-    fetch = [env.adjusted_coords, env.adjusted_confs, env.adjusted_probs]
-    coords, confs, probs = sess.run(fetch, feed_dict={updater.x_ph: images})
+    fetch = [
+        env.predictions['cell_y'], env.predictions['cell_x'],
+        env.predictions['normalized_h'], env.predictions['normalized_w'],
+        env.predictions['confs'], env.predictions['probs'],
+    ]
 
-    center_y = (coords[..., 0] + np.arange(env.H)[None, :, None, None]) * env.cell_height
-    center_x = (coords[..., 1] + np.arange(env.W)[None, None, :, None]) * env.cell_width
-    height = coords[..., 2]**2 * env.image_height
-    width = coords[..., 3]**2 * env.image_width
+    cell_y, cell_x, normalized_h, normalized_w, confs, probs = sess.run(fetch, feed_dict={updater.x_ph: images})
+
+    center_y = (cell_y + np.arange(env.H)[None, :, None, None, None]) * env.cell_height
+    center_x = (cell_x + np.arange(env.W)[None, None, :, None, None]) * env.cell_width
+    height = normalized_h * env.image_height
+    width = normalized_w * env.image_width
 
     # Convert to format that is convenient for computing IoU between bboxes.
     y_min = center_y - 0.5 * height
     y_max = center_y + 0.5 * height
+
     x_min = center_x - 0.5 * width
     x_max = center_x + 0.5 * width
 
@@ -495,22 +550,26 @@ def yolo_render_hook(updater):
             ax1 = axes[2*i, j]
             ax1.imshow(image)
 
+            _p = [b[1] for b in boxes]
+            max_p = max(_p) if _p else 0.0
+
             for c, p, top, bottom, left, right, _ in boxes:
                 width = bottom - top
                 height = right - left
                 rect = patches.Rectangle(
                     (left, top), width, height, linewidth=1,
-                    edgecolor=cfg.class_colours[c], facecolor='none')
+                    edgecolor=cfg.class_colours[c], facecolor='none', alpha=p/max_p)
                 ax1.add_patch(rect)
 
-            print("Image {}".format(n))
-            for c in range(class_probs.shape[-1]):
-                print("Max probability for class {}: {}".format(c, class_probs[n, ..., c].max()))
+            # print("Image {}".format(n))
+            # for c in range(class_probs.shape[-1]):
+            #     print("Max probability for class {}: {}".format(c, class_probs[n, ..., c].max()))
 
             ax2 = axes[2*i+1, j]
             ax2.imshow(image)
 
         mean_ap = mAP(all_boxes, gt_boxes, n_classes=env.C)
+        print("pt: {}".format(pt))
         print("mAP: {}".format(mean_ap))
 
         fig.suptitle('After {} experiences ({} updates, {} experiences per batch). prob_threshold={}. mAP={}'.format(
@@ -588,6 +647,87 @@ def mAP(pred_boxes, gt_boxes, n_classes, recall_values=None, iou_threshold=0.5):
     return np.mean(ap)
 
 
+class Yolo_RLUpdater(DifferentiableUpdater):
+    def _build_distributions(self, coords_yx, coords_hw, confs, probs, exploration):
+        b_exp, s_exp, yx_exp, hw_exp = exploration
+
+        effective_example_size = 1. / yx_exp
+        c0 = (1 - coords_yx) * effective_example_size
+        c1 = coords_yx * effective_example_size
+        yx = tf.distributions.Beta(concentration0=c0, concentration1=c1)
+
+        effective_example_size = 1. / hw_exp
+        c0 = (1 - coords_yx) * effective_example_size
+        c1 = coords_yx * effective_example_size
+        hw = tf.distributions.Beta(concentration0=c0, concentration1=c1)
+
+        existence = tf.distributions.Bernoulli(probs=confs/b_exp)
+        cls = tf.distributions.Categorical(probs=probs/s_exp)
+
+        return yx, hw, existence, cls
+
+    def _build_log_prob(self, coords, confs, probs):
+        pass
+
+    def _build_graph(self):
+        # Run network forward, sample from induced distribution, get reward of sample, construct REINFORCE loss function.
+        self.x_ph = tf.placeholder(tf.float32, (None,) + self.obs_shape, name="x_ph")
+        self.output = self.f(self.x_ph, self.action_shape, self.is_training)
+
+        dists = self._build_distributions(
+            self.env.adjusted_coords_yx,
+            self.env.adjusted_coords_hw,
+            self.env.adjusted_confs,
+            self.env.adjusted_probs
+        )
+
+        self._samples = [d.sample() for d in dists]
+        self._input_samples = [
+            tf.placeholder(tf.float32, shape=(None, *s.shape[1:]), name="input_sample")
+            for s in self._samples]
+        self._reward = tf.placeholder(tf.float32, (None, 1), name="reward")
+        self._log_prob = [d.log_probs(i) for i, d in zip(self._input_samples, dists)]
+
+        self.loss = self._log_prob * self._reward
+
+        self.recorded_tensors = [
+            tf.reduce_mean(getattr(self.env, 'build_' + name)(self.output, self.target_ph))
+            for name in self.env.recorded_names
+        ]
+
+        tvars = self.trainable_variables(for_opt=True)
+        self.train_op, train_summaries = build_gradient_train_op(
+            self.loss, tvars, self.optimizer_spec, self.lr_schedule,
+            self.max_grad_norm, self.noise_schedule)
+
+        self.summary_op = tf.summary.merge(
+            [tf.summary.scalar("loss_per_ep", self.loss)] +
+            [tf.summary.scalar("reward_per_ep", self._reward)] +
+            [tf.summary.scalar(name, t) for name, t in zip(self.env.recorded_names, self.recorded_tensors)] +
+            train_summaries)
+
+    def _update(self, batch_size, collect_summaries):
+        self.set_is_training(True)
+        x, y = self.env.next_batch(batch_size, mode='train')
+
+        feed_dict = {self.x_ph: x}
+        sess = tf.get_default_session()
+
+        samples = sess.run(self._samples, feed_dict=feed_dict)
+        reward = self.get_reward(samples)
+
+        feed_dict.update({i: s for i, s in zip(self._input_samples, samples)})
+        feed_dict.update({self._reward: reward})
+
+        if collect_summaries:
+            train_summaries, _, *recorded_values = sess.run(
+                [self.summary_op, self.train_op] + self.recorded_tensors, feed_dict=feed_dict)
+            return train_summaries, b'', dict(zip(self.env.recorded_names, recorded_values)), {}
+        else:
+            _, *recorded_values = sess.run([self.train_op] + self.recorded_tensors, feed_dict=feed_dict)
+            return b'', b'', dict(zip(self.env.recorded_names, recorded_values)), {}
+
+
 config = Config(
     log_name="yolo",
 
@@ -604,9 +744,9 @@ config = Config(
     build_env=build_env,
     max_overlap=20,
     image_shape=(40, 40),
-    characters=[0, 1, 2],
-    min_chars=2,
-    max_chars=3,
+    characters=[0, 1],
+    min_chars=1,
+    max_chars=1,
     # characters=list(range(10)) + [chr(i + ord('a')) for i in range(10)],
     sub_image_shape=(14, 14),
     n_sub_image_examples=1000,

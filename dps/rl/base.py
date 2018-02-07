@@ -300,8 +300,6 @@ class RLContext(Parameterized):
             obj.build_core_signals(self)
 
     def make_feed_dict(self, rollouts, mode, weights=None):
-        # import pdb; pdb.set_trace()
-
         if weights is None:
             weights = np.ones((rollouts.T, rollouts.batch_size, 1))
         elif weights.ndim == 1:
