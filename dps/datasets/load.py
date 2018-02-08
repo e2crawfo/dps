@@ -162,7 +162,7 @@ def load_emnist(
     x = x[order, :]
     y = y[order, :]
 
-    if n_examples is not None:
+    if n_examples:
         x = x[:n_examples]
         y = y[:n_examples]
 

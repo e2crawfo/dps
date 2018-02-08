@@ -42,10 +42,11 @@ def training_loop(exp_name='', start_time=None):
 
 
 class TrainingLoop(object):
-    def __init__(self, exp_name='', start_time=None):
+    def __init__(self, exp_name='', start_time=None, hooks=None):
         self.exp_name = exp_name or cfg.get_experiment_name()
         self.start_time = start_time
         self.history = []
+        self.hooks = hooks or []
 
     def record(self, d=None, **kwargs):
         d = d or {}
@@ -64,11 +65,11 @@ class TrainingLoop(object):
             s += "Stage-by-stage summary " + ">" * 30 + "\n"
             history = self.history
 
-        for stage, d in enumerate(history):
+        for stage_idx, d in enumerate(history):
             if latest:
                 s += "Step(g: {}, l: {}): ".format(self.global_step, self.local_step)
             else:
-                s += "Stage {} ".format(stage)
+                s += "Stage {} ".format(stage_idx)
 
             s += "*" * 30 + '\n'
 
@@ -96,7 +97,7 @@ class TrainingLoop(object):
                 else:
                     s += "* {}: {}\n".format(k, v)
             if not latest:
-                s += "* new config values: {}\n\n".format(pformat(self.curriculum[stage]))
+                s += "* new config values: {}\n\n".format(pformat(self.curriculum[stage_idx]))
         return s
 
     @property
@@ -176,10 +177,10 @@ class TrainingLoop(object):
         threshold_reached = True
         self.global_step = 0
 
-        for stage, stage_config in enumerate(self.curriculum):
+        for stage_idx, stage_config in enumerate(self.curriculum):
             print("\n" + "=" * 50)
             print("Starting stage {} at {}, {} seconds after given "
-                  "start time.\n".format(stage, datetime.datetime.now(), time.time() - self.start_time))
+                  "start time.\n".format(stage_idx, datetime.datetime.now(), time.time() - self.start_time))
             print("\n")
 
             stage_config = Config(stage_config)
@@ -190,7 +191,7 @@ class TrainingLoop(object):
 
             stage_start = time.time()
 
-            self.history.append(dict(stage=stage, train_data=[], off_policy_data=[], val_data=[], test_data=[]))
+            self.history.append(dict(stage=stage_idx, train_data=[], off_policy_data=[], val_data=[], test_data=[]))
 
             with ExitStack() as stack:
                 session_config = tf.ConfigProto()
@@ -218,7 +219,8 @@ class TrainingLoop(object):
                     stack.enter_context(graph.device("/cpu:0"))
                 else:
                     print("Using GPU if available.")
-                    print("Using {}% of GPU memory.".format(100 * session_config.gpu_options.per_process_gpu_memory_fraction))
+                    print("Using {}% of GPU memory.".format(
+                        100 * session_config.gpu_options.per_process_gpu_memory_fraction))
                     print("Allowing growth of GPU memory: {}".format(session_config.gpu_options.allow_growth))
 
                 if cfg.save_summaries:
@@ -248,7 +250,7 @@ class TrainingLoop(object):
 
                 stack.enter_context(stage_config)
 
-                if stage == 0 or not cfg.preserve_env:
+                if stage_idx == 0 or not cfg.preserve_env:
                     if getattr(self, 'env', None):
                         self.env.close()
 
@@ -267,7 +269,7 @@ class TrainingLoop(object):
                     assert isinstance(path, str)
                     print("Loading hypothesis from {}.".format(path))
                     updater.restore(sess, path)
-                elif stage > 0 and cfg.preserve_policy:
+                elif stage_idx > 0 and cfg.preserve_policy:
                     updater.restore(sess, self.history[-2]['best_path'])
 
                 self.summary_op = tf.summary.merge_all()
@@ -275,7 +277,7 @@ class TrainingLoop(object):
                 sess.run(uninitialized_variables_initializer())
                 sess.run(tf.assert_variables_initialized())
 
-                yield from self.run_stage(stage, updater)
+                yield from self.run_stage(stage_idx, updater)
                 threshold_reached, reason = self.threshold_reached, self.reason
 
                 self.record(reason=reason)
@@ -299,21 +301,20 @@ class TrainingLoop(object):
                 print(self.summarize(latest=True))
 
                 if cfg.start_tensorboard:
-                    restart_tensorboard(
-                        str(cfg.log_dir), cfg.tbport, cfg.reload_interval)
+                    restart_tensorboard(str(cfg.log_dir), cfg.tbport, cfg.reload_interval)
 
                 if cfg.render_step > 0 and cfg.render_hook is not None:
                     cfg.render_hook(updater)
 
                 if not (threshold_reached or cfg.power_through):
                     print("Failed to reach error threshold on stage {} "
-                          "of the curriculum, terminating.".format(stage))
+                          "of the curriculum, terminating.".format(stage_idx))
                     break
 
                 self.record(stage_duration=time.time()-stage_start)
 
                 print("Done stage {} at {}, {} seconds after given "
-                      "start time.".format(stage, datetime.datetime.now(), time.time() - self.start_time))
+                      "start time.".format(stage_idx, datetime.datetime.now(), time.time() - self.start_time))
                 print("=" * 50)
 
         print(self.summarize(latest=False))
@@ -329,7 +330,7 @@ class TrainingLoop(object):
 
         yield self._build_return_value()
 
-    def run_stage(self, stage, updater):
+    def run_stage(self, stage_idx, updater):
         self.threshold_reached = False
         self.reason = ""
 
@@ -349,16 +350,19 @@ class TrainingLoop(object):
             raise Exception("Ambiguous stopping criteria specification: {}".format(stopping_criteria[1]))
 
         early_stop = EarlyStopHook(patience=cfg.patience, maximize=self.maximize_sc)
+        for hook in self.hooks:
+            hook.start_stage(stage_idx)
+
         time_remaining = self.time_remaining
 
         print("{} seconds left "
-              "at the beginning of stage {}.".format(time_remaining, stage))
+              "at the beginning of stage {}.".format(time_remaining, stage_idx))
 
         phys_memory_before = memory_usage(physical=True)
 
         with time_limit(self.time_remaining, verbose=True) as limiter:
             try:
-                yield from self._run_stage(stage, updater, early_stop)
+                yield from self._run_stage(stage_idx, updater, early_stop)
             except KeyboardInterrupt:
                 self.threshold_reached = False
                 self.reason = "User interrupt"
@@ -376,12 +380,15 @@ class TrainingLoop(object):
             phys_memory_delta_mb=phys_memory_after - phys_memory_before
         )
 
+        for hook in self.hooks:
+            hook.end_stage()
+
         if limiter.ran_out:
             self.reason = "Time limit exceeded"
             if cfg.error_on_timeout:
                 raise Exception("Timed out.")
 
-    def _run_stage(self, stage, updater, early_stop):
+    def _run_stage(self, stage_idx, updater, early_stop):
         """ Run a stage of a curriculum. """
         self.local_step = 0
         threshold_reached = False
@@ -407,13 +414,14 @@ class TrainingLoop(object):
             render = cfg.render_step > 0 and (self.local_step % cfg.render_step == 0) and self.local_step > 0
 
             start_time = time.time()
-            train_summaries = b""
-            off_policy_summaries = b""
-            train_record = {}
-            off_policy_record = {}
+
+            train_summaries, off_policy_summaries = b"", b""
+            train_record, off_policy_record = {}, {}
+
             if cfg.do_train:
                 train_summaries, off_policy_summaries, train_record, off_policy_record = updater.update(
                     cfg.batch_size, collect_summaries=evaluate and cfg.save_summaries)
+
             update_duration = time.time() - start_time
 
             self.latest['train_data'].append(train_record)
@@ -443,7 +451,7 @@ class TrainingLoop(object):
                               self.stopping_criteria_name, stopping_criteria))
 
                     path = cfg.get('save_path', '')
-                    path = path or self.exp_dir.path_for('best_of_stage_{}'.format(stage))
+                    path = path or self.exp_dir.path_for('best_of_stage_{}'.format(stage_idx))
 
                     best_path = updater.save(tf.get_default_session(), path)
 
@@ -476,6 +484,19 @@ class TrainingLoop(object):
                     print(self.summarize(latest=True))
                     print("\nPhysical memory use: {}mb".format(memory_usage(physical=True)))
                     print("Virtual memory use: {}mb".format(memory_usage(physical=False)))
+
+            for hook in self.hooks:
+                run_hook = self.local_step == 0 and hook.initial
+                run_hook |= self.local_step > 0 and self.local_step % hook.n == 0
+
+                if run_hook:
+                    result = hook.step(updater)
+
+                    if result:
+                        # TODO: currently nothing is done with the record
+                        summaries, record = result
+                        writer = getattr(self, "{}_writer".format(hook.mode))
+                        writer.add_summary(summaries, (self.global_step + 1) * cfg.batch_size)
 
             if render and cfg.render_hook is not None:
                 cfg.render_hook(updater)
@@ -585,3 +606,34 @@ def load_or_train(train_config, var_scope, path, target_var_scope=None, sess=Non
 
         saver.restore(sess, path)
     return success
+
+
+class Hook(object):
+    """ Hook called throughout training.
+
+    Parameters
+    ----------
+    n: int
+        Hook is called every n steps throughout training.
+    mode: str
+        The mode in which this hook is called (essentially determines where its summaries end up).
+    initial: bool
+        If True, this hook is called on the first step of a stage.
+
+    """
+    def __init__(self, n, mode, initial=False):
+        self.n = n
+        self.mode = mode
+        self.initial = initial
+
+    def start_stage(self, stage_idx):
+        """ Called at the beginning of every stage. """
+        pass
+
+    def end_stage(self):
+        """ Called at the end of every stage. """
+        pass
+
+    def step(self, updater, step_idx):
+        """ May return a list of summaries and a dictionary of recorded values, similar to an updater. """
+        pass

@@ -40,6 +40,7 @@ class YOLOv2_SupervisedEnv(SupervisedEnv):
     scale_no_obj = Param()
     scale_coord = Param()
     use_squared_loss = Param()
+    conf_target = Param()
 
     def __init__(self, train, val, test, **kwargs):
         _anchor_boxes = np.array(self.anchor_boxes)
@@ -59,6 +60,8 @@ class YOLOv2_SupervisedEnv(SupervisedEnv):
 
         self._normalized_anchor_boxes = self.anchor_boxes[:, :2] / [self.image_height, self.image_width]
         self._normalized_anchor_boxes = self._normalized_anchor_boxes.reshape(1, 1, self.B, 2)
+
+        assert self.conf_target in "conf conf_times_iou iou".split()
 
     @property
     def channel_dim(self):
@@ -99,7 +102,6 @@ class YOLOv2_SupervisedEnv(SupervisedEnv):
 
         """
         H, W, B, C = self.H, self.W, self.B, self.C
-        HW = H * W
         D = 4 + 1 + C
 
         # All images must have same size
@@ -112,11 +114,11 @@ class YOLOv2_SupervisedEnv(SupervisedEnv):
 
         for batch_idx, objects in enumerate(annotations):
             # Populate these.
-            coords = np.zeros([HW, B, 4])
-            confs = np.zeros([HW, B, 1])
-            probs = np.zeros([HW, B, C])
+            coords = np.zeros([H, W, B, 4])
+            confs = np.zeros([H, W, B, 1])
+            probs = np.zeros([H, W, B, C])
 
-            # assume anchor_boxes has shape (n_anchor_boxes, 3), columns are (h, w, a), all in pixels.
+            # assume anchor_boxes has shape (n_anchor_boxes, 3), columns are (height, width, area), all in pixels.
             for obj in objects:
                 # in image coordinates
                 cls, y_min, y_max, x_min, x_max = obj
@@ -135,15 +137,16 @@ class YOLOv2_SupervisedEnv(SupervisedEnv):
                 if cy >= H or cx >= W:
                     raise Exception()
 
-                bbox_height_target = float(y_max - y_min) / image_height
-                bbox_width_target = float(x_max - x_min) / image_width
-
-                # bbox center in cell coordinates
-                cell_center_y = cy - np.floor(cy)
-                cell_center_x = cx - np.floor(cx)
+                bbox_height = float(y_max - y_min) / image_height
+                bbox_width = float(x_max - x_min) / image_width
 
                 # index of cell that the object is assigned to
-                cell_idx = int(np.floor(cy) * W + np.floor(cx))
+                cell_idx_y = int(np.floor(cy))
+                cell_idx_x = int(np.floor(cx))
+
+                # bbox center in cell coordinates
+                cell_center_y = cy - cell_idx_y
+                cell_center_x = cx - cell_idx_x
 
                 # find anchor box whose shape is most like ground-truth shape
                 pixel_height = y_max - y_min
@@ -156,13 +159,13 @@ class YOLOv2_SupervisedEnv(SupervisedEnv):
                 IOU = overlap_area / (self.anchor_boxes[:, 2] + pixel_area - overlap_area)
                 anchor_box_idx = np.argmax(IOU)
 
-                _coords = cell_center_y, cell_center_x, bbox_height_target, bbox_width_target
+                _coords = cell_center_y, cell_center_x, bbox_height, bbox_width
 
-                coords[cell_idx, anchor_box_idx, :] = np.array(_coords, ndmin=2)
-                confs[cell_idx, anchor_box_idx, :] = 1
-                probs[cell_idx, anchor_box_idx, cls] = 1
+                coords[cell_idx_y, cell_idx_x, anchor_box_idx, :] = _coords
+                confs[cell_idx_y, cell_idx_x, anchor_box_idx, :] = 1
+                probs[cell_idx_y, cell_idx_x, anchor_box_idx, cls] = 1
 
-            target = np.concatenate([coords, confs, probs], axis=2)
+            target = np.concatenate([coords, confs, probs], axis=-1)
             target_volume[batch_idx, ...] = target.reshape(H, W, B*D)
 
         return target_volume
@@ -176,7 +179,6 @@ class YOLOv2_SupervisedEnv(SupervisedEnv):
 
         """
         H, W, B, C = self.H, self.W, self.B, self.C
-        HW = H * W
         D = 4 + 1 + C
 
         self.predictions = {}
@@ -202,35 +204,41 @@ class YOLOv2_SupervisedEnv(SupervisedEnv):
 
         self.predictions.update(cell_y=y, cell_x=x, normalized_h=h, normalized_w=w)
 
-        y_min, y_max = y - 0.5 * h, y + 0.5 * h
-        x_min, x_max = x - 0.5 * w, x + 0.5 * w
-        area = h * w
+        if self.conf_target in ["conf_times_iou", "iou"]:
+            y_min, y_max = y - 0.5 * h, y + 0.5 * h
+            x_min, x_max = x - 0.5 * w, x + 0.5 * w
+            area = h * w
 
-        _y, _x = tf.split(_yx, 2, axis=-1)
-        _h, _w = tf.split(_hw, 2, axis=-1)
+            _y, _x = tf.split(_yx, 2, axis=-1)
+            _h, _w = tf.split(_hw, 2, axis=-1)
 
-        _y_min, _y_max = _y - 0.5 * _h, _y + 0.5 * _h
-        _x_min, _x_max = _x - 0.5 * _w, _x + 0.5 * _w
-        _area = _h * _w
+            _y_min, _y_max = _y - 0.5 * _h, _y + 0.5 * _h
+            _x_min, _x_max = _x - 0.5 * _w, _x + 0.5 * _w
+            _area = _h * _w
 
-        top = tf.maximum(y_min, _y_min)
-        bottom = tf.minimum(y_max, _y_max)
-        left = tf.maximum(x_min, _x_min)
-        right = tf.minimum(x_max, _x_max)
+            top = tf.maximum(y_min, _y_min)
+            bottom = tf.minimum(y_max, _y_max)
+            left = tf.maximum(x_min, _x_min)
+            right = tf.minimum(x_max, _x_max)
 
-        overlap_height = tf.maximum(0., bottom - top)
-        overlap_width = tf.maximum(0., right - left)
-        overlap_area = overlap_height * overlap_width
+            overlap_height = tf.maximum(0., bottom - top)
+            overlap_width = tf.maximum(0., right - left)
+            overlap_area = overlap_height * overlap_width
 
-        iou = 1.0
-        # iou = overlap_area / (area + _area - overlap_area)
+            iou = overlap_area / (area + _area - overlap_area)
 
-        self.predictions.update(iou=iou)
+            conf_target = iou
+            if self.conf_target == "conf_times_iou":
+                conf_target *= _confs
+
+            self.predictions.update(iou=iou)
+        else:
+            conf_target = _confs
 
         if self.use_squared_loss:
             sigmoid = tf.nn.sigmoid(conf_logits)
-            conf_loss = self.scale_obj * _confs * (sigmoid - iou * _confs)**2
-            conf_loss += self.scale_no_obj * (1 - _confs) * (sigmoid - _confs)**2
+            conf_loss = self.scale_obj * _confs * (sigmoid - conf_target)**2
+            conf_loss += self.scale_no_obj * (1 - _confs) * (sigmoid - conf_target)**2
 
             softmax = tf.nn.softmax(class_logits)
             prob_loss = self.scale_class * _confs * (softmax - _probs)**2
@@ -238,9 +246,9 @@ class YOLOv2_SupervisedEnv(SupervisedEnv):
             self.predictions.update(confs=sigmoid, probs=softmax)
         else:
             conf_loss = self.scale_obj * _confs * (
-                tf.nn.sigmoid_cross_entropy_with_logits(labels=iou * _confs, logits=conf_logits))
+                tf.nn.sigmoid_cross_entropy_with_logits(labels=conf_target, logits=conf_logits))
             conf_loss += self.scale_no_obj * (1 - _confs) * (
-                tf.nn.sigmoid_cross_entropy_with_logits(labels=_confs, logits=conf_logits))
+                tf.nn.sigmoid_cross_entropy_with_logits(labels=conf_target, logits=conf_logits))
 
             _prob_loss = tf.nn.softmax_cross_entropy_with_logits(labels=_probs, logits=class_logits)
             prob_loss = self.scale_class * _confs * _prob_loss[..., None]
@@ -250,6 +258,7 @@ class YOLOv2_SupervisedEnv(SupervisedEnv):
         loss_volume = tf.concat([yx_loss, hw_loss, conf_loss, prob_loss], axis=-1)  # (batch_dim, H, W, B, D)
         batch_size = tf.shape(target)[0]
         return tf.reduce_sum(tf.reshape(loss_volume, [batch_size, -1]), axis=1)
+        # return tf.reduce_mean(tf.reshape(loss_volume, [batch_size, -1]), axis=1)
 
 
 # def output_channel_dim(self):
@@ -281,10 +290,30 @@ class FullyConvolutional(ScopedFunction):
         Uses 'padding' == valid.
 
     """
-    def __init__(self, layout, check_output_shape=False, scope=None):
+    nonlinearities = dict(
+        relu=tf.nn.relu,
+        sigmoid=tf.nn.sigmoid,
+        tanh=tf.nn.tanh
+    )
+
+    def __init__(self, layout, check_output_shape=False, nl='relu', scope=None):
         self.layout = layout
         self.check_output_shape = check_output_shape
+        self.default_nl = nl
         super(FullyConvolutional, self).__init__(scope)
+
+    @staticmethod
+    def _output_shape_1d(inp_dim, f, s, padding, pool):
+        if padding == "SAME":
+            if inp_dim % s == 0:
+                p = f - s
+            else:
+                p = f - (inp_dim % s)
+
+            out_dim = int((inp_dim + p - f) / s) + 1
+        else:
+            out_dim = int((inp_dim - f) / s) + 1
+        return out_dim
 
     def output_shape(self, input_shape):
         """ Get spatial shape of the output given a spatial shape of the input. """
@@ -302,35 +331,42 @@ class FullyConvolutional(ScopedFunction):
             else:
                 strides0, strides1 = strides, strides
 
-            shape[0] = int((shape[0] - f0) / strides0) + 1
-            shape[1] = int((shape[1] - f1) / strides1) + 1
+            padding = layer.get('padding', 'VALID')
+            pool = layer.get('pool', False)
 
-            if layer.get('pool', False):
-                shape[0] = int(shape[0] / 2)
-                shape[1] = int(shape[0] / 2)
+            shape[0] = self._output_shape_1d(shape[0], f0, strides0, padding, pool)
+            shape[1] = self._output_shape_1d(shape[1], f1, strides1, padding, pool)
+
         return shape
 
     def _call(self, inp, output_size, is_training):
         volume = inp
         print("Predicted output shape is: {}".format(self.output_shape(inp.shape[1:3])))
+        print("Default non-linearity is: {}".format(self.default_nl))
 
         for i, layer in enumerate(self.layout):
             filters = layer['filters']
             strides = layer['strides']
             kernel_size = layer['kernel_size']
+            padding = layer.get('padding', 'VALID')
 
             volume = tf.layers.conv2d(
                 volume, filters=filters, kernel_size=kernel_size,
-                strides=strides, padding="valid", name="fcn-conv{}".format(i))
+                strides=strides, padding=padding, name="fcn-conv{}".format(i))
 
             if i < len(self.layout) - 1:
-                volume = tf.nn.relu(volume, name="fcn-relu{}".format(i))
+                nl_string = layer.get('nl', self.default_nl)
+                nl = FullyConvolutional.nonlinearities[nl_string]
+                volume = nl(volume, name="fcn-{}{}".format(nl_string, i))
 
                 if layer.get('pool', False):
                     volume = tf.layers.max_pooling2d(
                         volume, pool_size=2, strides=2, name='fcn-pool{}'.format(i))
 
-            print("FCN >>> Spatial shape after layer {}: {}".format(i, tuple(int(i) for i in volume.shape[1:3])))
+            layer_string = ', '.join("{}={}".format(k, v) for k, v in sorted(layer.items(), key=lambda kv: kv[0]))
+            output_shape = tuple(int(i) for i in volume.shape[1:])
+
+            print("FCN >>> Applying layer {}: {}. Output shape: {}".format(i, layer_string, output_shape))
 
         if self.check_output_shape and output_size is not None:
             actual_shape = tuple(int(i) for i in volume.shape[1:])
@@ -345,68 +381,19 @@ class FullyConvolutional(ScopedFunction):
         return volume
 
 
-# class TinyYoloBackbone(FullyConvolutional):
-#     def __init__(self):
-#         layout = [
-#             dict(filters=64, kernel_size=6, strides=1),
-#             dict(filters=128, kernel_size=6, strides=1),
-#             dict(filters=128, kernel_size=8, strides=1),
-#             dict(filters=128, kernel_size=6, strides=1),
-#             dict(filters=512, kernel_size=6, strides=1),
-#         ]
-#         super(TinyYoloBackbone, self).__init__(layout)
-
-
 class TinyYoloBackbone(FullyConvolutional):
     def __init__(self):
+        # Best configuration so far. Notice the striding.
         layout = [
-            dict(filters=64, kernel_size=6, strides=1),
-            dict(filters=64, kernel_size=5, strides=1),
-            dict(filters=128, kernel_size=4, strides=1),
-            dict(filters=128, kernel_size=5, strides=1),
-            dict(filters=256, kernel_size=4, strides=1),
-            dict(filters=256, kernel_size=5, strides=1),
-            dict(filters=256, kernel_size=6, strides=1),
-            dict(filters=512, kernel_size=6, strides=1),
+            dict(filters=128, kernel_size=3, strides=2, padding="SAME"),
+            dict(filters=256, kernel_size=3, strides=2, padding="SAME"),
+            dict(filters=256, kernel_size=4, strides=1, padding="VALID"),
         ]
         super(TinyYoloBackbone, self).__init__(layout, check_output_shape=True)
 
 
-class TinyYoloEarly(FullyConvolutional):
-    def __init__(self):
-        layout = [
-            dict(filters=64, kernel_size=8, strides=1),
-            dict(filters=128, kernel_size=8, strides=1),
-            dict(filters=256, kernel_size=8, strides=1),
-            dict(filters=256, kernel_size=8, strides=1),
-            dict(filters=256, kernel_size=6, strides=1),
-            dict(filters=256, kernel_size=1, strides=1),
-            dict(filters=256, kernel_size=1, strides=1),
-            dict(filters=256, kernel_size=1, strides=1),
-            dict(filters=256, kernel_size=1, strides=1),
-        ]
-        super(TinyYoloEarly, self).__init__(layout, check_output_shape=True)
-
-
-class YoloBackbone(FullyConvolutional):
-    def __init__(self):
-        layout = [
-            dict(filters=64, kernel_size=5, strides=1),
-            dict(filters=64, kernel_size=5, strides=1),
-            dict(filters=128, kernel_size=5, strides=1),
-            dict(filters=128, kernel_size=5, strides=1),
-            dict(filters=256, kernel_size=4, strides=1),
-            dict(filters=256, kernel_size=5, strides=1),
-            dict(filters=256, kernel_size=6, strides=1),
-            dict(filters=512, kernel_size=6, strides=1),
-        ]
-        super(YoloBackbone, self).__init__(layout, check_output_shape=True)
-
-
 def build_fcn():
-    # return YoloBackbone()
-    return TinyYoloEarly()
-    #return TinyYoloBackbone()
+    return TinyYoloBackbone()
 
 
 def get_differentiable_updater(env):
@@ -543,8 +530,8 @@ def yolo_render_hook(updater):
             i = int(n / sqrt_N)
             j = int(n % sqrt_N)
 
-            # boxes = top_n(5, bbox_bounds[n], class_probs[n])
             boxes = nms(bbox_bounds[n], class_probs[n], pt, cfg.iou_threshold)
+
             all_boxes.append(boxes)
 
             ax1 = axes[2*i, j]
@@ -728,12 +715,18 @@ class Yolo_RLUpdater(DifferentiableUpdater):
             return b'', b'', dict(zip(self.env.recorded_names, recorded_values)), {}
 
 
+base_lr = 1e-4
+
+
 config = Config(
     log_name="yolo",
 
     get_updater=get_differentiable_updater,
     render_hook=yolo_render_hook,
     render_step=500,
+
+    curriculum=[dict(lr_schedule=f * base_lr) for f in 2.**-np.arange(6)],
+    preserve_env=True,
 
     # backbone
     build_fully_conv_net=build_fcn,
@@ -746,22 +739,20 @@ config = Config(
     image_shape=(40, 40),
     characters=[0, 1],
     min_chars=1,
-    max_chars=1,
+    max_chars=2,
     # characters=list(range(10)) + [chr(i + ord('a')) for i in range(10)],
     sub_image_shape=(14, 14),
-    n_sub_image_examples=1000,
+    n_sub_image_examples=0,
     colours='red green blue',
 
     anchor_boxes=[[14, 14]],
 
     # display params
-    prob_threshold=1. / (2**np.arange(1, 11)),
-    # prob_threshold=0.6,  # Andrew Ng
-    # iou_threshold=0.0,
-    iou_threshold=0.5,  # Andrew Ng
+    prob_threshold=1. / (2**np.arange(0, 11)),
+    iou_threshold=0.5,
     class_colours='white yellow purple'.split(),
 
-    # number of grid cells - the depends on both the FCN backbone and the image size
+    # number of grid cells - depends on both the FCN backbone and the image size
     H=7,
     W=7,
 
@@ -776,18 +767,18 @@ config = Config(
     scale_coord=5.0,
 
     use_squared_loss=True,
+    conf_target="conf",
 
     # training params
     batch_size=64,
     eval_step=100,
     max_steps=1e7,
     patience=10000,
-    lr_schedule="1e-5",
     optimizer_spec="adam",
     use_gpu=True,
     gpu_allow_growth=True,
     seed=347405995,
     stopping_criteria="loss,min",
     threshold=-np.inf,
-    max_grad_norm=5.0,
+    max_grad_norm=1.0,
 )

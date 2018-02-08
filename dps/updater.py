@@ -45,11 +45,12 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
         self._n_experiences += batch_size
         self._n_updates += 1
 
-        scheduled_value_summaries = \
-            tf.get_default_session().run(self.scheduled_value_summaries_op)
+        sess = tf.get_default_session()
+
+        scheduled_value_summaries = sess.run(self.scheduled_value_summaries_op)
 
         train, off_policy, train_record, off_policy_record = self._update(batch_size, collect_summaries)
-        tf.get_default_session().run(self.inc_global_step_op)
+        sess.run(self.inc_global_step_op)
         return train + scheduled_value_summaries, off_policy + scheduled_value_summaries, train_record, off_policy_record
 
     @abc.abstractmethod
