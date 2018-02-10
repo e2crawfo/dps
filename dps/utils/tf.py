@@ -2,7 +2,6 @@ import subprocess as sp
 import numpy as np
 from collections import deque, OrderedDict
 import os
-from pathlib import Path
 import hashlib
 
 import tensorflow as tf
@@ -200,7 +199,7 @@ class ScopedFunction(Parameterized):
                             "it is an error to call `set_pretraining_params` at this point")
 
         assert train_config is not None
-        self.directory = str(directory or Path(dps.cfg.log_dir))
+        self.directory = directory or dps.cfg.log_dir
         if isinstance(name_params, str):
             name_params = name_params.split()
         name_params = sorted(name_params or [])

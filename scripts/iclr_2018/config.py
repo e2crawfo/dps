@@ -113,7 +113,7 @@ rl_config.update(env_config)
 rl_config.update(
     name="GridArithmeticRL",
 
-    memory_limit_mb=12*1024,
+    cpu_ram_limit_mb=12*1024,
     use_gpu=False,
     gpu_allow_growth=True,
     per_process_gpu_memory_fraction=0.22,
@@ -126,7 +126,7 @@ cnn_config.update(env_config)
 cnn_config.update(
     name="GridArithmeticCNN",
 
-    memory_limit_mb=12*1024,
+    cpu_ram_limit_mb=12*1024,
     use_gpu=True,
     gpu_allow_growth=True,
     per_process_gpu_memory_fraction=0.22,
@@ -171,7 +171,7 @@ rnn_config.update(env_config)
 rnn_config.update(
     name="GridArithmeticRNN",
 
-    memory_limit_mb=12*1024,
+    cpu_ram_limit_mb=12*1024,
     use_gpu=True,
     gpu_allow_growth=True,
     per_process_gpu_memory_fraction=0.22,

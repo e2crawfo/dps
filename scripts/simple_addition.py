@@ -32,7 +32,7 @@ config = DEFAULT_CONFIG.copy(
     threshold=0.01,
     # render_hook=rl_render_hook,
     render_hook=None,
-    memory_limit_mb=5*1024,
+    cpu_ram_limit_mb=5*1024,
 )
 
 

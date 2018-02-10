@@ -392,8 +392,26 @@ class TinyYoloBackbone(FullyConvolutional):
         super(TinyYoloBackbone, self).__init__(layout, check_output_shape=True)
 
 
+class YoloBackbone(FullyConvolutional):
+    def __init__(self):
+        # Best configuration so far. Notice the striding.
+        layout = [
+            dict(filters=128, kernel_size=3, strides=2, padding="SAME"),
+            dict(filters=128, kernel_size=1, strides=1, padding="VALID"),
+            dict(filters=128, kernel_size=1, strides=1, padding="VALID"),
+            dict(filters=256, kernel_size=3, strides=2, padding="SAME"),
+            dict(filters=256, kernel_size=1, strides=1, padding="VALID"),
+            dict(filters=256, kernel_size=1, strides=1, padding="VALID"),
+            dict(filters=256, kernel_size=4, strides=1, padding="VALID"),
+            dict(filters=256, kernel_size=1, strides=1, padding="VALID"),
+            dict(filters=256, kernel_size=1, strides=1, padding="VALID"),
+        ]
+        super(YoloBackbone, self).__init__(layout, check_output_shape=True)
+
+
 def build_fcn():
-    return TinyYoloBackbone()
+    return YoloBackbone()
+    # return TinyYoloBackbone()
 
 
 def get_differentiable_updater(env):

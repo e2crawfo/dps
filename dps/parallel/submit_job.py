@@ -3,7 +3,6 @@ import os
 import datetime
 import subprocess
 from future.utils import raise_with_traceback
-from pathlib import Path
 import numpy as np
 import time
 import progressbar
@@ -12,8 +11,11 @@ from collections import defaultdict
 import sys
 
 import dps
-from dps.parallel.base import ReadOnlyJob, zip_root
-from dps.utils import cd, parse_timedelta, make_symlink, ExperimentStore
+from dps.parallel.base import ReadOnlyJob
+from dps.utils import (
+    cd, parse_timedelta, make_symlink, ExperimentStore,
+    zip_root, process_path, path_stem
+)
 
 
 DEFAULT_HOST_POOL = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
@@ -132,15 +134,14 @@ class ParallelSession(object):
                 f.write(readme)
             del f
 
-        input_zip_stem = Path(input_zip).stem
-        input_zip = shutil.copy(str(input_zip), os.path.join(job_directory, "orig.zip"))
-        input_zip = Path(input_zip)
-        input_zip_abs = input_zip.resolve()
-        input_zip_base = input_zip.name
+        input_zip_stem = path_stem(input_zip)
+        input_zip = shutil.copy(input_zip, os.path.join(job_directory, "orig.zip"))
+        input_zip_abs = process_path(input_zip)
+        input_zip_base = os.path.basename(input_zip)
         archive_root = zip_root(input_zip)
 
         # storage local to each node, from the perspective of that node
-        local_scratch = str(Path(local_scratch_prefix) / Path(job_directory).name)
+        local_scratch = os.path.join(local_scratch_prefix, os.path.basename(job_directory))
 
         redirect = "--redirect" if redirect else ""
 
@@ -234,7 +235,8 @@ class ParallelSession(object):
         print("We have {wall_time_seconds} seconds to complete {n_jobs_to_run} "
               "sub-jobs (grouped into {n_steps} steps) using {n_procs} processors.".format(**self.__dict__))
         print("Total time per step is {total_seconds_per_step}.".format(**self.__dict__))
-        print("Each step, we are allowing {slack_seconds} seconds as slack and {cleanup_seconds} seconds for cleanup.".format(**self.__dict__))
+        print("Each step, we are allowing {slack_seconds} seconds as slack and "
+              "{cleanup_seconds} seconds for cleanup.".format(**self.__dict__))
         print("Time-limit passed to parallel is {parallel_seconds_per_step}.".format(**self.__dict__))
         print("Time-limit passed to dps-hyper is {python_seconds_per_step}.".format(**self.__dict__))
 
@@ -451,8 +453,11 @@ class ParallelSession(object):
 
             bind = "--accel-bind=g" if self.gpu_set else ""
             mem = "--mem-per-cpu={}mb".format(self.pmem) if self.pmem else ""
-            command = 'srun --cpus-per-task {cpp} --ntasks {n_tasks} {bind} {mem} --no-kill sh -c "{parallel_command}"'.format(
-                cpp=self.cpp, n_tasks=len(indices_for_step), bind=bind, mem=mem, parallel_command=parallel_command)
+
+            command = ('srun --cpus-per-task {cpp} --ntasks {n_tasks} {bind} '
+                       '{mem} --no-kill sh -c "{parallel_command}"'.format(
+                           cpp=self.cpp, n_tasks=len(indices_for_step), bind=bind,
+                           mem=mem, parallel_command=parallel_command))
         else:
             workon = "workon {launch_venv} && " if (self.copy_venv and self.launch_venv) else ""
             parallel_command = (
@@ -525,7 +530,9 @@ class ParallelSession(object):
             returncode, output = self.execute_command(
                 command, frmt=False, robust=False, progress=False, output='get')
             self.local_scratch_prefix = output.split('=')[-1].strip()
-            self.local_scratch = str(Path(self.local_scratch_prefix) / Path(self.job_directory).name)
+            self.local_scratch = os.path.join(
+                self.local_scratch_prefix,
+                os.path.basename(self.job_directory))
 
         if self.dry_run:
             print("Dry run, so not running.")

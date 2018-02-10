@@ -122,7 +122,7 @@ config = Config(
         build_function=lambda: LeNet(128, scope="digit_classifier")
     ),
 
-    memory_limit_mb=12*1024,
+    cpu_ram_limit_mb=12*1024,
     use_gpu=True,
     gpu_allow_growth=True,
     per_process_gpu_memory_fraction=0.22,

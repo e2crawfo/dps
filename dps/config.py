@@ -58,7 +58,6 @@ DEFAULT_CONFIG = Config(
     max_steps=1000000,
     max_experiences=np.inf,
 
-    deadline='',
     render_n_rollouts=10,
     render_hook=rl_render_hook,
 

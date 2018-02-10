@@ -1,6 +1,5 @@
 import copy
 import numpy as np
-from pathlib import Path
 import pandas as pd
 from pprint import pprint
 import time
@@ -24,7 +23,7 @@ import clify
 import dps
 from dps import cfg
 from dps.utils.base import (
-    gen_seed, Config, cd, ExperimentStore, edit_text)
+    gen_seed, Config, cd, ExperimentStore, edit_text, process_path)
 from dps.parallel.submit_job import ParallelSession, DEFAULT_HOST_POOL
 from dps.parallel.base import Job, ReadOnlyJob
 
@@ -153,6 +152,8 @@ def sanitize_string(s):
 
 
 class RunTrainingLoop(object):
+    """ Entry point for each process. """
+
     def __init__(self, base_config):
         self.base_config = base_config
 
@@ -160,10 +161,13 @@ class RunTrainingLoop(object):
         os.nice(10)
 
         start_time = time.time()
+
         print("Starting new training run at: ")
         print(datetime.datetime.now())
+
         print("Sampled values: ")
-        pprint(new)
+        print(new)
+
         print("Base config: ")
         print(self.base_config)
 
@@ -246,10 +250,7 @@ def build_search(
     if do_local_test:
         print("\nStarting local test " + ("=" * 80))
         test_config = new_configs[0].copy()
-        test_config.update(
-            max_steps=1000,
-            render_hook=None
-        )
+        test_config.update(max_steps=1000, render_hook=None)
         RunTrainingLoop(config)(test_config)
         print("Done local test " + ("=" * 80) + "\n")
 
@@ -259,7 +260,7 @@ def build_search(
     job.save_object('metadata', 'config', config)
 
     if _zip:
-        path = job.zip(delete=False)
+        path = job.zip(delete=True)
     else:
         path = exp_dir.path
     return job, path
@@ -280,7 +281,8 @@ def _print_config(args):
 
 def _summarize_search(args):
     """ Get all completed jobs, get their outputs. Summarize em. """
-    print("Summarizing search stored at {}.".format(Path(args.path).absolute()))
+
+    print("Summarizing search stored at {}.".format(os.path.realpath(args.path)))
 
     job = ReadOnlyJob(args.path)
 
@@ -349,7 +351,7 @@ def _summarize_search(args):
 def _traj_plot(args):
     style = args.style
     paths = args.paths
-    paths = [Path(p).absolute() for p in paths]
+    paths = [process_path(p) for p in paths]
 
     kind = args.kind
     assert kind in "train val test update".split()
@@ -475,8 +477,8 @@ def extract_data_from_job(job, data_keys=None, as_frame=True, omit_timestep_data
         if `as_frame` is False.
 
     """
-    if isinstance(job, str) or isinstance(job, Path):
-        job = ReadOnlyJob(str(job))
+    if isinstance(job, str):
+        job = ReadOnlyJob(job)
 
     if as_frame and not omit_timestep_data:
         raise Exception("If `omit_timestep_data` is False, `as_frame` must also be False.")
@@ -493,9 +495,11 @@ def extract_data_from_job(job, data_keys=None, as_frame=True, omit_timestep_data
         if 'map' in op.name:
             try:
                 r = op.get_outputs(job.objects)[0]
+                print(r)
             except BaseException as e:
                 print("Exception thrown when accessing "
                       "output of op {}:\n    {}".format(op.name, e))
+                raise
 
         record = r['history'][-1].copy()
         record['host'] = r['host']
@@ -551,7 +555,7 @@ def _sample_complexity_plot(args):
     style = args.style
     spread_measure = args.spread_measure
     paths = args.paths
-    paths = [Path(p).absolute() for p in paths]
+    paths = [process_path(p) for p in paths]
 
     plt.title(args.title)
 
@@ -852,7 +856,7 @@ def submit_job(
         session.run()
         return session
 
-    job_dir = Path(session.job_directory)
+    job_dir = session.job_directory
 
     python_script = """#!{}
 import dill
@@ -860,10 +864,10 @@ with open("./session.pkl", "rb") as f:
     session = dill.load(f)
 session.run()
 """.format(sys.executable)
-    with (job_dir / "run.py").open('w') as f:
+    with open(os.path.join(job_dir, "run.py"), 'w') as f:
         f.write(python_script)
 
-    with (job_dir / "session.pkl").open('wb') as f:
+    with open(os.path.join(job_dir, "session.pkl"), 'wb') as f:
         dill.dump(session, f, protocol=dill.HIGHEST_PROTOCOL, recurse=True)
 
     if kind == "pbs":

@@ -1,7 +1,6 @@
 from pprint import pformat
 from contextlib import contextmanager
 import numpy as np
-from pathlib import Path
 import signal
 import time
 import re
@@ -26,9 +25,26 @@ import inspect
 import hashlib
 import configparser
 import socket
+from zipfile import ZipFile
 
 import clify
 import dps
+
+
+def zip_root(zipfile):
+    """ Get the name of the root directory inside a zip file, if it has one. """
+
+    if not isinstance(zipfile, ZipFile):
+        zipfile = ZipFile(zipfile, 'r')
+
+    zip_root = min(
+        (z.filename for z in zipfile.infolist()),
+        key=lambda s: len(s))
+
+    if zip_root.endswith('/'):
+        zip_root = zip_root[:-1]
+
+    return zip_root
 
 
 def get_param_hash(d, name_params=None):
@@ -127,7 +143,7 @@ class GitSummary(object):
 
 
 def module_git_summary(module, **kwargs):
-    module_dir = Path(module.__file__).parent.parent
+    module_dir = os.path.dirname(module.__file__)
     return GitSummary(module_dir)
 
 
@@ -702,6 +718,11 @@ def process_path(path, real_path=False):
     return path
 
 
+def path_stem(path):
+    no_ext = os.path.splitext(path)[0]
+    return os.path.basename(no_ext)
+
+
 @contextmanager
 def catch(exception_types, action=None):
     """ A try-except block as a context manager. """
@@ -1229,8 +1250,8 @@ class SystemConfig(Config):
 
 def _load_system_config(key=None):
     _config = configparser.ConfigParser()
-    location = Path(dps.__file__).parent
-    _config.read(str(location / 'config.ini'))
+    location = os.path.dirname(dps.__file__)
+    _config.read(os.path.join(location, 'config.ini'))
 
     if not key:
         key = socket.gethostname()
@@ -1331,11 +1352,16 @@ class ConfigStack(dict, metaclass=Singleton):
 
         for i, (vk, config) in enumerate(zip(visible_keys[::-1], reverse_stack[::-1])):
             visible_items = {k: v for k, v in config.items() if k in vk}
+
             if hidden:
                 hidden_items = {k: v for k, v in config.items() if k not in vk}
-                s.append("# {}: <{} -\nVISIBLE:\n{}\nHIDDEN:\n{}\n>".format(i, config.__class__.__name__, pformat(visible_items), pformat(hidden_items)))
+                _s = "# {}: <{} -\nVISIBLE:\n{}\nHIDDEN:\n{}\n>".format(
+                    i, config.__class__.__name__,
+                    pformat(visible_items), pformat(hidden_items))
             else:
-                s.append("# {}: <{} -\n{}\n>".format(i, config.__class__.__name__, pformat(visible_items)))
+                _s = "# {}: <{} -\n{}\n>".format(i, config.__class__.__name__, pformat(visible_items))
+
+            s.append(_s)
 
         s = '\n'.join(s)
         return "<{} -\n{}\n>".format(self.__class__.__name__, s)
@@ -1404,7 +1430,7 @@ class ConfigStack(dict, metaclass=Singleton):
 
     @property
     def log_dir(self):
-        return str(Path(self.log_root) / self.log_name)
+        return os.path.join(self.log_root, self.log_name)
 
     def update_from_command_line(self):
         cl_args = clify.wrap_object(self).parse()

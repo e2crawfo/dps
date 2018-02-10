@@ -1,15 +1,12 @@
 import shutil
-import dill
-from pathlib import Path
-from zipfile import ZipFile
-from collections import defaultdict
-import argparse
 import signal
 import numpy as np
 import os
 import types
 import sys
+import argparse
 
+from dps.parallel.object_store import FileSystemObjectStore, ZipObjectStore
 from dps.utils import SigTerm, KeywordMapping, pdb_postmortem, redirect_stream, modify_env
 
 
@@ -23,7 +20,8 @@ def vprint(s, v, threshold=0):
 
 
 class Operator(object):
-    """
+    """ A processing element of a computation graph.
+
     Needs to be fully serializable since we're saving and loading these all the time.
 
     Parameters
@@ -39,7 +37,9 @@ class Operator(object):
 
     """
     def __init__(
-            self, idx, name, func_key, inp_keys, outp_keys, pass_store=False, metadata=None):
+            self, idx, name, func_key, inp_keys, outp_keys,
+            pass_store=False, metadata=None):
+
         self.idx = idx
         self.name = name
         self.func_key = func_key
@@ -59,8 +59,9 @@ Operator(
     outp_keys={},
     pass_store={},
     metadata={})""".format(
-            pformat(self.idx), pformat(self.name), pformat(self.func_key), pformat(self.inp_keys),
-            pformat(self.outp_keys), pformat(self.pass_store), pformat(self.metadata))
+            pformat(self.idx), pformat(self.name), pformat(self.func_key),
+            pformat(self.inp_keys), pformat(self.outp_keys),
+            pformat(self.pass_store), pformat(self.metadata))
 
     def __repr__(self):
         return str(self)
@@ -93,30 +94,23 @@ Operator(
     def is_ready(self, store):
         return all([store.object_exists('data', ik) for ik in self.inp_keys])
 
-    def call_function(self, func, store, inputs, force_unique, verbose):
+    def call_function(self, func, store, inputs, verbose):
         outputs = func(*inputs)
 
         if not isinstance(outputs, types.GeneratorType):
             outputs = [outputs]
-
-        first_yield = True
 
         for outp in outputs:
             print("Checkpointing...")
             vprint("\n\n" + ("-" * 40), verbose)
             vprint("Function for op {} has returned".format(self.name), verbose)
             vprint("Saving output for op {}".format(self.name), verbose)
-            _force_unique = first_yield and force_unique
+
             if len(self.outp_keys) == 1:
-                store.save_object(
-                    'data', self.outp_keys[0], outp, force_unique=_force_unique,
-                    clobber=True, recurse=False)
-            else:
-                for o, ok in zip(outp, self.outp_keys):
-                    store.save_object(
-                        'data', ok, o, force_unique=_force_unique,
-                        clobber=True, recurse=False)
-            first_yield = False
+                outp = [outp]
+
+            for key, obj in zip(self.outp_keys, outp):
+                store.save_object('data', key, obj, recurse=False)
 
     def run(self, store, force, output_to_files=True, verbose=False):
         vprint("\n\n" + ("*" * 80), verbose)
@@ -124,15 +118,9 @@ Operator(
         old_sigterm_handler = signal.signal(signal.SIGTERM, raise_sigterm)
 
         try:
-            force_unique = True
             if self.is_complete(store, partial=False):
-                if force:
-                    force_unique = False
-                    vprint("Op {} is already complete, but ``force`` is True, "
-                           "so we're running it anyway.".format(self.name), verbose)
-                else:
-                    vprint("Skipping op {}, already complete.".format(self.name), verbose)
-                    return False
+                vprint("Skipping op {}, already complete.".format(self.name), verbose)
+                return False
             else:
                 vprint("Op {} is not complete, so we SHOULD run it.".format(self.name), verbose)
 
@@ -158,17 +146,19 @@ Operator(
             vprint("Calling function for op {}".format(self.name), verbose)
             vprint("\n\n" + ("-" * 40), verbose)
             if output_to_files:
-                stdout = store.path_for('stdout')
-                stdout.mkdir(parents=True, exist_ok=True)
-                stderr = store.path_for('stderr')
-                stderr.mkdir(parents=True, exist_ok=True)
-                with redirect_stream('stdout', stdout / self.name):
-                    with redirect_stream('stderr', stderr / self.name):
-                        self.call_function(func, store, inputs, force_unique, verbose)
-            else:
-                self.call_function(func, store, inputs, force_unique, verbose)
+                stdout_path = store.path_for_kind('stdout')
+                os.makedirs(stdout_path, exist_ok=True)
 
-            store.save_object('complete', self.idx, self.idx, force_unique=False)
+                stderr_path = store.path_for_kind('stderr')
+                os.makedirs(stderr_path, exist_ok=True)
+
+                with redirect_stream('stdout', os.path.join(stdout_path, self.name)):
+                    with redirect_stream('stderr', os.path.join(stderr_path, self.name)):
+                        self.call_function(func, store, inputs, verbose)
+            else:
+                self.call_function(func, store, inputs, verbose)
+
+            store.save_object('complete', self.idx, self.idx)
 
             vprint("op {} complete.".format(self.name), verbose)
             vprint("\n\n" + ("*" * 80), verbose)
@@ -189,6 +179,8 @@ Operator(
 
 
 class Signal(object):
+    """ Representation of a piece of data used when constructing computation graphs. """
+
     def __init__(self, key, name):
         self.key = key
         self.name = name
@@ -201,10 +193,10 @@ class Signal(object):
 
 
 class ReadOnlyJob(object):
+    """ A job that can only be examined. """
+
     def __init__(self, path):
-        # A store for functions, data and operators.
-        path = Path(path)
-        if path.suffix == '.zip':
+        if os.path.splitext(path)[1] == '.zip':
             self.objects = ZipObjectStore(path)
         else:
             self.objects = FileSystemObjectStore(path)
@@ -216,32 +208,29 @@ class ReadOnlyJob(object):
             operators = (op for i, op in enumerate(operators) if selected[i])
 
         if ready is not None:
-            if ready:
-                operators = [op for op in operators if op.is_ready(self.objects)]
-            else:
-                operators = [op for op in operators if not op.is_ready(self.objects)]
+            pred = lambda b: b if ready else lambda b: not b
+            operators = [op for op in operators if pred(op.is_ready(self.objects))]
 
         if complete is not None:
-            if complete:
-                operators = [op for op in operators if op.is_complete(self.objects, partial=partial)]
-            else:
-                operators = [op for op in operators if not op.is_complete(self.objects, partial=partial)]
+            pred = lambda b: b if complete else lambda b: not b
+            operators = [op for op in operators if pred(op.is_complete(self.objects, partial=partial))]
 
         if sort:
             operators = sorted(operators, key=lambda op: op.idx)
+
         return operators
 
     def _print_ops(self, ops, verbose):
         s = []
-        if verbose == 1:
-            for op in ops:
+
+        for op in ops:
+            if verbose == 1:
                 s.append(op.name)
-        elif verbose == 2:
-            for op in ops:
+            elif verbose == 2:
                 s.append(op.status(self.objects, verbose=False))
-        elif verbose == 3:
-            for op in ops:
+            elif verbose == 3:
                 s.append(op.status(self.objects, verbose=True))
+
         return '\n'.join(s)
 
     def summary(self, pattern=None, verbose=0):
@@ -307,21 +296,27 @@ class Job(ReadOnlyJob):
         self.op_idx = 0
         self.n_signals = 0
 
-    def save_object(self, kind, key, obj, force_unique=True, clobber=False, recurse=True):
-        self.objects.save_object(kind, key, obj, force_unique, clobber, recurse=True)
+    def save_object(self, kind, key, obj, force_unique=True, recurse=True):
+        exists = self.objects.object_exists(kind, key)
+        if force_unique and exists:
+            raise Exception("Object with kind {} and key {} already exists, but `force_unique` is True.")
+
+        self.objects.save_object(kind, key, obj, recurse=True)
 
     def add_op(self, name, func, inputs, n_outputs, pass_store):
+        """ `func` can either be a function, the key to a function that has already been saved. """
+
         if not callable(func):
             func_key = func
         else:
             func_key = self.objects.get_unique_key('function')
-            self.save_object('function', func_key, func, force_unique=False, recurse=True)
+            self.save_object('function', func_key, func, recurse=True)
 
         inp_keys = []
         for inp in inputs:
             if not isinstance(inp, Signal):
                 key = self.objects.get_unique_key('data')
-                self.save_object('data', key, inp, force_unique=True, recurse=False)
+                self.save_object('data', key, inp, recurse=False)
             else:
                 key = inp.key
             inp_keys.append(key)
@@ -337,7 +332,7 @@ class Job(ReadOnlyJob):
             pass_store=pass_store)
         self.op_idx += 1
         op_key = self.objects.get_unique_key('operator')
-        self.save_object('operator', op_key, op, force_unique=True, recurse=True)
+        self.save_object('operator', op_key, op, recurse=True)
 
         return outputs
 
@@ -347,7 +342,7 @@ class Job(ReadOnlyJob):
         results = []
 
         func_key = self.objects.get_unique_key('function')
-        self.save_object('function', func_key, func, force_unique=True, recurse=True)
+        self.save_object('function', func_key, func, recurse=True)
 
         for idx, inp in enumerate(inputs):
             op_result = self.add_op(
@@ -365,10 +360,20 @@ class Job(ReadOnlyJob):
 
         return op_result
 
-    def run(
-            self, pattern, indices, force, output_to_files, verbose,
+    def run(self, pattern, indices, force, output_to_files, verbose,
             idx_in_node, ppn, gpu_set, ignore_gpu):
+        """ Run selected operators in the job.
 
+        Only ops that meet constraints imposed by both `pattern` and `indices` will be executed.
+
+        Parameters
+        ----------
+        pattern: str
+            Only ops whose name matches this pattern will be executed.
+        indices: set-like of int
+            Only ops whose indices are in this set will be executed.
+
+        """
         operators = self.get_ops(pattern)
 
         if not operators:
@@ -376,7 +381,7 @@ class Job(ReadOnlyJob):
 
         # When using SLURM, not sure how to pass different arguments to different tasks. So instead, we
         # pass ALL arguments to all tasks, and then let each task select the argument we intend for it
-        # by using SLURM_PROCID, which is basically gives the ID of the task within the job.
+        # by using SLURM_PROCID, which basically gives the ID of the task within the job.
         # `idx_in_job` is not used when not using slurm, as we can pass the indices to run directly to each job.
         idx_in_job = int(os.environ.get("SLURM_PROCID", -1))
         if idx_in_job != -1:
@@ -394,7 +399,7 @@ class Job(ReadOnlyJob):
         if int(idx_in_node) == -1:
             idx_in_node = int(os.environ.get("SLURM_LOCALID", -1))
         else:
-            # When getting idx_in_node from gnu-parallel, it starts from 1 instead of 0.
+            # When getting `idx_in_node` from gnu-parallel, it starts from 1 instead of 0.
             idx_in_node -= 1
 
         if ignore_gpu:
@@ -417,206 +422,15 @@ class Job(ReadOnlyJob):
             env = {}
 
         with modify_env(**env):
-            return [
-                op.run(self.objects, force, output_to_files, verbose)
-                for op in operators if op.idx in indices]
+            return [op.run(self.objects, force, output_to_files, verbose)
+                    for op in operators if op.idx in indices]
 
     def zip(self, archive_name=None, delete=False):
         return self.objects.zip(archive_name, delete=delete)
 
 
-class ObjectStore(object):
-    def __init__(self):
-        pass
-
-    def object_exists(self, kind, key):
-        raise Exception("Abstract method.")
-
-    def save_object(self, kind, key, obj, force_unique=True, clobber=False):
-        raise Exception("Abstract method.")
-
-    def load_object(self, kind, key):
-        raise Exception("Abstract method.")
-
-    def load_objects(self, kind):
-        raise Exception("Abstract method.")
-
-    def n_objects(self, kind=None):
-        raise Exception("Abstract method.")
-
-
-def split_path(path, root):
-    _path = Path(path).relative_to(root)
-    kind = str(_path.parent)
-    key = _path.stem
-    return kind, key
-
-
-class FileSystemObjectStore(ObjectStore):
-    def __init__(self, directory, force_fresh=False):
-        if str(directory).endswith('.zip'):
-            raise ValueError("Cannot create a FileSystemObjectStore from a zip file.")
-        self.used_keys = defaultdict(list)
-        self.directory = Path(directory)
-        self.directory.mkdir(parents=True, exist_ok=not force_fresh)
-        super(FileSystemObjectStore, self).__init__()
-
-    def path_for(self, kind=None, key=None):
-        path = self.directory
-        if kind is not None:
-            path /= kind
-        if key is not None:
-            path /= '{}.key'.format(key)
-        return path
-
-    def get_unique_key(self, kind):
-        unique_key = max(self.used_keys[kind], default=0) + 1
-        assert unique_key not in self.used_keys[kind]
-        self.used_keys[kind].append(unique_key)
-        return unique_key
-
-    def object_exists(self, kind, key):
-        return self.path_for(kind, key).exists()
-
-    def save_object(self, kind, key, obj, force_unique=True, clobber=False, recurse=True):
-        if self.object_exists(kind, key):
-            if force_unique:
-                raise ValueError("Trying to save object {} with kind {} and key {}, "
-                                 "but an object ({}) already exists at that location and "
-                                 "``force_unique`` is True.".format(obj, kind, key, self.load_object(kind, key)))
-            if not clobber:
-                return
-
-        path = self.path_for(kind, key)
-        path.parent.mkdir(exist_ok=True, parents=True)
-
-        with path.open('wb') as f:
-            dill.dump(obj, f, protocol=dill.HIGHEST_PROTOCOL, recurse=recurse)
-
-    def delete_object(self, kind, key):
-        path = self.path_for(kind, key)
-        try:
-            shutil.rmtree(str(path))
-        except:
-            pass
-
-    def load_object(self, kind, key):
-        path = self.path_for(kind, key)
-        if not self.object_exists(kind, key):
-            raise ValueError("No object with kind {} and key {}.".format(kind, key))
-        with path.open('rb') as f:
-            obj = dill.load(f)
-        return obj
-
-    def load_objects(self, kind):
-        directory = self.path_for(kind)
-        objects = {}
-        for obj_path in directory.glob('**/*.key'):
-            with obj_path.open('rb') as f:
-                obj = dill.load(f)
-            objects[split_path(obj_path, self.directory)] = obj
-        return objects
-
-    def n_objects(self, kind=None):
-        return len(self.keys(kind))
-
-    def keys(self, kind):
-        """ Returns list of tuples of form (kind, key) """
-        directory = self.path_for(kind)
-        return list(split_path(p, self.directory) for p in directory.glob('**/*.key'))
-
-    def zip(self, archive_name=None, delete=False):
-        if not archive_name:
-            archive_name = Path(self.directory).name
-        archive_name = Path(archive_name)
-        archive_name = archive_name.parent / archive_name.stem
-
-        # Within the archive, all entries are contained inside
-        # a directory with a name given by ``base_dir``.
-        archive_path = shutil.make_archive(
-            str(archive_name), 'zip', root_dir=str(self.directory.parent),
-            base_dir=str(self.directory.relative_to(self.directory.parent)))
-
-        archive_path = Path(archive_path).resolve()
-        if not str(archive_path).startswith(str(self.directory.parent)):
-            archive_path = shutil.move(str(archive_path), str(self.directory.parent))
-
-        print("Zipped {} as {}.".format(self.directory, archive_path))
-        if delete:
-            shutil.rmtree(str(self.directory))
-        return archive_path
-
-
-class ZipObjectStore(ObjectStore):
-    """ A read-only object store based on zip file. Avoids ever unzipping the entire file. """
-    def __init__(self, zip_path):
-        self._zip = ZipFile(str(zip_path), 'r')
-        self._zip_root = Path(zip_root(zip_path))
-
-    def __enter__(self):
-        pass
-
-    def __exit__(self):
-        self._zip.close()
-
-    def path_for(self, kind=None, key=None):
-        path = self._zip_root
-        if kind is not None:
-            path /= kind
-        if key is not None:
-            path /= '{}.key'.format(key)
-        return path
-
-    def object_exists(self, kind, key):
-        return str(self.path_for(kind, key)) in self._zip.namelist()
-
-    def save_object(self, kind, key, obj, force_unique, clobber):
-        raise Exception("Read-only object store.")
-
-    def load_object(self, kind, key):
-        path = self.path_for(kind, key)
-        if not self.object_exists(kind, key):
-            raise ValueError("No object with kind {} and key {}.".format(kind, key))
-        with self._zip.open(str(path), 'r') as f:
-            obj = dill.load(f)
-        return obj
-
-    def load_objects(self, kind):
-        directory = str(self.path_for(kind))
-        object_files = [
-            s for s in self._zip.namelist()
-            if s.startswith(directory) and s.endswith('.key')]
-        objects = {}
-        for o in object_files:
-            with self._zip.open(o, 'r') as f:
-                obj = dill.load(f)
-            objects[split_path(o, self._zip_root)] = obj
-        return objects
-
-    def n_objects(self, kind=None):
-        raise Exception("Abstract method.")
-
-    def keys(self, kind):
-        directory = str(self.path_for(kind))
-        _keys = [
-            split_path(s, self._zip_root) for s in self._zip.namelist()
-            if s.startswith(directory) and s.endswith('.key')]
-        return _keys
-
-
-def zip_root(zipfile):
-    """ Get the name of the root directory of a zip file, if it has one. """
-    if not isinstance(zipfile, ZipFile):
-        zipfile = ZipFile(str(zipfile), 'r')
-    zip_root = min(
-        [z.filename for z in zipfile.infolist()],
-        key=lambda s: len(s))
-    if zip_root[-1] == '/':
-        zip_root = zip_root[:-1]
-    return zip_root
-
-
 def run_command(args):
+    """ Implements the `run` sub-command, which executes some of the job's operators. """
     job = Job(args.path)
     job.run(
         args.pattern, args.indices, args.force, args.redirect, args.verbose,
@@ -624,19 +438,20 @@ def run_command(args):
 
 
 def view_command(args):
+    """ Implements the `view` sub-command, which prints a summary of a job. """
     job = ReadOnlyJob(args.path)
     print(job.summary(verbose=args.verbose))
 
 
 def parallel_cl(desc, additional_cmds=None):
-    """ Entry point for the `dps-parallel` command-line utility.
+    """ Entry point for command-line utility to which additional sub-commands can be added.
 
     Parameters
     ----------
     desc: str
         Description for the script.
     additional_cmds: list
-        Each element has form (name, help, func, *(arg_name, kwargs)).
+        Each element has the form (name, help, func, *(arg_name, kwargs)).
 
     """
     desc = desc or 'Run jobs and view their statuses.'
@@ -696,17 +511,21 @@ def parallel_cl(desc, additional_cmds=None):
 
 
 if __name__ == "__main__":
-    directory = Path('/tmp/test_job/test')
+    directory = '/tmp/test_job/test'
     try:
-        shutil.rmtree(str(directory))
-    except:
+        shutil.rmtree(directory)
+    except FileNotFoundError:
         pass
+
+    # Build job
     job = Job(directory)
     x = range(10)
     z = job.map(lambda y: y + 1, x)
     final = job.reduce(lambda *inputs: sum(inputs), z)
     print(job.summary())
-    # for i in range(10):
-    #     job.run("map", i)
-    # job.run("reduce", 0)
-    # print(job.summary())
+
+    # Run job
+    for i in range(10):
+        job.run("map", i)
+    job.run("reduce", 0)
+    print(job.summary())

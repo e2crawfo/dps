@@ -176,11 +176,7 @@ class DifferentiableUpdater(Updater):
         self.set_is_training(False)
 
         x, y = self.env.next_batch(None, mode)
-
-        feed_dict = {
-            self.x_ph: x,
-            self.target_ph: y
-        }
+        feed_dict = {self.x_ph: x, self.target_ph: y}
 
         sess = tf.get_default_session()
         summaries, loss, *recorded_values = sess.run(

@@ -79,7 +79,7 @@ alg_config = Config(
 config = RL_EXPERIMENT_CONFIG.copy(
     name="SimpleGridArithmeticRL",
 
-    memory_limit_mb=12*1024,
+    cpu_ram_limit_mb=12*1024,
     use_gpu=True,
     gpu_allow_growth=True,
     per_process_gpu_memory_fraction=0.22,
