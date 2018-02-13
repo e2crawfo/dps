@@ -1,13 +1,11 @@
-import shutil
 import signal
 import numpy as np
 import os
 import types
 import sys
-import argparse
 
 from dps.parallel.object_store import FileSystemObjectStore, ZipObjectStore
-from dps.utils import SigTerm, KeywordMapping, pdb_postmortem, redirect_stream, modify_env
+from dps.utils import SigTerm, KeywordMapping, redirect_stream, modify_env, process_path
 
 
 def raise_sigterm(*args, **kwargs):
@@ -101,10 +99,8 @@ Operator(
             outputs = [outputs]
 
         for outp in outputs:
-            print("Checkpointing...")
             vprint("\n\n" + ("-" * 40), verbose)
-            vprint("Function for op {} has returned".format(self.name), verbose)
-            vprint("Saving output for op {}".format(self.name), verbose)
+            vprint("Function for op {} has returned value {}.".format(self.name, outp), verbose)
 
             if len(self.outp_keys) == 1:
                 outp = [outp]
@@ -196,24 +192,31 @@ class ReadOnlyJob(object):
     """ A job that can only be examined. """
 
     def __init__(self, path):
+        self.path = path
         if os.path.splitext(path)[1] == '.zip':
             self.objects = ZipObjectStore(path)
         else:
             self.objects = FileSystemObjectStore(path)
 
-    def get_ops(self, pattern=None, sort=True, ready=None, complete=None, partial=False):
+    def get_ops(self, pattern=None, sort=True, ready=None,
+                complete=None, partial=False):
+
         operators = list(self.objects.load_objects('operator').values())
         if pattern is not None:
             selected = KeywordMapping.batch([op.name for op in operators], pattern)
             operators = (op for i, op in enumerate(operators) if selected[i])
 
+        _id = lambda b: b
+        _not = lambda b: not b
+
         if ready is not None:
-            pred = lambda b: b if ready else lambda b: not b
+            pred = _id if ready else _not
             operators = [op for op in operators if pred(op.is_ready(self.objects))]
 
         if complete is not None:
-            pred = lambda b: b if complete else lambda b: not b
-            operators = [op for op in operators if pred(op.is_complete(self.objects, partial=partial))]
+            pred = _id if complete else _not
+            operators = [op for op in operators
+                         if pred(op.is_complete(self.objects, partial=partial))]
 
         if sort:
             operators = sorted(operators, key=lambda op: op.idx)
@@ -228,7 +231,7 @@ class ReadOnlyJob(object):
                 s.append(op.name)
             elif verbose == 2:
                 s.append(op.status(self.objects, verbose=False))
-            elif verbose == 3:
+            elif verbose > 2:
                 s.append(op.status(self.objects, verbose=True))
 
         return '\n'.join(s)
@@ -290,7 +293,8 @@ class ReadOnlyJob(object):
 
 class Job(ReadOnlyJob):
     def __init__(self, path):
-        self.objects = FileSystemObjectStore(path)  # A store for functions, data and operators.
+        self.path = process_path(path)
+        self.objects = FileSystemObjectStore(path)
         self.map_idx = 0
         self.reduce_idx = 0
         self.op_idx = 0
@@ -302,6 +306,13 @@ class Job(ReadOnlyJob):
             raise Exception("Object with kind {} and key {} already exists, but `force_unique` is True.")
 
         self.objects.save_object(kind, key, obj, recurse=True)
+
+    def reserve_key(self, kind, key, force_unique=True):
+        exists = self.objects.object_exists(kind, key)
+        if force_unique and exists:
+            raise Exception("Object with kind {} and key {} already exists, but `force_unique` is True.")
+
+        self.objects.reserve_key(kind, key)
 
     def add_op(self, name, func, inputs, n_outputs, pass_store):
         """ `func` can either be a function, the key to a function that has already been saved. """
@@ -321,15 +332,19 @@ class Job(ReadOnlyJob):
                 key = inp.key
             inp_keys.append(key)
 
-        outputs = [
-            Signal(key=self.objects.get_unique_key('data'), name="{}[{}]".format(name, i))
-            for i in range(n_outputs)]
+        outputs = []
+        for i in range(n_outputs):
+            key = self.objects.get_unique_key('data')
+            self.objects.reserve_key('data', key)
+            signal = Signal(key=key, name="{}[{}]".format(name, i))
+            outputs.append(signal)
         outp_keys = [outp.key for outp in outputs]
 
         op = Operator(
             idx=self.op_idx, name=name, func_key=func_key,
             inp_keys=inp_keys, outp_keys=outp_keys,
             pass_store=pass_store)
+
         self.op_idx += 1
         op_key = self.objects.get_unique_key('operator')
         self.save_object('operator', op_key, op, recurse=True)
@@ -360,6 +375,9 @@ class Job(ReadOnlyJob):
 
         return op_result
 
+    def simple_run(self, pattern, indices):
+        return self.run(pattern, indices, False, True, True, 0, 1, "", True)
+
     def run(self, pattern, indices, force, output_to_files, verbose,
             idx_in_node, ppn, gpu_set, ignore_gpu):
         """ Run selected operators in the job.
@@ -374,9 +392,15 @@ class Job(ReadOnlyJob):
             Only ops whose indices are in this set will be executed.
 
         """
-        operators = self.get_ops(pattern)
+        if indices is not None and not isinstance(indices, set):
+            try:
+                indices = set(indices)
+            except (TypeError, ValueError):
+                indices = set([indices])
 
-        if not operators:
+        ops = self.get_ops(pattern)
+
+        if not ops:
             return False
 
         # When using SLURM, not sure how to pass different arguments to different tasks. So instead, we
@@ -421,111 +445,11 @@ class Job(ReadOnlyJob):
         else:
             env = {}
 
+        if indices is not None:
+            ops = [op for op in ops if op.idx in indices]
+
         with modify_env(**env):
-            return [op.run(self.objects, force, output_to_files, verbose)
-                    for op in operators if op.idx in indices]
+            return [op.run(self.objects, force, output_to_files, verbose) for op in ops]
 
     def zip(self, archive_name=None, delete=False):
         return self.objects.zip(archive_name, delete=delete)
-
-
-def run_command(args):
-    """ Implements the `run` sub-command, which executes some of the job's operators. """
-    job = Job(args.path)
-    job.run(
-        args.pattern, args.indices, args.force, args.redirect, args.verbose,
-        args.idx_in_node, args.ppn, args.gpu_set, args.ignore_gpu)
-
-
-def view_command(args):
-    """ Implements the `view` sub-command, which prints a summary of a job. """
-    job = ReadOnlyJob(args.path)
-    print(job.summary(verbose=args.verbose))
-
-
-def parallel_cl(desc, additional_cmds=None):
-    """ Entry point for command-line utility to which additional sub-commands can be added.
-
-    Parameters
-    ----------
-    desc: str
-        Description for the script.
-    additional_cmds: list
-        Each element has the form (name, help, func, *(arg_name, kwargs)).
-
-    """
-    desc = desc or 'Run jobs and view their statuses.'
-    parser = argparse.ArgumentParser(description=desc)
-
-    parser.add_argument(
-        '--pdb', action='store_true', help="If supplied, enter post-mortem debugging on error.")
-    parser.add_argument(
-        '-v', '--verbose', action='count', default=0, help="Increase verbosity.")
-
-    subparsers = parser.add_subparsers()
-
-    run_parser = subparsers.add_parser('run', help='Run a job.')
-    run_parser.add_argument('path', type=str)
-    run_parser.add_argument('pattern', type=str)
-    run_parser.add_argument('indices', nargs='*', type=int)
-    run_parser.add_argument('--idx-in-node', type=int, default=-1)
-    run_parser.add_argument('--idx-in-job', type=int, default=-1)
-    run_parser.add_argument('--ppn', type=int, default=-1)
-    run_parser.add_argument('--gpu-set', type=str, default="")
-    run_parser.add_argument('--ignore-gpu', action="store_true")
-    run_parser.add_argument(
-        '--force', action='store_true', help="If supplied, run the selected operators "
-                                             "even if they've already been completed.")
-    run_parser.add_argument(
-        '--redirect', action='store_true', help="If supplied, output is redirected to files rather than being printed.")
-
-    run_parser.set_defaults(func=run_command)
-
-    view_parser = subparsers.add_parser('view', help='View status of a job.')
-    view_parser.add_argument('path', type=str)
-
-    view_parser.set_defaults(func=view_command)
-
-    subparser_names = ['run', 'view']
-
-    additional_cmds = additional_cmds or []
-    for cmd in additional_cmds:
-        subparser_names.append(cmd[0])
-        cmd_parser = subparsers.add_parser(cmd[0], help=cmd[1])
-        for arg_name, kwargs in cmd[3:]:
-            cmd_parser.add_argument(arg_name, **kwargs)
-        cmd_parser.set_defaults(func=cmd[2])
-
-    args, _ = parser.parse_known_args()
-
-    try:
-        func = args.func
-    except AttributeError:
-        raise ValueError("Missing ``command`` argument to script. Should be one of {}.".format(subparser_names))
-
-    if args.pdb:
-        with pdb_postmortem():
-            func(args)
-    else:
-        func(args)
-
-
-if __name__ == "__main__":
-    directory = '/tmp/test_job/test'
-    try:
-        shutil.rmtree(directory)
-    except FileNotFoundError:
-        pass
-
-    # Build job
-    job = Job(directory)
-    x = range(10)
-    z = job.map(lambda y: y + 1, x)
-    final = job.reduce(lambda *inputs: sum(inputs), z)
-    print(job.summary())
-
-    # Run job
-    for i in range(10):
-        job.run("map", i)
-    job.run("reduce", 0)
-    print(job.summary())

@@ -25,7 +25,7 @@ if args.task == "A":
 elif args.task == "B":
     A_dir = "/home/e2crawfo/rl_parity_A/"
     config.load_path = [
-        os.path.join(A_dir, d, 'best_of_stage_0') for d in os.listdir(A_dir)
+        os.path.join(A_dir, d, 'weights/best_of_stage_0') for d in os.listdir(A_dir)
     ]
     config.update(parity='odd')
 
@@ -36,6 +36,6 @@ else:
     raise Exception()
 
 
-from dps.parallel.hyper import build_and_submit, default_host_pool
+from dps.hyper import build_and_submit, default_host_pool
 clify.wrap_function(build_and_submit)(
     config=config, distributions=grid, n_param_settings=None, host_pool=default_host_pool)

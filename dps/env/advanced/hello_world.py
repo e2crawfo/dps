@@ -23,8 +23,8 @@ config = Config(
     build_env=build_env,
     curriculum=[
         dict(order=order[:2], T=2),
-        # dict(order=order[:3], T=3),
-        # dict(order=order[:4], T=4),
+        dict(order=order[:3], T=3),
+        dict(order=order[:4], T=4),
     ],
     log_name='hello_world',
 )

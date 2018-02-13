@@ -82,28 +82,68 @@ class _FileSystemObjectWrapper(_ObjectWrapper):
         self.kind = kind
         self.key = key
 
+    @classmethod
+    def keys(cls, directory, kind, include_reserved):
+        keys = set()
+        pattern = os.path.join(directory, kind, "*.key")
+        for obj_path in glob.iglob(pattern):
+            basename = os.path.basename(obj_path)
+            key = basename.split('.')[0]
+            keys.add(key)
+
+        if include_reserved:
+            pattern = os.path.join(directory, kind, "*.reserved")
+            for obj_path in glob.iglob(pattern):
+                basename = os.path.basename(obj_path)
+                key = basename.split('.')[0]
+                keys.add(key)
+
+        keys = sorted(keys)
+
+        _keys = []
+        for key in keys:
+            try:
+                key = int(key)
+            except (TypeError, ValueError):
+                pass
+            _keys.append(key)
+
+        return _keys
+
     def __str__(self):
         return "_FileSystemObjectWrapper(directory={}, kind={}, key={})".format(self.directory, self.kind, self.key)
 
     def _indices(self):
-        pattern = os.path.join(self.directory, self.kind, "{}*.key".format(self.key))
-        for obj_path in glob.iglob(pattern):
-            basename = os.path.basename(obj_path)
-            parts = basename.split('.')
-            if len(parts) == 2:
-                idx = None
-            else:
-                idx = int(parts[1])
-            yield idx
+        """ Get indices of all fragments associated with the wrapped object. """
+
+        path = os.path.join(self.directory, self.kind)
+        if not os.path.isdir(path):
+            return
+
+        files = os.listdir(path)
+        pattern = "{}(\.[0-9]+\.|\.)key".format(self.key)
+        reg_exp = re.compile(pattern)
+
+        for f in files:
+            if reg_exp.match(f):
+                parts = f.split('.')
+                if len(parts) == 2:
+                    idx = None
+                else:
+                    idx = int(parts[1])
+                yield idx
 
     def _load_fragment(self, path):
+        """ Load a fragment of data. """
         with open(path, 'rb') as f:
             return dill.load(f)
 
     def _next_idx(self):
+        """ Get the next unused fragment index. """
         return max(self._indices(), default=-1) + 1
 
     def add_fragment(self, fragment, recurse=False):
+        """ Add a fragment of data to the wrapped object. """
         idx = self._next_idx()
         path = os.path.join(self.directory, self.kind, "{}.{}.key".format(self.key, idx))
 
@@ -112,7 +152,18 @@ class _FileSystemObjectWrapper(_ObjectWrapper):
         with open(path, 'wb') as f:
             dill.dump(fragment, f, protocol=dill.HIGHEST_PROTOCOL, recurse=recurse)
 
+    def reserve(self):
+        """ Reserve the kind/key combo of the current object. Reserved keys are
+            taken into account when calling `get_unique_key`. """
+
+        path = os.path.join(self.directory, self.kind, "{}.reserved".format(self.key))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+
+        with open(path, 'wb'):
+            pass
+
     def delete(self):
+        """ Delete all fragments associated with the wrapped object. """
         existed = self.exists()
         for filename in self._filenames():
             path = os.path.join(self.directory, self.kind, filename)
@@ -134,7 +185,9 @@ class _ZipObjectWrapper(_ObjectWrapper):
             self.zip, self.directory, self.kind, self.key)
 
     def _indices(self):
-        pattern = os.path.join(self.directory, self.kind, "{}.+\.key".format(self.key))
+        """ Get indices of all fragments associated with the wrapped object. """
+
+        pattern = os.path.join(self.directory, self.kind, "{}(\.[0-9]+\.|\.)key".format(self.key))
         reg_exp = re.compile(pattern)
         for path in self.zip_file.namelist():
             if reg_exp.match(path):
@@ -148,11 +201,19 @@ class _ZipObjectWrapper(_ObjectWrapper):
                 yield idx
 
     def _load_fragment(self, path):
+        """ Load a fragment of data. """
+
         with self.zip_file.open(path, 'r') as f:
             return dill.load(f)
 
 
 class ObjectStore(object, metaclass=abc.ABCMeta):
+
+    def __str__(self):
+        return "{}(directory={})".format(self.__class__.__name__, self.directory)
+
+    def __repr__(self):
+        return str(self)
 
     @abc.abstractmethod
     def _wrap_object(self, kind, key):
@@ -160,25 +221,14 @@ class ObjectStore(object, metaclass=abc.ABCMeta):
         raise Exception("NotImplemented")
 
     @abc.abstractmethod
-    def keys(self, kind):
+    def keys(self, kind, include_reserved=False):
         """ Return all keys for given kind. """
         raise Exception("NotImplemented")
 
     def get_unique_key(self, kind):
         """ Get a unique key for the given kind. """
-        int_keys = [key for key in self.keys(kind) if isinstance(key, int)]
+        int_keys = [key for key in self.keys(kind, include_reserved=True) if isinstance(key, int)]
         return max(int_keys, default=-1) + 1
-
-    def save_object(self, kind, key, obj, recurse=True):
-        wrapped = self._wrap_object(kind, key)
-
-        fragment = isinstance(obj, ObjectFragment)
-        if not fragment and wrapped.exists():
-            raise ValueError("Trying to save object {} with kind {} and key {}, "
-                             "but an object {} already exists at that location."
-                             "".format(obj, kind, key, self.load_object(kind, key)))
-
-        wrapped.add_fragment(obj)
 
     def load_object(self, kind, key):
         obj = self._wrap_object(kind, key)
@@ -212,20 +262,24 @@ class FileSystemObjectStore(ObjectStore):
     def _wrap_object(self, kind, key):
         return _FileSystemObjectWrapper(self.directory, kind, key)
 
-    def keys(self, kind):
-        """ Return all keys for given kind. """
-        keys = set()
-        pattern = os.path.join(self.directory, kind, "*.key")
-        for obj_path in glob.iglob(pattern):
-            basename = os.path.basename(obj_path)
-            key = basename.split('.')[0]
-            try:
-                key = int(key)
-            except (ValueError, TypeError):
-                pass
-            keys.add(key)
+    def reserve_key(self, kind, key):
+        wrapped = self._wrap_object(kind, key)
+        wrapped.reserve()
 
-        return sorted(keys)
+    def keys(self, kind, include_reserved=False):
+        """ Return all keys for given kind. """
+        return _FileSystemObjectWrapper.keys(self.directory, kind, include_reserved)
+
+    def save_object(self, kind, key, obj, recurse=True):
+        wrapped = self._wrap_object(kind, key)
+
+        fragment = isinstance(obj, ObjectFragment)
+        if not fragment and wrapped.exists():
+            raise ValueError("Trying to save object {} with kind {} and key {}, "
+                             "but an object {} already exists at that location."
+                             "".format(obj, kind, key, self.load_object(kind, key)))
+
+        wrapped.add_fragment(obj)
 
     def delete_object(self, kind, key):
         wrapped = self._wrap_object(kind, key)
@@ -246,7 +300,6 @@ class FileSystemObjectStore(ObjectStore):
         archive_path = shutil.make_archive(
             archive_path, 'zip', root_dir=parent, base_dir=base_dir)
 
-        print("Zipped {} as {}.".format(self.directory, archive_path))
         if delete:
             shutil.rmtree(self.directory)
 

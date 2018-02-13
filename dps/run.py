@@ -13,9 +13,14 @@ import dps.env.basic as env_pkg_basic
 def get_module_specs(*packages):
     specs = {}
     for p in packages:
-        update = {name: (loader, name, is_pkg) for loader, name, is_pkg in pkgutil.iter_modules(p.__path__)}
+        update = {
+            name: (loader, name, is_pkg)
+            for loader, name, is_pkg in pkgutil.iter_modules(p.__path__)
+        }
+
         intersection = specs.keys() & update.keys()
-        assert not intersection, "Module name overlaps: {}".format(list(intersection))
+        assert not intersection, \
+            "Module name overlaps: {}".format(list(intersection))
         specs.update(update)
     return specs
 
@@ -33,7 +38,8 @@ def parse_env_alg(env, alg=None):
 
     if env_spec is None:
         candidates = [e for e in env_module_specs.keys() if e.startswith(env)]
-        assert len(candidates) == 1, "Ambiguity in env selection, possibilities are: {}.".format(candidates)
+        assert len(candidates) == 1, \
+            "Ambiguity in env selection, possibilities are: {}.".format(candidates)
         env_spec = env_module_specs[candidates[0]]
 
     env_module = get_module_from_spec(env_spec)
@@ -54,7 +60,10 @@ def parse_env_alg(env, alg=None):
 
             if alg_spec is None:
                 candidates = [a for a in alg_module_specs.keys() if a.startswith(alg)]
-                assert len(candidates) == 1, "Ambiguity in alg selection, possibilities are: {}.".format(candidates)
+                assert len(candidates) == 1, (
+                    "Ambiguity in alg selection, possibilities "
+                    "are: {}.".format(candidates))
+
                 alg_spec = alg_module_specs[candidates[0]]
             alg_module = get_module_from_spec(alg_spec)
             alg_config = alg_module.config

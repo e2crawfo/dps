@@ -1,18 +1,17 @@
 import pytest
 import os
 import shutil
-from contextlib import contextmanager
-import numpy as np
 
-from dps.parallel.object_store import FileSystemObjectStore, ZipObjectStore, ObjectFragment
-from dps.parallel.hyper import build_and_submit
-from dps.env.advanced import simple_addition
-from dps.rl.algorithms import a2c
-from dps.config import DEFAULT_CONFIG
+from dps.parallel import (
+    FileSystemObjectStore, ZipObjectStore, ObjectFragment, Job
+)
+
+
+root_test_dir = "/tmp/test_dps/"
 
 
 def test_object_store_general():
-    directory = '/tmp/test_fs_object_store/test'
+    directory = os.path.join(root_test_dir, 'object_store_general')
     parent = os.path.dirname(directory)
     shutil.rmtree(parent, ignore_errors=True)
 
@@ -71,7 +70,7 @@ def test_object_store_general():
 def test_object_store_no_overwrite():
     """ Test that objects cannot be overwritten. """
 
-    directory = '/tmp/test_fs_object_store/test'
+    directory = os.path.join(root_test_dir, 'object_store_no_overwrite')
     shutil.rmtree(directory, ignore_errors=True)
 
     store = FileSystemObjectStore(directory)
@@ -112,7 +111,7 @@ class DictFragment(ObjectFragment):
 def test_object_store_fragments():
     """ Test that object fragments can be stored and loaded. """
 
-    directory = '/tmp/test_fs_object_store/test'
+    directory = os.path.join(root_test_dir, "object_store_fragments")
     parent = os.path.dirname(directory)
     shutil.rmtree(parent, ignore_errors=True)
 
@@ -181,48 +180,30 @@ def test_object_store_fragments():
     test_store(zip_store)
 
 
-@contextmanager
-def remove_tree(path):
-    path = os.path.abspath(path)
-    try:
-        yield
-    finally:
-        shutil.rmtree(str(path), ignore_errors=True)
+def test_parallel_job():
+    directory = os.path.join(root_test_dir, 'parallel_job')
+    parent = os.path.dirname(directory)
+    shutil.rmtree(parent, ignore_errors=True)
 
+    job = Job(directory)
+    x = range(10)
+    z = job.map(lambda y: y + 1, x)
+    job.reduce(lambda *inputs: sum(inputs), z)
 
-@pytest.mark.slow
-def test_hyper(test_config):
-    config = DEFAULT_CONFIG.copy()
-    config.update(a2c.config)
-    config.update(simple_addition.config)
-    config.update(test_config)
-    config['max_steps'] = 101
+    print(job.summary(verbose=4))
 
-    distributions = dict(n_train=2**np.array([5, 6, 7]))
-    n_repeats = 2
+    # Run job
+    job.simple_run("map", 0)
+    job.simple_run("map", 1)
+    job.simple_run("map", [2, 4])
+    job.simple_run("map", [3, 5])
+    job.simple_run("map", 6)
+    job.simple_run("map", [7, 8])
+    job.simple_run("map", [9])
 
-    session = build_and_submit(
-        name="test_hyper", config=config, distributions=distributions, n_repeats=n_repeats,
-        kind='parallel', host_pool=':', wall_time='1year', cleanup_time='10mins',
-        slack_time='10mins', ppn=2, load_avg_threshold=100000.0)
+    job.simple_run("reduce", None)
 
-    path = session.exp_dir.path
-    files = os.listdir(path)
-    assert set(files) == set(
-        ['orig.zip', 'experiments', 'os_environ.txt', 'results.zip', 'pip_freeze.txt',
-         'dps_git_summary.txt', 'nodefile.txt', 'results.txt', 'job_log.txt']
-    )
-    experiments = os.listdir(os.path.join(path, 'experiments'))
-    for exp in experiments:
-        assert exp.startswith('exp_')
-        assert os.path.isdir(os.path.join(path, 'experiments', exp))
-    assert len(experiments) == n_repeats * len(distributions['n_train'])
+    result = job.get_ops("reduce")[0].get_outputs(job.objects)[0]
+    assert result == sum(i + 1 for i in range(10))
 
-    with open(os.path.join(path, 'results.txt'), 'r') as f:
-        results = f.read()
-
-    assert "n_ops: 6" in results
-    assert "n_completed_ops: 6" in results
-    assert "n_partially_completed_ops: 0" in results
-    assert "n_ready_incomplete_ops: 0" in results
-    assert "n_not_ready_incomplete_ops: 0" in results
+    print(job.summary(verbose=4))

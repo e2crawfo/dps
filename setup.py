@@ -28,8 +28,7 @@ setup(
         "clify",
     ],
     entry_points={
-        'console_scripts': ['dps-hyper=dps.parallel:dps_hyper_cl',
-                            'dps-submit=dps.parallel:dps_submit_cl',
+        'console_scripts': ['dps-hyper=dps.hyper.command_line:dps_hyper_cl',
                             'dps-run=dps.run:run']
     }
 )

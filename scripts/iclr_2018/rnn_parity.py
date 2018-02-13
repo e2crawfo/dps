@@ -26,6 +26,6 @@ elif args.task == "C":
 else:
     raise Exception()
 
-from dps.parallel.hyper import build_and_submit, default_host_pool
+from dps.hyper import build_and_submit, default_host_pool
 clify.wrap_function(build_and_submit)(
     config=config, distributions=grid, n_param_settings=None, host_pool=default_host_pool)

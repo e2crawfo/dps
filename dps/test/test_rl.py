@@ -86,10 +86,10 @@ def test_simple_add(test_config):
     for i in range(n_repeats):
         config = config.copy()
         output = _raw_run(config)
-        stdout = os.path.join(output['exp_dir'], 'stdout')
+        stdout = output.path_for('stdout')
         result = _get_deterministic_output(stdout)
         results[result] += 1
-        assert output['history'][-1]['best_01_loss'] < 0.1
+        assert output.history[-1]['best_01_loss'] < 0.1
 
     if len(results) != 1:
         for r in sorted(results):
@@ -98,25 +98,25 @@ def test_simple_add(test_config):
             print(r)
         raise Exception("Results were not deterministic.")
 
-    assert len(output['config'].curriculum) == 3
-    config.load_path = os.path.join(output['exp_dir'], 'best_of_stage_2')
+    assert len(output.config.curriculum) == 3
+    config.load_path = output.path_for('weights/best_of_stage_2')
     assert os.path.exists(config.load_path + ".index")
     assert os.path.exists(config.load_path + ".meta")
 
     # Load one of the hypotheses, train it for a bit, make sure the accuracy is still high.
-    config.curriculum = [output['config'].curriculum[-1]]
+    config.curriculum = [output.config.curriculum[-1]]
     config = config.copy()
     output = _raw_run(config)
-    stdout = os.path.join(output['exp_dir'], 'stdout')
+    stdout = output.path_for('stdout')
     result = _get_deterministic_output(stdout)
     results[result] += 1
-    assert output['history'][-1]['best_01_loss'] < 0.1
+    assert output.history[-1]['best_01_loss'] < 0.1
 
     # Load one of the hypotheses, don't train it at all, make sure the accuracy is still high.
     config.do_train = False
     config = config.copy()
     output = _raw_run(config)
-    stdout = os.path.join(output['exp_dir'], 'stdout')
+    stdout = output.path_for('stdout')
     result = _get_deterministic_output(stdout)
     results[result] += 1
-    assert output['history'][-1]['best_01_loss'] < 0.1
+    assert output.history[-1]['best_01_loss'] < 0.1

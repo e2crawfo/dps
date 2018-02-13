@@ -90,7 +90,7 @@ config.update(env_config)
 
 grid = dict(n_train=2**np.arange(6, 18))
 
-from dps.parallel.hyper import build_and_submit
+from dps.hyper import build_and_submit
 host_pool = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
 clify.wrap_function(build_and_submit)(
     config=config, distributions=grid, n_param_settings=None, host_pool=host_pool)

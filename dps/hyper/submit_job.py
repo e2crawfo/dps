@@ -9,12 +9,14 @@ import progressbar
 import shutil
 from collections import defaultdict
 import sys
+import dill
 
 import dps
-from dps.parallel.base import ReadOnlyJob
+from dps import cfg
+from dps.parallel import ReadOnlyJob
 from dps.utils import (
     cd, parse_timedelta, make_symlink, ExperimentStore,
-    zip_root, process_path, path_stem
+    zip_root, process_path, path_stem, redirect_stream
 )
 
 
@@ -63,7 +65,7 @@ class ParallelSession(object):
     env_vars: dict (str -> str)
         Dictionary mapping environment variable names to values. These will be accessible
         by the submit script, and will also be sent to the worker nodes.
-    redirect: bool
+    output_to_files: bool
         If True, stderr and stdout of jobs is saved in files rather than being printed to screen.
     n_retries: int
         Number of retries per job.
@@ -77,9 +79,6 @@ class ParallelSession(object):
         of time).
     ignore_gpu: bool
         If True, GPUs will be requested by as part of the job, but will not be used at run time.
-    store_experiments: bool
-        If True, after each step we fetch experiment data from each of the nodes and store it locally
-        along with the results. Either way, experiment data is deleted from nodes after each step.
     ssh_options: string
         String of options to pass to ssh.
 
@@ -87,9 +86,9 @@ class ParallelSession(object):
     def __init__(
             self, name, input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', ppn=12, cpp=1,
             pmem=None, wall_time="1hour", cleanup_time="1min", slack_time="1min", add_date=True, dry_run=0,
-            parallel_exe=None, kind="parallel", host_pool=None, load_avg_threshold=8.,
-            min_hosts=None, max_hosts=1, env_vars=None, redirect=False, n_retries=0, gpu_set="", copy_venv="",
-            step_time_limit="", ignore_gpu=False, store_experiments=True, ssh_options=None, readme=""):
+            parallel_exe=None, kind="parallel", host_pool=None, load_avg_threshold=8., min_hosts=None,
+            max_hosts=1, env_vars=None, output_to_files=True, n_retries=0, gpu_set="", copy_venv="",
+            step_time_limit="", ignore_gpu=False, ssh_options=None, readme=""):
 
         args = locals().copy()
         del args['self']
@@ -120,30 +119,29 @@ class ParallelSession(object):
         hpc = kind != "parallel"
 
         # Create directory to run the job from - should be on scratch.
-        scratch = os.path.abspath(os.path.expandvars(str(scratch)))
-        es = ExperimentStore(str(scratch), max_experiments=None, delete_old=False)
-        exp_dir = es.new_experiment(name, 0, add_date=add_date, force_fresh=1)
-        exp_dir.record_environment(git_modules=[dps])
+        scratch = os.path.abspath(os.path.expandvars(scratch))
+        es = ExperimentStore(scratch, max_experiments=None, delete_old=False)
+        job_dir = es.new_experiment(name, 0, add_date=add_date, force_fresh=1)
+        job_dir.record_environment(git_modules=[dps])
 
-        job_directory = str(exp_dir.path)
-
-        os.makedirs(os.path.realpath(job_directory + "/experiments"))
+        job_path = job_dir.path
+        job_dir.make_directory('experiments')
 
         if readme:
-            with open(os.path.join(job_directory, 'README.md'), 'w') as f:
+            with open(job_dir.path_for('README.md'), 'w') as f:
                 f.write(readme)
             del f
 
         input_zip_stem = path_stem(input_zip)
-        input_zip = shutil.copy(input_zip, os.path.join(job_directory, "orig.zip"))
+        input_zip = shutil.copy(input_zip, job_dir.path_for("orig.zip"))
         input_zip_abs = process_path(input_zip)
         input_zip_base = os.path.basename(input_zip)
         archive_root = zip_root(input_zip)
 
         # storage local to each node, from the perspective of that node
-        local_scratch = os.path.join(local_scratch_prefix, os.path.basename(job_directory))
+        local_scratch = os.path.join(local_scratch_prefix, os.path.basename(job_path))
 
-        redirect = "--redirect" if redirect else ""
+        output_to_files = "--output-to-files" if output_to_files else ""
 
         env = os.environ.copy()
 
@@ -174,7 +172,7 @@ class ParallelSession(object):
                 host_pool = host_pool.split()
 
             # Get an estimate of the number of hosts we'll have available.
-            with cd(job_directory):
+            with cd(job_path):
                 hosts, n_procs = self.recruit_hosts(
                     hpc, min_hosts, max_hosts, host_pool,
                     ppn, max_procs=np.inf)
@@ -222,7 +220,7 @@ class ParallelSession(object):
         assert python_seconds_per_step > 0
 
         # Create convenience `latest` symlinks
-        make_symlink(job_directory, os.path.join(scratch, 'latest'))
+        make_symlink(job_path, os.path.join(scratch, 'latest'))
 
     def get_load_avg(self, host):
         return_code, stdout = self.ssh_execute("uptime", host, output='get', robust=True)
@@ -373,28 +371,31 @@ class ParallelSession(object):
             sys.stdout.flush()
             sys.stderr.flush()
 
-            p = subprocess.Popen(command, shell=shell, universal_newlines=True, stdout=stdout, stderr=stderr)
+            p = subprocess.Popen(command, shell=shell, universal_newlines=True,
+                                 stdout=stdout, stderr=stderr)
 
+            progress_bar = None
             if progress:
-                progress = progressbar.ProgressBar(
-                    widgets=['[', progressbar.Timer(), '] ', '(', progressbar.ETA(), ') ', progressbar.Bar()],
-                    max_value=max_seconds or progressbar.UnknownLength, redirect_stdout=True)
-            else:
-                progress = None
+                widgets=['[', progressbar.Timer(), '] ',
+                         '(', progressbar.ETA(), ') ',
+                         progressbar.Bar()]
+                _max_value = max_seconds or progressbar.UnknownLength
+                progress_bar = progressbar.ProgressBar(
+                    widgets=widgets, max_value=_max_value, redirect_stdout=True)
 
             interval_length = 1
             while True:
                 try:
                     p.wait(interval_length)
                 except subprocess.TimeoutExpired:
-                    if progress is not None:
-                        progress.update(min(int(time.time() - start), max_seconds))
+                    if progress_bar is not None:
+                        progress_bar.update(min(int(time.time() - start), max_seconds))
 
                 if p.returncode is not None:
                     break
 
-            if progress is not None:
-                progress.finish()
+            if progress_bar is not None:
+                progress_bar.finish()
 
             if verbose:
                 print("\nCommand took {} seconds.\n".format(time.time() - start))
@@ -403,7 +404,8 @@ class ParallelSession(object):
                 if isinstance(command, list):
                     command = ' '.join(command)
 
-                print("The following command returned with non-zero exit code {}:\n    {}".format(p.returncode, command))
+                print("The following command returned with non-zero exit code "
+                      "{}:\n    {}".format(p.returncode, command))
 
                 if robust:
                     if output == 'get':
@@ -423,8 +425,8 @@ class ParallelSession(object):
             if p is not None:
                 p.terminate()
                 p.kill()
-            if progress is not None:
-                progress.finish()
+            if progress_bar is not None:
+                progress_bar.finish()
             raise_with_traceback(e)
 
     def ssh_execute(self, command, host, **kwargs):
@@ -448,7 +450,7 @@ class ParallelSession(object):
             parallel_command = (
                 "cd {local_scratch} && "
                 "dps-hyper run {archive_root} {pattern} {indices} --max-time {python_seconds_per_step} "
-                "--log-root {local_scratch} --log-name experiments --gpu-set={gpu_set} --ppn={ppn} {_ignore_gpu} {redirect}"
+                "--log-root {local_scratch} --log-name experiments --gpu-set={gpu_set} --ppn={ppn} {_ignore_gpu} {output_to_files}"
             )
 
             bind = "--accel-bind=g" if self.gpu_set else ""
@@ -465,12 +467,12 @@ class ParallelSession(object):
                 "cd {local_scratch} && "
                 "dps-hyper run {archive_root} {pattern} {{}} --max-time {python_seconds_per_step} "
                 "--log-root {local_scratch} --log-name experiments "
-                "--idx-in-node={{%}} --gpu-set={gpu_set} --ppn={ppn} {_ignore_gpu} {redirect}"
+                "--idx-in-node={{%}} --gpu-set={gpu_set} --ppn={ppn} {_ignore_gpu} {output_to_files}"
             )
 
             command = (
                 '{parallel_exe} --timeout {parallel_seconds_per_step} --no-notice -j{ppn} \\\n'
-                '    --joblog {job_directory}/job_log.txt {node_file} \\\n'
+                '    --joblog {job_path}/job_log.txt {node_file} \\\n'
                 '    --env PATH --env LD_LIBRARY_PATH {env_vars} -v \\\n'
                 '    "' + parallel_command + '" \\\n'
                 '    ::: {indices}'
@@ -490,9 +492,8 @@ class ParallelSession(object):
 
         for i, host in enumerate(self.hosts):
             if host is ':':
-                if self.store_experiments:
-                    command = "mv {local_scratch}/experiments/* ./experiments"
-                    self.execute_command(command, robust=True)
+                command = "mv {local_scratch}/experiments/* ./experiments"
+                self.execute_command(command, robust=True)
 
                 command = "rm -rf {local_scratch}/experiments"
                 self.execute_command(command, robust=True)
@@ -500,13 +501,12 @@ class ParallelSession(object):
                 command = "cp -ru {local_scratch}/{archive_root} ."
                 self.execute_command(command, robust=True)
             else:
-                if self.store_experiments:
-                    command = (
-                        "rsync -avz -e \"ssh {ssh_options}\" "
-                        "{host}:{local_scratch}/experiments/ ./experiments".format(
-                            host=host, **self.__dict__)
-                    )
-                    self.execute_command(command, frmt=False, robust=True)
+                command = (
+                    "rsync -avz -e \"ssh {ssh_options}\" "
+                    "{host}:{local_scratch}/experiments/ ./experiments".format(
+                        host=host, **self.__dict__)
+                )
+                self.execute_command(command, frmt=False, robust=True)
 
                 command = "rm -rf {local_scratch}/experiments"
                 self.ssh_execute(command, host, robust=True)
@@ -519,8 +519,11 @@ class ParallelSession(object):
                 self.execute_command(command, frmt=False, robust=True)
 
         self.execute_command("zip -rq results {archive_root}", robust=True)
-        self.execute_command(
-            "dps-hyper summary --no-config results.zip | tee results.txt", robust=True, output='loud')
+
+        from dps.hyper import HyperSearch
+        search = HyperSearch('.')
+        with redirect_stream('stdout', 'results.txt', tee=True):
+            search.print_summary(print_config=False, verbose=False)
 
     def run(self):
         if "slurm" in self.kind:
@@ -532,7 +535,7 @@ class ParallelSession(object):
             self.local_scratch_prefix = output.split('=')[-1].strip()
             self.local_scratch = os.path.join(
                 self.local_scratch_prefix,
-                os.path.basename(self.job_directory))
+                os.path.basename(self.job_path))
 
         if self.dry_run:
             print("Dry run, so not running.")
@@ -540,7 +543,7 @@ class ParallelSession(object):
 
         self.print_time_limits()
 
-        with cd(self.job_directory):
+        with cd(self.job_path):
             print("\n" + ("=" * 80))
             job_start = datetime.datetime.now()
             print("Starting job at {}".format(job_start))
@@ -604,3 +607,94 @@ class ParallelSession(object):
         for host in self.dirty_hosts:
             print("Cleaning host {}...".format(host))
             self.ssh_execute(command, host, robust=True)
+
+
+def submit_job(
+        archive_path, name, wall_time="1year", ppn=1, cpp=1, pmem=0,
+        queue="", kind="local", gpu_set="", **run_kwargs):
+
+    assert kind in "pbs slurm slurm-local parallel".split()
+
+    if "slurm" in kind and not pmem:
+        raise Exception("Must supply a value for pmem (per-process-memory in mb) when using SLURM")
+
+    run_kwargs.update(
+        wall_time=wall_time, ppn=ppn, cpp=cpp, kind=kind,
+        gpu_set=gpu_set, pmem=pmem)
+
+    env_vars=dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1')
+
+    session = ParallelSession(
+        name, archive_path, 'map', cfg.run_experiments_dir, dry_run=False,
+        env_vars=env_vars, **run_kwargs)
+
+    if kind in "parallel slurm-local".split():
+        session.run()
+        return session
+
+    job_path = session.job_path
+
+    python_script = """#!{}
+import dill
+with open("./session.pkl", "rb") as f:
+    session = dill.load(f)
+session.run()
+""".format(sys.executable)
+    with open(os.path.join(job_path, "run.py"), 'w') as f:
+        f.write(python_script)
+
+    with open(os.path.join(job_path, "session.pkl"), 'wb') as f:
+        dill.dump(session, f, protocol=dill.HIGHEST_PROTOCOL, recurse=True)
+
+    if kind == "pbs":
+        resources = "nodes={}:ppn={},walltime={}".format(session.n_nodes, session.ppn, session.wall_time_seconds)
+        if pmem:
+            resources = "{},pmem={}mb".format(resources, pmem)
+
+        project = "jim-594-aa"
+        email = "eric.crawford@mail.mcgill.ca"
+        if queue:
+            queue = "-q " + queue
+        command = (
+            "qsub -N {name} -d {job_path} -w {job_path} -m abe -M {email} "
+            "-A {project} {queue} -V -l {resources} "
+            "-j oe output.txt run.py".format(
+                name=name, job_path=job_path, email=email, project=project,
+                queue=queue, resources=resources
+            )
+        )
+
+    elif kind == "slurm":
+        wall_time_minutes = int(np.ceil(session.wall_time_seconds / 60))
+        resources = "--nodes={} --ntasks-per-node={} --cpus-per-task={} --time={}".format(
+            session.n_nodes, session.ppn, cpp, wall_time_minutes)
+
+        if pmem:
+            resources = "{} --mem-per-cpu={}mb".format(resources, pmem)
+
+        if gpu_set:
+            n_gpus = len([int(i) for i in gpu_set.split(',')])
+            resources = "{} --gres=gpu:{}".format(resources, n_gpus)
+
+        project = "def-jpineau"
+        # project = "rpp-bengioy"
+        email = "eric.crawford@mail.mcgill.ca"
+        if queue:
+            queue = "-p " + queue
+        command = (
+            "sbatch --job-name {name} -D {job_path} --mail-type=ALL --mail-user=e2crawfo "
+            "-A {project} {queue} --export=ALL {resources} "
+            "-o output.txt run.py".format(
+                name=name, job_path=job_path, email=email, project=project,
+                queue=queue, resources=resources
+            )
+        )
+
+    else:
+        raise Exception()
+
+    print(command)
+
+    with cd(job_path):
+        subprocess.run(command.split())
+    return session

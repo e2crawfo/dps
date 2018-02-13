@@ -28,21 +28,21 @@ if args.task == "0":
 elif args.task == "A":
     zero_dir = "/home/e2crawfo/rl_size_0/"
     config.load_path = [
-        os.path.join(zero_dir, d, 'best_of_stage_0') for d in os.listdir(zero_dir)
+        os.path.join(zero_dir, d, 'weights/best_of_stage_0') for d in os.listdir(zero_dir)
     ]
     config.update(stage_1)
 
 elif args.task == "B":
     A_dir = "/home/e2crawfo/rl_size_A/"
     config.load_path = [
-        os.path.join(A_dir, d, 'best_of_stage_0') for d in os.listdir(A_dir)
+        os.path.join(A_dir, d, 'weights/best_of_stage_0') for d in os.listdir(A_dir)
     ]
     config.update(stage_2)
 
 elif args.task == "C":
     B_dir = "/home/e2crawfo/rl_size_B/"
     config.load_path = [
-        os.path.join(B_dir, d, 'best_of_stage_0') for d in os.listdir(B_dir)
+        os.path.join(B_dir, d, 'weights/best_of_stage_0') for d in os.listdir(B_dir)
     ]
     config.update(stage_3)
 
@@ -56,6 +56,6 @@ else:
     raise Exception()
 
 
-from dps.parallel.hyper import build_and_submit, default_host_pool
+from dps.hyper import build_and_submit, default_host_pool
 clify.wrap_function(build_and_submit)(
     config=config, distributions=grid, n_param_settings=None, host_pool=default_host_pool)

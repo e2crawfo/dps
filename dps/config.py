@@ -35,6 +35,7 @@ DEFAULT_CONFIG = Config(
     display_step=100,
     eval_step=100,
     checkpoint_step=5000,
+    store_step_data=True,
 
     n_train=10000,
     n_val=500,

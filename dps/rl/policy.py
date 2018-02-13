@@ -160,7 +160,7 @@ class Policy(AgentHead):
             else:
                 rho = tf.ones_like(importance_weights)
 
-            label = "{}-mean_rho_c={}".format(self.display_name, c)
+            label = "{}-mean_rho_c_{}".format(self.display_name, c)
             mask = context.get_signal("mask")
             context.add_summary(tf.summary.scalar(label, masked_mean(rho, mask)))
 

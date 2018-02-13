@@ -1,5 +1,4 @@
 import time
-import os
 import shutil
 import subprocess
 import pytest
@@ -29,7 +28,114 @@ def test_time_limit(test_config):
 
 
 def grep(pattern, filename, options=""):
-    return subprocess.check_output('grep {} "{}" {}'.format(options, pattern, filename), shell=True).decode()
+    return subprocess.check_output(
+        'grep {} "{}" {}'.format(options, pattern, filename),
+        shell=True).decode()
+
+
+def test_train_data():
+    config = dict(
+        max_steps=101, render_step=0, checkpoint_step=43, eval_step=100)
+
+    frozen_data = _run('hello_world', 'a2c', _config=config)
+
+    # train
+
+    train0 = frozen_data.step_data('train', 0)
+    assert train0.shape[0] == 101
+    assert (train0['stage_idx'] == 0).all()
+
+    train1 = frozen_data.step_data('train', 1)
+    assert train1.shape[0] == 101
+    assert (train1['stage_idx'] == 1).all()
+
+    train2 = frozen_data.step_data('train', 2)
+    assert train2.shape[0] == 101
+    assert (train2['stage_idx'] == 2).all()
+
+    trainNone = frozen_data.step_data('train', None)
+    assert trainNone.shape[0] == 303
+
+    assert trainNone.ix[0, 'stage_idx'] == 0
+    assert trainNone.ix[0, 'local_step'] == 0
+    assert trainNone.ix[0, 'global_step'] == 0
+
+    assert trainNone.iloc[-1]['stage_idx'] == 2
+    assert trainNone.iloc[-1]['local_step'] == 100
+    assert trainNone.iloc[-1]['global_step'] == 302
+
+    train03 = frozen_data.step_data('train', (0, 3))
+    assert (trainNone == train03).all().all()
+
+    trainSlice03 = frozen_data.step_data('train', slice(0, 3))
+    assert (trainNone == trainSlice03).all().all()
+
+    # off_policy
+
+    off_policy = frozen_data.step_data('off_policy', 0)
+    assert off_policy is None
+
+    # val
+
+    val0 = frozen_data.step_data('val', 0)
+    assert val0.shape[0] == 2
+    assert (val0['stage_idx'] == 0).all()
+
+    val1 = frozen_data.step_data('val', 1)
+    assert val1.shape[0] == 2
+    assert (val1['stage_idx'] == 1).all()
+
+    val2 = frozen_data.step_data('val', 2)
+    assert val2.shape[0] == 2
+    assert (val2['stage_idx'] == 2).all()
+
+    valNone = frozen_data.step_data('val', None)
+    assert valNone.shape[0] == 6
+
+    assert valNone.ix[0, 'stage_idx'] == 0
+    assert valNone.ix[0, 'local_step'] == 0
+    assert valNone.ix[0, 'global_step'] == 0
+
+    assert valNone.iloc[-1]['stage_idx'] == 2
+    assert valNone.iloc[-1]['local_step'] == 100
+    assert valNone.iloc[-1]['global_step'] == 302
+
+    val03 = frozen_data.step_data('val', (0, 3))
+    assert (valNone == val03).all().all()
+
+    valSlice03 = frozen_data.step_data('val', slice(0, 3))
+    assert (valNone == valSlice03).all().all()
+
+    # test
+
+    test0 = frozen_data.step_data('test', 0)
+    assert test0.shape[0] == 2
+    assert (test0['stage_idx'] == 0).all()
+
+    test1 = frozen_data.step_data('test', 1)
+    assert test1.shape[0] == 2
+    assert (test1['stage_idx'] == 1).all()
+
+    test2 = frozen_data.step_data('test', 2)
+    assert test2.shape[0] == 2
+    assert (test2['stage_idx'] == 2).all()
+
+    testNone = frozen_data.step_data('test', None)
+    assert testNone.shape[0] == 6
+
+    assert testNone.ix[0, 'stage_idx'] == 0
+    assert testNone.ix[0, 'local_step'] == 0
+    assert testNone.ix[0, 'global_step'] == 0
+
+    assert testNone.iloc[-1]['stage_idx'] == 2
+    assert testNone.iloc[-1]['local_step'] == 100
+    assert testNone.iloc[-1]['global_step'] == 302
+
+    test03 = frozen_data.step_data('test', (0, 3))
+    assert (testNone == test03).all().all()
+
+    testSlice03 = frozen_data.step_data('test', slice(0, 3))
+    assert (testNone == testSlice03).all().all()
 
 
 @pytest.mark.slow
@@ -58,7 +164,7 @@ def test_fixed_variables(test_config):
     _config = config.copy(name="PART_1")
     output = _run("translated_mnist", "a2c", _config=_config)
 
-    load_path1 = os.path.join(output['exp_dir'], 'best_of_stage_0')
+    load_path1 = output.path_for('weights/best_of_stage_0')
     tensors1 = get_tensors_from_checkpoint_file(load_path1)
 
     prefix = "{}/digit_classifier".format(translated_mnist.AttentionClassifier.__name__)
@@ -76,7 +182,7 @@ def test_fixed_variables(test_config):
     )
 
     output = _run("translated_mnist", "a2c", _config=_config)
-    load_path2 = os.path.join(output['exp_dir'], 'best_of_stage_0')
+    load_path2 = output.path_for('weights/best_of_stage_0')
     tensors2 = get_tensors_from_checkpoint_file(load_path2)
 
     for key in relevant_keys:
@@ -93,7 +199,7 @@ def test_fixed_variables(test_config):
     )
 
     output = _run("translated_mnist", "a2c", _config=_config)
-    load_path3 = os.path.join(output['exp_dir'], 'best_of_stage_0')
+    load_path3 = output.path_for('weights/best_of_stage_0')
     tensors3 = get_tensors_from_checkpoint_file(load_path3)
 
     for key in relevant_keys:
@@ -110,7 +216,7 @@ def test_fixed_variables(test_config):
     )
 
     output = _run("translated_mnist", "a2c", _config=_config)
-    load_path4 = os.path.join(output['exp_dir'], 'best_of_stage_0')
+    load_path4 = output.path_for('weights/best_of_stage_0')
     tensors4 = get_tensors_from_checkpoint_file(load_path4)
 
     for key in relevant_keys:

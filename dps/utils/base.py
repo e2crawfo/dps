@@ -26,9 +26,19 @@ import hashlib
 import configparser
 import socket
 from zipfile import ZipFile
+from scipy import stats
 
 import clify
 import dps
+
+
+def confidence_interval(data, coverage):
+    return stats.t.interval(
+        coverage, len(data)-1, loc=np.mean(data), scale=stats.sem(data))
+
+
+def standard_error(data):
+    return stats.sem(data)
 
 
 def zip_root(zipfile):
@@ -267,6 +277,7 @@ class ExperimentStore(object):
 
         if update_latest:
             make_symlink(filename, os.path.join(self.path, 'latest'))
+
         return ExperimentDirectory(
             os.path.join(self.path, filename), store=self, force_fresh=force_fresh)
 
@@ -332,15 +343,25 @@ class ExperimentDirectory(object):
             pass
         return full_path
 
-    def record_environment(self, config=None, dill_recurse=False, git_modules=None, git_diff=True):
+    def record_environment(self, config=None, dill_recurse=False,
+                           git_modules=None, git_diff=True):
+
         git_modules = [] if git_modules is None else git_modules
         if not isinstance(git_modules, list):
             git_modules = [git_modules]
 
         for module in git_modules:
             git_summary = module_git_summary(module)
-            with open(self.path_for(module.__name__ + '_git_summary.txt'), 'w') as f:
+            git_summary_path = self.path_for(module.__name__ + '_git_summary.txt')
+
+            with open(git_summary_path, 'w') as f:
                 f.write(git_summary.summarize(diff=git_diff))
+
+        uname_path = self.path_for("uname.txt")
+        subprocess.run("uname -a > {}".format(uname_path), shell=True)
+
+        lscpu_path = self.path_for("lscpu.txt")
+        subprocess.run("lscpu > {}".format(lscpu_path), shell=True)
 
         environ = {k.decode(): v.decode() for k, v in os.environ._data.items()}
         with open(self.path_for('os_environ.txt'), 'w') as f:
@@ -352,10 +373,17 @@ class ExperimentDirectory(object):
 
         if config is not None:
             with open(self.path_for('config.pkl'), 'wb') as f:
-                dill.dump(config, f, protocol=dill.HIGHEST_PROTOCOL, recurse=dill_recurse)
+
+                dill.dump(config, f, protocol=dill.HIGHEST_PROTOCOL,
+                          recurse=dill_recurse)
 
             with open(self.path_for('config.txt'), 'w') as f:
                 f.write(str(config))
+
+    @property
+    def host(self):
+        with open(self.path_for('uname.txt'), 'r') as f:
+            return f.read().split()[1]
 
 
 def edit_text(dir=None, prefix=None, editor="vim", initial_text=None):

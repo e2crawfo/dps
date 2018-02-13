@@ -6,7 +6,7 @@ import numpy as np
 from scipy import stats
 
 import matplotlib.pyplot as plt
-from dps.parallel.hyper import extract_data_from_job
+from dps.hyper import extract_data_from_job
 from dps.utils import process_path, Config, sha_cache, set_clear_cache
 
 

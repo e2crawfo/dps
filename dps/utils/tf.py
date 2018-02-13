@@ -696,7 +696,7 @@ def restart_tensorboard(logdir, port=6006, reload_interval=120):
     print("Restarting tensorboard process...")
     command = "tensorboard --logdir={} --port={} --reload_interval={}".format(logdir, port, reload_interval)
     sp.Popen(command.split(), stdout=sp.DEVNULL, stderr=sp.DEVNULL)
-    print("Done restarting tensorboard.")
+    print("Done restarting tensorboard.\n")
 
 
 def add_scaled_noise_to_gradients(grads_and_vars, gradient_noise_scale):

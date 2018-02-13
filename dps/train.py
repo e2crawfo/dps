@@ -9,64 +9,23 @@ from pprint import pformat
 import datetime
 import shutil
 import os
-import socket
 import pandas as pd
+import dill
 
 import dps
 from dps import cfg
 from dps.utils import (
-    gen_seed, time_limit, memory_usage, ExperimentStore, memory_limit,
-    du, Config, ClearConfig, redirect_stream, NumpySeed
+    gen_seed, time_limit, memory_usage, ExperimentStore, ExperimentDirectory,
+    memory_limit, du, Config, ClearConfig, redirect_stream, NumpySeed
 )
 from dps.utils.tf import (
     restart_tensorboard, uninitialized_variables_initializer, trainable_variables
 )
-from dps.parallel.object_store import ObjectFragment
-
-
-class TrainingDataFragment(ObjectFragment):
-    def __init__(self, global_step, data):
-        # data is a mapping from stage_idx to data
-        self.global_step = global_step
-        self.data = data
-
-    def combine(self, *others):
-        final = None
-        fragments = [self] + others
-        history = {}
-
-        for fragment in sorted(fragments, key=lambda f: f.global_step):
-            if final is None:
-                final = dict(
-                    config=fragment.data['config'],
-                    host=fragment.data['host'],
-                    exp_dir=fragment.data['exp_dir'],
-                    history=history,
-                )
-
-            for stage_idx, _data in sorted(fragment.data.history.items()):
-                if stage_idx not in history:
-                    history[stage_idx] = _data
-                else:
-                    for key, value in _data.items():
-                        history[stage_idx][key].append(value)
-        return final
-
-
-def stepped_training_loop(exp_name='', start_time=None):
-    """ A generator that runs a training loop. Every `checkpoint_step` steps,
-        this generator yields an output that summarizes the state of the
-        training run so far, acting as a checkpointing mechanism.
-
-    """
-    loop = TrainingLoop(exp_name)
-    yield from loop.run(start_time)
 
 
 def training_loop(exp_name='', start_time=None):
-    """ Run a training loop without checkpointing,
-        returning a summary only at the end of training. """
-    return list(stepped_training_loop(exp_name, start_time))[-1]
+    loop = TrainingLoop(exp_name)
+    return loop.run(start_time)
 
 
 class EarlyStopHook(object):
@@ -141,7 +100,7 @@ def load_or_train(train_config, var_scope, path, target_var_scope=None, sess=Non
 
     if path is not None:
         # Make sure that the location we want to save the result exists
-        os.mkdirs(os.path.dirname(path), exist_ok=True)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
 
     success = False
     try:
@@ -155,8 +114,8 @@ def load_or_train(train_config, var_scope, path, target_var_scope=None, sess=Non
             output = training_loop(var_scope.name)
 
             stem = os.path.splitext(path)[0]
-            shutil.copyfile(os.path.join(output['exp_dir'], 'stdout'), stem + '.stdout')
-            shutil.copyfile(os.path.join(output['exp_dir'], 'stderr'), stem + '.stderr')
+            shutil.copyfile(output.path_for('stdout'), stem + '.stdout')
+            shutil.copyfile(output.path_for('stderr'), stem + '.stderr')
 
         saver.restore(sess, path)
     return success
@@ -210,71 +169,7 @@ class TrainingLoop(object):
     def __init__(self, exp_name='', hooks=None):
         self.exp_name = exp_name or cfg.get_experiment_name()
         self.hooks = hooks or []
-        self.history = {}
         self.start_time = None
-
-    @property
-    def current_stage_record(self):
-        return self.history[self.stage_idx]
-
-    def record_values(self, d=None, **kwargs):
-        """ Record values for the current stage. """
-        d = d or {}
-        self.current_stage_record.update(d)
-        self.current_stage_record.update(kwargs)
-
-    def summarize(self, current_stage_only=False):
-        """
-        Parameters
-        ----------
-        current_stage_only: bool
-            If True, only output info for the current/most recent stage.
-
-        """
-        s = "\n"
-        if current_stage_only:
-            itr = [(self.stage_idx, self.current_stage_record)]
-        else:
-            s += "Stage-by-stage summary " + ">" * 30 + "\n"
-            itr = sorted(self.history.items())
-
-        for stage_idx, record in itr:
-            if current_stage_only:
-                s += "Step(g: {}, l: {}): ".format(self.global_step, self.local_step)
-            else:
-                s += "Stage {} ".format(stage_idx)
-
-            s += "*" * 30 + '\n'
-
-            for k, v in sorted(record.items()):
-                if k in 'train_data off_policy_data val_data test_data'.split() and len(v) > 0:
-
-                    if isinstance(v, pd.DataFrame):
-                        s += "* {} (final_step): {}\n".format(k, v.iloc[-1].to_dict())
-
-                    elif isinstance(v, str):
-                        # CSV representation of a data-frame
-                        try:
-                            lines = [l for l in v.split('\n') if l]
-                            keys = lines[0].split(',')
-                            values = lines[-1].split(',')
-                            d = dict(zip(keys, values))
-                            s += "* {} (final_step): {}\n".format(k, sorted(d.items()))
-                        except IndexError:
-                            pass
-
-                    else:
-                        # A list of records
-                        final_value = v[-1]
-                        if isinstance(final_value, dict):
-                            s += "* {} (final_step): {}\n".format(k, sorted(final_value.items()))
-                        else:
-                            s += "* {} (final_step): {}\n".format(k, final_value)
-                else:
-                    s += "* {}: {}\n".format(k, v)
-
-            s += "* new cfg values: {}\n\n".format(pformat(self.curriculum[stage_idx]))
-        return s
 
     @property
     def elapsed_time(self):
@@ -286,30 +181,6 @@ class TrainingLoop(object):
             return np.inf
         else:
             return cfg.max_time - self.elapsed_time
-
-    def _build_return_value(self):
-        stored_history = {}
-
-        for stage_idx, record in self.history.items():
-            new_record = {}
-
-            for kind in 'train off_policy val test'.split():
-                key = kind + '_data'
-                if key in record:
-                    # new_record[key] = pd.DataFrame.from_records(record[key]).to_csv(index=False)
-                    new_record[key] = record[key]
-                    record[key] = []
-
-            stored_history[stage_idx] = new_record
-
-        return_value = dict(
-            config=cfg.freeze(remove_callable=True),
-            history=stored_history,
-            host=socket.gethostname(),
-            exp_dir=self.exp_dir.path
-        )
-
-        return TrainingDataFragment(global_step=self.global_step, data=return_value)
 
     def run(self, start_time):
         """ Run the training loop.
@@ -327,22 +198,20 @@ class TrainingLoop(object):
             cfg.seed = gen_seed()
 
         if cfg.start_tensorboard:
-            restart_tensorboard(str(cfg.log_dir), cfg.tbport, cfg.reload_interval)
+            restart_tensorboard(cfg.log_dir, cfg.tbport, cfg.reload_interval)
 
         with ExitStack() as stack:
             # Create a directory to store the results of the training session.
-            es = ExperimentStore(str(cfg.log_dir), max_experiments=cfg.max_experiments, delete_old=1)
-            self.exp_dir = exp_dir = es.new_experiment(
+            es = ExperimentStore(cfg.log_dir, max_experiments=cfg.max_experiments, delete_old=1)
+            exp_dir = es.new_experiment(
                 self.exp_name, cfg.seed, add_date=1, force_fresh=1, update_latest=cfg.update_latest)
 
-            # Record training session environment for post-mortem diagnostic purposes
-            exp_dir.record_environment(config=cfg.freeze(), git_modules=[dps])
+            self.data = _TrainingLoopData(exp_dir)
+            self.data.setup()
 
-            # Tee stdout and stderr so that it gets written to a file
-            stack.enter_context(redirect_stream('stdout', exp_dir.path_for('stdout'), tee=cfg.tee))
-            stack.enter_context(redirect_stream('stderr', exp_dir.path_for('stderr'), tee=cfg.tee))
-
-            exp_dir.make_directory('plots')
+            # Tee stdout and stderr to files
+            stack.enter_context(redirect_stream('stdout', self.data.path_for('stdout'), tee=cfg.tee))
+            stack.enter_context(redirect_stream('stderr', self.data.path_for('stderr'), tee=cfg.tee))
 
             if start_time is None:
                 start_time = time.time()
@@ -352,19 +221,21 @@ class TrainingLoop(object):
             print("Starting training run (name={}) at {}, {} seconds after given "
                   "start time.".format(cfg.name, datetime.datetime.now(), time.time() - self.start_time))
 
-            print("\nScratch directory for this training run is {}.".format(exp_dir.path))
-            cfg.path = exp_dir.path
+            print("\nScratch directory for this training run is {}.".format(self.data.path))
+            cfg.path = self.data.path
 
             stack.enter_context(NumpySeed(cfg.seed))
 
             print("Set numpy random seed to {}.".format(cfg.seed))
 
-            yield from self._run()
+            self._run()
 
             print("Done training run (name={}) at {}, {} seconds after given "
                   "start time.".format(cfg.name, datetime.datetime.now(), time.time() - self.start_time))
             print("=" * 80)
             print("\n\n")
+
+            return self.data.freeze(self.local_step)
 
     def _run(self):
         print(cfg.to_string())
@@ -384,19 +255,7 @@ class TrainingLoop(object):
                 print("Time limit exceeded.")
                 break
 
-            stage_start_time = time.time()
-
-            # Initial record for the stage.
-            stage_record = dict(
-                stage=stage_idx,
-                train_data=[],
-                off_policy_data=[],
-                val_data=[],
-                test_data=[]
-            )
-
-            self.stage_idx = stage_idx
-            self.history[self.stage_idx] = stage_record
+            self.data.new_stage(stage_idx)
 
             with ExitStack() as stack:
 
@@ -433,18 +292,8 @@ class TrainingLoop(object):
                     print("Not using GPU.")
                     stack.enter_context(graph.device("/cpu:0"))
 
-                # Initialize summary writers
                 if cfg.save_summaries:
-                    self.train_writer = tf.summary.FileWriter(
-                        self.exp_dir.path_for('train'), graph, flush_secs=cfg.reload_interval)
-                    self.off_policy_writer = tf.summary.FileWriter(
-                        self.exp_dir.path_for('off_policy'), flush_secs=cfg.reload_interval)
-                    self.val_writer = tf.summary.FileWriter(
-                        self.exp_dir.path_for('val'), flush_secs=cfg.reload_interval)
-                    self.test_writer = tf.summary.FileWriter(
-                        self.exp_dir.path_for('test'), flush_secs=cfg.reload_interval)
-
-                    print("Writing summaries to {}.".format(self.exp_dir.path))
+                    self.data.setup_summary_writers(graph)
 
                 stack.enter_context(graph.as_default())
                 stack.enter_context(sess)
@@ -486,9 +335,10 @@ class TrainingLoop(object):
                     assert isinstance(path, str)
                     print("Loading hypothesis from {}.".format(path))
                     updater.restore(sess, path)
+
                 elif stage_idx > 0 and cfg.preserve_policy:
                     # Initialize weights from best hypothesis discovered on the previous stage
-                    updater.restore(sess, self.history[stage_idx-1]['best_path'])
+                    updater.restore(sess, self.data.history[-2]['best_path'])
 
                 self.summary_op = tf.summary.merge_all()
                 tf.train.get_or_create_global_step()
@@ -497,60 +347,60 @@ class TrainingLoop(object):
 
                 # --------------- Run stage -------------------
 
-                yield from self.run_stage(stage_idx, updater)
-
-                # --------------- Record stage results -------------------
+                self.run_stage(stage_idx, updater)
 
                 threshold_reached, reason = self.threshold_reached, self.reason
-                self.record_values(reason=reason)
+                self.data.record_values_for_stage(reason=reason)
 
-                print("Optimization complete. Reason: {}.".format(reason))
+                # --------------- Evaluate the best hypothesis on the test set -------------------
+
+                print("\n" + "-" * 10 + " Optimization complete " + "-" * 10)
+                print("\nReason: {}.\n".format(reason))
+
                 print("Best hypothesis for this stage was found on "
-                      "step (g: {best_global_step}, l: {best_local_step}) "
+                      "step (l: {best_local_step}, g: {best_global_step}) "
                       "with stopping criteria ({sc_name}) of {best_stopping_criteria}.".format(
-                          sc_name=self.stopping_criteria_name, **self.current_stage_record))
+                          sc_name=self.stopping_criteria_name, **self.data.current_stage_record))
 
-                best_path = self.current_stage_record['best_path']
+                best_path = self.data.current_stage_record['best_path']
                 print("Loading best hypothesis for this stage "
                       "from file {}...".format(best_path))
                 updater.restore(sess, best_path)
 
                 _, test_record = updater.evaluate(cfg.n_val, 'test')
-                print("Results on test dataset: ")
-                print(test_record)
-                self.record_values(**{'test_' + k: v for k, v in test_record.items()})
 
-                print(self.summarize(current_stage_only=True))
+                print("\nResults on test dataset: ")
+                print(pformat(test_record))
+                print("\n")
 
-                if cfg.start_tensorboard:
-                    restart_tensorboard(str(cfg.log_dir), cfg.tbport, cfg.reload_interval)
+                # --------------- Optionally render performance of best hypothesis -------------------
 
                 if cfg.render_step > 0 and cfg.render_hook is not None:
                     cfg.render_hook(updater)
+
+                # --------------- Finish up the stage -------------------
+
+                self.data.dump_data(self.local_step)
+
+                if cfg.start_tensorboard:
+                    restart_tensorboard(cfg.log_dir, cfg.tbport, cfg.reload_interval)
 
                 if not (threshold_reached or cfg.power_through):
                     print("Failed to reach error threshold on stage {} "
                           "of the curriculum, terminating.".format(stage_idx))
                     break
 
-                self.record_values(stage_duration=time.time()-stage_start_time)
-
                 print("Done stage {} at {}, {} seconds after given "
                       "start time.".format(stage_idx, datetime.datetime.now(), time.time() - self.start_time))
                 print("=" * 50)
 
-        print(self.summarize(current_stage_only=False))
+        print(self.data.summarize())
 
         if cfg.slim:
-            print("`slim` is True, so deleting experiment directory {}.".format(self.exp_dir.path))
+            print("`slim` is True, so deleting experiment directory {}.".format(self.data.path))
             print("Size of {} before delete: {}.".format(cfg.log_dir, du(cfg.log_dir)))
-            try:
-                shutil.rmtree(self.exp_dir.path)
-            except FileNotFoundError:
-                pass
+            shutil.rmtree(self.data.path, ignore_errors=True)
             print("Size of {} after delete: {}.".format(cfg.log_dir, du(cfg.log_dir)))
-
-        yield self._build_return_value()
 
     def run_stage(self, stage_idx, updater):
         self.threshold_reached = False
@@ -584,7 +434,7 @@ class TrainingLoop(object):
 
         with time_limit(self.time_remaining, verbose=True) as limiter:
             try:
-                yield from self._run_stage(stage_idx, updater, early_stop)
+                self._run_stage(stage_idx, updater, early_stop)
             except KeyboardInterrupt:
                 self.threshold_reached = False
                 self.reason = "User interrupt"
@@ -595,7 +445,7 @@ class TrainingLoop(object):
 
         phys_memory_after = memory_usage(physical=True)
 
-        self.record_values(
+        self.data.record_values_for_stage(
             stage_duration=limiter.elapsed_time,
             phys_memory_before_mb=phys_memory_before,
             phys_memory_after_mb=phys_memory_after,
@@ -629,13 +479,14 @@ class TrainingLoop(object):
                 reason = "Maximum number of experiences reached"
                 break
 
-            # Temporarily yield results gathered so far (for checkpointing purposes)
             if self.local_step > 0 and self.local_step % cfg.checkpoint_step == 0:
-                yield self._build_return_value()
+                self.data.dump_data(self.local_step)
 
             evaluate = self.local_step % cfg.eval_step == 0
             display = self.local_step % cfg.display_step == 0
-            render = cfg.render_step > 0 and (self.local_step % cfg.render_step == 0) and self.local_step > 0
+            render = (cfg.render_step > 0 and
+                      (self.local_step % cfg.render_step == 0) and
+                      self.local_step > 0)
 
             # --------------- Perform an update -------------------
 
@@ -645,46 +496,58 @@ class TrainingLoop(object):
             update_start_time = time.time()
 
             if cfg.do_train:
-                train_summaries, off_policy_summaries, train_record, off_policy_record = updater.update(
-                    cfg.batch_size, collect_summaries=evaluate and cfg.save_summaries)
+                collect_summaries = evaluate and cfg.save_summaries
+
+                update_output = updater.update(
+                    cfg.batch_size, collect_summaries=collect_summaries)
+
+                (train_summaries,
+                 off_policy_summaries,
+                 train_record,
+                 off_policy_record) = update_output
 
             update_duration = time.time() - update_start_time
 
-            self.current_stage_record['train_data'].append(train_record)
-            self.current_stage_record['off_policy_data'].append(off_policy_record)
+            step_records = dict(train=train_record, off_policy=off_policy_record)
 
             # --------------- Possibly evaluate -------------------
 
             if evaluate or display:
                 val_summaries, val_record = updater.evaluate(cfg.n_val, 'val')
-                self.current_stage_record['val_data'].append(val_record)
-
                 test_summaries, test_record = updater.evaluate(cfg.n_val, 'test')
-                self.current_stage_record['test_data'].append(test_record)
+
+                step_records.update(val=val_record, test=test_record)
 
                 if evaluate and cfg.save_summaries:
-                    self.train_writer.add_summary(train_summaries, (self.global_step + 1) * cfg.batch_size)
-                    self.off_policy_writer.add_summary(off_policy_summaries, (self.global_step + 1) * cfg.batch_size)
-                    self.val_writer.add_summary(val_summaries, (self.global_step + 1) * cfg.batch_size)
-                    self.test_writer.add_summary(test_summaries, (self.global_step + 1) * cfg.batch_size)
+                    n_experiences_global = (self.global_step + 1) * cfg.batch_size
+
+                    self.data.add_summaries(
+                        n_experiences_global, train=train_summaries,
+                        off_policy=off_policy_summaries, val=val_summaries,
+                        test=test_summaries
+                    )
 
                 stopping_criteria = val_record[self.stopping_criteria_name]
-                new_best, stop = early_stop.check(stopping_criteria, self.local_step, val_record)
+                new_best, stop = early_stop.check(
+                    stopping_criteria, self.local_step, val_record)
 
                 if new_best:
                     print("Storing new best on (local, global) step ({}, {}), "
                           "constituting {} local experiences, "
                           "with stopping criteria ({}) of {}.".format(
-                              self.local_step, self.global_step, updater.n_experiences,
-                              self.stopping_criteria_name, stopping_criteria))
+                              self.local_step, self.global_step,
+                              updater.n_experiences, self.stopping_criteria_name,
+                              stopping_criteria))
 
-                    path = cfg.get('save_path', '')
-                    path = path or self.exp_dir.path_for('best_of_stage_{}'.format(stage_idx))
+                    best_path = self.data.path_for(
+                        'weights/best_of_stage_{}'.format(stage_idx))
+                    best_path = cfg.get('save_path', best_path)
+                    best_path = updater.save(tf.get_default_session(), best_path)
 
-                    best_path = updater.save(tf.get_default_session(), path)
-
-                    self.record_values(best_path=best_path, best_global_step=self.global_step)
-                    self.record_values(**{'best_' + k: v for k, v in early_stop.best.items()})
+                    self.data.record_values_for_stage(
+                        best_path=best_path, best_global_step=self.global_step)
+                    self.data.record_values_for_stage(
+                        **{'best_' + k: v for k, v in early_stop.best.items()})
 
                 if stop:
                     print("Early stopping triggered.")
@@ -700,7 +563,7 @@ class TrainingLoop(object):
                     reason = "Stopping criteria threshold reached"
                     break
 
-                self.record_values(
+                self.data.record_values_for_stage(
                     time_per_example=time_per_example,
                     time_per_batch=time_per_batch,
                     n_steps=self.local_step,
@@ -709,9 +572,15 @@ class TrainingLoop(object):
                 )
 
                 if display:
-                    print(self.summarize(current_stage_only=True))
-                    print("\nPhysical memory use: {}mb".format(memory_usage(physical=True)))
-                    print("Virtual memory use: {}mb".format(memory_usage(physical=False)))
+                    print(self.data.summarize(self.local_step, self.global_step))
+                    print("\nPhysical memory use: "
+                          "{}mb".format(memory_usage(physical=True)))
+                    print("Virtual memory use: "
+                          "{}mb".format(memory_usage(physical=False)))
+
+            if cfg.store_step_data:
+                self.data.store_step_records(
+                    stage_idx, self.local_step, self.global_step, **step_records)
 
             # Run training hooks
             for hook in self.hooks:
@@ -724,8 +593,9 @@ class TrainingLoop(object):
                     if result:
                         # TODO: currently nothing is done with the record
                         summaries, record = result
-                        writer = getattr(self, "{}_writer".format(hook.mode))
-                        writer.add_summary(summaries, (self.global_step + 1) * cfg.batch_size)
+                        n_experiences_global = (self.global_step + 1) * cfg.batch_size
+                        self.data.add_summaries(
+                            n_experiences_global, **{hook.mode: summaries})
 
             # Possibly render
             if render and cfg.render_hook is not None:
@@ -746,3 +616,213 @@ class TrainingLoop(object):
 
         self.threshold_reached = threshold_reached
         self.reason = reason
+
+
+class FrozenTrainingLoopData(ExperimentDirectory):
+    """ Interface for the on-disk data generated by a training loop.
+
+    Parameters
+    ----------
+    path: str
+        Path to the the directory for the experiment whose data we want
+        to anaylze.  Should contain a sub-directory for each data-collection
+        mode (e.g. train, test).
+
+    """
+    modes = 'train off_policy val test'.split()
+
+    def __init__(self, path):
+        self.path = path.path if isinstance(path, ExperimentDirectory) else path
+        self._config = None
+        self._history = None
+
+    def get_summary_path(self, mode):
+        return self.path_for('summaries/' + mode, is_dir=True)
+
+    def get_data_path(self, mode, stage_idx, local_step):
+        local_path = 'data/{}/stage{}/localstep={}.csv'.format(mode, stage_idx, local_step)
+        return self.path_for(local_path)
+
+    def step_data(self, mode, stage_slice=None):
+        indices = range(self.n_stages)
+        if stage_slice is None:
+            pass
+        elif isinstance(stage_slice, int):
+            indices = [indices[stage_slice]]
+        elif isinstance(stage_slice, slice):
+            indices = indices[stage_slice]
+        else:
+            start, end, *step = stage_slice
+            step = step[0] if step else 1
+            indices = indices[start:end:step]
+
+        data = {}
+
+        for stage_idx in indices:
+            local_path = 'data/{}/stage{}'.format(mode, stage_idx)
+            path = self.path_for(local_path)
+            files = os.listdir(path) if os.path.isdir(path) else []
+            for f in files:
+                local_step = int(f.split('=')[1].split('.')[0])
+                data[(stage_idx, local_step)] = pd.read_csv(os.path.join(path, f))
+
+        data_frames = [d[1] for d in sorted(data.items())]
+        if data_frames:
+            return pd.concat(data_frames, axis=0, ignore_index=True)
+        else:
+            return None
+
+    @property
+    def config(self):
+        if self._config is None:
+            with open(self.path_for('config.pkl'), 'rb') as f:
+                self._config = dill.load(f)
+        return self._config
+
+    @property
+    def n_stages(self):
+        return len(self.history)
+
+    @property
+    def history(self):
+        if self._history is None:
+            with open(self.path_for('history.pkl'), 'rb') as f:
+                self._history = dill.load(f)
+        return self._history
+
+
+class _TrainingLoopData(FrozenTrainingLoopData):
+    """ Data structure used by a TrainingLoop to manage data
+        throughout the experiment.
+
+    """
+    def setup(self):
+        # Record training session environment for later diagnostic purposes
+        self.record_environment(config=cfg.freeze(), git_modules=[dps])
+        self.curriculum = cfg.curriculum + []
+
+        self.make_directory('weights')
+        self.make_directory('plots')
+
+        for mode in self.modes:
+            self.make_directory('data/' + mode)
+            self.make_directory('summaries/' + mode)
+
+        self._history = []
+
+        self.train_data = []
+        self.off_policy_data = []
+        self.val_data = []
+        self.test_data = []
+
+        self.stage_idx = -1
+
+    @property
+    def history(self):
+        return self._history
+
+    def setup_summary_writers(self, graph):
+        self.summary_writers = {}
+        for mode in self.modes:
+            _graph = graph if mode is 'train' else None
+
+            self.summary_writers[mode] = tf.summary.FileWriter(
+                self.get_summary_path(mode), _graph, flush_secs=cfg.reload_interval)
+
+        print("Writing summaries to {}.".format(self.path_for('summaries')))
+
+    def new_stage(self, stage_idx):
+        self.history.append(dict(stage_idx=stage_idx))
+        self.stage_idx = stage_idx
+
+    def dump_data(self, local_step):
+        for mode in 'train off_policy val test'.split():
+            attr = mode + '_data'
+            data = getattr(self, attr)
+            if data:
+                path = self.get_data_path(mode, self.stage_idx, local_step)
+
+                with open(path, 'w') as f:
+                    pd.DataFrame.from_records(data).to_csv(f, index=False)
+
+                setattr(self, attr, [])
+
+    def record_values_for_stage(self, d=None, **kwargs):
+        """ Record values for the current stage. """
+        d = d or {}
+        self.current_stage_record.update(d)
+        self.current_stage_record.update(kwargs)
+
+    def store_step_records(self, stage_idx, local_step, global_step, **step_records):
+        for mode, record in step_records.items():
+            if record:
+                record.update(
+                    local_step=local_step,
+                    global_step=global_step,
+                    stage_idx=stage_idx)
+
+                getattr(self, mode + "_data").append(record)
+
+    def add_summaries(self, n_experiences_global, **summaries):
+        for mode, summary in summaries.items():
+            self.summary_writers[mode].add_summary(summary, n_experiences_global)
+
+    @property
+    def current_stage_record(self):
+        return self.history[-1]
+
+    def _finalize(self, local_step):
+        """ Write all stored data to disk. """
+        self.dump_data(local_step)
+
+        with open(self.path_for('history.pkl'), 'wb') as f:
+            dill.dump(self.history, f, protocol=dill.HIGHEST_PROTOCOL, recurse=False)
+
+    def freeze(self, local_step):
+        self._finalize(local_step)
+        return FrozenTrainingLoopData(self.path)
+
+    def summarize(self, *steps):
+        """ Summarize the training data.
+
+        Parameters
+        ----------
+        steps: pair of ints
+            local_step, global_step
+
+        """
+        s = "\n"
+        current_stage_only = bool(steps)
+        if current_stage_only:
+            local_step, global_step = steps
+            history = [self.current_stage_record]
+        else:
+            s += "Stage-by-stage summary " + ">" * 30 + "\n"
+            history = self.history
+
+        for record in history:
+            stage_idx = record['stage_idx']
+
+            if current_stage_only:
+                s += "\nStep(l: {}, g: {}, stage: {}): ".format(local_step, global_step, stage_idx)
+            else:
+                s += "\nStage {} ".format(stage_idx)
+
+            s += "*" * 30 + '\n'
+
+            for k, v in sorted(record.items()):
+                s += "* {}: {}\n".format(k, v)
+
+            s += "* new cfg values: {}\n".format(pformat(self.curriculum[stage_idx]))
+
+        for mode in 'train off_policy val test'.split():
+            data = getattr(self, mode + '_data')
+            if data:
+                record = data[-1]
+
+                if record:
+                    s += "\n-- {} data -- \n".format(mode)
+                    for k, v in sorted(record.items()):
+                        s += "* {}: {}\n".format(k, v)
+
+        return s
