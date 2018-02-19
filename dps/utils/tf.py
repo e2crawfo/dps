@@ -350,38 +350,120 @@ class VGGNet(ScopedFunction):
 
 
 class FullyConvolutional(ScopedFunction):
+    """
+    Parameters
+    ----------
+    layout: list of dict
+        Each entry supplies parameters for a layer of the network. Valid argument names are:
+            kind
+            filters (required, int)
+            kernel_size (required, int or pair of ints)
+            strides (defaults to 1, int or pair of ints)
+            pool (defaults to False, bool, whether to apply 2x2 pooling with stride 2, pooling is never done on final layer)
+
+        Uses 'padding' == valid.
+
+    """
+    nonlinearities = dict(
+        relu=tf.nn.relu,
+        sigmoid=tf.nn.sigmoid,
+        tanh=tf.nn.tanh
+    )
+
+    def __init__(self, layout, check_output_shape=False, scope=None):
+        self.layout = layout
+        self.check_output_shape = check_output_shape
+        self.volumes = []
+        super(FullyConvolutional, self).__init__(scope)
+
+    @staticmethod
+    def _output_shape_1d(inp_dim, f, s, padding, pool):
+        if padding == "SAME":
+            if inp_dim % s == 0:
+                p = f - s
+            else:
+                p = f - (inp_dim % s)
+
+            out_dim = int((inp_dim + p - f) / s) + 1
+        else:
+            out_dim = int((inp_dim - f) / s) + 1
+        return out_dim
+
+    def output_shape(self, input_shape):
+        """ Get spatial shape of the output given a spatial shape of the input. """
+        shape = [int(i) for i in input_shape]
+        for layer in self.layout:
+            kernel_size = layer['kernel_size']
+            if isinstance(kernel_size, tuple):
+                f0, f1 = kernel_size
+            else:
+                f0, f1 = kernel_size, kernel_size
+
+            strides = layer['strides']
+            if isinstance(strides, tuple):
+                strides0, strides1 = strides
+            else:
+                strides0, strides1 = strides, strides
+
+            padding = layer.get('padding', 'VALID')
+            pool = layer.get('pool', False)
+
+            shape[0] = self._output_shape_1d(shape[0], f0, strides0, padding, pool)
+            shape[1] = self._output_shape_1d(shape[1], f1, strides1, padding, pool)
+
+        return shape
+
+    @staticmethod
+    def _apply_layer(volume, layer_spec, idx, is_final):
+        filters = layer_spec['filters']
+        strides = layer_spec['strides']
+        transpose = layer_spec.get('transpose', False)
+        kernel_size = layer_spec['kernel_size']
+        padding = layer_spec.get('padding', 'VALID')
+
+        if transpose:
+            volume = tf.layers.conv2d_transpose(
+                volume, filters=filters, kernel_size=kernel_size,
+                strides=strides, padding=padding, name="fcn-conv_transpose{}".format(idx))
+        else:
+            volume = tf.layers.conv2d(
+                volume, filters=filters, kernel_size=kernel_size,
+                strides=strides, padding=padding, name="fcn-conv{}".format(idx))
+
+        if not is_final:
+            nl_string = layer_spec.get('nl', 'relu')
+            nl = FullyConvolutional.nonlinearities[nl_string]
+            volume = nl(volume, name="fcn-{}{}".format(nl_string, idx))
+
+            if layer_spec.get('pool', False):
+                volume = tf.layers.max_pooling2d(
+                    volume, pool_size=2, strides=2, name='fcn-pool{}'.format(idx))
+
+        layer_string = ', '.join("{}={}".format(k, v) for k, v in sorted(layer_spec.items(), key=lambda kv: kv[0]))
+        output_shape = tuple(int(i) for i in volume.shape[1:])
+        print("FCN >>> Applying layer {}: {}. Output shape: {}".format(idx, layer_string, output_shape))
+
+        return volume
+
     def _call(self, inp, output_size, is_training):
-        # `is_training` is ignored
-        conv2d = tf.layers.conv2d
         volume = inp
+        self.volumes = [volume]
 
-        # volume.shape = (*, 210, 160, 3 * n_input_frames)
+        print("Predicted output shape is: {}".format(self.output_shape(inp.shape[1:3])))
 
-        volume = conv2d(volume, filters=64, kernel_size=8, strides=2, padding="valid")
-        volume = tf.nn.relu(volume)
+        for i, layer_spec in enumerate(self.layout):
+            volume = self._apply_layer(volume, layer_spec, i, i == len(self.layout) - 1)
+            self.volumes.append(volume)
 
-        # volume.shape = (*, 102, 77, 64)
+        if self.check_output_shape and output_size is not None:
+            actual_shape = tuple(int(i) for i in volume.shape[1:])
 
-        volume = conv2d(volume, filters=128, kernel_size=6, strides=2, padding="valid")
-        volume = tf.nn.relu(volume)
-
-        # volume.shape = (*, 49, 36, 128)
-
-        volume = conv2d(volume, filters=128, kernel_size=6, strides=2, padding="valid")
-        volume = tf.nn.relu(volume)
-
-        # volume.shape = (*, 22, 16, 128)
-
-        volume = conv2d(volume, filters=128, kernel_size=4, strides=2, padding="valid")
-        volume = tf.nn.relu(volume)
-
-        # volume.shape = (*, 10, 7, 128)
-
-        volume = conv2d(volume, filters=2048, kernel_size=(10, 7), padding="valid")  # fully connected layer
-
-        volume = tf.nn.relu(volume)
-
-        volume = conv2d(volume, filters=output_size, kernel_size=(10, 7), padding="valid")  # fully connected layer
+            if actual_shape == output_size:
+                print("FCN >>> Shape check passed.")
+            else:
+                raise Exception(
+                    "Shape-checking turned on, and actual shape {} does not "
+                    "match desired shape {}.".format(actual_shape, output_size))
 
         return volume
 

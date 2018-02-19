@@ -6,7 +6,7 @@ from dps.datasets import load_emnist, load_omniglot, emnist_classes, omniglot_cl
 
 
 class SupervisedDataset(Parameterized):
-    n_examples = Param()
+    n_examples = Param(None)
 
     def __init__(self, x, y, shuffle=True, **kwargs):
         self.x = x
@@ -761,6 +761,106 @@ class EMNIST_ObjectDetection(PatchesDataset):
                     (left, top), width, height, linewidth=1, edgecolor='r', facecolor='none')
                 ax.add_patch(rect)
         plt.show()
+
+
+class AutoencodeDataset(Parameterized):
+    n_examples = Param(None)
+
+    def __init__(self, x, shuffle=True, image=False, **kwargs):
+        self.x = x
+        self.y = x
+        self.n_examples = self.x.shape[0]
+        self.shuffle = shuffle
+        self.image = image
+
+        self._epochs_completed = 0
+        self._index_in_epoch = 0
+
+        super(AutoencodeDataset, self).__init__(**kwargs)
+
+    @property
+    def obs_shape(self):
+        return self.x.shape[1:]
+
+    @property
+    def epochs_completed(self):
+        return self._epochs_completed
+
+    @property
+    def index_in_epoch(self):
+        return self._index_in_epoch
+
+    @property
+    def completion(self):
+        return self.epochs_completed + self.index_in_epoch / self.n_examples
+
+    def _do_shuffle(self):
+        perm = np.arange(self.n_examples)
+        np.random.shuffle(perm)
+        self._x = [self.x[i] for i in perm]
+
+    def post_process_batch(self, x):
+        """ x are lists of equal length """
+        x = np.array(x)
+        if self.image:
+            assert x.dtype == np.uint8
+            return (x / 255.).astype('f')
+        else:
+            return x
+
+    def next_batch(self, batch_size=None, advance=True):
+        """ Return the next ``batch_size`` examples from this data set.
+
+        If ``batch_size`` not specified, return rest of the examples in the current epoch.
+
+        """
+        start = self._index_in_epoch
+
+        if batch_size is None:
+            batch_size = self.n_examples - start
+
+        # Shuffle for the first epoch
+        if self._epochs_completed == 0 and start == 0 and self.shuffle:
+            self._do_shuffle()
+
+        if batch_size > self.n_examples:
+            if advance:
+                self._epochs_completed += batch_size / self.n_examples
+                self._index_in_epoch = 0
+            indices = np.random.choice(self.n_examples, batch_size, replace=True)
+            return self._x[indices]
+
+        if start + batch_size >= self.n_examples:
+            # Finished epoch
+
+            # Get the remaining examples in this epoch
+            x_rest_part = self._x[start:]
+
+            # Shuffle the data
+            if self.shuffle and advance:
+                self._do_shuffle()
+
+            # Start next epoch
+            end = batch_size - len(x_rest_part)
+            x_new_part = self._x[:end]
+
+            x = x_rest_part
+            if x_new_part:
+                x = [*x, *x_new_part]
+
+            if advance:
+                self._index_in_epoch = end
+                self._epochs_completed += 1
+        else:
+            # Middle of epoch
+            end = start + batch_size
+            x = self._x[start:end]
+
+            if advance:
+                self._index_in_epoch = end
+
+        x = self.post_process_batch(x)
+        return x
 
 
 if __name__ == "__main__":

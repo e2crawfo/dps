@@ -68,8 +68,8 @@ def gaussian_filter(mu, std, locations, normalize=False):
     filt: Tensor (batch_size, n_filters, n_points)
 
     """
-    mu = tf.expand_dims(mu, 2)
-    std = tf.expand_dims(std, 2)
+    mu = mu[..., None]
+    std = std[..., None]
     locations = tf.reshape(locations, (1, 1, -1))
     filt = tf.exp(-0.5 * ((mu - locations)**2) / std)
     if normalize:

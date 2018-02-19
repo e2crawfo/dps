@@ -508,7 +508,10 @@ class TrainingLoop(object):
 
             update_duration = time.time() - update_start_time
 
-            step_records = dict(train=train_record, off_policy=off_policy_record)
+            if cfg.store_step_data:
+                self.data.store_step_records(
+                    stage_idx, self.local_step, self.global_step,
+                    train=train_record, off_policy=off_policy_record)
 
             # --------------- Possibly evaluate -------------------
 
@@ -516,7 +519,10 @@ class TrainingLoop(object):
                 val_summaries, val_record = updater.evaluate(cfg.n_val, 'val')
                 test_summaries, test_record = updater.evaluate(cfg.n_val, 'test')
 
-                step_records.update(val=val_record, test=test_record)
+                if cfg.store_step_data:
+                    self.data.store_step_records(
+                        stage_idx, self.local_step, self.global_step,
+                        val=val_record, test=test_record)
 
                 if evaluate and cfg.save_summaries:
                     n_experiences_global = (self.global_step + 1) * cfg.batch_size
@@ -577,10 +583,6 @@ class TrainingLoop(object):
                           "{}mb".format(memory_usage(physical=True)))
                     print("Virtual memory use: "
                           "{}mb".format(memory_usage(physical=False)))
-
-            if cfg.store_step_data:
-                self.data.store_step_records(
-                    stage_idx, self.local_step, self.global_step, **step_records)
 
             # Run training hooks
             for hook in self.hooks:

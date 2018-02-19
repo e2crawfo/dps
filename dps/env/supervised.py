@@ -14,11 +14,11 @@ class SupervisedEnv(Env):
 
     def __init__(self, train, val, test=None, **kwargs):
         self.train, self.val, self.test = train, val, test
-        self.datasets = {
-            'train': self.train,
-            'val': self.val,
-            'test': self.test,
-        }
+        self.datasets = dict(
+            train=self.train,
+            val=self.val,
+            test=self.test,
+        )
 
         if getattr(self, 'obs_shape', None) is None:
             self.obs_shape = self.train.x.shape[1:]
@@ -34,12 +34,49 @@ class SupervisedEnv(Env):
         return "<{} - train={}, val={}, test={}>".format(
             self.__class__.__name__, self.train, self.val, self.test)
 
-    def next_batch(self, batch_size, mode):
-        advance = mode == 'train'
-        return self.datasets[mode].next_batch(batch_size=batch_size, advance=advance)
+    @property
+    def recorded_names(self):
+        """ Returns a list of names to be recorded. First one is used as the main loss.
 
-    def build_loss(self, actions, targets):
+        For each entry `s` in this list, a method called `build_s` is called to get the
+        tensor value. Finally, the mean of the tensor is taken to get the final value
+        that gets recorded.
+
+        """
         raise Exception("NotImplemented")
+
+    def _build_placeholders(self):
+        self.x = tf.placeholder(tf.float32, (None,) + self.obs_shape, name="x")
+        self.y = self.target = tf.placeholder(tf.float32, (None,) + self.action_shape, name="target")
+        self.is_training = tf.placeholder(tf.bool, (), name="is_training")
+
+    def _build(self):
+        """ Should be over-ridden in sub-classes. Must return a dictionary of tensors to record.
+            At least one of those tensors must have the key `loss`.
+
+        """
+        recorded_tensors = {
+            name: tf.reduce_mean(getattr(self, 'build_' + name)(self.prediction, self.target))
+            for name in self.recorded_names
+        }
+
+        assert recorded_tensors
+        recorded_tensors['loss'] = recorded_tensors[self.recorded_names[0]]
+
+        return recorded_tensors
+
+    def build(self, f):
+        self._build_placeholders()
+        self.f = f
+        self.prediction = self.f(self.x, self.action_shape, self.is_training)
+
+        recorded_tensors = self._build()
+
+        return recorded_tensors
+
+    def make_feed_dict(self, batch_size, mode, evaluate):
+        x, target = self.datasets[mode].next_batch(batch_size=batch_size, advance=not evaluate)
+        return {self.x: x, self.target: target, self.is_training: not evaluate}
 
     def get_reward(self, actions, targets):
         raise Exception("NotImplemented")
@@ -51,23 +88,24 @@ class SupervisedEnv(Env):
     def _step(self, action):
         self.t += 1
 
-        obs = np.zeros(self.x.shape)
+        obs = np.zeros(self.rl_x.shape)
 
-        reward = self.get_reward(action, self.y)
+        reward = self.get_reward(action, self.rl_target)
 
         done = True
-        info = {"y": self.y}
+        info = {"y": self.rl_target}
         for name in self.recorded_names:
             func = getattr(self, "get_{}".format(name))
-            info[name] = np.mean(func(action, self.y))
+            info[name] = np.mean(func(action, self.rl_target))
 
         return obs, reward, done, info
 
     def _reset(self):
         self.t = 0
         advance = self._mode == 'train'
-        self.x, self.y = self.datasets[self._mode].next_batch(self._batch_size, advance=advance)
-        return self.x
+        self.rl_x, self.rl_target = self.datasets[self._mode].next_batch(self._batch_size, advance=advance)
+        self.rl_y = self.rl_target
+        return self.rl_x
 
     def _render(self, mode='human', close=False):
         pass
@@ -94,9 +132,6 @@ class ClassificationEnv(SupervisedEnv):
         """
         self.one_hot = one_hot
         super(ClassificationEnv, self).__init__(*args, **kwargs)
-
-    def build_loss(self, actions, targets):
-        return self.build_xent_loss(actions, targets)
 
     def build_xent_loss(self, actions, targets):
         if not self.one_hot:
@@ -140,9 +175,6 @@ class RegressionEnv(SupervisedEnv):
     reward_range = (-np.inf, 0)
     recorded_names = ["2norm_loss"]
 
-    def build_loss(self, actions, targets):
-        return self.build_2norm_loss(actions, targets)
-
     def build_2norm_loss(self, actions, targets):
         return tf.reduce_mean((actions - targets)**2, keep_dims=True)
 
@@ -154,12 +186,9 @@ class RegressionEnv(SupervisedEnv):
 
 
 class BernoulliSigmoid(SupervisedEnv):
-    """ Assumes that `targets` is in th range [0, 1]. """
+    """ Assumes that `targets` is in the range [0, 1]. """
     reward_range = (-np.inf, 0)
     recorded_names = ["xent_loss", "2norm_loss", "1norm_loss"]
-
-    def build_loss(self, logits, targets):
-        return self.build_xent_loss(logits, targets)
 
     def build_xent_loss(self, logits, targets):
         return tf.reduce_mean(
@@ -169,11 +198,11 @@ class BernoulliSigmoid(SupervisedEnv):
 
     def build_2norm_loss(self, logits, targets):
         actions = tf.sigmoid(logits)
-        return tf.reduce_mean((actions - targets)**2, keep_dims=True)
+        return tf.reduce_mean((actions - targets)**2, axis=-1, keep_dims=True)
 
     def build_1norm_loss(self, logits, targets):
         actions = tf.sigmoid(logits)
-        return tf.reduce_mean(tf.abs(actions - targets), keep_dims=True)
+        return tf.reduce_mean(tf.abs(actions - targets), axis=-1, keep_dims=True)
 
     def get_reward(self, logits, targets):
         return -self.get_xent_loss(logits, targets)
@@ -197,7 +226,7 @@ class BernoulliSigmoid(SupervisedEnv):
 
 class IntegerRegressionEnv(RegressionEnv):
     reward_range = (-1, 0)
-    recorded_names = ["2norm_loss", "01_loss"]
+    recorded_names = ["01_loss", "2norm_loss"]
 
     def build_01_loss(self, actions, targets):
         return tf.reduce_mean(

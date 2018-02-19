@@ -321,7 +321,7 @@ class CompositeEnv(Env):
         segment_lengths = []
 
         while not external_done:
-            feed_dict = self.internal.make_feed_dict(n_rollouts, T, mode, external_obs, self.external.y)
+            feed_dict = self.internal.make_feed_dict(n_rollouts, T, mode, external_obs, self.external.rl_y)
 
             if e > 0:
                 feed_dict.update({initial_registers: final_registers})

@@ -7,7 +7,7 @@ from dps.updater import DifferentiableUpdater
 from dps.env.supervised import SupervisedEnv
 from dps.datasets.base import EMNIST_ObjectDetection
 from dps.utils import Config, Param
-from dps.utils.tf import ScopedFunction, build_gradient_train_op
+from dps.utils.tf import build_gradient_train_op, FullyConvolutional
 
 
 class MODE(object):
@@ -76,12 +76,15 @@ class YOLOv2_SupervisedEnv(SupervisedEnv):
         s += '\tn_classes (C) = {}\n'.format(self.C)
         s += '\tscales  = {}\n'.format([self.scale_class, self.scale_obj, self.scale_no_obj, self.scale_coord])
 
-    def next_batch(self, batch_size, mode, process=True):
-        advance = mode == 'train'
-        images, annotations = self.datasets[mode].next_batch(batch_size=batch_size, advance=advance)
+    def next_batch(self, batch_size, mode, process=True, evaluate=True):
+        images, annotations = self.datasets[mode].next_batch(batch_size=batch_size, advance=not evaluate)
         if process:
             annotations = self.process_annotations(annotations)
         return images, annotations
+
+    def make_feed_dict(self, batch_size, mode, evaluate):
+        x, target = self.next_batch(batch_size, mode, process=True, evaluate=evaluate)
+        return {self.x: x, self.target: target, self.is_training: not evaluate}
 
     def process_annotations(self, annotations):
         """ Turn a batch of bounding box annotations into a target volume.
@@ -170,24 +173,18 @@ class YOLOv2_SupervisedEnv(SupervisedEnv):
 
         return target_volume
 
-    def build_loss(self, action, target):
-        """
-        action: tensor, (batch_dim, H, W, B * (4 + 1 + C))
-            Output of the network.
-        target: tensor, (batch_dim, H, W, B * (4 + 1 + C))
-            Target volume.
-
-        """
+    def _build(self):
+        """ self.action and self.target are both tensors with shape (batch_dim, H, W, B * (4 + 1 + C)) """
         H, W, B, C = self.H, self.W, self.B, self.C
         D = 4 + 1 + C
 
         self.predictions = {}
 
-        target = tf.reshape(target, [-1, H, W, B, D])
-        action = tf.reshape(action, [-1, H, W, B, D])
+        target = tf.reshape(self.target, [-1, H, W, B, D])
+        prediction = tf.reshape(self.prediction, [-1, H, W, B, D])
 
         _yx, _hw, _confs, _probs = tf.split(target, [2, 2, 1, C], -1)
-        yx_logits, hw_logits, conf_logits, class_logits = tf.split(action, [2, 2, 1, C], -1)
+        yx_logits, hw_logits, conf_logits, class_logits = tf.split(prediction, [2, 2, 1, C], -1)
 
         # predict bbox center in cell coordinates
         yx = tf.nn.sigmoid(yx_logits)
@@ -257,8 +254,8 @@ class YOLOv2_SupervisedEnv(SupervisedEnv):
 
         loss_volume = tf.concat([yx_loss, hw_loss, conf_loss, prob_loss], axis=-1)  # (batch_dim, H, W, B, D)
         batch_size = tf.shape(target)[0]
-        return tf.reduce_sum(tf.reshape(loss_volume, [batch_size, -1]), axis=1)
-        # return tf.reduce_mean(tf.reshape(loss_volume, [batch_size, -1]), axis=1)
+        per_examples_loss = tf.reduce_sum(tf.reshape(loss_volume, [batch_size, -1]), axis=1)
+        return {"loss": tf.reduce_mean(per_examples_loss, name="yolo_loss")}
 
 
 # def output_channel_dim(self):
@@ -275,112 +272,6 @@ class YOLOv2_SupervisedEnv(SupervisedEnv):
 #         MODE.validate_mode(self.mode)
 
 
-class FullyConvolutional(ScopedFunction):
-    """
-    Parameters
-    ----------
-    layout: list of dict
-        Each entry supplies parameters for a layer of the network. Valid argument names are:
-            kind
-            filters (required, int)
-            kernel_size (required, int or pair of ints)
-            strides (defaults to 1, int or pair of ints)
-            pool (defaults to False, bool, whether to apply 2x2 pooling with stride 2, pooling is never done on final layer)
-
-        Uses 'padding' == valid.
-
-    """
-    nonlinearities = dict(
-        relu=tf.nn.relu,
-        sigmoid=tf.nn.sigmoid,
-        tanh=tf.nn.tanh
-    )
-
-    def __init__(self, layout, check_output_shape=False, nl='relu', scope=None):
-        self.layout = layout
-        self.check_output_shape = check_output_shape
-        self.default_nl = nl
-        super(FullyConvolutional, self).__init__(scope)
-
-    @staticmethod
-    def _output_shape_1d(inp_dim, f, s, padding, pool):
-        if padding == "SAME":
-            if inp_dim % s == 0:
-                p = f - s
-            else:
-                p = f - (inp_dim % s)
-
-            out_dim = int((inp_dim + p - f) / s) + 1
-        else:
-            out_dim = int((inp_dim - f) / s) + 1
-        return out_dim
-
-    def output_shape(self, input_shape):
-        """ Get spatial shape of the output given a spatial shape of the input. """
-        shape = [int(i) for i in input_shape]
-        for layer in self.layout:
-            kernel_size = layer['kernel_size']
-            if isinstance(kernel_size, tuple):
-                f0, f1 = kernel_size
-            else:
-                f0, f1 = kernel_size, kernel_size
-
-            strides = layer['strides']
-            if isinstance(strides, tuple):
-                strides0, strides1 = strides
-            else:
-                strides0, strides1 = strides, strides
-
-            padding = layer.get('padding', 'VALID')
-            pool = layer.get('pool', False)
-
-            shape[0] = self._output_shape_1d(shape[0], f0, strides0, padding, pool)
-            shape[1] = self._output_shape_1d(shape[1], f1, strides1, padding, pool)
-
-        return shape
-
-    def _call(self, inp, output_size, is_training):
-        volume = inp
-        print("Predicted output shape is: {}".format(self.output_shape(inp.shape[1:3])))
-        print("Default non-linearity is: {}".format(self.default_nl))
-
-        for i, layer in enumerate(self.layout):
-            filters = layer['filters']
-            strides = layer['strides']
-            kernel_size = layer['kernel_size']
-            padding = layer.get('padding', 'VALID')
-
-            volume = tf.layers.conv2d(
-                volume, filters=filters, kernel_size=kernel_size,
-                strides=strides, padding=padding, name="fcn-conv{}".format(i))
-
-            if i < len(self.layout) - 1:
-                nl_string = layer.get('nl', self.default_nl)
-                nl = FullyConvolutional.nonlinearities[nl_string]
-                volume = nl(volume, name="fcn-{}{}".format(nl_string, i))
-
-                if layer.get('pool', False):
-                    volume = tf.layers.max_pooling2d(
-                        volume, pool_size=2, strides=2, name='fcn-pool{}'.format(i))
-
-            layer_string = ', '.join("{}={}".format(k, v) for k, v in sorted(layer.items(), key=lambda kv: kv[0]))
-            output_shape = tuple(int(i) for i in volume.shape[1:])
-
-            print("FCN >>> Applying layer {}: {}. Output shape: {}".format(i, layer_string, output_shape))
-
-        if self.check_output_shape and output_size is not None:
-            actual_shape = tuple(int(i) for i in volume.shape[1:])
-
-            if actual_shape == output_size:
-                print("FCN >>> Shape check passed.")
-            else:
-                raise Exception(
-                    "Shape-checking turned on, and actual shape {} does not "
-                    "match desired shape {}.".format(actual_shape, output_size))
-
-        return volume
-
-
 class TinyYoloBackbone(FullyConvolutional):
     def __init__(self):
         # Best configuration so far. Notice the striding.
@@ -390,6 +281,19 @@ class TinyYoloBackbone(FullyConvolutional):
             dict(filters=256, kernel_size=4, strides=1, padding="VALID"),
         ]
         super(TinyYoloBackbone, self).__init__(layout, check_output_shape=True)
+
+
+class TinyYoloBackboneWithSharpening(FullyConvolutional):
+    def __init__(self):
+        # Best configuration so far. Notice the striding.
+        layout = [
+            dict(filters=128, kernel_size=3, strides=2, padding="SAME"),
+            dict(filters=256, kernel_size=3, strides=2, padding="SAME"),
+            dict(filters=256, kernel_size=4, strides=1, padding="VALID"),
+            dict(filters=256, kernel_size=7, strides=1, padding="SAME"),
+            dict(filters=256, kernel_size=7, strides=1, padding="SAME"),
+        ]
+        super(TinyYoloBackboneWithSharpening, self).__init__(layout, check_output_shape=True)
 
 
 class YoloBackbone(FullyConvolutional):
@@ -410,7 +314,8 @@ class YoloBackbone(FullyConvolutional):
 
 
 def build_fcn():
-    return YoloBackbone()
+    return TinyYoloBackboneWithSharpening()
+    # return YoloBackbone()
     # return TinyYoloBackbone()
 
 
@@ -421,9 +326,9 @@ def get_differentiable_updater(env):
 
 
 def build_env():
-    train = EMNIST_ObjectDetection(n_examples=cfg.n_train)
-    val = EMNIST_ObjectDetection(n_examples=cfg.n_val)
-    test = EMNIST_ObjectDetection(n_examples=cfg.n_val)
+    train = EMNIST_ObjectDetection(n_examples=int(cfg.n_train))
+    val = EMNIST_ObjectDetection(n_examples=int(cfg.n_val))
+    test = EMNIST_ObjectDetection(n_examples=int(cfg.n_val))
 
     return YOLOv2_SupervisedEnv(train, val, test, C=len(cfg.characters))
 
@@ -501,9 +406,8 @@ def yolo_render_hook(updater):
     # Run the network on a subset of the evaluation data, fetch the output
     N = 16
 
-    updater.set_is_training(False)
     env = updater.env
-    images, gt_boxes = env.next_batch(N, 'val', process=False)
+    images, gt_boxes = env.next_batch(N, 'val', process=False, evaluate=True)
     sess = tf.get_default_session()
 
     fetch = [
@@ -512,7 +416,9 @@ def yolo_render_hook(updater):
         env.predictions['confs'], env.predictions['probs'],
     ]
 
-    cell_y, cell_x, normalized_h, normalized_w, confs, probs = sess.run(fetch, feed_dict={updater.x_ph: images})
+    feed_dict = {updater.env.x: images, updater.env.is_training: False}
+
+    cell_y, cell_x, normalized_h, normalized_w, confs, probs = sess.run(fetch, feed_dict=feed_dict)
 
     center_y = (cell_y + np.arange(env.H)[None, :, None, None, None]) * env.cell_height
     center_x = (cell_x + np.arange(env.W)[None, None, :, None, None]) * env.cell_width
@@ -562,7 +468,7 @@ def yolo_render_hook(updater):
                 width = bottom - top
                 height = right - left
                 rect = patches.Rectangle(
-                    (left, top), width, height, linewidth=1,
+                    (left, top), width, height, linewidth=3,
                     edgecolor=cfg.class_colours[c], facecolor='none', alpha=p/max_p)
                 ax1.add_patch(rect)
 
@@ -580,7 +486,7 @@ def yolo_render_hook(updater):
         fig.suptitle('After {} experiences ({} updates, {} experiences per batch). prob_threshold={}. mAP={}'.format(
             updater.n_experiences, updater.n_updates, cfg.batch_size, pt, mean_ap))
 
-        fig.savefig(os.path.join(str(cfg.path), 'plots', 'yolo_output_pt={}.pdf'.format(pt)))
+        fig.savefig(os.path.join(cfg.path, 'plots', 'yolo_output_pt={}.pdf'.format(pt)))
         plt.close(fig)
 
 
@@ -733,7 +639,7 @@ class Yolo_RLUpdater(DifferentiableUpdater):
             return b'', b'', dict(zip(self.env.recorded_names, recorded_values)), {}
 
 
-base_lr = 1e-4
+xkcd_colors = 'viridian,cerulean,vermillion,lavender,celadon,fuchsia,saffron,cinnamon,greyish,vivid blue'.split(',')
 
 
 config = Config(
@@ -743,22 +649,19 @@ config = Config(
     render_hook=yolo_render_hook,
     render_step=500,
 
-    curriculum=[dict(lr_schedule=f * base_lr) for f in 2.**-np.arange(6)],
+    curriculum=[dict(lr_schedule=lr) for lr in [1e-4, 1e-5, 1e-6]],
     preserve_env=True,
 
     # backbone
     build_fully_conv_net=build_fcn,
 
-    predict_counts=False,
-
     # env parameters
     build_env=build_env,
     max_overlap=20,
     image_shape=(40, 40),
-    characters=[0, 1],
+    characters=[0, 1, 2, 3],
     min_chars=1,
-    max_chars=2,
-    # characters=list(range(10)) + [chr(i + ord('a')) for i in range(10)],
+    max_chars=3,
     sub_image_shape=(14, 14),
     n_sub_image_examples=0,
     colours='red green blue',
@@ -766,17 +669,17 @@ config = Config(
     anchor_boxes=[[14, 14]],
 
     # display params
-    prob_threshold=1. / (2**np.arange(0, 11)),
+    prob_threshold=1e-4,
     iou_threshold=0.5,
-    class_colours='white yellow purple'.split(),
+    class_colours=['xkcd:' + c for c in xkcd_colors],
 
     # number of grid cells - depends on both the FCN backbone and the image size
     H=7,
     W=7,
 
-    n_train=100000,
-    n_val=100,
-    n_test=100,
+    n_train=1e5,
+    n_val=1e2,
+    n_test=1e2,
 
     # loss params
     scale_class=1.0,
@@ -788,7 +691,8 @@ config = Config(
     conf_target="conf",
 
     # training params
-    batch_size=64,
+    batch_size=16,
+    # batch_size=64,
     eval_step=100,
     max_steps=1e7,
     patience=10000,

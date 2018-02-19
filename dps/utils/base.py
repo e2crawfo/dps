@@ -645,7 +645,7 @@ NotSupplied = object()
 
 
 class Param(object):
-    def __init__(self, default=NotSupplied, aliases=None, help=""):
+    def __init__(self, default=NotSupplied, aliases=None, help="", type=None):
         """ aliases are different ways to fill the value (i.e. from config or kwargs),
             but should not be used to access the value as a class attribute. """
         self.default = default
@@ -653,6 +653,7 @@ class Param(object):
             aliases = aliases.split()
         self.aliases = aliases or []
         self.help = help
+        self.type = type
 
 
 class Parameterized(object):
@@ -697,6 +698,9 @@ class Parameterized(object):
                             "Could not find value for parameter {} for class {} "
                             "in either kwargs or config, and no default was provided.".format(
                                 name, self.__class__))
+
+                if param.type is not None:
+                    value = param.type(value)
 
                 setattr(self, name, value)
             self._resolved = True

@@ -450,7 +450,8 @@ class ParallelSession(object):
             parallel_command = (
                 "cd {local_scratch} && "
                 "dps-hyper run {archive_root} {pattern} {indices} --max-time {python_seconds_per_step} "
-                "--log-root {local_scratch} --log-name experiments --gpu-set={gpu_set} --ppn={ppn} {_ignore_gpu} {output_to_files}"
+                "--log-root {local_scratch} --log-name experiments --gpu-set={gpu_set} --ppn={ppn} "
+                "{_ignore_gpu} {output_to_files}"
             )
 
             bind = "--accel-bind=g" if self.gpu_set else ""

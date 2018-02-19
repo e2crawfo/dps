@@ -51,7 +51,13 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
 
         train, off_policy, train_record, off_policy_record = self._update(batch_size, collect_summaries)
         sess.run(self.inc_global_step_op)
-        return train + scheduled_value_summaries, off_policy + scheduled_value_summaries, train_record, off_policy_record
+
+        return (
+            train + scheduled_value_summaries,
+            off_policy + scheduled_value_summaries,
+            train_record,
+            off_policy_record
+        )
 
     @abc.abstractmethod
     def _update(self, batch_size, collect_summaries=None):
@@ -104,42 +110,27 @@ class DifferentiableUpdater(Updater):
     noise_schedule = Param()
     max_grad_norm = Param()
     l2_weight = Param(None)
-
     stopping_criteria = "loss,min"
 
     def __init__(self, env, f, **kwargs):
-        assert hasattr(env, 'build_loss'), (
+        assert hasattr(env, 'build'), (
             "Environments used with DifferentiableUpdater must possess "
-            "a method called `build_loss` which builds a differentiable "
-            "loss function.")
+            "a method called `build` which builds returns a dictionary of scalar tensors."
+        )
+        assert hasattr(env, 'make_feed_dict'), (
+            "Environments used with DifferentiableUpdater must possess "
+            "a method called `make_feed_dict` which return a feed dict "
+            "to pass to the training step.")
         self.f = f
-        self.obs_shape = env.obs_shape
-        self.action_shape = env.action_shape
 
         super(DifferentiableUpdater, self).__init__(env, **kwargs)
-
-    def set_is_training(self, is_training):
-        tf.get_default_session().run(
-            self._assign_is_training, feed_dict={self._set_is_training: is_training})
 
     def trainable_variables(self, for_opt):
         return trainable_variables(self.f.scope, for_opt=for_opt)
 
     def _build_graph(self):
-        self.is_training = tf.Variable(False, trainable=False, name="is_training")
-        self._set_is_training = tf.placeholder(tf.bool, ())
-        self._assign_is_training = tf.assign(self.is_training, self._set_is_training)
-
-        self.x_ph = tf.placeholder(tf.float32, (None,) + self.obs_shape, name="x_ph")
-
-        self.target_ph = tf.placeholder(tf.float32, (None,) + self.action_shape, name="target_ph")
-        self.output = self.f(self.x_ph, self.action_shape, self.is_training)
-        self.loss = tf.reduce_mean(self.env.build_loss(self.output, self.target_ph))
-
-        self.recorded_tensors = [
-            tf.reduce_mean(getattr(self.env, 'build_' + name)(self.output, self.target_ph))
-            for name in self.env.recorded_names
-        ]
+        self.recorded_tensors = self.env.build(self.f)
+        self.loss = self.recorded_tensors['loss']
 
         tvars = self.trainable_variables(for_opt=True)
         if self.l2_weight is not None:
@@ -150,39 +141,28 @@ class DifferentiableUpdater(Updater):
             self.max_grad_norm, self.noise_schedule)
 
         self.summary_op = tf.summary.merge(
-            [tf.summary.scalar("loss_per_ep", self.loss)] +
-            [tf.summary.scalar(name, t) for name, t in zip(self.env.recorded_names, self.recorded_tensors)] +
+            [tf.summary.scalar(name, t) for name, t in self.recorded_tensors.items()] +
             train_summaries)
 
     def _update(self, batch_size, collect_summaries):
-        self.set_is_training(True)
-        x, y = self.env.next_batch(batch_size, mode='train')
+        feed_dict = self.env.make_feed_dict(batch_size, 'train', False)
 
-        feed_dict = {
-            self.x_ph: x,
-            self.target_ph: y
-        }
+        train_summaries = b''
 
         sess = tf.get_default_session()
         if collect_summaries:
-            train_summaries, _, *recorded_values = sess.run(
-                [self.summary_op, self.train_op] + self.recorded_tensors, feed_dict=feed_dict)
-            return train_summaries, b'', dict(zip(self.env.recorded_names, recorded_values)), {}
+            train_summaries, _, record = sess.run(
+                [self.summary_op, self.train_op, self.recorded_tensors], feed_dict=feed_dict)
         else:
-            _, *recorded_values = sess.run([self.train_op] + self.recorded_tensors, feed_dict=feed_dict)
-            return b'', b'', dict(zip(self.env.recorded_names, recorded_values)), {}
+            _, record = sess.run([self.train_op, self.recorded_tensors], feed_dict=feed_dict)
+
+        return train_summaries, b'', record, {}
 
     def _evaluate(self, batch_size, mode):
-        self.set_is_training(False)
-
-        x, y = self.env.next_batch(None, mode)
-        feed_dict = {self.x_ph: x, self.target_ph: y}
+        feed_dict = self.env.make_feed_dict(None, mode, True)
 
         sess = tf.get_default_session()
-        summaries, loss, *recorded_values = sess.run(
-            [self.summary_op, self.loss] + self.recorded_tensors, feed_dict=feed_dict)
-
-        record = {"loss": loss}
-        record.update(zip(self.env.recorded_names, recorded_values))
+        summaries, record = sess.run(
+            [self.summary_op, self.recorded_tensors], feed_dict=feed_dict)
 
         return summaries, record
