@@ -111,9 +111,9 @@ config = Config(
     build_policy=BuildEpsilonSoftmaxPolicy(),
     build_controller=BuildLstmController(),
 
-    exploration_schedule="1.0",
+    exploration_schedule="0.1",
+    val_exploration_schedule="0.0",
     actor_exploration_schedule=None,
-    val_exploration_schedule="0.1",
 
     policy_weight=1.0,
     value_reg_weight=0.0,
@@ -143,6 +143,18 @@ ppo_config = config.copy(
     opt_steps_per_update=10,
     sub_batch_size=2,
     epsilon=0.2,
+)
+
+
+# Same config that is used in the test.
+test_config = config.copy(
+    name="TestA2C",
+    opt_steps_per_update=20,
+    sub_batch_size=0,
+    epsilon=0.2,
+    n_controller_units=32,
+    value_weight=0.0,
+    split=False,
 )
 
 

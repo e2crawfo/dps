@@ -325,8 +325,9 @@ class ExperimentDirectory(object):
         _checked_makedirs(path, force_fresh)
         self.store = store
 
-    def path_for(self, path, is_dir=False):
+    def path_for(self, *path, is_dir=False):
         """ Get a path for a file, creating necessary subdirs. """
+        path = os.path.join(*path)
         if is_dir:
             filename = ""
         else:
@@ -335,12 +336,9 @@ class ExperimentDirectory(object):
         full_path = self.make_directory(path)
         return os.path.join(full_path, filename)
 
-    def make_directory(self, path):
+    def make_directory(self, path, exist_ok=True):
         full_path = os.path.join(self.path, path)
-        try:
-            os.makedirs(full_path)
-        except Exception:
-            pass
+        os.makedirs(full_path, exist_ok=exist_ok)
         return full_path
 
     def record_environment(self, config=None, dill_recurse=False,
@@ -1076,8 +1074,14 @@ class Constant(Schedule):
 
 
 def eval_schedule(schedule):
+    try:
+        schedule = "Constant({})".format(float(schedule))
+    except (TypeError, ValueError):
+        pass
+
     if isinstance(schedule, str):
         schedule = eval(schedule)
+
     return schedule
 
 

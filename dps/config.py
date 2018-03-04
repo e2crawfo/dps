@@ -66,6 +66,7 @@ DEFAULT_CONFIG = Config(
     error_on_timeout=False,
 
     stopping_criteria="",
+    eval_mode="val",
 
     tee=True,  # If True, output of training run (stdout and stderr) will is written to screen as
                # well as a file. If False, only written to the file.

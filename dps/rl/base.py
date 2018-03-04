@@ -523,13 +523,11 @@ class RLUpdater(Updater):
             learner.build_graph(self.env)
 
     def _update(self, batch_size, collect_summaries):
-        train_summaries, off_policy_summaries = [], []
         train_record, off_policy_record = {}, {}
+        train_summary, off_policy_summary = [], []
 
         for learner in self.learners:
             ts, us, tr, ur = learner.update(batch_size, collect_summaries)
-            train_summaries.append(ts)
-            off_policy_summaries.append(us)
 
             for k, v in tr.items():
                 if learner.name:
@@ -545,20 +543,24 @@ class RLUpdater(Updater):
                     s = k
                 off_policy_record[s] = v
 
-        train_summaries = (b'').join(train_summaries)
-        off_policy_summaries = (b'').join(off_policy_summaries)
+            train_summary.append(ts)
+            off_policy_summary.append(us)
 
-        return train_summaries, off_policy_summaries, train_record, off_policy_record
+        train_summary = (b'').join(train_summary)
+        off_policy_summary = (b'').join(off_policy_summary)
+
+        return {
+            'train': (train_record, train_summary),
+            'off_policy': (off_policy_record, off_policy_summary),
+        }
 
     def _evaluate(self, batch_size, mode):
-        """ Return list of tf summaries and a dictionary of values to be displayed. """
-        summaries = []
-        records = []
         record = {}
+        summary = []
 
         for learner in self.learners:
             s, r = learner.evaluate(batch_size, mode)
-            summaries.append(s)
+            summary.append(s)
 
             for k, v in r.items():
                 if learner.name:
@@ -566,7 +568,7 @@ class RLUpdater(Updater):
                 else:
                     s = k
                 record[s] = v
-            records.append(r)
 
-        summaries = (b'').join(summaries)
-        return summaries, record
+        summary = (b'').join(summary)
+
+        return record, summary

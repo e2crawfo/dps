@@ -125,7 +125,6 @@ class YOLOv2_UnsupervisedNetwork(ScopedFunction):
         if self.size_noise_std:
             hw += tf.random_normal(tf.shape(hw), 0.0, self.size_noise_std)
 
-        # compute iou for conf regression target
         cell_y, cell_x = tf.split(cell_yx, 2, axis=-1)
         h, w = tf.split(hw, 2, axis=-1)
 

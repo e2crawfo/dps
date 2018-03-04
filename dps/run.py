@@ -54,19 +54,26 @@ def parse_env_alg(env, alg=None):
         if alg_config is None:
             alg_module_specs = get_module_specs(alg_pkg)
 
-            alg_spec = None
-            if alg in alg_module_specs:
-                alg_spec = alg_module_specs[alg]
+            if "." in alg:
+                alg_file, alg_suffix = alg.split('.')
+            else:
+                alg_file, alg_suffix = alg, ""
+
+            alg_spec = alg_module_specs.get(alg_file, None)
 
             if alg_spec is None:
-                candidates = [a for a in alg_module_specs.keys() if a.startswith(alg)]
+                candidates = [a for a in alg_module_specs.keys() if a.startswith(alg_file)]
                 assert len(candidates) == 1, (
                     "Ambiguity in alg selection, possibilities "
                     "are: {}.".format(candidates))
 
                 alg_spec = alg_module_specs[candidates[0]]
+
             alg_module = get_module_from_spec(alg_spec)
-            alg_config = alg_module.config
+            if alg_suffix:
+                alg_config = getattr(alg_module, "{}_config".format(alg_suffix))
+            else:
+                alg_config = alg_module.config
 
     return env_config, alg_config
 

@@ -274,7 +274,7 @@ class YOLOv2_SupervisedEnv(SupervisedEnv):
 
 class TinyYoloBackbone(FullyConvolutional):
     def __init__(self):
-        # Best configuration so far. Notice the striding.
+        # Notice the striding.
         layout = [
             dict(filters=128, kernel_size=3, strides=2, padding="SAME"),
             dict(filters=256, kernel_size=3, strides=2, padding="SAME"),
@@ -285,7 +285,7 @@ class TinyYoloBackbone(FullyConvolutional):
 
 class TinyYoloBackboneWithSharpening(FullyConvolutional):
     def __init__(self):
-        # Best configuration so far. Notice the striding.
+        # Best configuration so far. Notice the striding, and the final two layers.
         layout = [
             dict(filters=128, kernel_size=3, strides=2, padding="SAME"),
             dict(filters=256, kernel_size=3, strides=2, padding="SAME"),
@@ -298,7 +298,6 @@ class TinyYoloBackboneWithSharpening(FullyConvolutional):
 
 class YoloBackbone(FullyConvolutional):
     def __init__(self):
-        # Best configuration so far. Notice the striding.
         layout = [
             dict(filters=128, kernel_size=3, strides=2, padding="SAME"),
             dict(filters=128, kernel_size=1, strides=1, padding="VALID"),

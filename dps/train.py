@@ -11,6 +11,7 @@ import shutil
 import os
 import pandas as pd
 import dill
+from collections import defaultdict
 
 import dps
 from dps import cfg
@@ -205,6 +206,7 @@ class TrainingLoop(object):
             es = ExperimentStore(cfg.log_dir, max_experiments=cfg.max_experiments, delete_old=1)
             exp_dir = es.new_experiment(
                 self.exp_name, cfg.seed, add_date=1, force_fresh=1, update_latest=cfg.update_latest)
+            self.exp_dir = exp_dir
 
             self.data = _TrainingLoopData(exp_dir)
             self.data.setup()
@@ -255,7 +257,7 @@ class TrainingLoop(object):
                 print("Time limit exceeded.")
                 break
 
-            self.data.new_stage(stage_idx)
+            self.data.start_stage(stage_idx)
 
             with ExitStack() as stack:
 
@@ -292,9 +294,6 @@ class TrainingLoop(object):
                     print("Not using GPU.")
                     stack.enter_context(graph.device("/cpu:0"))
 
-                if cfg.save_summaries:
-                    self.data.setup_summary_writers(graph)
-
                 stack.enter_context(graph.as_default())
                 stack.enter_context(sess)
                 stack.enter_context(sess.as_default())
@@ -322,6 +321,8 @@ class TrainingLoop(object):
                 # Build updater
                 updater = cfg.get_updater(self.env)
                 updater.build_graph()
+                updater.stage_idx = stage_idx
+                updater.exp_dir = self.exp_dir
 
                 # Optionally initialize policy weights
                 if cfg.load_path:
@@ -352,7 +353,7 @@ class TrainingLoop(object):
                 threshold_reached, reason = self.threshold_reached, self.reason
                 self.data.record_values_for_stage(reason=reason)
 
-                # --------------- Evaluate the best hypothesis on the test set -------------------
+                # --------------- Evaluate the best hypothesis -------------------
 
                 print("\n" + "-" * 10 + " Optimization complete " + "-" * 10)
                 print("\nReason: {}.\n".format(reason))
@@ -367,11 +368,16 @@ class TrainingLoop(object):
                       "from file {}...".format(best_path))
                 updater.restore(sess, best_path)
 
-                _, test_record = updater.evaluate(cfg.n_val, 'test')
+                eval_results = updater.evaluate(cfg.n_val)
 
-                print("\nResults on test dataset: ")
-                print(pformat(test_record))
-                print("\n")
+                print("\n" + "-" * 10 + " Final evaluation " + "-" * 10)
+                for mode, (record, _) in eval_results.items():
+                    if record:
+                        print("\n-- {} -- \n".format(mode))
+                        for k, v in sorted(record.items()):
+                            print("* {}: {}".format(k, v))
+
+                print()
 
                 # --------------- Optionally render performance of best hypothesis -------------------
 
@@ -380,7 +386,7 @@ class TrainingLoop(object):
 
                 # --------------- Finish up the stage -------------------
 
-                self.data.dump_data(self.local_step)
+                self.data.end_stage(self.local_step)
 
                 if cfg.start_tensorboard:
                     restart_tensorboard(cfg.log_dir, cfg.tbport, cfg.reload_interval)
@@ -390,8 +396,8 @@ class TrainingLoop(object):
                           "of the curriculum, terminating.".format(stage_idx))
                     break
 
-                print("Done stage {} at {}, {} seconds after given "
-                      "start time.".format(stage_idx, datetime.datetime.now(), time.time() - self.start_time))
+                print("Done stage {} at {}, {} seconds after given start time.".format(
+                    stage_idx, datetime.datetime.now(), time.time() - self.start_time))
                 print("=" * 50)
 
         print(self.data.summarize())
@@ -482,16 +488,15 @@ class TrainingLoop(object):
             if self.local_step > 0 and self.local_step % cfg.checkpoint_step == 0:
                 self.data.dump_data(self.local_step)
 
-            evaluate = self.local_step % cfg.eval_step == 0
-            display = self.local_step % cfg.display_step == 0
+            evaluate = (self.local_step % cfg.eval_step) == 0
+            display = (self.local_step % cfg.display_step) == 0
             render = (cfg.render_step > 0 and
-                      (self.local_step % cfg.render_step == 0) and
+                      (self.local_step % cfg.render_step) == 0 and
                       self.local_step > 0)
 
-            # --------------- Perform an update -------------------
+            n_global_experiences = (self.global_step + 1) * cfg.batch_size
 
-            train_summaries, off_policy_summaries = b"", b""
-            train_record, off_policy_record = {}, {}
+            # --------------- Perform an update -------------------
 
             update_start_time = time.time()
 
@@ -501,41 +506,26 @@ class TrainingLoop(object):
                 update_output = updater.update(
                     cfg.batch_size, collect_summaries=collect_summaries)
 
-                (train_summaries,
-                 off_policy_summaries,
-                 train_record,
-                 off_policy_record) = update_output
+                self.data.store_step_data_and_summaries(
+                    stage_idx, self.local_step, self.global_step, n_global_experiences,
+                    **update_output)
 
             update_duration = time.time() - update_start_time
-
-            if cfg.store_step_data:
-                self.data.store_step_records(
-                    stage_idx, self.local_step, self.global_step,
-                    train=train_record, off_policy=off_policy_record)
 
             # --------------- Possibly evaluate -------------------
 
             if evaluate or display:
-                val_summaries, val_record = updater.evaluate(cfg.n_val, 'val')
-                test_summaries, test_record = updater.evaluate(cfg.n_val, 'test')
+                eval_results = updater.evaluate(cfg.n_val)
 
-                if cfg.store_step_data:
-                    self.data.store_step_records(
-                        stage_idx, self.local_step, self.global_step,
-                        val=val_record, test=test_record)
+                self.data.store_step_data_and_summaries(
+                    stage_idx, self.local_step, self.global_step, n_global_experiences,
+                    **eval_results)
 
-                if evaluate and cfg.save_summaries:
-                    n_experiences_global = (self.global_step + 1) * cfg.batch_size
+                record = eval_results[cfg.eval_mode][0]
 
-                    self.data.add_summaries(
-                        n_experiences_global, train=train_summaries,
-                        off_policy=off_policy_summaries, val=val_summaries,
-                        test=test_summaries
-                    )
-
-                stopping_criteria = val_record[self.stopping_criteria_name]
+                stopping_criteria = record[self.stopping_criteria_name]
                 new_best, stop = early_stop.check(
-                    stopping_criteria, self.local_step, val_record)
+                    stopping_criteria, self.local_step, record)
 
                 if new_best:
                     print("Storing new best on (local, global) step ({}, {}), "
@@ -574,7 +564,7 @@ class TrainingLoop(object):
                     time_per_batch=time_per_batch,
                     n_steps=self.local_step,
                     n_experiences=self.local_step*cfg.batch_size,
-                    epoch=updater.env.completion
+                    epoch=updater.completion
                 )
 
                 if display:
@@ -594,10 +584,8 @@ class TrainingLoop(object):
 
                     if result:
                         # TODO: currently nothing is done with the record
-                        summaries, record = result
-                        n_experiences_global = (self.global_step + 1) * cfg.batch_size
-                        self.data.add_summaries(
-                            n_experiences_global, **{hook.mode: summaries})
+                        record, summary = result
+                        self.data.add_summary(n_global_experiences, hook.mode, summary)
 
             # Possibly render
             if render and cfg.render_hook is not None:
@@ -631,8 +619,6 @@ class FrozenTrainingLoopData(ExperimentDirectory):
         mode (e.g. train, test).
 
     """
-    modes = 'train off_policy val test'.split()
-
     def __init__(self, path):
         self.path = path.path if isinstance(path, ExperimentDirectory) else path
         self._config = None
@@ -692,6 +678,10 @@ class FrozenTrainingLoopData(ExperimentDirectory):
                 self._history = dill.load(f)
         return self._history
 
+    @property
+    def modes(self):
+        pass
+
 
 class _TrainingLoopData(FrozenTrainingLoopData):
     """ Data structure used by a TrainingLoop to manage data
@@ -705,17 +695,13 @@ class _TrainingLoopData(FrozenTrainingLoopData):
 
         self.make_directory('weights')
         self.make_directory('plots')
-
-        for mode in self.modes:
-            self.make_directory('data/' + mode)
-            self.make_directory('summaries/' + mode)
+        self.make_directory('data')
+        self.make_directory('summaries')
 
         self._history = []
 
-        self.train_data = []
-        self.off_policy_data = []
-        self.val_data = []
-        self.test_data = []
+        self.data = defaultdict(list)
+        self.summary_writers = {}
 
         self.stage_idx = -1
 
@@ -723,31 +709,25 @@ class _TrainingLoopData(FrozenTrainingLoopData):
     def history(self):
         return self._history
 
-    def setup_summary_writers(self, graph):
-        self.summary_writers = {}
-        for mode in self.modes:
-            _graph = graph if mode is 'train' else None
-
-            self.summary_writers[mode] = tf.summary.FileWriter(
-                self.get_summary_path(mode), _graph, flush_secs=cfg.reload_interval)
-
-        print("Writing summaries to {}.".format(self.path_for('summaries')))
-
-    def new_stage(self, stage_idx):
+    def start_stage(self, stage_idx):
         self.history.append(dict(stage_idx=stage_idx))
         self.stage_idx = stage_idx
+        self.summary_writers = {}
+
+    def end_stage(self, local_step):
+        self.dump_data(local_step)
+        for writer in self.summary_writers.values():
+            writer.close()
 
     def dump_data(self, local_step):
-        for mode in 'train off_policy val test'.split():
-            attr = mode + '_data'
-            data = getattr(self, attr)
+        for mode, data in self.data.items():
             if data:
                 path = self.get_data_path(mode, self.stage_idx, local_step)
 
                 with open(path, 'w') as f:
                     pd.DataFrame.from_records(data).to_csv(f, index=False)
 
-                setattr(self, attr, [])
+                self.data[mode] = []
 
     def record_values_for_stage(self, d=None, **kwargs):
         """ Record values for the current stage. """
@@ -763,11 +743,31 @@ class _TrainingLoopData(FrozenTrainingLoopData):
                     global_step=global_step,
                     stage_idx=stage_idx)
 
-                getattr(self, mode + "_data").append(record)
+                self.data[mode].append(record)
 
-    def add_summaries(self, n_experiences_global, **summaries):
-        for mode, summary in summaries.items():
-            self.summary_writers[mode].add_summary(summary, n_experiences_global)
+    def store_step_data_and_summaries(self, stage_idx, local_step, global_step, n_global_experiences, **data):
+        for mode, (record, summary) in data.items():
+            if record and cfg.store_step_data:
+                record = record.copy()
+                record.update(
+                    local_step=local_step,
+                    global_step=global_step,
+                    stage_idx=stage_idx)
+
+                self.data[mode].append(record)
+
+            if summary:
+                self.add_summary(mode, n_global_experiences, summary)
+
+    def _get_summary_writer(self, mode):
+        if mode not in self.summary_writers:
+            self.summary_writers[mode] = tf.summary.FileWriter(
+                self.get_summary_path(mode), flush_secs=cfg.reload_interval)
+        return self.summary_writers[mode]
+
+    def add_summary(self, mode, n_global_experiences, summary):
+        writer = self._get_summary_writer(mode)
+        writer.add_summary(summary, n_global_experiences)
 
     @property
     def current_stage_record(self):
@@ -815,15 +815,14 @@ class _TrainingLoopData(FrozenTrainingLoopData):
             for k, v in sorted(record.items()):
                 s += "* {}: {}\n".format(k, v)
 
-            s += "* new cfg values: {}\n".format(pformat(self.curriculum[stage_idx]))
+            s += "* new cfg values:\n{}\n".format(pformat(self.curriculum[stage_idx]))
 
-        for mode in 'train off_policy val test'.split():
-            data = getattr(self, mode + '_data')
+        for mode, data in self.data.items():
             if data:
                 record = data[-1]
 
                 if record:
-                    s += "\n-- {} data -- \n".format(mode)
+                    s += "\n-- {} -- \n".format(mode)
                     for k, v in sorted(record.items()):
                         s += "* {}: {}\n".format(k, v)
 

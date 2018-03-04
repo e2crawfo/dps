@@ -20,6 +20,10 @@ else:
     from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 
 
+def tf_normal_kl(q_mean, q_std, p_mean, p_std):
+    return tf.log(p_std / q_std) + (q_std**2 + (q_mean - p_mean)**2) / (2 * p_std**2) - 0.5
+
+
 def resize_image_with_crop_or_pad(img, target_height, target_width):
     if tf.__version__ >= "1.1":
         return tf.image.resize_image_with_crop_or_pad(img, target_height, target_width)
@@ -841,10 +845,6 @@ def build_scheduled_value(schedule, name=None, global_step=None, dtype=None):
 
     """
     op_name = name + "_schedule" if name else None
-    try:
-        schedule = "Constant({})".format(float(schedule))
-    except (TypeError, ValueError):
-        pass
 
     schedule = eval_schedule(schedule)
     assert isinstance(schedule, Schedule), "{} is not a schedule instance.".format(schedule)
@@ -912,9 +912,10 @@ def masked_mean(array, mask, axis=None, keep_dims=False):
 
 
 def build_gradient_train_op(
-        loss, tvars, optimizer_spec, lr_schedule,
-        max_grad_norm=None, noise_schedule=None, global_step=None):
+        loss, tvars, optimizer_spec, lr_schedule, max_grad_norm=None,
+        noise_schedule=None, global_step=None, summary_prefix=None):
     """ By default, `global_step` is None, so the global step is not incremented. """
+
     pure_gradients = tf.gradients(loss, tvars)
 
     clipped_gradients = pure_gradients
@@ -934,9 +935,11 @@ def build_gradient_train_op(
 
     train_op = optimizer.apply_gradients(grads_and_vars, global_step=global_step)
 
+    pre = summary_prefix + "_" if summary_prefix else ""
+
     summaries = [
-        tf.summary.scalar('grad_norm_pure', tf.global_norm(pure_gradients)),
-        tf.summary.scalar('grad_norm_processed', tf.global_norm(noisy_gradients)),
+        tf.summary.scalar(pre + 'grad_norm_pure', tf.global_norm(pure_gradients)),
+        tf.summary.scalar(pre + 'grad_norm_processed', tf.global_norm(noisy_gradients)),
     ]
 
     return train_op, summaries

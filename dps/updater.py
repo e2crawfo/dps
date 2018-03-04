@@ -9,6 +9,8 @@ from dps.utils.tf import (
 
 
 class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
+    eval_modes = "val test".split()
+
     def __init__(self, env, scope=None, **kwargs):
         self.scope = scope
         self.env = env
@@ -23,13 +25,17 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
     def n_updates(self):
         return self._n_updates
 
+    @property
+    def completion(self):
+        return self.env.completion
+
     def build_graph(self):
         with tf.name_scope(self.scope or self.__class__.__name__) as scope:
             self._scope = scope
 
             self._build_graph()
 
-            self.scheduled_value_summaries_op = tf.summary.merge(scheduled_value_summaries())
+            self.scheduled_value_summary_op = tf.summary.merge(scheduled_value_summaries())
 
             global_step = tf.train.get_or_create_global_step()
             self.inc_global_step_op = tf.assign_add(global_step, 1)
@@ -47,34 +53,35 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
 
         sess = tf.get_default_session()
 
-        scheduled_value_summaries = sess.run(self.scheduled_value_summaries_op)
+        scheduled_value_summary = sess.run(self.scheduled_value_summary_op)
 
-        train, off_policy, train_record, off_policy_record = self._update(batch_size, collect_summaries)
+        update_result = self._update(batch_size, collect_summaries)
+        update_result = {mode: (record, summary + scheduled_value_summary)
+                         for mode, (record, summary) in update_result.items()}
+
         sess.run(self.inc_global_step_op)
 
-        return (
-            train + scheduled_value_summaries,
-            off_policy + scheduled_value_summaries,
-            train_record,
-            off_policy_record
-        )
+        return update_result
 
     @abc.abstractmethod
     def _update(self, batch_size, collect_summaries=None):
         raise Exception("NotImplemented")
 
-    def evaluate(self, batch_size, mode):
-        summaries, record = self._evaluate(batch_size, mode)
+    def evaluate(self, batch_size):
+        results = {}
+        for mode in self.eval_modes:
+            record, summary = self._evaluate(batch_size, mode)
 
-        scheduled_value_summaries = \
-            tf.get_default_session().run(self.scheduled_value_summaries_op)
-        summaries += scheduled_value_summaries
+            sess = tf.get_default_session()
+            scheduled_value_summary = sess.run(self.scheduled_value_summary_op)
+            summary += scheduled_value_summary
+            results[mode] = record, summary
 
-        return summaries, record
+        return results
 
     @abc.abstractmethod
     def _evaluate(self, batch_size, mode):
-        assert mode in 'val test'.split()
+        assert mode in self.eval_modes
         raise Exception("NotImplemented")
 
     def trainable_variables(self, for_opt):
@@ -136,33 +143,33 @@ class DifferentiableUpdater(Updater):
         if self.l2_weight is not None:
             self.loss += self.l2_weight * sum(tf.nn.l2_loss(v) for v in tvars if 'weights' in v.name)
 
-        self.train_op, train_summaries = build_gradient_train_op(
+        self.train_op, train_summary = build_gradient_train_op(
             self.loss, tvars, self.optimizer_spec, self.lr_schedule,
             self.max_grad_norm, self.noise_schedule)
 
         self.summary_op = tf.summary.merge(
             [tf.summary.scalar(name, t) for name, t in self.recorded_tensors.items()] +
-            train_summaries)
+            train_summary)
 
     def _update(self, batch_size, collect_summaries):
         feed_dict = self.env.make_feed_dict(batch_size, 'train', False)
 
-        train_summaries = b''
+        summary = b''
 
         sess = tf.get_default_session()
         if collect_summaries:
-            train_summaries, _, record = sess.run(
-                [self.summary_op, self.train_op, self.recorded_tensors], feed_dict=feed_dict)
+            _, record, summary = sess.run(
+                [self.train_op, self.recorded_tensors, self.summary_op], feed_dict=feed_dict)
         else:
-            _, record = sess.run([self.train_op, self.recorded_tensors], feed_dict=feed_dict)
+            _, record = sess.run(
+                [self.train_op, self.recorded_tensors], feed_dict=feed_dict)
 
-        return train_summaries, b'', record, {}
+        return {'train': (record, summary)}
 
     def _evaluate(self, batch_size, mode):
         feed_dict = self.env.make_feed_dict(None, mode, True)
 
         sess = tf.get_default_session()
-        summaries, record = sess.run(
-            [self.summary_op, self.recorded_tensors], feed_dict=feed_dict)
+        result = sess.run([self.recorded_tensors, self.summary_op], feed_dict=feed_dict)
 
-        return summaries, record
+        return result
