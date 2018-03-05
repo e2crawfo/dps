@@ -11,6 +11,13 @@ from dps.utils.tf import (
     tf_normal_kl,
 )
 
+tf_flatten = tf.layers.flatten
+
+
+def tf_mean_sum(t):
+    """ Average over batch dimension, sum over all other dimensions """
+    return tf.reduce_mean(tf.reduce_sum(tf_flatten(t), axis=-1))
+
 
 class Env(object):
     pass
@@ -548,8 +555,9 @@ class YoloRL_Updater(Updater):
         self.reward_input['object_decoder_output'] = self.object_decoder_output
 
     def build_xent_loss(self, logits, targets):
-        targets = tf.reshape(targets, (self.batch_size, -1))
-        logits = tf.reshape(logits, (self.batch_size, -1))
+        targets = tf_flatten(targets)
+        logits = tf_flatten(logits)
+
         return tf.reduce_sum(
             tf.nn.sigmoid_cross_entropy_with_logits(labels=targets, logits=logits),
             keep_dims=True, axis=1
@@ -558,18 +566,18 @@ class YoloRL_Updater(Updater):
     def build_2norm_loss(self, logits, targets):
         actions = tf.sigmoid(logits)
 
-        targets = tf.reshape(targets, (self.batch_size, -1))
-        actions = tf.reshape(actions, (self.batch_size, -1))
+        targets = tf_flatten(targets)
+        actions = tf_flatten(actions)
 
-        return tf.reduce_mean((actions - targets)**2, keep_dims=True, axis=1)
+        return tf.sqrt(tf.reduce_sum((actions - targets)**2, keep_dims=True, axis=1))
 
     def build_1norm_loss(self, logits, targets):
         actions = tf.sigmoid(logits)
 
-        targets = tf.reshape(targets, (self.batch_size, -1))
-        actions = tf.reshape(actions, (self.batch_size, -1))
+        targets = tf_flatten(targets)
+        actions = tf_flatten(actions)
 
-        return tf.reduce_mean(tf.abs(actions - targets), keep_dims=True, axis=1)
+        return tf.reduce_sum(tf.abs(actions - targets), keep_dims=True, axis=1)
 
     def _build_graph(self):
         self._build_placeholders()
@@ -606,38 +614,31 @@ class YoloRL_Updater(Updater):
         self.reward_input.update(reconstruction_loss=getattr(self, 'build_' + loss_key)(self.output_logits, self.inp))
 
         # --- kl ---
-
         cell_yx_target_mean = 0.5
         cell_yx_target_std = 0.1
         cell_yx_kl = tf_normal_kl(
             self.cell_yx_dist['mean'], self.cell_yx_dist['std'],
             cell_yx_target_mean, cell_yx_target_std)
-        cell_yx_kl = tf.reduce_sum(tf.reshape(cell_yx_kl, (self.batch_size, -1)))
-        recorded_tensors['cell_yx_kl'] = tf.reduce_mean(cell_yx_kl)
+        recorded_tensors['cell_yx_kl'] = tf_mean_sum(cell_yx_kl)
 
         hw_target_mean = 1.0
         hw_target_std = 0.1
         hw_kl = tf_normal_kl(
             self.hw_dist['mean'], self.hw_dist['std'],
             hw_target_mean, hw_target_std)
-        hw_kl = tf.reduce_sum(tf.reshape(hw_kl, (self.batch_size, -1)))
-        recorded_tensors['hw_kl'] = tf.reduce_mean(hw_kl)
+        recorded_tensors['hw_kl'] = tf_mean_sum(hw_kl)
 
         attr_target_mean = 0.0
         attr_target_std = 1.0
         attr_kl = tf_normal_kl(
             self.attr_dist['mean'], self.attr_dist['std'],
             attr_target_mean, attr_target_std)
-        attr_kl = tf.reduce_sum(tf.reshape(attr_kl, (self.batch_size, -1)))
-        recorded_tensors['attr_kl'] = tf.reduce_mean(attr_kl)
+        recorded_tensors['attr_kl'] = tf_mean_sum(attr_kl)
 
         # --- entropy ---
 
-        obj_entropy = tf.reduce_sum(tf.reshape(self.entropy['obj'], (self.batch_size, -1)))
-        recorded_tensors['obj_entropy'] = tf.reduce_mean(obj_entropy)
-
-        cls_entropy = tf.reduce_sum(tf.reshape(self.entropy['cls'], (self.batch_size, -1)))
-        recorded_tensors['cls_entropy'] = tf.reduce_mean(cls_entropy)
+        recorded_tensors['obj_entropy'] = tf_mean_sum(self.entropy['obj'])
+        recorded_tensors['cls_entropy'] = tf_mean_sum(self.entropy['cls'])
 
         # --- recorded values ---
 
@@ -670,11 +671,11 @@ class YoloRL_Updater(Updater):
 
         recorded_tensors['diff_loss'] = recorded_tensors['reconstruction_loss']
         if self.obj_sparsity:
-            recorded_tensors['obj_sparsity_loss'] = tf.reduce_sum(self.program_fields['obj']) / self.batch_size
+            recorded_tensors['obj_sparsity_loss'] = tf_mean_sum(self.program_fields['obj'])
             recorded_tensors['diff_loss'] += self.obj_sparsity * recorded_tensors['obj_sparsity_loss']
 
         if self.cls_sparsity:
-            recorded_tensors['cls_sparsity_loss'] = tf.reduce_sum(self.program_fields['cls']) / self.batch_size
+            recorded_tensors['cls_sparsity_loss'] = tf_mean_sum(self.program_fields['cls'])
             recorded_tensors['diff_loss'] += self.cls_sparsity * recorded_tensors['_cls_sparsity_loss']
 
         if self.maximize_entropy:
@@ -894,11 +895,11 @@ diff_mode = dict(
 
 rl_mode = dict(
     rl_weight=1.0, eval_mode="rl_val",
-    stopping_criteria="reconstruction_loss,min", patience=50000)
+    stopping_criteria="reconstruction_loss,min")
 
 combined_mode = dict(
     rl_weight=1.0, diff_weight=1.0, eval_mode="rl_val",
-    stopping_criteria="reconstruction_loss,min", patience=50000)
+    stopping_criteria="reconstruction_loss,min")
 
 config = Config(
     log_name="yolo_rl",
@@ -952,7 +953,7 @@ config = Config(
     maximize_entropy=False,
 
     curriculum=[
-        combined_mode,
+        # combined_mode,
         rl_mode,
     ],
 
@@ -964,7 +965,7 @@ config = Config(
     eval_step=100,
     display_step=1000,
     max_steps=1e7,
-    patience=10000,
+    patience=0,
     optimizer_spec="adam",
     use_gpu=True,
     gpu_allow_growth=True,
