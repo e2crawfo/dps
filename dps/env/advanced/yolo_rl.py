@@ -922,7 +922,8 @@ config = Config(
 
     # model params
     object_shape=(14, 14),
-    anchor_boxes=[[14, 14]],
+    anchor_boxes=[[28, 28]],
+    # anchor_boxes=[[14, 14]],
     H=1,
     W=1,
     C=1,

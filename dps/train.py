@@ -17,7 +17,7 @@ import dps
 from dps import cfg
 from dps.utils import (
     gen_seed, time_limit, memory_usage, ExperimentStore, ExperimentDirectory,
-    memory_limit, du, Config, ClearConfig, redirect_stream, NumpySeed
+    memory_limit, du, Config, ClearConfig, redirect_stream, NumpySeed, make_symlink
 )
 from dps.utils.tf import (
     restart_tensorboard, uninitialized_variables_initializer, trainable_variables
@@ -208,6 +208,8 @@ class TrainingLoop(object):
             exp_dir = es.new_experiment(
                 self.exp_name, cfg.seed, add_date=1, force_fresh=1, update_latest=cfg.update_latest)
             self.exp_dir = exp_dir
+
+            make_symlink(exp_dir.path, os.path.join(os.getenv("HOME"), "dps-latest"))
 
             self.data = _TrainingLoopData(exp_dir)
             self.data.setup()
