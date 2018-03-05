@@ -366,7 +366,6 @@ class YoloRL_Updater(Updater):
 
         obj_param_depth = B * 1
 
-        obj_input = tf.concat([features, _program], axis=-1)
         obj_output = self.obj_network(obj_input, (H, W, obj_param_depth + self.n_passthrough_features), is_training)
 
         features = obj_output[..., obj_param_depth:]
@@ -435,8 +434,6 @@ class YoloRL_Updater(Updater):
             attr_input = tf.concat([features, _program], axis=-1)
 
         n_attr_params = self.n_attr_params
-
-        attr_input = tf.concat([features, _program], axis=-1)
         attr_output = self.attr_network(attr_input, (H, W, B * n_attr_params * A), is_training)
 
         attr_params = tf.reshape(attr_output, (-1, H, W, B, n_attr_params * A))
@@ -449,7 +446,7 @@ class YoloRL_Updater(Updater):
             _attr_std = build_scheduled_value(self.attr_std)
             attr_std = _attr_std * tf.ones_like(attr)
 
-        attr_noise = tf.random_normal(tf.shape(attr_std), 0.0, 1.0)
+        attr_noise = tf.random_normal(tf.shape(attr_std))
         noisy_attr = attr + attr_noise * attr_std * self.float_is_training
 
         program = tf.concat([program, noisy_attr], axis=-1)
@@ -611,7 +608,7 @@ class YoloRL_Updater(Updater):
         # --- kl ---
 
         cell_yx_target_mean = 0.5
-        cell_yx_target_std = 1.0
+        cell_yx_target_std = 0.1
         cell_yx_kl = tf_normal_kl(
             self.cell_yx_dist['mean'], self.cell_yx_dist['std'],
             cell_yx_target_mean, cell_yx_target_std)
@@ -948,16 +945,14 @@ config = Config(
     cls_sparsity=0.0,  # We want each of the class distributions to be as sparse as possible
 
     # VAE
-    box_std=-1,
+    box_std=0.1,
     attr_std=0.0,
-    minimize_kl=True,
-    maximize_entropy=True,
+    minimize_kl=False,
+    maximize_entropy=False,
 
     curriculum=[
         combined_mode,
         rl_mode,
-        # dict(position_noise_std=0.0, size_noise_std=0.0, **diff_mode),
-        # dict(position_noise_std=0.0, size_noise_std=0.0, **rl_mode),
     ],
 
     # training params

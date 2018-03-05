@@ -442,6 +442,8 @@ def redirect_stream(stream, filename, mode='w', tee=False, **kwargs):
 
         try:
             yield
+        except BaseException:
+            traceback.print_exc()
         finally:
             setattr(sys, stream, old)
 

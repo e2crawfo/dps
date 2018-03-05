@@ -51,9 +51,10 @@ class EarlyStopHook(object):
             self._best_step = step
             self._best_record = record.copy()
 
-        self._early_stopped = (
-            self._early_stopped or
-            (step - self._best_step > self.patience))
+        if self.patience > 0:
+            self._early_stopped = (
+                self._early_stopped or
+                (step - self._best_step > self.patience))
         return new_best, self._early_stopped
 
     @property
