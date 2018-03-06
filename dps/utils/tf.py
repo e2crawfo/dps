@@ -10,7 +10,7 @@ from tensorflow.python.framework import ops
 from tensorflow.contrib.slim import fully_connected
 
 import dps
-from dps.utils.base import Schedule, _bool, popleft, eval_schedule, Parameterized
+from dps.utils.base import _bool, popleft, Parameterized
 from dps.utils.inspect_checkpoint import get_tensors_from_checkpoint_file  # noqa: F401
 
 
@@ -849,19 +849,186 @@ def build_scheduled_value(schedule, name=None, global_step=None, dtype=None):
     schedule = eval_schedule(schedule)
     assert isinstance(schedule, Schedule), "{} is not a schedule instance.".format(schedule)
 
-    signal = schedule.build(np.arange(dps.cfg.max_steps+1).astype('f'))
     global_step = tf.train.get_or_create_global_step() if global_step is None else global_step
-
-    scheduled_value = tf.cast(tf.gather(signal, global_step), tf.float32)
+    scheduled_value = schedule.build(global_step)
 
     if dtype is not None:
         dtype = tf.as_dtype(np.dtype(dtype))
-        scheduled_value = tf.cast(scheduled_value, dtype, name=op_name+"_cast")
+        scheduled_value = tf.cast(scheduled_value, dtype, name=op_name)
+    else:
+        scheduled_value = tf.cast(scheduled_value, tf.float32, name=op_name)
 
     if name is not None:
         tf.summary.scalar(name, scheduled_value, collections=['scheduled_value_summaries'])
 
     return scheduled_value
+
+
+def eval_schedule(schedule):
+    try:
+        schedule = "Constant({})".format(float(schedule))
+    except (TypeError, ValueError):
+        pass
+
+    if isinstance(schedule, str):
+        schedule = eval(schedule)
+
+    return schedule
+
+
+class Schedule(object):
+    pass
+
+
+class RepeatSchedule(Schedule):
+    def __init__(self, schedule, period):
+        self.schedule = schedule
+        self.period = period
+
+    def build(self, t):
+        return self.schedule.build(t % self.period)
+
+
+class Exponential(Schedule):
+    def __init__(self, start, end, decay_steps, decay_rate, staircase=False):
+        self.start = start
+        self.end = end
+        self.decay_steps = decay_steps
+        self.decay_rate = decay_rate
+        self.staircase = staircase
+
+        assert isinstance(self.decay_steps, int)
+        assert self.decay_steps > 1
+        assert 0 < self.decay_rate < 1
+
+    def build(self, t):
+        if self.staircase:
+            t //= self.decay_steps
+        else:
+            t /= self.decay_steps
+        return (self.start - self.end) * (self.decay_rate ** t) + self.end
+
+
+class Exp(Exponential):
+    pass
+
+
+class Polynomial(Schedule):
+    def __init__(self, start, end, decay_steps, power=1.0):
+        self.start = start
+        self.end = end
+        self.decay_steps = decay_steps
+        self.power = power
+
+        assert isinstance(self.decay_steps, int)
+        assert self.decay_steps > 1
+        assert power > 0
+
+    def build(self, t):
+        t = tf.minimum(self.decay_steps, t)
+        return (self.start - self.end) * ((1 - t / self.decay_steps) ** self.power) + self.end
+
+
+class Poly(Polynomial):
+    pass
+
+
+class Reciprocal(Schedule):
+    def __init__(self, start, end, decay_steps, gamma=1.0, staircase=False):
+        self.start = start
+        self.end = end
+        self.decay_steps = decay_steps
+        self.gamma = gamma
+        self.staircase = staircase
+
+        assert isinstance(self.decay_steps, int)
+        assert self.decay_steps > 1
+        assert self.gamma > 0
+
+    def build(self, t):
+        if self.staircase:
+            t //= self.decay_steps
+        else:
+            t /= self.decay_steps
+        return ((self.start - self.end) / (1 + t))**self.gamma + self.end
+
+
+class Constant(Schedule):
+    def __init__(self, value):
+        self.value = value
+
+    def build(self, t):
+        return tf.constant(self.value)
+
+
+# class MixtureSchedule(Schedule):
+#     def __init__(self, components, reset_n_steps, shared_clock=False, p=None, name=None):
+#         self.components = components
+#         self.n_components = len(components)
+#         self.reset_n_steps = reset_n_steps
+#         self.shared_clock = shared_clock
+#         self.p = p
+#
+#     def build(self, t):
+#         t = t.copy()
+#         n_periods = int(np.ceil(len(t) / self.reset_n_steps))
+#         offsets = [0] * self.n_components
+#         signal = []
+#         for i in range(n_periods):
+#             if len(signal) >= len(t):
+#                 break
+#             selected = np.random.choice(range(self.n_components), p=self.p)
+#             if self.shared_clock:
+#                 start = offsets[0]
+#             else:
+#                 start = offsets[selected]
+#
+#             t_ = t[start:start+self.reset_n_steps]
+#             _signal = self.components[selected].build(t_)
+#             signal.extend(_signal)
+#
+#             if self.shared_clock:
+#                 offsets[0] += self.reset_n_steps
+#             else:
+#                 offsets[selected] += self.reset_n_steps
+#         signal = np.array(signal).reshape(-1)[:len(t)]
+#         return signal
+#
+#
+# class ChainSchedule(Schedule):
+#     def __init__(self, components, component_n_steps, shared_clock=False):
+#         self.components = components
+#         self.n_components = len(components)
+#         self.component_n_steps = component_n_steps
+#         self.shared_clock = shared_clock
+#
+#     def build(self, t):
+#         try:
+#             int(self.component_n_steps)
+#             n_steps = [self.component_n_steps] * self.n_components
+#         except Exception:
+#             n_steps = self.component_n_steps
+#
+#         signal = []
+#         offsets = [0] * self.n_components
+#         for i in cycle(range(self.n_components)):
+#             if len(signal) >= len(t):
+#                 break
+#             if self.shared_clock:
+#                 start = offsets[0]
+#             else:
+#                 start = offsets[i]
+#
+#             t_ = t[start: start+n_steps[i]]
+#             _signal = self.components[i].build(t_).astype('f')
+#             signal.extend(list(_signal))
+#
+#             if self.shared_clock:
+#                 offsets[0] += n_steps[i]
+#             else:
+#                 offsets[i] += n_steps[i]
+#
+#         return np.array(signal).reshape(-1)[:len(t)]
 
 
 def build_optimizer(spec, learning_rate):
