@@ -416,9 +416,7 @@ class TrainingLoop(object):
         self.reason = ""
 
         # Parse stopping criteria
-        stopping_criteria = cfg.get("stopping_criteria", "")
-        if not stopping_criteria:
-            stopping_criteria = updater.stopping_criteria
+        stopping_criteria = cfg.get("stopping_criteria", updater.stopping_criteria)
 
         if isinstance(stopping_criteria, str):
             stopping_criteria = stopping_criteria.split(",")

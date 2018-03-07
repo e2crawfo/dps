@@ -24,6 +24,11 @@ def tf_normal_kl(q_mean, q_std, p_mean, p_std):
     return tf.log(p_std / q_std) + (q_std**2 + (q_mean - p_mean)**2) / (2 * p_std**2) - 0.5
 
 
+def tf_mean_sum(t):
+    """ Average over batch dimension, sum over all other dimensions """
+    return tf.reduce_mean(tf.reduce_sum(tf.layers.flatten(t), axis=-1))
+
+
 def resize_image_with_crop_or_pad(img, target_height, target_width):
     if tf.__version__ >= "1.1":
         return tf.image.resize_image_with_crop_or_pad(img, target_height, target_width)

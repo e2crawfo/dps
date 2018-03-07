@@ -32,10 +32,12 @@ def get_module_from_spec(spec):
 def parse_env_alg(env, alg=None):
     env_module_specs = get_module_specs(env_pkg_advanced, env_pkg_basic)
 
-    env_spec = None
-    if env in env_module_specs:
-        env_spec = env_module_specs[env]
+    if "." in env:
+        env_file, env_suffix = env.split('.')
+    else:
+        env_file, env_suffix = env, ""
 
+    env_spec = env_module_specs.get(env_file, None)
     if env_spec is None:
         candidates = [e for e in env_module_specs.keys() if e.startswith(env)]
         assert len(candidates) == 1, \
@@ -43,7 +45,10 @@ def parse_env_alg(env, alg=None):
         env_spec = env_module_specs[candidates[0]]
 
     env_module = get_module_from_spec(env_spec)
-    env_config = env_module.config
+    if env_suffix:
+        env_config = getattr(env_module, "{}_config".format(env_suffix))
+    else:
+        env_config = env_module.config
 
     if alg is None:
         alg_config = {}

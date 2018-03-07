@@ -12,7 +12,6 @@ import subprocess
 import copy
 import datetime
 import psutil
-from itertools import cycle, islice
 import resource
 import sys
 import shutil
@@ -430,22 +429,24 @@ class Tee(object):
 
 
 @contextmanager
-def redirect_stream(stream, filename, mode='w', tee=False, **kwargs):
-    assert stream in ['stdout', 'stderr']
+def redirect_stream(stream_name, filename, mode='w', tee=False, **kwargs):
+    assert stream_name in ['stdout', 'stderr']
     with open(str(filename), mode=mode, **kwargs) as f:
-        old = getattr(sys, stream)
+        old = getattr(sys, stream_name)
 
         new = f
         if tee:
             new = Tee(f, old)
-        setattr(sys, stream, new)
+        setattr(sys, stream_name, new)
 
         try:
             yield
         except BaseException:
-            traceback.print_exc()
+            exc = traceback.format_exc()
+            f.write(exc)
+            raise
         finally:
-            setattr(sys, stream, old)
+            setattr(sys, stream_name, old)
 
 
 def make_filename(main_title, directory='', config_dict=None, add_date=True,

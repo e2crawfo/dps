@@ -1,6 +1,6 @@
 try:
     import matplotlib
-    matplotlib.use("pdf")
+    # matplotlib.use("pdf")
 except ImportError:
     pass
 

@@ -35,9 +35,10 @@ class SupervisedDataset(Parameterized):
     def completion(self):
         return self.epochs_completed + self.index_in_epoch / self.n_examples
 
-    def _do_shuffle(self):
+    def _reset_data(self, shuffle):
         perm = np.arange(self.n_examples)
-        np.random.shuffle(perm)
+        if self.shuffle:
+            np.random.shuffle(perm)
         self._x = [self.x[i] for i in perm]
         self._y = [self.y[i] for i in perm]
 
@@ -57,8 +58,8 @@ class SupervisedDataset(Parameterized):
             batch_size = self.n_examples - start
 
         # Shuffle for the first epoch
-        if self._epochs_completed == 0 and start == 0 and self.shuffle:
-            self._do_shuffle()
+        if self._epochs_completed == 0 and start == 0:
+            self._reset_data(self.shuffle)
 
         if batch_size > self.n_examples:
             if advance:
@@ -75,9 +76,7 @@ class SupervisedDataset(Parameterized):
             x_rest_part = self._x[start:]
             y_rest_part = self._y[start:]
 
-            # Shuffle the data
-            if self.shuffle and advance:
-                self._do_shuffle()
+            self._reset_data(self.shuffle and advance)
 
             # Start next epoch
             end = batch_size - len(x_rest_part)
@@ -794,9 +793,10 @@ class AutoencodeDataset(Parameterized):
     def completion(self):
         return self.epochs_completed + self.index_in_epoch / self.n_examples
 
-    def _do_shuffle(self):
+    def _reset_data(self, shuffle):
         perm = np.arange(self.n_examples)
-        np.random.shuffle(perm)
+        if self.shuffle:
+            np.random.shuffle(perm)
         self._x = [self.x[i] for i in perm]
 
     def post_process_batch(self, x):
@@ -820,8 +820,8 @@ class AutoencodeDataset(Parameterized):
             batch_size = self.n_examples - start
 
         # Shuffle for the first epoch
-        if self._epochs_completed == 0 and start == 0 and self.shuffle:
-            self._do_shuffle()
+        if self._epochs_completed == 0 and start == 0:
+            self._reset_data(self.shuffle)
 
         if batch_size > self.n_examples:
             if advance:
@@ -836,9 +836,7 @@ class AutoencodeDataset(Parameterized):
             # Get the remaining examples in this epoch
             x_rest_part = self._x[start:]
 
-            # Shuffle the data
-            if self.shuffle and advance:
-                self._do_shuffle()
+            self._reset_data(self.shuffle and advance)
 
             # Start next epoch
             end = batch_size - len(x_rest_part)
