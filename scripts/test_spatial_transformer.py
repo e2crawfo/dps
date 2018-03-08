@@ -22,7 +22,7 @@ A = [a, b, tx],
     [c, d, ty]
 """
 
-boxes = np.array([[0.5, 0., 0.5, 0.0, 0.5, -.5]], dtype='f')
+boxes = np.array([[.5, 0, .5, 0, .5, -.5]], dtype='f')
 A = boxes.reshape(2, 3)
 
 # Top left, top right, bottom left bottom right
@@ -38,10 +38,13 @@ bottom = image_corners[1, 1]
 width = right - left
 height = bottom - top
 
+boxes = boxes[:, [0, 2, 4, 5]]
 boxes = np.tile(boxes, (n_examples, 1))
 boxes = tf.constant(boxes, tf.float32)
 
-warper = snt.AffineGridWarper(image_shape[:2], crop_shape[:2])
+transform_constraints = snt.AffineWarpConstraints.no_shear_2d()
+
+warper = snt.AffineGridWarper(image_shape[:2], crop_shape[:2], transform_constraints)
 grid_coords = warper(boxes)
 output = tf.contrib.resampler.resampler(_train, grid_coords)
 

@@ -39,7 +39,7 @@ def parse_env_alg(env, alg=None):
 
     env_spec = env_module_specs.get(env_file, None)
     if env_spec is None:
-        candidates = [e for e in env_module_specs.keys() if e.startswith(env)]
+        candidates = [e for e in env_module_specs.keys() if e.startswith(env_file)]
         assert len(candidates) == 1, \
             "Ambiguity in env selection, possibilities are: {}.".format(candidates)
         env_spec = env_module_specs[candidates[0]]

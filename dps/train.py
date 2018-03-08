@@ -16,7 +16,7 @@ from collections import defaultdict
 import dps
 from dps import cfg
 from dps.utils import (
-    gen_seed, time_limit, memory_usage, ExperimentStore, ExperimentDirectory,
+    gen_seed, time_limit, memory_usage, ExperimentStore, ExperimentDirectory, edit_text,
     memory_limit, du, Config, ClearConfig, redirect_stream, NumpySeed, make_symlink
 )
 from dps.utils.tf import (
@@ -209,7 +209,7 @@ class TrainingLoop(object):
                 self.exp_name, cfg.seed, add_date=1, force_fresh=1, update_latest=cfg.update_latest)
             self.exp_dir = exp_dir
 
-            make_symlink(exp_dir.path, os.path.join(os.getenv("HOME"), "dps-latest"))
+            make_symlink(exp_dir.path, os.path.join(os.getenv("HOME"), "dps-latest-experiment"))
 
             self.data = _TrainingLoopData(exp_dir)
             self.data.setup()
@@ -224,7 +224,16 @@ class TrainingLoop(object):
 
             print("\n\n" + "=" * 80)
             print("Starting training run (name={}) at {}, {} seconds after given "
-                  "start time.".format(cfg.name, datetime.datetime.now(), time.time() - self.start_time))
+                  "start time.".format(self.exp_name, datetime.datetime.now(), time.time() - self.start_time))
+
+            breaker = "-" * 40
+            header = "{}\nREADME.md - {}\n{}\n\n\n".format(breaker, os.path.basename(exp_dir.path), breaker)
+
+            readme = edit_text(
+                prefix="dps_readme_", editor="vim", initial_text=header)
+
+            with open(exp_dir.path_for('README.md'), 'w') as f:
+                f.write(readme)
 
             print("\nScratch directory for this training run is {}.".format(self.data.path))
             cfg.path = self.data.path
@@ -236,17 +245,18 @@ class TrainingLoop(object):
             self._run()
 
             print("Done training run (name={}) at {}, {} seconds after given "
-                  "start time.".format(cfg.name, datetime.datetime.now(), time.time() - self.start_time))
+                  "start time.".format(self.exp_name, datetime.datetime.now(), time.time() - self.start_time))
             print("=" * 80)
             print("\n\n")
 
-            return self.data.freeze(self.local_step)
+            return self.data.freeze()
 
     def _run(self):
         print(cfg.to_string())
 
         threshold_reached = True
         self.global_step = 0
+        self.n_global_experiences = 0
 
         for stage_idx, stage_config in enumerate(self.curriculum):
             print("\n" + "=" * 50)
@@ -385,11 +395,11 @@ class TrainingLoop(object):
                 # --------------- Optionally render performance of best hypothesis -------------------
 
                 if cfg.render_step > 0 and cfg.render_hook is not None:
+                    print("Rendering...")
                     cfg.render_hook(updater)
+                    print("Done rendering.")
 
                 # --------------- Finish up the stage -------------------
-
-                self.data.end_stage(self.local_step)
 
                 if cfg.start_tensorboard:
                     restart_tensorboard(cfg.log_dir, cfg.tbport, cfg.reload_interval)
@@ -402,6 +412,8 @@ class TrainingLoop(object):
                 print("Done stage {} at {}, {} seconds after given start time.".format(
                     stage_idx, datetime.datetime.now(), time.time() - self.start_time))
                 print("=" * 50)
+
+            self.data.end_stage(updater.n_updates)
 
         print(self.data.summarize())
 
@@ -469,7 +481,6 @@ class TrainingLoop(object):
 
     def _run_stage(self, stage_idx, updater, early_stop):
         """ Run main training loop for a stage of the curriculum. """
-        self.local_step = 0
         threshold_reached = False
         reason = None
         total_train_time = 0.0
@@ -478,24 +489,25 @@ class TrainingLoop(object):
 
         while True:
             # Check whether to keep training
-            if self.local_step >= cfg.max_steps:
-                reason = "Maximum number of steps reached"
+            if updater.n_updates >= cfg.max_steps:
+                reason = "Maximum number of steps-per-stage reached"
                 break
 
             if updater.n_experiences >= cfg.max_experiences:
-                reason = "Maximum number of experiences reached"
+                reason = "Maximum number of experiences-per-stage reached"
                 break
 
-            if self.local_step > 0 and self.local_step % cfg.checkpoint_step == 0:
-                self.data.dump_data(self.local_step)
+            local_step = updater.n_updates
+            global_step = self.global_step
 
-            evaluate = (self.local_step % cfg.eval_step) == 0
-            display = (self.local_step % cfg.display_step) == 0
+            if local_step > 0 and local_step % cfg.checkpoint_step == 0:
+                self.data.dump_data(local_step)
+
+            evaluate = (local_step % cfg.eval_step) == 0
+            display = (local_step % cfg.display_step) == 0
             render = (cfg.render_step > 0 and
-                      (self.local_step % cfg.render_step) == 0 and
-                      self.local_step > 0)
-
-            n_global_experiences = (self.global_step + 1) * cfg.batch_size
+                      (local_step % cfg.render_step) == 0 and
+                      local_step > 0)
 
             # --------------- Perform an update -------------------
 
@@ -504,12 +516,21 @@ class TrainingLoop(object):
             if cfg.do_train:
                 collect_summaries = evaluate and cfg.save_summaries
 
+                _old_n_experiences = updater.n_experiences
+
                 update_output = updater.update(
                     cfg.batch_size, collect_summaries=collect_summaries)
 
+                n_experiences_delta = updater.n_experiences - _old_n_experiences
+                self.n_global_experiences += n_experiences_delta
+
                 self.data.store_step_data_and_summaries(
-                    stage_idx, self.local_step, self.global_step, n_global_experiences,
+                    stage_idx, local_step, global_step,
+                    updater.n_experiences, self.n_global_experiences,
                     **update_output)
+
+            n_local_experiences = updater.n_experiences
+            n_global_experiences = self.n_global_experiences
 
             update_duration = time.time() - update_start_time
 
@@ -519,22 +540,22 @@ class TrainingLoop(object):
                 eval_results = updater.evaluate(cfg.n_val)
 
                 self.data.store_step_data_and_summaries(
-                    stage_idx, self.local_step, self.global_step, n_global_experiences,
+                    stage_idx, local_step, global_step,
+                    n_local_experiences, n_global_experiences,
                     **eval_results)
 
                 record = eval_results[cfg.eval_mode][0]
 
                 stopping_criteria = record[self.stopping_criteria_name]
-                new_best, stop = early_stop.check(
-                    stopping_criteria, self.local_step, record)
+                new_best, stop = early_stop.check(stopping_criteria, local_step, record)
 
                 if new_best:
-                    print("Storing new best on (local, global) step ({}, {}), "
-                          "constituting {} local experiences, "
+                    print("Storing new best on step (l={}, g={}), "
+                          "constituting (l={}, g={}) experiences, "
                           "with stopping criteria ({}) of {}.".format(
-                              self.local_step, self.global_step,
-                              updater.n_experiences, self.stopping_criteria_name,
-                              stopping_criteria))
+                              local_step, global_step,
+                              n_local_experiences, n_global_experiences,
+                              self.stopping_criteria_name, stopping_criteria))
 
                     best_path = self.data.path_for(
                         'weights/best_of_stage_{}'.format(stage_idx))
@@ -542,7 +563,7 @@ class TrainingLoop(object):
                     best_path = updater.save(tf.get_default_session(), best_path)
 
                     self.data.record_values_for_stage(
-                        best_path=best_path, best_global_step=self.global_step)
+                        best_path=best_path, best_global_step=global_step)
                     self.data.record_values_for_stage(
                         **{'best_' + k: v for k, v in early_stop.best.items()})
 
@@ -563,13 +584,13 @@ class TrainingLoop(object):
                 self.data.record_values_for_stage(
                     time_per_example=time_per_example,
                     time_per_batch=time_per_batch,
-                    n_steps=self.local_step,
-                    n_experiences=self.local_step*cfg.batch_size,
+                    n_steps=local_step,
+                    n_experiences=n_local_experiences,
                     epoch=updater.completion
                 )
 
                 if display:
-                    print(self.data.summarize(self.local_step, self.global_step))
+                    print(self.data.summarize(local_step, global_step, n_local_experiences, n_global_experiences))
                     print("\nPhysical memory use: "
                           "{}mb".format(memory_usage(physical=True)))
                     print("Virtual memory use: "
@@ -577,8 +598,8 @@ class TrainingLoop(object):
 
             # Run training hooks
             for hook in self.hooks:
-                run_hook = self.local_step == 0 and hook.initial
-                run_hook |= self.local_step > 0 and self.local_step % hook.n == 0
+                run_hook = local_step == 0 and hook.initial
+                run_hook |= local_step > 0 and local_step % hook.n == 0
 
                 if run_hook:
                     result = hook.step(updater)
@@ -590,7 +611,9 @@ class TrainingLoop(object):
 
             # Possibly render
             if render and cfg.render_hook is not None:
+                print("Rendering...")
                 cfg.render_hook(updater)
+                print("Done rendering.")
 
             # If `do_train` is False, we do no training and evaluate
             # exactly once, so only one iteration is required.
@@ -599,10 +622,9 @@ class TrainingLoop(object):
                 break
 
             total_train_time += update_duration
-            time_per_example = total_train_time / ((self.local_step+1) * cfg.batch_size)
-            time_per_batch = total_train_time / (self.local_step+1)
+            time_per_example = total_train_time / updater.n_experiences
+            time_per_batch = total_train_time / updater.n_updates
 
-            self.local_step += 1
             self.global_step += 1
 
         self.threshold_reached = threshold_reached
@@ -720,6 +742,9 @@ class _TrainingLoopData(FrozenTrainingLoopData):
         for writer in self.summary_writers.values():
             writer.close()
 
+    def dirty(self):
+        return any(bool(v) for v in self.data.values())
+
     def dump_data(self, local_step):
         for mode, data in self.data.items():
             if data:
@@ -736,23 +761,17 @@ class _TrainingLoopData(FrozenTrainingLoopData):
         self.current_stage_record.update(d)
         self.current_stage_record.update(kwargs)
 
-    def store_step_records(self, stage_idx, local_step, global_step, **step_records):
-        for mode, record in step_records.items():
-            if record:
-                record.update(
-                    local_step=local_step,
-                    global_step=global_step,
-                    stage_idx=stage_idx)
+    def store_step_data_and_summaries(
+            self, stage_idx, local_step, global_step, n_local_experiences, n_global_experiences, **data):
 
-                self.data[mode].append(record)
-
-    def store_step_data_and_summaries(self, stage_idx, local_step, global_step, n_global_experiences, **data):
         for mode, (record, summary) in data.items():
             if record and cfg.store_step_data:
                 record = record.copy()
                 record.update(
                     local_step=local_step,
                     global_step=global_step,
+                    n_local_experiences=n_local_experiences,
+                    n_global_experiences=n_global_experiences,
                     stage_idx=stage_idx)
 
                 self.data[mode].append(record)
@@ -774,15 +793,15 @@ class _TrainingLoopData(FrozenTrainingLoopData):
     def current_stage_record(self):
         return self.history[-1]
 
-    def _finalize(self, local_step):
+    def _finalize(self):
         """ Write all stored data to disk. """
-        self.dump_data(local_step)
+        assert not self.dirty(), "_TrainingLoopData is finalizing, but still contains data that needs to be dumped."
 
         with open(self.path_for('history.pkl'), 'wb') as f:
             dill.dump(self.history, f, protocol=dill.HIGHEST_PROTOCOL, recurse=False)
 
-    def freeze(self, local_step):
-        self._finalize(local_step)
+    def freeze(self):
+        self._finalize()
         return FrozenTrainingLoopData(self.path)
 
     def summarize(self, *steps):
@@ -790,14 +809,14 @@ class _TrainingLoopData(FrozenTrainingLoopData):
 
         Parameters
         ----------
-        steps: pair of ints
-            local_step, global_step
+        steps: quadtuple of ints
+            local_step, global_step, local_experience, global_experiences
 
         """
         s = "\n"
         current_stage_only = bool(steps)
         if current_stage_only:
-            local_step, global_step = steps
+            local_step, global_step, n_local_experiences, n_global_experiences = steps
             history = [self.current_stage_record]
         else:
             s += "Stage-by-stage summary " + ">" * 30 + "\n"
@@ -807,7 +826,8 @@ class _TrainingLoopData(FrozenTrainingLoopData):
             stage_idx = record['stage_idx']
 
             if current_stage_only:
-                s += "\nStep(l: {}, g: {}, stage: {}): ".format(local_step, global_step, stage_idx)
+                s += "\nStage={}, Step(l={}, g={}), Experiences(l={}, g={}): ".format(
+                    stage_idx, local_step, global_step, n_local_experiences, n_global_experiences)
             else:
                 s += "\nStage {} ".format(stage_idx)
 

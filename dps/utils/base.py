@@ -383,7 +383,7 @@ class ExperimentDirectory(object):
             return f.read().split()[1]
 
 
-def edit_text(dir=None, prefix=None, editor="vim", initial_text=None):
+def edit_text(prefix=None, editor="vim", initial_text=None):
     if editor != "vim":
         raise Exception("NotImplemented")
 
@@ -398,7 +398,7 @@ def edit_text(dir=None, prefix=None, editor="vim", initial_text=None):
             with open(temp_file.name, 'w') as f:
                 f.write(initial_text)
 
-        subprocess.call(['vim', str(temp_file.name)])
+        subprocess.call(['vim', '+', str(temp_file.name)])
 
         with open(temp_file.name, 'r') as f:
             text = f.read()
@@ -960,7 +960,7 @@ class Config(dict, MutableMapping):
             key, value = new
             nested_key = key_prefix + sep + key
 
-            if isinstance(value, dict):
+            if isinstance(value, dict) and value:
                 stack.append(iter(value.items()))
                 key_prefix = nested_key
             else:
@@ -1086,7 +1086,7 @@ class Config(dict, MutableMapping):
 
     def copy(self, _d=None, **kwargs):
         """ Copy and update at the same time. """
-        new = copy.copy(self)
+        new = copy.deepcopy(self)
         if _d:
             new.update(_d)
         new.update(**kwargs)

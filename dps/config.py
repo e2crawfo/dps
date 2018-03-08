@@ -9,7 +9,7 @@ def get_experiment_name():
     name = []
 
     try:
-        name.append('name={}'.format(cfg.name))
+        name.append('name={}'.format(cfg.log_name))
     except Exception:
         pass
 
@@ -17,7 +17,7 @@ def get_experiment_name():
 
 
 DEFAULT_CONFIG = Config(
-    name="Default",
+    log_name="Default",
     seed=-1,
 
     curriculum=[{}],
