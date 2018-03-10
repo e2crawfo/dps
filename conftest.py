@@ -20,6 +20,12 @@ def pytest_collection_modifyitems(config, items):
             if "slow" in item.keywords:
                 item.add_marker(skip_slow)
 
+    elif config.getoption("--skip-fast"):
+        skip_fast = pytest.mark.skip(reason="Test is not marked slow and --skip-fast was supplied.")
+        for item in items:
+            if "slow" not in item.keywords:
+                item.add_marker(skip_fast)
+
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_protocol(item, nextitem):
@@ -68,4 +74,6 @@ def test_config(request):
         show_plots=request.config.getoption("--show-plots"),
         save_plots=request.config.getoption("--save-plots"),
         render_step=0,
+        readme="testing",
+        make_latest_symlink=False,
     )

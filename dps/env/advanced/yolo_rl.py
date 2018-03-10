@@ -3,7 +3,7 @@ import numpy as np
 import sonnet as snt
 
 from dps import cfg
-from dps.datasets import AutoencodeDataset, EMNIST_ObjectDetection
+from dps.datasets import EMNIST_ObjectDetection
 from dps.updater import Updater
 from dps.utils import Config, Param
 from dps.utils.tf import (
@@ -44,11 +44,11 @@ class Backbone(FullyConvolutional):
 
         layout = [
             dict(filters=128, kernel_size=3, strides=2, padding="SAME"),
-            dict(filters=256, kernel_size=3, strides=2, padding="SAME"),
-            dict(filters=256, kernel_size=4, strides=1, padding="VALID"),
-            dict(filters=256, kernel_size=ksize, strides=1, padding="VALID"),
-            dict(filters=256, kernel_size=(H, W), strides=1, padding="SAME"),
-            dict(filters=256, kernel_size=(H, W), strides=1, padding="SAME"),
+            dict(filters=128, kernel_size=3, strides=2, padding="SAME"),
+            dict(filters=128, kernel_size=4, strides=1, padding="VALID"),
+            dict(filters=128, kernel_size=ksize, strides=1, padding="VALID"),
+            dict(filters=128, kernel_size=(H, W), strides=1, padding="SAME"),
+            dict(filters=128, kernel_size=(H, W), strides=1, padding="SAME"),
         ]
         if H == 7:
             layout = layout[:2] + layout[4:] + layout[-1:]
@@ -63,9 +63,7 @@ class NextStep(FullyConvolutional):
         kernel_size = (self.H, self.W)
         layout = [
             dict(filters=128, kernel_size=kernel_size, strides=1, padding="SAME"),
-            dict(filters=256, kernel_size=kernel_size, strides=1, padding="SAME"),
             dict(filters=128, kernel_size=kernel_size, strides=1, padding="SAME"),
-            dict(filters=256, kernel_size=kernel_size, strides=1, padding="SAME"),
         ]
         super(NextStep, self).__init__(layout, check_output_shape=True, **kwargs)
 
@@ -74,25 +72,37 @@ class ObjectDecoder(FullyConvolutional):
     def __init__(self, **kwargs):
         layout = [
             dict(filters=128, kernel_size=3, strides=1, padding="VALID", transpose=True),
-            dict(filters=256, kernel_size=5, strides=1, padding="VALID", transpose=True),
-            dict(filters=256, kernel_size=3, strides=2, padding="SAME", transpose=True),
+            dict(filters=128, kernel_size=5, strides=1, padding="VALID", transpose=True),
+            dict(filters=128, kernel_size=3, strides=2, padding="SAME", transpose=True),
             dict(filters=3, kernel_size=4, strides=1, padding="SAME", transpose=True),  # For 14 x 14 output
         ]
         super(ObjectDecoder, self).__init__(layout, check_output_shape=True, **kwargs)
 
 
-def reconstruction_cost(cost_input):
-    return cost_input['reconstruction_loss'][..., None, None, None]
+def reconstruction_cost(network_outputs):
+    return network_outputs['reconstruction_loss'][..., None, None, None]
 
 
-def prediction_map_cost(cost_input):
-    return cost_input['prediction_map_loss'][..., None, None, None]
+def area_cost(network_outputs):
+    return network_outputs['area_loss'][..., None, None, None]
 
 
-def obj_nonzero_cost(cost_input):
-    obj_samples = cost_input['obj']
+def specific_area_cost(network_outputs):
+    return network_outputs['program_fields']['obj'] * network_outputs['area']
+
+
+def obj_nonzero_cost(network_outputs):
+    obj_samples = network_outputs['program_fields']['obj']
     obj_samples = obj_samples.reshape(obj_samples.shape[0], -1)
     return np.count_nonzero(obj_samples, axis=1)[..., None, None, None, None].astype('f')
+
+
+def specific_obj_nonzero_cost(network_outputs):
+    return network_outputs['program_fields']['obj']
+
+
+def mAP_cost(network_outputs):
+    pass
 
 
 class YoloRL_Updater(Updater):
@@ -114,6 +124,7 @@ class YoloRL_Updater(Updater):
     cls_sparsity = Param()
 
     max_hw = Param()
+    min_hw = Param()
 
     box_std = Param()
     attr_std = Param()
@@ -131,7 +142,9 @@ class YoloRL_Updater(Updater):
 
     use_baseline = Param()
     obj_nonzero_weight = Param()
-    prediction_map_weight = Param()
+    area_weight = Param()
+    mAP_weight = Param()
+    use_specific_costs = Param()
 
     obj_exploration = Param()
     cls_exploration = Param()
@@ -159,10 +172,12 @@ class YoloRL_Updater(Updater):
         self.COST_funcs = {}
 
         if self.obj_nonzero_weight is not None:
+            cost_func = specific_obj_nonzero_cost if self.use_specific_costs else obj_nonzero_cost
             self.COST_funcs['obj_nonzero'] = (self.obj_nonzero_weight, obj_nonzero_cost, "obj")
 
-        if self.prediction_map_weight > 0.0:
-            self.COST_funcs['prediction_map'] = (self.prediction_map_weight, prediction_map_cost, "obj")
+        if self.area_weight > 0.0:
+            cost_func = specific_area_cost if self.use_specific_costs else area_cost
+            self.COST_funcs['area'] = (self.area_weight, cost_func, "obj")
 
         self.COST_funcs['reconstruction'] = (1, reconstruction_cost, "both")
 
@@ -193,11 +208,8 @@ class YoloRL_Updater(Updater):
         self.n_attr_params = 2 if self.predict_attr_std else 1
 
     def _make_datasets(self):
-        _train = EMNIST_ObjectDetection(n_examples=int(cfg.n_train)).x
-        train = AutoencodeDataset(_train, image=True, shuffle=True)
-
-        _val = EMNIST_ObjectDetection(n_examples=int(cfg.n_val)).x
-        val = AutoencodeDataset(_val, image=True, shuffle=False)
+        train = EMNIST_ObjectDetection(n_examples=int(cfg.n_train), shuffle=True)
+        val = EMNIST_ObjectDetection(n_examples=int(cfg.n_val), shuffle=True)
 
         self.datasets = dict(train=train, val=val)
 
@@ -261,15 +273,15 @@ class YoloRL_Updater(Updater):
 
     def _sample(self, feed_dict):
         sess = tf.get_default_session()
-        cost_input = sess.run(self.cost_input, feed_dict=feed_dict)
-        cost_input['shape'] = self.H, self.W, self.B
 
-        sample_feed_dict = {self.samples[k]: s for k, s in cost_input.items() if k in self.samples}
+        network_outputs = sess.run(self.network_outputs, feed_dict=feed_dict)
+        network_outputs['shape'] = self.H, self.W, self.B
+
+        sample_feed_dict = {self.samples[k]: v for k, v in network_outputs['samples'].items()}
 
         for name, (_, f, _) in self.COST_funcs.items():
-            sample_feed_dict[self.COST_components[name]] = self._process_cost(f(cost_input))
+            sample_feed_dict[self.COST_components[name]] = self._process_cost(f(network_outputs))
 
-        # sample_feed_dict contains entries for only self.samples and costs
         return sample_feed_dict
 
     def _evaluate(self, batch_size, mode):
@@ -299,7 +311,7 @@ class YoloRL_Updater(Updater):
         return record, summary
 
     def make_feed_dict(self, batch_size, mode, evaluate):
-        inp = self.datasets[mode].next_batch(batch_size=batch_size, advance=not evaluate)
+        inp, boxes = self.datasets[mode].next_batch(batch_size=batch_size, advance=not evaluate)
         return {self.inp: inp, self.is_training: not evaluate}
 
     def _build_placeholders(self):
@@ -381,8 +393,7 @@ class YoloRL_Updater(Updater):
 
         # ------
 
-        hw = float(self.max_hw) * tf.nn.sigmoid(tf.clip_by_value(hw_logits, -10., 10.))
-        # hw = 2 * tf.nn.sigmoid(tf.clip_by_value(hw_logits, -10., 10.))
+        hw = float(self.max_hw - self.min_hw) * tf.nn.sigmoid(tf.clip_by_value(hw_logits, -10., 10.)) + self.min_hw
 
         h, w = tf.split(hw, 2, axis=-1)
         if "h" in self.fix_values:
@@ -413,6 +424,8 @@ class YoloRL_Updater(Updater):
 
         yt = 2 * noisy_y - 1
         xt = 2 * noisy_x - 1
+
+        self.area = (ys * float(self.image_height)) * (xs * float(self.image_width))
 
         box_representation = tf.concat([xs, xt, ys, yt], axis=-1)
 
@@ -541,6 +554,10 @@ class YoloRL_Updater(Updater):
         self.hw_dist = dict(mean=hw, std=hw_std)
         self.attr_dist = dict(mean=attr, std=attr_std)
 
+        self.network_outputs['samples'] = self.samples
+        self.network_outputs['area'] = self.area
+        self.network_outputs['program_fields'] = self.program_fields
+
     def _build_program_interpreter(self):
         H, W, B, A = self.H, self.W, self.B, self.A
         object_shape, image_height, image_width, image_depth = (
@@ -558,7 +575,6 @@ class YoloRL_Updater(Updater):
 
         self.object_decoder_output = {}
         per_class_images = {}
-        per_class_map = {}  # Map of where predictions are being made.
 
         transform_constraints = snt.AffineWarpConstraints.no_shear_2d()
 
@@ -600,41 +616,19 @@ class YoloRL_Updater(Updater):
             )
             per_class_images[c] = tf.reshape(weighted_images, [-1, H*W*B, image_height, image_width, image_depth])
 
-            # --- build prediction map ---
-
-            _map = tf.contrib.resampler.resampler(tf.ones_like(object_decoder_output[..., 0:1]), grid_coords)
-            _map = tf.reshape(
-                _map, [-1, H, W, B, image_height, image_width, 1]
-            )
-
-            weighted_map = (
-                cls[..., c:c+1, None, None] *
-                obj[..., None, None] *
-                _map
-            )
-            per_class_map[c] = tf.reshape(weighted_map, [-1, H*W*B, image_height, image_width, 1])
-
         self.output = tf.concat([per_class_images[c] for c in range(self.C)], axis=1)
         self.output = tf.reduce_max(self.output, axis=1)
 
         _output = tf.clip_by_value(self.output, 1e-6, 1-1e-6)
         self.output_logits = tf.log(_output / (1 - _output))
 
-        self.prediction_map = tf.concat([per_class_map[c] for c in range(self.C)], axis=1)
-        self.prediction_map = tf.reduce_sum(self.prediction_map, axis=1)
+        self.network_outputs['output'] = self.output
+        self.network_outputs['output_logits'] = self.output_logits
 
-        # Samples contains all values upon which costs may be based
-        self.cost_input = self.samples.copy()
-        self.cost_input['inp'] = self.inp
-        self.cost_input['output'] = self.output
-        self.cost_input['output_logits'] = self.output_logits
-        self.cost_input['object_decoder_output'] = self.object_decoder_output
-
-        self.cost_input.update(self.program_fields)
-
-    def build_prediction_map_loss(self):
-        _map = tf_flatten(self.prediction_map)
-        return tf.reduce_sum(_map, axis=1, keep_dims=True)
+    def build_area_loss(self):
+        selected_area = self.area * self.program_fields['obj']
+        selected_area = tf_flatten(selected_area)
+        return tf.reduce_sum(selected_area, axis=1, keep_dims=True)
 
     def build_xent_loss(self, logits, targets):
         targets = tf_flatten(targets)
@@ -662,6 +656,8 @@ class YoloRL_Updater(Updater):
         return tf.reduce_sum(tf.abs(actions - targets), keep_dims=True, axis=1)
 
     def _build_graph(self):
+        self.network_outputs = {}
+
         self._build_placeholders()
 
         if self.backbone is None:
@@ -710,14 +706,14 @@ class YoloRL_Updater(Updater):
         reconstruction_loss = getattr(self, 'build_' + loss_key)(self.output_logits, self.inp)
         mean_reconstruction_loss = tf.reduce_mean(reconstruction_loss)
 
-        prediction_map_loss = self.build_prediction_map_loss()
-        mean_prediction_map_loss = tf.reduce_mean(prediction_map_loss)
+        area_loss = self.build_area_loss()
+        mean_area_loss = tf.reduce_mean(area_loss)
 
-        # --- cost input ---
+        # --- network output ---
 
-        self.cost_input.update(
+        self.network_outputs.update(
             reconstruction_loss=reconstruction_loss,
-            prediction_map_loss=prediction_map_loss
+            area_loss=area_loss
         )
 
         # --- kl ---
@@ -769,12 +765,12 @@ class YoloRL_Updater(Updater):
         recorded_tensors['cls'] = tf.reduce_mean(self.program_fields['cls'])
 
         recorded_tensors['reconstruction_loss'] = mean_reconstruction_loss
-        recorded_tensors['prediction_map_loss'] = mean_prediction_map_loss
+        recorded_tensors['area_loss'] = mean_area_loss
 
         recorded_tensors['diff_loss'] = mean_reconstruction_loss
 
-        if self.prediction_map_weight > 0.0:
-            recorded_tensors['diff_loss'] += self.prediction_map_weight * mean_prediction_map_loss
+        if self.area_weight > 0.0:
+            recorded_tensors['diff_loss'] += self.area_weight * mean_area_loss
 
         if self.obj_sparsity:
             recorded_tensors['obj_sparsity_loss'] = tf_mean_sum(self.program_fields['obj'])
@@ -826,8 +822,8 @@ class YoloRL_Updater(Updater):
 
         _rl_recorded_tensors['surrogate_loss'] = _rl_recorded_tensors['rl_loss'] + mean_reconstruction_loss
 
-        if self.prediction_map_weight > 0.0:
-            _rl_recorded_tensors['surrogate_loss'] += self.prediction_map_weight * mean_prediction_map_loss
+        # if self.area_weight > 0.0:
+        #     _rl_recorded_tensors['surrogate_loss'] += self.area_weight * mean_area_loss
 
         if self.minimize_kl:
             _rl_recorded_tensors['surrogate_loss'] -= recorded_tensors['cls_entropy']
@@ -1047,6 +1043,7 @@ config = Config(
     cls_sparsity=0.0,  # We want each of the class distributions to be as sparse as possible
 
     max_hw=1.0,  # Maximum for the bounding box multiplier.
+    min_hw=0.0,  # Minimum for the bounding box multiplier.
 
     # VAE
     box_std=0.1,
@@ -1066,7 +1063,8 @@ config = Config(
     # Costs
     use_baseline=True,
     obj_nonzero_weight=0.0,
-    prediction_map_weight=0.0,
+    area_weight=0.0,
+    use_specific_costs=False,
 
     curriculum=[
         rl_mode,

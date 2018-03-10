@@ -33,9 +33,9 @@ def grep(pattern, filename, options=""):
         shell=True).decode()
 
 
-def test_train_data():
-    config = dict(
-        max_steps=101, render_step=0, checkpoint_step=43, eval_step=100)
+def test_train_data(test_config):
+    config = test_config.copy()
+    config.update(max_steps=101, checkpoint_step=43, eval_step=100)
 
     frozen_data = _run('hello_world', 'a2c', _config=config)
 
@@ -152,6 +152,7 @@ def test_fixed_variables(test_config):
     config['emnist_config:threshold'] = 0.1
     config['emnist_config:n_train'] = 1000
     config['emnist_config:classes'] = digits
+    config.emnist_config.update(test_config)
     try:
         shutil.rmtree(config.model_dir)
     except FileNotFoundError:
@@ -177,7 +178,6 @@ def test_fixed_variables(test_config):
         fix_classifier=True,
         pretrain_classifier=False,
         load_path=load_path1,
-        max_steps=2,
         do_train=False,
     )
 
@@ -188,7 +188,7 @@ def test_fixed_variables(test_config):
     for key in relevant_keys:
         assert (tensors1[key] == tensors2[key]).all(), "Error on tensor with name {}".format(key)
 
-    # ------------- Third run, reload, some training
+    # ------------- Third run, reload with variables fixed, do some training, assert that variables haven't changed
     _config = config.copy(
         name="PART_3",
         fix_classifier=True,

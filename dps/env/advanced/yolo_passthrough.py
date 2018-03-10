@@ -1,4 +1,4 @@
-from dps.env.advanced import yolo_rl, yolo_rl_simple
+from dps.env.advanced import yolo_rl
 from dps.utils.tf import ScopedFunction
 
 
@@ -10,7 +10,7 @@ class PassthroughDecoder(ScopedFunction):
 
 config = yolo_rl.config.copy(
     log_name="yolo_passthrough",
-    get_updater=yolo_rl_simple.get_updater,
+    get_updater=yolo_rl.get_updater,
     build_object_decoder=PassthroughDecoder,
     C=1,
     A=2,
@@ -45,7 +45,7 @@ multi_config = config.copy(
 
     cell_yx_target_mean=0.5,
     cell_yx_target_std=1.0,
-    hw_target_mean=1.0,
+    hw_target_mean=0.0,
     hw_target_std=1.0,
     attr_target_mean=0.0,
     attr_target_std=1.0,
@@ -53,9 +53,16 @@ multi_config = config.copy(
 
 
 experimental_config = multi_config.copy(
-    H=7,
-    W=7,
+    H=3,
+    W=3,
     obj_exploration=0.05,
-    obj_nonzero_weight=20.0,
-    prediction_map_weight=0.1,
+    obj_nonzero_weight=100.0,
+    # area_weight=0.1,
+    use_specific_costs=True,
+    render_step=5000,
+    max_hw=1.0,
+    min_hw=0.5,
+    max_chars=2,
+    min_chars=1,
+    characters=[0, 1, 2],
 )

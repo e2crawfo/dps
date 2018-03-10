@@ -5,17 +5,6 @@ from dps.utils import Config
 from dps.rl import rl_render_hook
 
 
-def get_experiment_name():
-    name = []
-
-    try:
-        name.append('name={}'.format(cfg.log_name))
-    except Exception:
-        pass
-
-    return '_'.join(name)
-
-
 DEFAULT_CONFIG = Config(
     log_name="Default",
     seed=-1,
@@ -36,6 +25,7 @@ DEFAULT_CONFIG = Config(
     eval_step=100,
     checkpoint_step=5000,
     store_step_data=True,
+    make_latest_symlink=True,
 
     n_train=10000,
     n_val=500,
@@ -62,7 +52,6 @@ DEFAULT_CONFIG = Config(
     render_n_rollouts=10,
     render_hook=rl_render_hook,
 
-    get_experiment_name=get_experiment_name,
     error_on_timeout=False,
 
     stopping_criteria="",
@@ -73,6 +62,8 @@ DEFAULT_CONFIG = Config(
 
     intra_op_parallelism_threads=0,
     inter_op_parallelism_threads=0,
+
+    readme="",
 )
 
 

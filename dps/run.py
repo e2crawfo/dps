@@ -4,7 +4,7 @@ import pkgutil
 from dps import cfg
 from dps.config import DEFAULT_CONFIG
 from dps.train import training_loop
-from dps.utils import pdb_postmortem
+from dps.utils import pdb_postmortem, edit_text
 from dps.rl import algorithms as alg_pkg
 import dps.env.advanced as env_pkg_advanced
 import dps.env.basic as env_pkg_basic
@@ -85,9 +85,9 @@ def parse_env_alg(env, alg=None):
 
 def run():
     parser = argparse.ArgumentParser(allow_abbrev=False)
-    parser.add_argument('env', help="Name or prefix of name of environment to run.")
+    parser.add_argument('env', help="Name (or unique name-prefix) of environment to run.")
     parser.add_argument('alg', nargs='?', default=None,
-                        help="Name or prefix of name of algorithm to run. Optional. "
+                        help="Name (or unique name-prefix) of algorithm to run. Optional. "
                              "If not provided, algorithm spec is assumed to be included "
                              "in the environment spec.")
     parser.add_argument('--pdb', action='store_true',
@@ -97,14 +97,22 @@ def run():
     env = args.env
     alg = args.alg
 
+    # This can happen by accident when there is another argument passed of the form --x="y z"
+    # that is not parsed by the current parser (since we are using `parse_known_args`).
+    if env.startswith("--"):
+        env = None
+
+    if alg.startswith("--"):
+        alg = None
+
     if args.pdb:
         with pdb_postmortem():
-            _run(env, alg)
+            _run(env, alg, get_readme=True)
     else:
-        _run(env, alg)
+        _run(env, alg, get_readme=True)
 
 
-def _run(env_str, alg_str, _config=None, **kwargs):
+def _run(env_str, alg_str, _config=None, get_readme=False, **kwargs):
     env_config, alg_config = parse_env_alg(env_str, alg_str)
 
     config = DEFAULT_CONFIG.copy()
@@ -117,6 +125,10 @@ def _run(env_str, alg_str, _config=None, **kwargs):
 
     with config:
         cfg.update_from_command_line()
+
+        if get_readme and not cfg.readme:
+            cfg.readme = edit_text(prefix="dps_readme_", editor="vim")
+
         return training_loop()
 
 

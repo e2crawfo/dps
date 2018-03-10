@@ -5,7 +5,7 @@ from dps import cfg
 from dps.register import RegisterBank
 from dps.env import CompositeEnv, InternalEnv
 from dps.env.supervised import IntegerRegressionEnv
-from dps.datasets import SupervisedDataset
+from dps.datasets import Dataset
 from dps.vision.attention import gaussian_filter
 from dps.utils import Param, digits_to_numbers, numbers_to_digits, Config
 
@@ -30,7 +30,7 @@ config = Config(
 )
 
 
-class HardAdditionDataset(SupervisedDataset):
+class HardAdditionDataset(Dataset):
     width = Param()
     height = Param()
     base = Param()

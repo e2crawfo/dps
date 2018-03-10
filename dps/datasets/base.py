@@ -5,23 +5,40 @@ from dps.utils import image_to_string, Param, Parameterized, DataContainer
 from dps.datasets import load_emnist, load_omniglot, emnist_classes, omniglot_classes
 
 
-class SupervisedDataset(Parameterized):
+class Dataset(Parameterized):
     n_examples = Param(None)
 
-    def __init__(self, x, y, shuffle=True, **kwargs):
-        self.x = x
-        self.y = y
-        self.n_examples = self.x.shape[0]
+    def __init__(self, *tracks, shuffle=True, **kwargs):
+        length = len(tracks[0])
+        assert all(len(t) == length for t in tracks[1:])
+
+        self.tracks = list(tracks)
+        self.obs_shape = np.array(self.tracks[0])
+        self.n_examples = len(self.tracks[0])
         self.shuffle = shuffle
 
         self._epochs_completed = 0
         self._index_in_epoch = 0
 
-        super(SupervisedDataset, self).__init__(**kwargs)
+        self._reset_indices(self.shuffle)
+
+        super(Dataset, self).__init__(**kwargs)
 
     @property
-    def obs_shape(self):
-        return self.x.shape[1:]
+    def x(self):
+        return self.tracks[0]
+
+    @x.setter
+    def x(self, value):
+        self.tracks[0] = value
+
+    @property
+    def y(self):
+        return self.tracks[-1]
+
+    @y.setter
+    def y(self, value):
+        self.tracks[-1] = value
 
     @property
     def epochs_completed(self):
@@ -35,16 +52,14 @@ class SupervisedDataset(Parameterized):
     def completion(self):
         return self.epochs_completed + self.index_in_epoch / self.n_examples
 
-    def _reset_data(self, shuffle):
-        perm = np.arange(self.n_examples)
+    def _reset_indices(self, shuffle):
+        indices = np.arange(self.n_examples)
         if self.shuffle:
-            np.random.shuffle(perm)
-        self._x = [self.x[i] for i in perm]
-        self._y = [self.y[i] for i in perm]
+            np.random.shuffle(indices)
+        self.indices = indices
 
-    def post_process_batch(self, x, y):
-        """ x, y are lists of equal length """
-        return np.array(x), np.array(y)
+    def post_process_batch(self, output):
+        return tuple(np.array(t) for t in output)
 
     def next_batch(self, batch_size=None, advance=True):
         """ Return the next ``batch_size`` examples from this data set.
@@ -57,39 +72,25 @@ class SupervisedDataset(Parameterized):
         if batch_size is None:
             batch_size = self.n_examples - start
 
-        # Shuffle for the first epoch
-        if self._epochs_completed == 0 and start == 0:
-            self._reset_data(self.shuffle)
-
         if batch_size > self.n_examples:
             if advance:
                 self._epochs_completed += batch_size / self.n_examples
                 self._index_in_epoch = 0
             indices = np.random.choice(self.n_examples, batch_size, replace=True)
-            x, y = self._x[indices], self._y[indices]
-            return x, y
 
         if start + batch_size >= self.n_examples:
             # Finished epoch
 
             # Get the remaining examples in this epoch
-            x_rest_part = self._x[start:]
-            y_rest_part = self._y[start:]
+            rest_indices = self.indices[start:]
 
-            self._reset_data(self.shuffle and advance)
+            self._reset_indices(self.shuffle and advance)
 
             # Start next epoch
-            end = batch_size - len(x_rest_part)
-            x_new_part = self._x[:end]
-            y_new_part = self._y[:end]
+            end = batch_size - len(rest_indices)
+            new_indices = self.indices[:end]
 
-            x = x_rest_part
-            if x_new_part:
-                x = [*x, *x_new_part]
-
-            y = y_rest_part
-            if y_new_part:
-                y = [*y, *y_new_part]
+            indices = [*rest_indices, *new_indices]
 
             if advance:
                 self._index_in_epoch = end
@@ -97,22 +98,23 @@ class SupervisedDataset(Parameterized):
         else:
             # Middle of epoch
             end = start + batch_size
-            x, y = self._x[start:end], self._y[start:end]
+            indices = self.indices[start:end]
 
             if advance:
                 self._index_in_epoch = end
 
-        return self.post_process_batch(x, y)
+        output = [[t[i] for i in indices] for t in self.tracks]
+        return self.post_process_batch(output)
 
 
-class ImageDataset(SupervisedDataset):
-    """ When calling `next_batch`, x output will have dtype np.float32, and its elements will take on values in [0, 1]. """
-    def next_batch(self, batch_size=None, advance=True):
-        x, y = super(ImageDataset, self).next_batch(batch_size=batch_size, advance=advance)
-        assert x[0].dtype == np.uint8
-        x = (np.array(x) / 255.).astype('f')
-        y = np.array(y)
-        return x, y
+class ImageDataset(Dataset):
+    def post_process_batch(self, x):
+        x = super(ImageDataset, self).post_process_batch(x)
+
+        first, *rest = x
+        assert first.dtype == np.uint8
+        first = (first / 255.).astype('f')
+        return tuple([first, *rest])
 
 
 # EMNIST ***************************************
@@ -760,105 +762,6 @@ class EMNIST_ObjectDetection(PatchesDataset):
                     (left, top), width, height, linewidth=1, edgecolor='r', facecolor='none')
                 ax.add_patch(rect)
         plt.show()
-
-
-class AutoencodeDataset(Parameterized):
-    n_examples = Param(None)
-
-    def __init__(self, x, shuffle=True, image=False, **kwargs):
-        self.x = x
-        self.y = x
-        self.n_examples = self.x.shape[0]
-        self.shuffle = shuffle
-        self.image = image
-
-        self._epochs_completed = 0
-        self._index_in_epoch = 0
-
-        super(AutoencodeDataset, self).__init__(**kwargs)
-
-    @property
-    def obs_shape(self):
-        return self.x.shape[1:]
-
-    @property
-    def epochs_completed(self):
-        return self._epochs_completed
-
-    @property
-    def index_in_epoch(self):
-        return self._index_in_epoch
-
-    @property
-    def completion(self):
-        return self.epochs_completed + self.index_in_epoch / self.n_examples
-
-    def _reset_data(self, shuffle):
-        perm = np.arange(self.n_examples)
-        if self.shuffle:
-            np.random.shuffle(perm)
-        self._x = [self.x[i] for i in perm]
-
-    def post_process_batch(self, x):
-        """ x are lists of equal length """
-        x = np.array(x)
-        if self.image:
-            assert x.dtype == np.uint8
-            return (x / 255.).astype('f')
-        else:
-            return x
-
-    def next_batch(self, batch_size=None, advance=True):
-        """ Return the next ``batch_size`` examples from this data set.
-
-        If ``batch_size`` not specified, return rest of the examples in the current epoch.
-
-        """
-        start = self._index_in_epoch
-
-        if batch_size is None:
-            batch_size = self.n_examples - start
-
-        # Shuffle for the first epoch
-        if self._epochs_completed == 0 and start == 0:
-            self._reset_data(self.shuffle)
-
-        if batch_size > self.n_examples:
-            if advance:
-                self._epochs_completed += batch_size / self.n_examples
-                self._index_in_epoch = 0
-            indices = np.random.choice(self.n_examples, batch_size, replace=True)
-            return self._x[indices]
-
-        if start + batch_size >= self.n_examples:
-            # Finished epoch
-
-            # Get the remaining examples in this epoch
-            x_rest_part = self._x[start:]
-
-            self._reset_data(self.shuffle and advance)
-
-            # Start next epoch
-            end = batch_size - len(x_rest_part)
-            x_new_part = self._x[:end]
-
-            x = x_rest_part
-            if x_new_part:
-                x = [*x, *x_new_part]
-
-            if advance:
-                self._index_in_epoch = end
-                self._epochs_completed += 1
-        else:
-            # Middle of epoch
-            end = start + batch_size
-            x = self._x[start:end]
-
-            if advance:
-                self._index_in_epoch = end
-
-        x = self.post_process_batch(x)
-        return x
 
 
 if __name__ == "__main__":

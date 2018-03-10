@@ -5,7 +5,7 @@ import os
 from dps import cfg
 from dps.updater import DifferentiableUpdater
 from dps.env.supervised import BernoulliSigmoid
-from dps.datasets import EMNIST_ObjectDetection, AutoencodeDataset
+from dps.datasets import EMNIST_ObjectDetection
 from dps.utils import Config, Param
 from dps.utils.tf import ScopedFunction
 
@@ -29,15 +29,9 @@ class SimpleDecoder(ScopedFunction):
 
 
 def build_env():
-    _train = EMNIST_ObjectDetection(n_examples=int(cfg.n_train)).x
-    train = AutoencodeDataset(_train, image=True)
-
-    _val = EMNIST_ObjectDetection(n_examples=int(cfg.n_val)).x
-    val = AutoencodeDataset(_val, image=True)
-
-    _test = EMNIST_ObjectDetection(n_examples=int(cfg.n_val)).x
-    test = AutoencodeDataset(_test, image=True)
-
+    train = EMNIST_ObjectDetection(n_examples=int(cfg.n_train))
+    val = EMNIST_ObjectDetection(n_examples=int(cfg.n_val))
+    test = EMNIST_ObjectDetection(n_examples=int(cfg.n_val))
     return LearnMean(train, val, test)
 
 
@@ -50,14 +44,10 @@ class LearnMean(BernoulliSigmoid):
     xent_loss = Param()
 
     def __init__(self, train, val, test=None, **kwargs):
-        assert isinstance(train, AutoencodeDataset)
-        assert isinstance(val, AutoencodeDataset)
-        if test:
-            assert isinstance(test, AutoencodeDataset)
         super(LearnMean, self).__init__(train, val, test, **kwargs)
 
     def make_feed_dict(self, batch_size, mode, evaluate):
-        x = self.datasets[mode].next_batch(batch_size=batch_size, advance=not evaluate)
+        x, *_ = self.datasets[mode].next_batch(batch_size=batch_size, advance=not evaluate)
         return {self.x: x, self.is_training: not evaluate}
 
     def _build_placeholders(self):

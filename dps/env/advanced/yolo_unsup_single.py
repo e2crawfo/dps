@@ -4,21 +4,16 @@ import os
 
 from dps import cfg
 from dps.env.advanced.mnist_vae import VAE_Env
-from dps.datasets import AutoencodeDataset, EMNIST_ObjectDetection
+from dps.datasets import EMNIST_ObjectDetection
 from dps.updater import DifferentiableUpdater
 from dps.utils import Config, Param
 from dps.utils.tf import FullyConvolutional, ScopedFunction
 
 
 def build_env():
-    _train = EMNIST_ObjectDetection(n_examples=int(cfg.n_train)).x
-    train = AutoencodeDataset(_train, image=True)
-
-    _val = EMNIST_ObjectDetection(n_examples=int(cfg.n_val)).x
-    val = AutoencodeDataset(_val, image=True)
-
-    _test = EMNIST_ObjectDetection(n_examples=int(cfg.n_val)).x
-    test = AutoencodeDataset(_test, image=True)
+    train = EMNIST_ObjectDetection(n_examples=int(cfg.n_train))
+    val = EMNIST_ObjectDetection(n_examples=int(cfg.n_val))
+    test = EMNIST_ObjectDetection(n_examples=int(cfg.n_val))
 
     return YOLOv2_UnsupervisedEnv(train, val, test)
 

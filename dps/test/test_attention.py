@@ -16,8 +16,8 @@ def get_images(n_images, classes):
 
 def get_test_session():
     session_config = tf.ConfigProto()
-    session_config.intra_op_parallelism_threads = 1
-    session_config.inter_op_parallelism_threads = 1
+    session_config.intra_op_parallelism_threads = 0
+    session_config.inter_op_parallelism_threads = 0
     sess = tf.Session(config=session_config)
     return sess
 

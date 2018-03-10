@@ -16,7 +16,7 @@ from collections import defaultdict
 import dps
 from dps import cfg
 from dps.utils import (
-    gen_seed, time_limit, memory_usage, ExperimentStore, ExperimentDirectory, edit_text,
+    gen_seed, time_limit, memory_usage, ExperimentStore, ExperimentDirectory,
     memory_limit, du, Config, ClearConfig, redirect_stream, NumpySeed, make_symlink
 )
 from dps.utils.tf import (
@@ -169,7 +169,7 @@ class TrainingLoop(object):
 
     """
     def __init__(self, exp_name='', hooks=None):
-        self.exp_name = exp_name or cfg.get_experiment_name()
+        self.exp_name = exp_name or cfg.log_name
         self.hooks = hooks or []
         self.start_time = None
 
@@ -209,7 +209,8 @@ class TrainingLoop(object):
                 self.exp_name, cfg.seed, add_date=1, force_fresh=1, update_latest=cfg.update_latest)
             self.exp_dir = exp_dir
 
-            make_symlink(exp_dir.path, os.path.join(os.getenv("HOME"), "dps-latest-experiment"))
+            if cfg.make_latest_symlink:
+                make_symlink(exp_dir.path, os.path.join(os.getenv("HOME"), "dps-latest-experiment"))
 
             self.data = _TrainingLoopData(exp_dir)
             self.data.setup()
@@ -228,9 +229,7 @@ class TrainingLoop(object):
 
             breaker = "-" * 40
             header = "{}\nREADME.md - {}\n{}\n\n\n".format(breaker, os.path.basename(exp_dir.path), breaker)
-
-            readme = edit_text(
-                prefix="dps_readme_", editor="vim", initial_text=header)
+            readme = header + (cfg.readme if cfg.readme else "")
 
             with open(exp_dir.path_for('README.md'), 'w') as f:
                 f.write(readme)
@@ -276,7 +275,7 @@ class TrainingLoop(object):
 
                 # --------------- Stage set-up -------------------
 
-                # Configure (number of threads and gpu) and create and create session and graph for stage.
+                # Configure and create session and graph for stage.
                 session_config = tf.ConfigProto()
                 session_config.intra_op_parallelism_threads = cfg.get('intra_op_parallelism_threads', 0)
                 session_config.inter_op_parallelism_threads = cfg.get('inter_op_parallelism_threads', 0)
@@ -428,7 +427,9 @@ class TrainingLoop(object):
         self.reason = ""
 
         # Parse stopping criteria
-        stopping_criteria = cfg.get("stopping_criteria", updater.stopping_criteria)
+        stopping_criteria = cfg.get("stopping_criteria", None)
+        if not stopping_criteria:
+            stopping_criteria = updater.stopping_criteria
 
         if isinstance(stopping_criteria, str):
             stopping_criteria = stopping_criteria.split(",")

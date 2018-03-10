@@ -1,7 +1,7 @@
 import gym
 import numpy as np
 
-from dps.datasets import AutoencodeDataset
+from dps.datasets import ImageDataset
 from dps.utils import Param
 
 
@@ -48,7 +48,7 @@ def gather_atari_frames(game, policy, n_frames, density=1.0, render=False):
     return np.array(frames[:n_frames])
 
 
-class AtariAutoencodeDataset(AutoencodeDataset):
+class AtariAutoencodeDataset(ImageDataset):
     game = Param(aliases="atari_game")
     policy = Param()
 

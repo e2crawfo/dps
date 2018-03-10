@@ -62,7 +62,7 @@ def test_simple_add(test_config):
         use_differentiable_loss=False,
 
         use_gpu=False,
-        render_step=0,
+        display_step=500,
         seed=1034340,
 
         # env-specific
@@ -89,7 +89,7 @@ def test_simple_add(test_config):
         stdout = output.path_for('stdout')
         result = _get_deterministic_output(stdout)
         results[result] += 1
-        assert output.history[-1]['best_01_loss'] < 0.1
+        assert output.history[-1]['best_01_loss'] < 0.15
 
     if len(results) != 1:
         for r in sorted(results):
@@ -110,7 +110,7 @@ def test_simple_add(test_config):
     stdout = output.path_for('stdout')
     result = _get_deterministic_output(stdout)
     results[result] += 1
-    assert output.history[-1]['best_01_loss'] < 0.1
+    assert output.history[-1]['best_01_loss'] < 0.15
 
     # Load one of the hypotheses, don't train it at all, make sure the accuracy is still high.
     config.do_train = False
@@ -119,4 +119,4 @@ def test_simple_add(test_config):
     stdout = output.path_for('stdout')
     result = _get_deterministic_output(stdout)
     results[result] += 1
-    assert output.history[-1]['best_01_loss'] < 0.1
+    assert output.history[-1]['best_01_loss'] < 0.15

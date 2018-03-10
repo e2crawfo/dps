@@ -811,10 +811,6 @@ def add_scaled_noise_to_gradients(grads_and_vars, gradient_noise_scale):
     return noisy_gradients
 
 
-def scheduled_value_summaries():
-    return tf.get_collection('scheduled_value_summaries')
-
-
 def lst_to_vec(lst):
     if isinstance(lst[0], np.ndarray):
         return np.concatenate([np.reshape(v, (-1,)) for v in lst], axis=0)
@@ -833,6 +829,10 @@ def vec_to_lst(vec, reference):
         return [tf.reshape(v, tf.shape(r)) for v, r in zip(splits, reference)]
     else:
         raise Exception()
+
+
+def scheduled_value_summaries():
+    return tf.get_collection('scheduled_value_summaries')
 
 
 def build_scheduled_value(schedule, name=None, global_step=None, dtype=None):

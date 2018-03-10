@@ -6,7 +6,7 @@ from dps.utils import Param, Config
 from dps.register import RegisterBank
 from dps.env import CompositeEnv, InternalEnv
 from dps.env.supervised import RegressionEnv
-from dps.datasets import SupervisedDataset
+from dps.datasets import Dataset
 
 
 def build_env():
@@ -30,7 +30,7 @@ config = Config(
 )
 
 
-class HelloWorldDataset(SupervisedDataset):
+class HelloWorldDataset(Dataset):
     order = Param()
 
     def __init__(self, **kwargs):

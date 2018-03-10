@@ -5,7 +5,7 @@ from dps import cfg
 from dps.register import RegisterBank
 from dps.env import CompositeEnv, InternalEnv
 from dps.env.supervised import IntegerRegressionEnv
-from dps.datasets import SupervisedDataset
+from dps.datasets import Dataset
 from dps.vision.attention import apply_gaussian_filter
 from dps.utils import Param, Config
 
@@ -27,7 +27,7 @@ config = Config(
 )
 
 
-class PointerDataset(SupervisedDataset):
+class PointerDataset(Dataset):
     width = Param()
     base = Param()
 

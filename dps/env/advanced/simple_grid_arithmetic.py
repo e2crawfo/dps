@@ -5,7 +5,7 @@ from dps import cfg
 from dps.register import RegisterBank
 from dps.env import CompositeEnv, InternalEnv
 from dps.env.supervised import IntegerRegressionEnv
-from dps.datasets import SupervisedDataset
+from dps.datasets import Dataset
 from dps.utils import DataContainer, Param, Config
 from dps.utils.tf import extract_glimpse_numpy_like, resize_image_with_crop_or_pad
 from dps.env.advanced.grid_arithmetic import GridArithmeticDataset
@@ -65,7 +65,7 @@ config = Config(
 )
 
 
-class SimpleGridArithmeticDataset(SupervisedDataset):
+class SimpleGridArithmeticDataset(Dataset):
     reductions = Param()
 
     env_shape = Param()

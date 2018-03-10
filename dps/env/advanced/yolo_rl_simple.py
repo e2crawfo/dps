@@ -3,7 +3,7 @@ import tensorflow as tf
 from dps import cfg
 from dps.env.advanced import yolo_rl
 from dps.utils.tf import ScopedFunction
-from dps.datasets import AutoencodeDataset, EMNIST_ObjectDetection
+from dps.datasets import EMNIST_ObjectDetection
 
 
 class StaticObjectDecoder(ScopedFunction):
@@ -27,12 +27,8 @@ class StaticObjectDecoder(ScopedFunction):
 
 class YoloRLSimple_Updater(yolo_rl.YoloRL_Updater):
     def _make_datasets(self):
-        _train = EMNIST_ObjectDetection(n_examples=int(cfg.n_train), colours="red").x
-        train = AutoencodeDataset(_train, image=True, shuffle=True)
-
-        _val = EMNIST_ObjectDetection(n_examples=int(cfg.n_val), colours="red").x
-        val = AutoencodeDataset(_val, image=True, shuffle=False)
-
+        train = EMNIST_ObjectDetection(n_examples=int(cfg.n_train), colours="red")
+        val = EMNIST_ObjectDetection(n_examples=int(cfg.n_val), colours="red", shuffle=False)
         self.datasets = dict(train=train, val=val)
 
 
