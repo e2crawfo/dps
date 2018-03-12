@@ -29,9 +29,8 @@ config = yolo_rl.config.copy(
 )
 
 multi_config = config.copy(
-    H=3,
-    W=3,
-    obj_nonzero_weight=40.0,
+    pixels_per_cell=(10, 10),
+    nonzero_weight=40.0,
     obj_exploration=0.30,
     cls_exploration=0.30,
 
@@ -53,10 +52,8 @@ multi_config = config.copy(
 
 
 experimental_config = multi_config.copy(
-    H=3,
-    W=3,
-    obj_exploration=0.05,
-    obj_nonzero_weight=100.0,
+    obj_exploration=0.1,
+    nonzero_weight=100.0,
     # area_weight=0.1,
     use_specific_costs=True,
     render_step=5000,
@@ -65,4 +62,15 @@ experimental_config = multi_config.copy(
     max_chars=2,
     min_chars=1,
     characters=[0, 1, 2],
+
+    box_std=-1.,
+    attr_std=0.0,
+    minimize_kl=True,
+
+    cell_yx_target_mean=0.5,
+    cell_yx_target_std=100.0,
+    hw_target_mean=0.0,
+    hw_target_std=1.0,
+    attr_target_mean=0.0,
+    attr_target_std=100.0,
 )

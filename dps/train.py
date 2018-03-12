@@ -12,6 +12,7 @@ import os
 import pandas as pd
 import dill
 from collections import defaultdict
+import traceback
 
 import dps
 from dps import cfg
@@ -229,7 +230,7 @@ class TrainingLoop(object):
 
             breaker = "-" * 40
             header = "{}\nREADME.md - {}\n{}\n\n\n".format(breaker, os.path.basename(exp_dir.path), breaker)
-            readme = header + (cfg.readme if cfg.readme else "")
+            readme = header + (cfg.readme if cfg.readme else "") + "\n\n"
 
             with open(exp_dir.path_for('README.md'), 'w') as f:
                 f.write(readme)
@@ -462,6 +463,12 @@ class TrainingLoop(object):
                 # There is a bug that prevents instances of `NotImplementedError`
                 # from being handled properly, so replace it with an instance of `Exception`.
                 raise Exception("NotImplemented") from e
+            except Exception as e:
+                if cfg.robust:
+                    traceback.print_exc()
+                    self.reason = "Exception occurred ({})".format(e)
+                else:
+                    raise
 
         phys_memory_after = memory_usage(physical=True)
 

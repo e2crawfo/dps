@@ -16,6 +16,7 @@ DEFAULT_CONFIG = Config(
     preserve_policy=True,  # Whether to use the policy learned on the last stage of the curriculum for each new stage.
     preserve_env=False,
     power_through=True,  # Whether to complete the entire curriculum, even if threshold not reached.
+    robust=True,
 
     slim=False,  # If true, tries to use little disk space
     patience=np.inf,

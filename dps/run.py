@@ -85,7 +85,7 @@ def parse_env_alg(env, alg=None):
 
 def run():
     parser = argparse.ArgumentParser(allow_abbrev=False)
-    parser.add_argument('env', help="Name (or unique name-prefix) of environment to run.")
+    parser.add_argument('env', default=None, help="Name (or unique name-prefix) of environment to run.")
     parser.add_argument('alg', nargs='?', default=None,
                         help="Name (or unique name-prefix) of algorithm to run. Optional. "
                              "If not provided, algorithm spec is assumed to be included "
@@ -99,10 +99,10 @@ def run():
 
     # This can happen by accident when there is another argument passed of the form --x="y z"
     # that is not parsed by the current parser (since we are using `parse_known_args`).
-    if env.startswith("--"):
+    if isinstance(env, str) and env.startswith("--"):
         env = None
 
-    if alg.startswith("--"):
+    if isinstance(alg, str) and alg.startswith("--"):
         alg = None
 
     if args.pdb:
@@ -127,7 +127,10 @@ def _run(env_str, alg_str, _config=None, get_readme=False, **kwargs):
         cfg.update_from_command_line()
 
         if get_readme and not cfg.readme:
-            cfg.readme = edit_text(prefix="dps_readme_", editor="vim")
+            header = "README:"
+            readme = edit_text(prefix="dps_readme_", editor="vim", initial_text=header + "\n\n")
+            parts = readme.partition(header)
+            cfg.readme = parts[0] + parts[2]
 
         return training_loop()
 

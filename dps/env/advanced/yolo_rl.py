@@ -27,53 +27,67 @@ def get_updater(env):
     return YoloRL_Updater()
 
 
+def prime_factors(n):
+    i = 2
+    factors = []
+    while i * i <= n:
+        if n % i:
+            i += 1
+        else:
+            n //= i
+            factors.append(i)
+    if n > 1:
+        factors.append(n)
+    return factors
+
+
 class Backbone(FullyConvolutional):
-    H = Param()
-    W = Param()
+    pixels_per_cell = Param()
+    kernel_size = Param()
+    n_channels = Param(128)
+    n_final_layers = Param(2)
 
     def __init__(self, **kwargs):
-        H, W = self.H, self.W
-        assert H == W
-        assert H in (1, 2, 3, 7)
-        if H == 1:
-            ksize = 4
-        elif H == 2:
-            ksize = 3
-        else:
-            ksize = 2
+        sh = sorted(prime_factors(self.pixels_per_cell[0]))
+        sw = sorted(prime_factors(self.pixels_per_cell[1]))
+        assert max(sh) <= 4
+        assert max(sw) <= 4
 
-        layout = [
-            dict(filters=128, kernel_size=3, strides=2, padding="SAME"),
-            dict(filters=128, kernel_size=3, strides=2, padding="SAME"),
-            dict(filters=128, kernel_size=4, strides=1, padding="VALID"),
-            dict(filters=128, kernel_size=ksize, strides=1, padding="VALID"),
-            dict(filters=128, kernel_size=(H, W), strides=1, padding="SAME"),
-            dict(filters=128, kernel_size=(H, W), strides=1, padding="SAME"),
-        ]
-        if H == 7:
-            layout = layout[:2] + layout[4:] + layout[-1:]
+        if len(sh) < len(sw):
+            sh = sh + [1] * (len(sw) - len(sh))
+        elif len(sw) < len(sh):
+            sw = sw + [1] * (len(sh) - len(sw))
+
+        layout = [dict(filters=self.n_channels, kernel_size=4, strides=(_sh, _sw), padding="SAME")
+                  for _sh, _sw in zip(sh, sw)]
+
+        # These layers don't change the shape
+        layout += [
+            dict(filters=self.n_channels, kernel_size=self.kernel_size, strides=1, padding="SAME")
+            for i in range(self.n_final_layers)]
+
         super(Backbone, self).__init__(layout, check_output_shape=True, **kwargs)
 
 
 class NextStep(FullyConvolutional):
-    H = Param()
-    W = Param()
+    kernel_size = Param()
 
     def __init__(self, **kwargs):
-        kernel_size = (self.H, self.W)
         layout = [
-            dict(filters=128, kernel_size=kernel_size, strides=1, padding="SAME"),
-            dict(filters=128, kernel_size=kernel_size, strides=1, padding="SAME"),
+            dict(filters=128, kernel_size=self.kernel_size, strides=1, padding="SAME"),
+            dict(filters=128, kernel_size=self.kernel_size, strides=1, padding="SAME"),
         ]
         super(NextStep, self).__init__(layout, check_output_shape=True, **kwargs)
 
 
 class ObjectDecoder(FullyConvolutional):
+    n_filters = Param(128)
+
     def __init__(self, **kwargs):
         layout = [
-            dict(filters=128, kernel_size=3, strides=1, padding="VALID", transpose=True),
-            dict(filters=128, kernel_size=5, strides=1, padding="VALID", transpose=True),
-            dict(filters=128, kernel_size=3, strides=2, padding="SAME", transpose=True),
+            dict(filters=self.n_filters, kernel_size=3, strides=1, padding="VALID", transpose=True),
+            dict(filters=self.n_filters, kernel_size=5, strides=1, padding="VALID", transpose=True),
+            dict(filters=self.n_filters, kernel_size=3, strides=2, padding="SAME", transpose=True),
             dict(filters=3, kernel_size=4, strides=1, padding="SAME", transpose=True),  # For 14 x 14 output
         ]
         super(ObjectDecoder, self).__init__(layout, check_output_shape=True, **kwargs)
@@ -91,23 +105,19 @@ def specific_area_cost(network_outputs):
     return network_outputs['program_fields']['obj'] * network_outputs['area']
 
 
-def obj_nonzero_cost(network_outputs):
+def nonzero_cost(network_outputs):
     obj_samples = network_outputs['program_fields']['obj']
     obj_samples = obj_samples.reshape(obj_samples.shape[0], -1)
     return np.count_nonzero(obj_samples, axis=1)[..., None, None, None, None].astype('f')
 
 
-def specific_obj_nonzero_cost(network_outputs):
+def specific_nonzero_cost(network_outputs):
     return network_outputs['program_fields']['obj']
 
 
-def mAP_cost(network_outputs):
-    pass
-
-
 class YoloRL_Updater(Updater):
-    H = Param()
-    W = Param()
+    pixels_per_cell = Param()
+    image_shape = Param()
     C = Param()
     A = Param(help="Dimension of attribute vector.")
     anchor_boxes = Param(help="List of (h, w) pairs.")
@@ -141,9 +151,8 @@ class YoloRL_Updater(Updater):
     xent_loss = Param()
 
     use_baseline = Param()
-    obj_nonzero_weight = Param()
+    nonzero_weight = Param()
     area_weight = Param()
-    mAP_weight = Param()
     use_specific_costs = Param()
 
     obj_exploration = Param()
@@ -155,11 +164,12 @@ class YoloRL_Updater(Updater):
 
     fix_values = Param()
 
-    stopping_criteria = "loss,min"
     eval_modes = "rl_val diff_val".split()
 
     def __init__(self, scope=None, **kwargs):
         self.anchor_boxes = np.array(self.anchor_boxes)
+        self.H = int(np.ceil(self.image_shape[0] / self.pixels_per_cell[0]))
+        self.W = int(np.ceil(self.image_shape[1] / self.pixels_per_cell[1]))
         self.B = len(self.anchor_boxes)
 
         self._make_datasets()
@@ -171,9 +181,9 @@ class YoloRL_Updater(Updater):
 
         self.COST_funcs = {}
 
-        if self.obj_nonzero_weight is not None:
-            cost_func = specific_obj_nonzero_cost if self.use_specific_costs else obj_nonzero_cost
-            self.COST_funcs['obj_nonzero'] = (self.obj_nonzero_weight, obj_nonzero_cost, "obj")
+        if self.nonzero_weight is not None:
+            cost_func = specific_nonzero_cost if self.use_specific_costs else nonzero_cost
+            self.COST_funcs['nonzero'] = (self.nonzero_weight, nonzero_cost, "obj")
 
         if self.area_weight > 0.0:
             cost_func = specific_area_cost if self.use_specific_costs else area_cost
@@ -311,7 +321,7 @@ class YoloRL_Updater(Updater):
         return record, summary
 
     def make_feed_dict(self, batch_size, mode, evaluate):
-        inp, boxes = self.datasets[mode].next_batch(batch_size=batch_size, advance=not evaluate)
+        inp, *_ = self.datasets[mode].next_batch(batch_size=batch_size, advance=not evaluate)
         return {self.inp: inp, self.is_training: not evaluate}
 
     def _build_placeholders(self):
@@ -801,6 +811,11 @@ class YoloRL_Updater(Updater):
         _rl_recorded_tensors["COST"] = tf.reduce_mean(self.COST)
         _rl_recorded_tensors["COST_obj"] = tf.reduce_mean(self.COST_obj)
         _rl_recorded_tensors["COST_cls"] = tf.reduce_mean(self.COST_cls)
+        _rl_recorded_tensors["TOTAL_COST"] = (
+            _rl_recorded_tensors["COST"] +
+            _rl_recorded_tensors["COST_obj"] +
+            _rl_recorded_tensors["COST_cls"]
+        )
 
         _rl_recorded_tensors["obj_log_probs"] = tf.reduce_mean(self.log_probs['obj'])
         _rl_recorded_tensors["cls_log_probs"] = tf.reduce_mean(self.log_probs['cls'])
@@ -993,6 +1008,7 @@ diff_mode = dict(rl_weight=0.0, diff_weight=1.0)
 rl_mode = dict(rl_weight=1.0, diff_weight=0.0)
 combined_mode = dict(rl_weight=1.0, diff_weight=1.0)
 
+
 config = Config(
     log_name="yolo_rl",
     build_env=build_env,
@@ -1007,21 +1023,21 @@ config = Config(
     build_attr_network=NextStep,
     build_object_decoder=ObjectDecoder,
     xent_loss=True,
-    image_shape=(28, 28),
     sub_image_shape=(14, 14),
 
     render_hook=YoloRL_RenderHook(),
-    render_step=500,
+    render_step=5000,
 
     use_input_attention=False,
     decoders_output_logits=True,
     decoder_logit_scale=10.0,
 
     # model params
+    image_shape=(28, 28),
     object_shape=(14, 14),
     anchor_boxes=[[28, 28]],
-    H=1,
-    W=1,
+    pixels_per_cell=(28, 28),
+    kernel_size=(1, 1),
     D=3,
     C=1,
     A=100,
@@ -1062,7 +1078,7 @@ config = Config(
 
     # Costs
     use_baseline=True,
-    obj_nonzero_weight=0.0,
+    nonzero_weight=0.0,
     area_weight=0.0,
     use_specific_costs=False,
 
@@ -1078,12 +1094,12 @@ config = Config(
     eval_step=100,
     display_step=1000,
     max_steps=1e7,
-    patience=0,
+    patience=10000,
     optimizer_spec="adam",
     use_gpu=True,
     gpu_allow_growth=True,
     seed=347405995,
-    stopping_criteria="reconstruction_loss,min",
+    stopping_criteria="TOTAL_COST,min",
     eval_mode="rl_val",
     threshold=-np.inf,
     max_grad_norm=1.0,
@@ -1097,28 +1113,39 @@ config = Config(
     fix_values=dict(),
 )
 
+
 experimental_config = config.copy(
-    obj_exploration=1.0,
-)
-
-multi_config = config.copy(
-    H=2,
-    W=2,
+    image_shape=(40, 40),
+    object_shape=(14, 14),
     anchor_boxes=[[14, 14]],
-    obj_nonzero_weight=20.0,
-    obj_exploration=0.10,
-    cls_exploration=0.10,
-)
+    pixels_per_cell=(12, 12),
+    kernel_size=(3, 3),
 
+    nonzero_weight=20.0,
+    # area_weight=0.1,
+    use_specific_costs=True,
+    max_hw=1.0,
+    min_hw=0.5,
+    max_chars=3,
+    min_chars=1,
+    characters=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
 
-multi_small_config = multi_config.copy(
-    box_std=0.1,
-    attr_std=0.01,
+    curriculum=[
+        dict(fix_values=dict(obj=1)),
+        dict(obj_exploration=0.2, nonzero_weight=100.),
+        dict(obj_exploration=0.1, nonzero_weight=100.),
+        dict(obj_exploration=0.05, nonzero_weight=100.),
+    ],
+
+    box_std=-1.,
+    attr_std=0.0,
     minimize_kl=True,
+
     cell_yx_target_mean=0.5,
     cell_yx_target_std=100.0,
-    hw_target_mean=0.1,
+    hw_target_mean=0.0,
     hw_target_std=1.0,
     attr_target_mean=0.0,
     attr_target_std=100.0,
+    **rl_mode,
 )

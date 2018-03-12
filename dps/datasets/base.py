@@ -727,10 +727,6 @@ class EMNIST_ObjectDetection(PatchesDataset):
         new_X = np.array(new_X, dtype=np.uint8)
         return new_X, new_Y
 
-    def post_process_batch(self, x, y):
-        """ x, y are lists of equal length """
-        return np.array(x), y
-
     def colourize(self, img, colour_idx=None):
         if colour_idx is None:
             colour_idx = np.random.randint(len(self._colours))
