@@ -61,14 +61,10 @@ elif args.task == "G":
     config.curriculum = [
         dict(min_digits=1, max_digits=1),
         dict(min_digits=2, max_digits=2),
+        dict(min_digits=2, max_digits=3),
     ]
 elif args.task == "H":
     config.curriculum = [
-        dict(min_digits=2, max_digits=2),
-    ]
-elif args.task == "I":
-    config.curriculum = [
-        dict(min_digits=1, max_digits=1),
         dict(min_digits=2, max_digits=2),
         dict(min_digits=2, max_digits=3),
     ]
