@@ -9,7 +9,7 @@ from dps.utils import Config, Param
 from dps.utils.tf import (
     FullyConvolutional, build_gradient_train_op,
     trainable_variables, build_scheduled_value,
-    tf_normal_kl, tf_mean_sum
+    tf_normal_kl, tf_mean_sum, ScopedFunction
 )
 
 tf_flatten = tf.layers.flatten
@@ -93,6 +93,42 @@ class ObjectDecoder(FullyConvolutional):
         super(ObjectDecoder, self).__init__(layout, check_output_shape=True, **kwargs)
 
 
+class PassthroughDecoder(ScopedFunction):
+    def _call(self, inp, output_shape, is_training):
+        _, input_glimpses = inp
+        return input_glimpses
+
+
+class ObjectDecoder28x28(FullyConvolutional):
+    def __init__(self, **kwargs):
+        layout = [
+            dict(filters=128, kernel_size=3, strides=1, padding="VALID", transpose=True),
+            dict(filters=256, kernel_size=5, strides=1, padding="VALID", transpose=True),
+            dict(filters=256, kernel_size=3, strides=2, padding="SAME", transpose=True),
+            dict(filters=3, kernel_size=3, strides=2, padding="SAME", transpose=True),  # For 28 x 28 output
+        ]
+        super(ObjectDecoder28x28, self).__init__(layout, check_output_shape=True, **kwargs)
+
+
+class StaticObjectDecoder(ScopedFunction):
+    """ An object decoder that outputs a learnable image, ignoring input. """
+    def __init__(self, initializer=None, **kwargs):
+        super(StaticObjectDecoder, self).__init__(**kwargs)
+        if initializer is None:
+            initializer = tf.random_normal_initializer(mean=0.0, stddev=0.01)
+        self.initializer = initializer
+
+    def _call(self, inp, output_shape, is_training):
+        output = tf.get_variable(
+            "learnable_bias",
+            shape=output_shape,
+            dtype=tf.float32,
+            initializer=self.initializer,
+            trainable=True,
+        )
+        return tf.tile(output[None, ...], (tf.shape(inp)[0],) + tuple(1 for s in output_shape))
+
+
 def reconstruction_cost(network_outputs):
     return network_outputs['reconstruction_loss'][..., None, None, None]
 
@@ -156,13 +192,19 @@ class YoloRL_Updater(Updater):
     use_specific_costs = Param()
 
     obj_exploration = Param()
+    obj_default = Param()
     cls_exploration = Param()
 
-    fixed_backbone = Param()
-    fixed_next_step = Param()
+    fixed_box = Param()
+    fixed_obj = Param()
+    fixed_cls = Param()
+    fixed_attr = Param()
+
     fixed_object_decoder = Param()
 
     fix_values = Param()
+    dynamic_partition = Param()
+    order = Param()
 
     eval_modes = "rl_val diff_val".split()
 
@@ -195,10 +237,6 @@ class YoloRL_Updater(Updater):
         self._n_experiences = 0
         self._n_updates = 0
 
-        self.backbone = None
-        self.obj_network = None
-        self.cls_network = None
-        self.attr_network = None
         self.object_decoders = None
 
         self.predict_box_std = False
@@ -207,7 +245,6 @@ class YoloRL_Updater(Updater):
             self.predict_box_std = box_std < 0
         except (TypeError, ValueError):
             pass
-        self.n_box_params = 8 if self.predict_box_std else 4
 
         self.predict_attr_std = False
         try:
@@ -215,7 +252,38 @@ class YoloRL_Updater(Updater):
             self.predict_attr_std = attr_std < 0
         except (TypeError, ValueError):
             pass
-        self.n_attr_params = 2 if self.predict_attr_std else 1
+
+        if isinstance(self.order, str):
+            self.order = self.order.split()
+        assert set(self.order) == set("box obj cls attr".split())
+        assert len(self.order) == 4
+
+        self.layer_params = dict(
+            box=dict(
+                rep_builder=self._build_box,
+                fixed=self.fixed_box,
+                output_size=4*(2 if self.predict_box_std else 1),
+                network=None
+            ),
+            obj=dict(
+                rep_builder=self._build_obj,
+                fixed=self.fixed_obj,
+                output_size=1,
+                network=None
+            ),
+            cls=dict(
+                rep_builder=self._build_cls,
+                fixed=self.fixed_cls,
+                output_size=self.C,
+                network=None
+            ),
+            attr=dict(
+                rep_builder=self._build_attr,
+                fixed=self.fixed_box,
+                output_size=self.A*(2 if self.predict_attr_std else 1),
+                network=None
+            ),
+        )
 
     def _make_datasets(self):
         train = EMNIST_ObjectDetection(n_examples=int(cfg.n_train), shuffle=True)
@@ -230,7 +298,7 @@ class YoloRL_Updater(Updater):
     def trainable_variables(self, for_opt, rl_only=False):
         scoped_functions = (
             self.object_decoders +
-            [self.backbone, self.obj_network, self.cls_network, self.attr_network]
+            [self.layer_params[kind]["network"] for kind in self.order]
         )
 
         tvars = []
@@ -357,21 +425,9 @@ class YoloRL_Updater(Updater):
             else:
                 raise Exception("Unknown kind {}".format(kind))
 
-    def _build_program_generator(self):
-        inp, is_training = self.inp, self.is_training
-        H, W, B, C, A = self.H, self.W, self.B, self.C, self.A
+    def _build_box(self, box_params, is_training):
+        H, W, B = self.H, self.W, self.B
         image_height, image_width = self.image_height, self.image_width
-
-        # --- bounding boxes ---
-
-        n_box_params = self.n_box_params
-
-        box_output = self.backbone(inp, (H, W, B * n_box_params + self.n_passthrough_features), is_training)
-
-        features = box_output[..., B * n_box_params:]
-
-        box_params = box_output[..., :B * n_box_params]
-        box_params = tf.reshape(box_params, (-1, H, W, B, n_box_params))
 
         if self.predict_box_std:
             box_mean_logits, box_std_logits = tf.split(box_params, 2, axis=-1)
@@ -429,39 +485,37 @@ class YoloRL_Updater(Updater):
         ys = noisy_h
         xs = noisy_w
 
-        noisy_y = (noisy_cell_y + tf.range(H, dtype=tf.float32)[None, :, None, None, None]) / H
-        noisy_x = (noisy_cell_x + tf.range(W, dtype=tf.float32)[None, None, :, None, None]) / W
+        noisy_y = (
+            (noisy_cell_y + tf.range(H, dtype=tf.float32)[None, :, None, None, None]) *
+            (self.pixels_per_cell[0] / self.image_shape[0])
+        )
+        noisy_x = (
+            (noisy_cell_x + tf.range(W, dtype=tf.float32)[None, None, :, None, None]) *
+            (self.pixels_per_cell[1] / self.image_shape[1])
+        )
 
         yt = 2 * noisy_y - 1
         xt = 2 * noisy_x - 1
 
         self.area = (ys * float(self.image_height)) * (xs * float(self.image_width))
 
+        self.cell_y, self.cell_x = tf.split(cell_yx, 2, axis=-1)
+        self.h, self.w = tf.split(hw, 2, axis=-1)
+        self.cell_yx_dist = dict(mean=cell_yx, std=cell_yx_std)
+        self.hw_dist = dict(mean=hw, std=hw_std)
+
+        self.samples.update(cell_yx=cell_yx_noise, hw=hw_noise)
+
         box_representation = tf.concat([xs, xt, ys, yt], axis=-1)
+        return box_representation
 
-        program = box_representation
-
-        # --- objectness ---
-
-        obj_input = features
-        if self.pass_samples:
-            _program = tf.reshape(program, (-1, H, W, B*4))
-            obj_input = tf.concat([features, _program], axis=-1)
-
-        obj_param_depth = B * 1
-
-        obj_output = self.obj_network(obj_input, (H, W, obj_param_depth + self.n_passthrough_features), is_training)
-
-        features = obj_output[..., obj_param_depth:]
-
-        obj_logits = obj_output[..., :obj_param_depth]
-        obj_logits = tf.reshape(obj_logits, (-1, H, W, B, 1))
+    def _build_obj(self, obj_logits, is_training):
         obj_logits = tf.clip_by_value(obj_logits, -10., 10.)
         self.obj_logits = obj_logits
 
         obj_params = tf.nn.sigmoid(obj_logits)
         obj_exploration = build_scheduled_value(self.obj_exploration, "obj_exploration") * self.float_is_training
-        obj_params = (1 - obj_exploration) * obj_params + 0.5 * obj_exploration
+        obj_params = (1 - obj_exploration) * obj_params + self.obj_default * obj_exploration
 
         obj_dist = tf.distributions.Bernoulli(probs=obj_params)
 
@@ -478,22 +532,13 @@ class YoloRL_Updater(Updater):
         if "obj" in self.fix_values:
             obj_representation = float(self.fix_values["obj"]) * tf.ones_like(obj_representation, dtype=tf.float32)
 
-        program = tf.concat([program, obj_representation], axis=-1)
+        self.samples["obj"] = obj_samples
+        self.entropy["obj"] = obj_entropy
+        self.log_probs["obj"] = obj_log_probs
 
-        # --- classes ---
+        return obj_representation
 
-        cls_input = features
-        if self.pass_samples:
-            _program = tf.reshape(program, (-1, H, W, B*(4 + 1)))
-            cls_input = tf.concat([features, _program], axis=-1)
-
-        cls_param_depth = B * C
-        cls_output = self.cls_network(cls_input, (H, W, cls_param_depth + self.n_passthrough_features), is_training)
-
-        features = cls_output[..., cls_param_depth:]
-
-        cls_logits = cls_output[..., :cls_param_depth]
-        cls_logits = tf.reshape(cls_logits, (-1, H, W, B, C))
+    def _build_cls(self, cls_logits, is_training):
         cls_logits = tf.minimum(10.0, cls_logits)
 
         self.cls_logits = cls_logits
@@ -506,7 +551,7 @@ class YoloRL_Updater(Updater):
         cls_dist = tf.distributions.Categorical(probs=cls_params)
 
         cls_samples = tf.stop_gradient(cls_dist.sample())
-        cls_samples = tf.one_hot(cls_samples, C)
+        cls_samples = tf.one_hot(cls_samples, self.C)
         cls_samples = tf.to_float(cls_samples)
 
         cls_log_probs = cls_dist.log_prob(tf.argmax(cls_samples, axis=-1))[..., None]
@@ -519,20 +564,13 @@ class YoloRL_Updater(Updater):
         if "cls" in self.fix_values:
             cls_representation = float(self.fix_values["cls"]) * tf.ones_like(cls_representation, dtype=tf.float32)
 
-        program = tf.concat([program, cls_representation], axis=-1)
+        self.samples["cls"] = cls_samples
+        self.entropy["cls"] = cls_entropy
+        self.log_probs["cls"] = cls_log_probs
 
-        # --- attributes ---
+        return cls_representation
 
-        attr_input = features
-        if self.pass_samples:
-            _program = tf.reshape(program, (-1, H, W, B*(4 + 1 + C)))
-            attr_input = tf.concat([features, _program], axis=-1)
-
-        n_attr_params = self.n_attr_params
-        attr_output = self.attr_network(attr_input, (H, W, B * n_attr_params * A), is_training)
-
-        attr_params = tf.reshape(attr_output, (-1, H, W, B, n_attr_params * A))
-
+    def _build_attr(self, attr_params, is_training):
         if self.predict_attr_std:
             attr, attr_std_logits = tf.split(attr_params, 2, axis=-1)
             attr_std = tf.exp(attr_std_logits)
@@ -544,25 +582,71 @@ class YoloRL_Updater(Updater):
         attr_noise = tf.random_normal(tf.shape(attr_std), name="attr_noise")
         noisy_attr = attr + attr_noise * attr_std * self.float_is_training
 
-        program = tf.concat([program, noisy_attr], axis=-1)
+        self.attr_dist = dict(mean=attr, std=attr_std)
+        self.samples["attr"] = attr_noise
+
+        return noisy_attr
+
+    def _build_program_generator(self):
+        inp, is_training = self.inp, self.is_training
+        H, W, B = self.H, self.W, self.B
+        program, features = None, None
+
+        self.program_fields = {}
+        self.samples = {}
+        self.entropy = {}
+        self.log_probs = {}
+
+        for i, kind in enumerate(self.order):
+            kind = self.order[i]
+            params = self.layer_params[kind]
+            rep_builder = params["rep_builder"]
+            output_size = params["output_size"]
+            network = params["network"]
+            fixed = params["fixed"]
+
+            final = kind == self.order[-1]
+
+            out_channel_dim = B * output_size
+            if not final:
+                out_channel_dim += self.n_passthrough_features
+
+            if network is None:
+                builder = cfg.build_next_step if i else cfg.build_backbone
+
+                network = builder(scope="{}_network".format(kind))
+                network.layout[-1]['filters'] = out_channel_dim
+
+                if fixed:
+                    network.fix_variables()
+                self.layer_params[kind]["network"] = network
+
+            if i:
+                layer_inp = features
+                if self.pass_samples:
+                    _program = tf.reshape(program, (-1, H, W, B * int(program.shape[-1])))
+                    layer_inp = tf.concat([features, _program], axis=-1)
+            else:
+                layer_inp = inp
+
+            network_output = network(layer_inp, (H, W, out_channel_dim), is_training)
+
+            features = network_output[..., B*output_size:]
+
+            output = network_output[..., :B*output_size]
+            output = tf.reshape(output, (-1, H, W, B, output_size))
+
+            representation = rep_builder(output, is_training)
+
+            self.program_fields[kind] = representation
+
+            if i:
+                program = tf.concat([program, representation], axis=-1)
+            else:
+                program = representation
 
         # --- finalize ---
-
-        self.cell_y, self.cell_x = tf.split(cell_yx, 2, axis=-1)
-        self.h, self.w = tf.split(hw, 2, axis=-1)
-
-        self.program_fields = dict(
-            box=box_representation, obj=obj_representation,
-            cls=cls_representation, attr=noisy_attr)
-
-        self.samples = dict(cell_yx=cell_yx_noise, hw=hw_noise, obj=obj_samples, cls=cls_samples, attr=attr_noise)
-        self.log_probs = dict(obj=obj_log_probs, cls=cls_log_probs)
-        self.entropy = dict(obj=obj_entropy, cls=cls_entropy)
         self.program = program
-
-        self.cell_yx_dist = dict(mean=cell_yx, std=cell_yx_std)
-        self.hw_dist = dict(mean=hw, std=hw_std)
-        self.attr_dist = dict(mean=attr, std=attr_std)
 
         self.network_outputs['samples'] = self.samples
         self.network_outputs['area'] = self.area
@@ -635,6 +719,96 @@ class YoloRL_Updater(Updater):
         self.network_outputs['output'] = self.output
         self.network_outputs['output_logits'] = self.output_logits
 
+    def _build_program_interpreter_with_dynamic_partition(self):
+        H, W, B, A = self.H, self.W, self.B, self.A
+        object_shape, image_height, image_width, image_depth = (
+            self.object_shape, self.image_height, self.image_width, self.image_depth)
+
+        boxes = self.program_fields['box']
+        obj = self.program_fields['obj']
+        cls = self.program_fields['cls']
+        attr = self.program_fields['attr']
+
+        self.object_decoder_output = {}
+        self.batch_indices = {}
+        self.box_indices = {}
+
+        per_class_images = {}
+
+        transform_constraints = snt.AffineWarpConstraints.no_shear_2d()
+
+        warper = snt.AffineGridWarper(
+            (image_height, image_width), object_shape, transform_constraints)
+        inverse_warper = warper.inverse()
+
+        for c, od in enumerate(self.object_decoders):
+            mask = tf.to_int32((obj[..., 0] * cls[..., c]) > 0)
+
+            # Make sure at least one box is active per batch-element.
+            mask = tf.maximum(
+                mask,
+                tf.to_int32(tf.tile(tf.reshape(tf.one_hot(0, H * W * B), (1, H, W, B)), (self.batch_size, 1, 1, 1)))
+            )
+
+            boxes_off, boxes_on = tf.dynamic_partition(boxes, mask, 2)
+            obj_off, obj_on = tf.dynamic_partition(obj, mask, 2)
+            cls_off, cls_on = tf.dynamic_partition(cls[..., c:c+1], mask, 2)
+            attr_off, attr_on = tf.dynamic_partition(attr, mask, 2)
+
+            object_decoder_in = tf.concat([boxes_on, attr_on], axis=-1)
+            object_decoder_in = tf.reshape(object_decoder_in, (-1, 1, 1, 4 + A))
+
+            batch_indices = tf.tile(tf.range(self.batch_size)[:, None, None, None], (1, H, W, B))
+            _, batch_indices = tf.dynamic_partition(batch_indices, mask, 2)
+
+            self.batch_indices[c] = batch_indices
+
+            box_indices = tf.reshape(tf.tile(tf.range(H * W * B)[None, :], (self.batch_size, 1)), (-1, H, W, B))
+            _, box_indices = tf.dynamic_partition(box_indices, mask, 2)
+
+            self.box_indices[c] = box_indices
+
+            if self.use_input_attention:
+                raise Exception("NotImplemented")
+
+                grid_coords = warper(boxes_on)
+                grid_coords = tf.reshape(grid_coords, (self.batch_size, H, W, B,) + object_shape + (2,))
+                input_glimpses = tf.contrib.resampler.resampler(self.inp, grid_coords)
+                input_glimpses = tf.reshape(input_glimpses, (-1,) + object_shape + (image_depth,))
+                object_decoder_in = [object_decoder_in, input_glimpses]
+
+            object_decoder_output = od(object_decoder_in, object_shape + (image_depth,), self.is_training)
+
+            if self.decoders_output_logits:
+                object_decoder_output = tf.nn.sigmoid(
+                    self.decoder_logit_scale * tf.clip_by_value(object_decoder_output, -10., 10.))
+
+            self.object_decoder_output[c] = object_decoder_output
+
+            # --- build predicted images by warping object_decoder_output and taking the max ---
+
+            grid_coords = inverse_warper(boxes_on)
+            object_decoder_transformed = tf.contrib.resampler.resampler(object_decoder_output, grid_coords)
+
+            weighted_images = cls_on[..., None, None] * obj_on[..., None, None] * object_decoder_transformed
+
+            per_class_images[c] = tf.segment_max(weighted_images, batch_indices)
+
+        self.output = tf.stack([per_class_images[c] for c in range(self.C)], axis=1)
+        self.output = tf.reduce_max(self.output, axis=1)
+
+        original_batch_size = tf.shape(boxes)[0]
+        new_batch_size = tf.shape(self.output)[0]
+
+        correct_shape = tf.Assert(tf.equal(original_batch_size, new_batch_size), [original_batch_size, new_batch_size, batch_indices], name="batch_size_check")
+        with tf.control_dependencies([correct_shape]):
+            _output = tf.clip_by_value(self.output, 1e-6, 1-1e-6)
+            self.output_logits = tf.log(_output / (1 - _output))
+
+            self.network_outputs['correct_shape'] = correct_shape
+            self.network_outputs['output'] = self.output
+            self.network_outputs['output_logits'] = self.output_logits
+
     def build_area_loss(self):
         selected_area = self.area * self.program_fields['obj']
         selected_area = tf_flatten(selected_area)
@@ -670,34 +844,6 @@ class YoloRL_Updater(Updater):
 
         self._build_placeholders()
 
-        if self.backbone is None:
-            self.backbone = cfg.build_backbone(scope="backbone")
-            self.backbone.layout[-1]['filters'] = self.B * self.n_box_params + self.n_passthrough_features
-
-            if self.fixed_backbone:
-                self.backbone.fix_variables()
-
-        if self.obj_network is None:
-            self.obj_network = cfg.build_obj_network(scope="obj_network")
-            self.obj_network.layout[-1]['filters'] = self.B + self.n_passthrough_features
-
-            if self.fixed_next_step:
-                self.obj_network.fix_variables()
-
-        if self.cls_network is None:
-            self.cls_network = cfg.build_cls_network(scope="cls_network")
-            self.cls_network.layout[-1]['filters'] = self.B * self.C + self.n_passthrough_features
-
-            if self.fixed_next_step:
-                self.cls_network.fix_variables()
-
-        if self.attr_network is None:
-            self.attr_network = cfg.build_attr_network(scope="attr_network")
-            self.attr_network.layout[-1]['filters'] = self.B * self.n_attr_params * self.A
-
-            if self.fixed_next_step:
-                self.attr_network.fix_variables()
-
         self._build_program_generator()
 
         if self.object_decoders is None:
@@ -707,7 +853,10 @@ class YoloRL_Updater(Updater):
                 for od in self.object_decoders:
                     od.fix_variables()
 
-        self._build_program_interpreter()
+        if self.dynamic_partition:
+            self._build_program_interpreter_with_dynamic_partition()
+        else:
+            self._build_program_interpreter()
 
         loss_key = 'xent_loss' if self.xent_loss else '2norm_loss'
 
@@ -896,6 +1045,10 @@ class YoloRL_RenderHook(object):
         to_fetch["output"] = updater.output
         to_fetch["object_decoder_output"] = updater.object_decoder_output
 
+        if updater.dynamic_partition:
+            to_fetch["batch_indices"] = updater.batch_indices
+            to_fetch["box_indices"] = updater.box_indices
+
         sess = tf.get_default_session()
         fetched = sess.run(to_fetch, feed_dict=feed_dict)
         fetched.update(images=images)
@@ -960,7 +1113,10 @@ class YoloRL_RenderHook(object):
         plt.close(fig)
 
     def _plot_patches(self, updater, fetched, sampled):
-        # Create a plot showing what each object is generating (for the 1st image only)
+        if updater.dynamic_partition:
+            return self._plot_patches_dynamic(updater, fetched, sampled)
+
+        # Create a plot showing what each object is generating
         import matplotlib.pyplot as plt
 
         object_decoder_output = fetched['object_decoder_output']
@@ -1000,6 +1156,57 @@ class YoloRL_RenderHook(object):
             fig.savefig(path)
             plt.close(fig)
 
+    def _plot_patches_dynamic(self, updater, fetched, sampled):
+
+        # Create a plot showing what each object is generating
+        import matplotlib.pyplot as plt
+
+        object_decoder_output = fetched['object_decoder_output']
+        batch_indices = fetched['batch_indices']
+        box_indices = fetched['box_indices']
+
+        batch_size = fetched['images'].shape[0]
+        H, W, C, B = [getattr(updater, a) for a in "H W C B".split()]
+
+        obj = fetched['obj']
+        cls = fetched['cls']
+        activation = obj * cls
+
+        for batch_idx in range(batch_size):
+            fig, axes = plt.subplots(H * C, W * B, figsize=(20, 20))
+            axes = np.array(axes).reshape(H * C, W * B)
+
+            for c in range(C):
+                mask = batch_indices[c] == batch_idx
+                images = object_decoder_output[c][mask, ...]
+                indices = list(box_indices[c][mask])
+                raw_idx = 0
+
+                for i in range(H):
+                    for j in range(W):
+                        for b in range(B):
+                            ax = axes[i * C + c, j * B + b]
+
+                            _cls = cls[batch_idx, i, j, b, c]
+                            _obj = obj[batch_idx, i, j, b, 0]
+                            _act = activation[batch_idx, i, j, b, c]
+
+                            ax.set_title("obj, cls, obj*cls = {}, {}, {}".format(_cls, _obj, _act))
+                            ax.set_xlabel("(c, b) = ({}, {})".format(c, b))
+
+                            if c == 0 and b == 0:
+                                ax.set_ylabel("grid_cell: ({}, {})".format(i, j))
+
+                            if raw_idx in indices:
+                                ax.imshow(images[indices.index(raw_idx)])
+
+                            raw_idx += 1
+
+            dir_name = ('sampled_' if sampled else '') + 'patches'
+            path = updater.exp_dir.path_for('plots', 'stage{}'.format(updater.stage_idx), dir_name, '{}.pdf'.format(batch_idx))
+            fig.savefig(path)
+            plt.close(fig)
+
 
 xkcd_colors = 'viridian,cerulean,vermillion,lavender,celadon,fuchsia,saffron,cinnamon,greyish,vivid blue'.split(',')
 
@@ -1018,9 +1225,7 @@ config = Config(
     characters=[0, 1, 2],
     n_sub_image_examples=0,
     build_backbone=Backbone,
-    build_obj_network=NextStep,
-    build_cls_network=NextStep,
-    build_attr_network=NextStep,
+    build_next_step=NextStep,
     build_object_decoder=ObjectDecoder,
     xent_loss=True,
     sub_image_shape=(14, 14),
@@ -1074,6 +1279,7 @@ config = Config(
     attr_target_std=1.0,
 
     obj_exploration=0.05,
+    obj_default=0.5,
     cls_exploration=0.05,
 
     # Costs
@@ -1106,23 +1312,29 @@ config = Config(
 
     max_experiments=None,
 
-    fixed_backbone=False,
-    fixed_next_step=False,
+    fixed_box=False,
+    fixed_obj=False,
+    fixed_cls=False,
+    fixed_attr=False,
+
     fixed_object_decoder=False,
 
     fix_values=dict(),
+    dynamic_partition=False,
+    order="box obj cls attr",
 )
 
 
-experimental_config = config.copy(
+nonzero_weight = 37.5
+
+
+good_config = config.copy(
     image_shape=(40, 40),
     object_shape=(14, 14),
     anchor_boxes=[[14, 14]],
     pixels_per_cell=(12, 12),
     kernel_size=(3, 3),
 
-    nonzero_weight=20.0,
-    # area_weight=0.1,
     use_specific_costs=True,
     max_hw=1.0,
     min_hw=0.5,
@@ -1130,11 +1342,19 @@ experimental_config = config.copy(
     min_chars=1,
     characters=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
 
+    dynamic_partition=True,
+    fix_values=dict(),
+    obj_exploration=0.0,
+    nonzero_weight=0.0,
+    lr_schedule=1-4,
+
     curriculum=[
-        dict(fix_values=dict(obj=1)),
-        dict(obj_exploration=0.2, nonzero_weight=100.),
-        dict(obj_exploration=0.1, nonzero_weight=100.),
-        dict(obj_exploration=0.05, nonzero_weight=100.),
+        dict(fix_values=dict(obj=1), lr_schedule=1e-4, dynamic_partition=False),
+        dict(fix_values=dict(obj=1), lr_schedule=1e-5, dynamic_partition=False),
+        dict(fix_values=dict(obj=1), lr_schedule=1e-6, dynamic_partition=False),
+        dict(obj_exploration=0.2, nonzero_weight=nonzero_weight, lr_schedule=1e-6),
+        dict(obj_exploration=0.1, nonzero_weight=nonzero_weight, lr_schedule=1e-6),
+        dict(obj_exploration=0.05, nonzero_weight=nonzero_weight, lr_schedule=1e-6),
     ],
 
     box_std=-1.,
@@ -1148,4 +1368,134 @@ experimental_config = config.copy(
     attr_target_mean=0.0,
     attr_target_std=100.0,
     **rl_mode,
+)
+
+
+classification_config = config.copy(
+    log_name="yolo_rl_classify",
+    C=2,
+    image_shape=(16, 16),
+    pixels_per_cell=(16, 16),
+    sub_image_shape=(14, 14),
+    object_shape=(14, 14),
+    anchor_boxes=[[14, 14]],
+    kernel_size=(3, 3),
+    colours="red",
+
+    use_specific_costs=True,
+    max_hw=1.0,
+    min_hw=0.5,
+    max_chars=1,
+    min_chars=1,
+    characters=[0, 1],
+
+    dynamic_partition=False,
+    fix_values=dict(obj=1),
+    obj_exploration=0.0,
+    nonzero_weight=0.0,
+    lr_schedule=1-4,
+
+    curriculum=[
+        dict()
+    ],
+
+    box_std=-1.,
+    attr_std=0.0,
+    minimize_kl=True,
+
+    cell_yx_target_mean=0.5,
+    cell_yx_target_std=100.0,
+    hw_target_mean=0.0,
+    hw_target_std=1.0,
+    attr_target_mean=0.0,
+    attr_target_std=100.0,
+    **rl_mode,
+
+)
+
+
+test_dynamic_partition_config = good_config.copy(
+    dynamic_partition=True,
+    curriculum=[
+        dict(obj_exploration=1.0, obj_default=0.5, dynamic_partition=False),
+        dict(obj_exploration=1.0, obj_default=0.9, dynamic_partition=False),
+        dict(obj_exploration=1.0, obj_default=0.1, dynamic_partition=False),
+        dict(obj_exploration=1.0, obj_default=0.5),
+        dict(obj_exploration=1.0, obj_default=0.9),
+        dict(obj_exploration=1.0, obj_default=0.1),
+    ],
+    max_steps=201,
+    display_step=10,
+)
+
+test_larger_config = good_config.copy(
+    curriculum=[
+        dict(load_path="/data/dps_data/logs/yolo_rl/exp_yolo_rl_seed=347405995_2018_03_12_21_50_31/weights/best_of_stage_0", do_train=False),
+    ],
+    image_shape=(80, 80),
+    n_train=100,
+)
+
+
+passthrough_config = config.copy(
+    log_name="yolo_passthrough",
+    build_object_decoder=PassthroughDecoder,
+    C=1,
+    A=2,
+    characters=[0],
+    # characters=[0, 1, 2],
+    object_shape=(28, 28),
+    anchor_boxes=[[28, 28]],
+    sub_image_shape=(28, 28),
+
+    use_input_attention=True,
+    decoders_output_logits=False,
+
+    fix_values=dict(cls=1),
+
+    lr_schedule=1e-6,
+    pixels_per_cell=(10, 10),
+    nonzero_weight=40.0,
+    obj_exploration=0.30,
+    cls_exploration=0.30,
+
+    box_std=-1.,
+    attr_std=0.0,
+    minimize_kl=True,
+
+    cell_yx_target_mean=0.5,
+    cell_yx_target_std=1.0,
+    hw_target_mean=0.0,
+    hw_target_std=1.0,
+    attr_target_mean=0.0,
+    attr_target_std=1.0,
+)
+
+
+simple_config = config.copy(
+    log_name="yolo_rl_simple",
+    build_object_decoder=StaticObjectDecoder,
+    colours="red",
+    C=1,
+    A=2,
+    characters=[0],
+    pixels_per_cell=(16, 16),
+    object_shape=(28, 28),
+    anchor_boxes=[[28, 28]],
+    image_shape=(28, 28),
+    sub_image_shape=(28, 28),
+    decoder_logit_scale=100.,
+    max_hw=2.,
+    min_hw=.5,
+    **rl_mode,
+    curriculum=[
+        dict(fix_values=dict(obj=1), nonzero_weight=0.0),
+        dict(nonzero_weight=50.0, obj_exploration=1.0),
+        dict(nonzero_weight=50.0, obj_exploration=0.5),
+        dict(nonzero_weight=50.0, obj_exploration=0.3),
+        dict(nonzero_weight=50.0, obj_exploration=0.15),
+        dict(nonzero_weight=50.0, obj_exploration=0.075),
+        dict(nonzero_weight=50.0, obj_exploration=0.0375),
+        dict(nonzero_weight=50.0, obj_exploration=0.0),
+    ],
 )
