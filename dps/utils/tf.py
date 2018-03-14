@@ -1103,9 +1103,15 @@ def build_gradient_train_op(
     grads_and_vars = list(zip(noisy_gradients, tvars))
 
     lr = build_scheduled_value(lr_schedule, 'learning_rate')
+
+    valid_lr = tf.Assert(
+        tf.logical_and(tf.less(lr, 1.0), tf.less(0.0, lr)),
+        [lr], name="valid_learning_rate")
+
     optimizer = build_optimizer(optimizer_spec, lr)
 
-    train_op = optimizer.apply_gradients(grads_and_vars, global_step=global_step)
+    with tf.control_dependencies([valid_lr]):
+        train_op = optimizer.apply_gradients(grads_and_vars, global_step=global_step)
 
     pre = summary_prefix + "_" if summary_prefix else ""
 
