@@ -137,20 +137,34 @@ class Hook(object):
         If True, this hook is called on the first step of a stage.
 
     """
-    def __init__(self, n, mode, initial=False):
+    def __init__(self, n=None, mode=None, initial=False):
         self.n = n
         self.mode = mode
         self.initial = initial
 
-    def start_stage(self, stage_idx):
+    @property
+    def call_per_timestep(self):
+        return not (self.n is None or self.mode is None)
+
+    def _attrs(self):
+        return "n mode initial".split()
+
+    def __str__(self):
+        attr_string = ", ".join("{}={}".format(k, getattr(self, k)) for k in self._attrs())
+        return("{}({})".format(self.__class__.__name__, attr_string))
+
+    def __repr__(self):
+        return str(self)
+
+    def start_stage(self, training_loop, stage_idx):
         """ Called at the beginning of every stage. """
         pass
 
-    def end_stage(self):
+    def end_stage(self, training_loop, stage_idx):
         """ Called at the end of every stage. """
         pass
 
-    def step(self, updater, step_idx):
+    def step(self, training_loop, updater, step_idx):
         """ May return a list of summaries and a dictionary of recorded values, similar to an updater. """
         pass
 
@@ -165,13 +179,10 @@ class TrainingLoop(object):
     ----------
     exp_name: str
         Name of the experiment, used as a prefix when creating a directory for the training loop.
-    hooks: list of Hook instances
-        Hooks to run throughout training.
 
     """
-    def __init__(self, exp_name='', hooks=None):
+    def __init__(self, exp_name=''):
         self.exp_name = exp_name or cfg.log_name
-        self.hooks = hooks or []
         self.start_time = None
 
     @property
@@ -184,6 +195,9 @@ class TrainingLoop(object):
             return np.inf
         else:
             return cfg.max_time - self.elapsed_time
+
+    def add_stage(self, stage_config):
+        self.curriculum_remaining.append(stage_config)
 
     def run(self, start_time):
         """ Run the training loop.
@@ -257,24 +271,34 @@ class TrainingLoop(object):
         threshold_reached = True
         self.global_step = 0
         self.n_global_experiences = 0
+        self.curriculum_remaining = self.curriculum
+        self.curriculum_complete = []
 
-        for stage_idx, stage_config in enumerate(self.curriculum):
+        stage_idx = 0
+        while self.curriculum_remaining:
             print("\n" + "=" * 50)
             print("Starting stage {} at {}, {} seconds after given "
                   "start time.\n".format(stage_idx, datetime.datetime.now(), time.time() - self.start_time))
             print("\n")
 
+            stage_config = self.curriculum_remaining.pop(0)
             stage_config = Config(stage_config)
 
             if self.time_remaining <= 1:
                 print("Time limit exceeded.")
                 break
 
-            self.data.start_stage(stage_idx)
+            self.data.start_stage(stage_idx, stage_config)
 
             with ExitStack() as stack:
 
                 # --------------- Stage set-up -------------------
+                print("New config values for this stage are: \n{}\n".format(pformat(stage_config)))
+                stack.enter_context(stage_config)
+
+                for hook in cfg.hooks:
+                    assert isinstance(hook, Hook)
+                    hook.start_stage(self, stage_idx)
 
                 # Configure and create session and graph for stage.
                 session_config = tf.ConfigProto()
@@ -319,10 +343,6 @@ class TrainingLoop(object):
                 cpu_ram_limit_mb = cfg.get("cpu_ram_limit_mb", None)
                 if cpu_ram_limit_mb is not None:
                     stack.enter_context(memory_limit(cfg.cpu_ram_limit_mb))
-
-                print("New config values for this stage are: \n{}\n".format(pformat(stage_config)))
-
-                stack.enter_context(stage_config)
 
                 # Build env
                 if stage_idx == 0 or not cfg.preserve_env:
@@ -409,11 +429,16 @@ class TrainingLoop(object):
                           "of the curriculum, terminating.".format(stage_idx))
                     break
 
+                for hook in cfg.hooks:
+                    hook.end_stage(self, stage_idx)
+
                 print("Done stage {} at {}, {} seconds after given start time.".format(
                     stage_idx, datetime.datetime.now(), time.time() - self.start_time))
                 print("=" * 50)
 
             self.data.end_stage(updater.n_updates)
+            stage_idx += 1
+            self.curriculum_complete.append(stage_config)
 
         print(self.data.summarize())
 
@@ -443,10 +468,7 @@ class TrainingLoop(object):
         else:
             raise Exception("Ambiguous stopping criteria specification: {}".format(stopping_criteria[1]))
 
-        # Set-up hooks
         early_stop = EarlyStopHook(patience=cfg.patience, maximize=self.maximize_sc)
-        for hook in self.hooks:
-            hook.start_stage(stage_idx)
 
         # Run stage with time and memory limits
         print("{} seconds left at the beginning of stage {}.".format(self.time_remaining, stage_idx))
@@ -478,9 +500,6 @@ class TrainingLoop(object):
             phys_memory_after_mb=phys_memory_after,
             phys_memory_delta_mb=phys_memory_after - phys_memory_before
         )
-
-        for hook in self.hooks:
-            hook.end_stage()
 
         if limiter.ran_out:
             self.reason = "Time limit exceeded"
@@ -604,18 +623,18 @@ class TrainingLoop(object):
                     print("Virtual memory use: "
                           "{}mb".format(memory_usage(physical=False)))
 
-            # Run training hooks
-            for hook in self.hooks:
-                run_hook = local_step == 0 and hook.initial
-                run_hook |= local_step > 0 and local_step % hook.n == 0
+            for hook in cfg.hooks:
+                if hook.call_per_timestep:
+                    run_hook = local_step == 0 and hook.initial
+                    run_hook |= local_step > 0 and local_step % hook.n == 0
 
-                if run_hook:
-                    result = hook.step(updater)
+                    if run_hook:
+                        result = hook.step(self, updater)
 
-                    if result:
-                        # TODO: currently nothing is done with the record
-                        record, summary = result
-                        self.data.add_summary(n_global_experiences, hook.mode, summary)
+                        if result:
+                            # TODO: currently nothing is done with the record
+                            record, summary = result
+                            self.data.add_summary(n_global_experiences, hook.mode, summary)
 
             # Possibly render
             if render and cfg.render_hook is not None:
@@ -722,7 +741,7 @@ class _TrainingLoopData(FrozenTrainingLoopData):
     def setup(self):
         # Record training session environment for later diagnostic purposes
         self.record_environment(config=cfg.freeze(), git_modules=[dps])
-        self.curriculum = cfg.curriculum + []
+        self.curriculum = []
 
         self.make_directory('weights')
         self.make_directory('plots')
@@ -740,8 +759,8 @@ class _TrainingLoopData(FrozenTrainingLoopData):
     def history(self):
         return self._history
 
-    def start_stage(self, stage_idx):
-        self.history.append(dict(stage_idx=stage_idx))
+    def start_stage(self, stage_idx, stage_config):
+        self.history.append(dict(stage_idx=stage_idx, stage_config=stage_config))
         self.stage_idx = stage_idx
         self.summary_writers = {}
 
@@ -842,9 +861,9 @@ class _TrainingLoopData(FrozenTrainingLoopData):
             s += "*" * 30 + '\n'
 
             for k, v in sorted(record.items()):
+                if isinstance(v, dict):
+                    v = "\n" + pformat(v, indent=2)
                 s += "* {}: {}\n".format(k, v)
-
-            s += "* new cfg values:\n{}\n".format(pformat(self.curriculum[stage_idx]))
 
         for mode, data in self.data.items():
             if data:
@@ -853,6 +872,8 @@ class _TrainingLoopData(FrozenTrainingLoopData):
                 if record:
                     s += "\n-- {} -- \n".format(mode)
                     for k, v in sorted(record.items()):
+                        if isinstance(v, dict):
+                            v = "\n" + pformat(v, indent=2)
                         s += "* {}: {}\n".format(k, v)
 
         return s

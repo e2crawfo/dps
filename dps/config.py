@@ -65,6 +65,7 @@ DEFAULT_CONFIG = Config(
     inter_op_parallelism_threads=0,
 
     readme="",
+    hooks=[],
 )
 
 

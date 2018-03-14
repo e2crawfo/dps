@@ -5,7 +5,7 @@ import pytest
 
 from dps.run import _run
 from dps.rl.algorithms.a2c import reinforce_config
-from dps.train import training_loop
+from dps.train import training_loop, Hook
 from dps.env.advanced import translated_mnist
 from dps.env.advanced import simple_addition
 from dps.config import DEFAULT_CONFIG
@@ -25,6 +25,41 @@ def test_time_limit(test_config):
         training_loop()
     elapsed = start - time.time()
     assert elapsed < config.max_time + 1
+
+
+class DummyHook(Hook):
+    def __init__(self, n_stages, base_config):
+        self.n_stages = n_stages
+        self.base_config = base_config
+        super(DummyHook, self).__init__()
+
+    def _attrs(self):
+        return "n_stages base_config".split()
+
+    def end_stage(self, training_loop, stage_idx):
+        if stage_idx < self.n_stages - 1:
+            training_loop.add_stage(self.base_config.copy())
+
+
+def test_stage_hook(test_config):
+    """ Test that we can safely use hooks to add new stages. """
+    config = DEFAULT_CONFIG.copy()
+    config.update(simple_addition.config)
+    config.update(reinforce_config)
+    config.update(
+        max_steps=11, eval_step=10, n_train=100, seed=100,
+        hooks=[DummyHook(3, dict(max_steps=21))],
+        curriculum=[dict()],
+        width=1,
+    )
+    config.update(test_config)
+
+    with config:
+        data = training_loop()
+        assert data.n_stages == 3
+        assert not data.history[0]["stage_config"]
+        assert data.history[1]["stage_config"]["max_steps"] == 21
+        assert data.history[2]["stage_config"]["max_steps"] == 21
 
 
 def grep(pattern, filename, options=""):
