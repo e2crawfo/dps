@@ -3,8 +3,10 @@ import numpy as np
 import sonnet as snt
 
 from dps import cfg
+from dps.train import Hook
 from dps.datasets import EMNIST_ObjectDetection
 from dps.updater import Updater
+from dps.vision.attention import gaussian_filter
 from dps.utils import Config, Param
 from dps.utils.tf import (
     FullyConvolutional, build_gradient_train_op,
@@ -44,7 +46,7 @@ def prime_factors(n):
 class Backbone(FullyConvolutional):
     pixels_per_cell = Param()
     kernel_size = Param()
-    n_channels = Param(128)
+    n_channels = Param()
     n_final_layers = Param(2)
 
     def __init__(self, **kwargs):
@@ -71,23 +73,24 @@ class Backbone(FullyConvolutional):
 
 class NextStep(FullyConvolutional):
     kernel_size = Param()
+    n_channels = Param()
 
     def __init__(self, **kwargs):
         layout = [
-            dict(filters=128, kernel_size=self.kernel_size, strides=1, padding="SAME"),
-            dict(filters=128, kernel_size=self.kernel_size, strides=1, padding="SAME"),
+            dict(filters=self.n_channels, kernel_size=self.kernel_size, strides=1, padding="SAME"),
+            dict(filters=self.n_channels, kernel_size=self.kernel_size, strides=1, padding="SAME"),
         ]
         super(NextStep, self).__init__(layout, check_output_shape=True, **kwargs)
 
 
 class ObjectDecoder(FullyConvolutional):
-    n_filters = Param(128)
+    n_channels = Param()
 
     def __init__(self, **kwargs):
         layout = [
-            dict(filters=self.n_filters, kernel_size=3, strides=1, padding="VALID", transpose=True),
-            dict(filters=self.n_filters, kernel_size=5, strides=1, padding="VALID", transpose=True),
-            dict(filters=self.n_filters, kernel_size=3, strides=2, padding="SAME", transpose=True),
+            dict(filters=self.n_channels, kernel_size=3, strides=1, padding="VALID", transpose=True),
+            dict(filters=self.n_channels, kernel_size=5, strides=1, padding="VALID", transpose=True),
+            dict(filters=self.n_channels, kernel_size=3, strides=2, padding="SAME", transpose=True),
             dict(filters=3, kernel_size=4, strides=1, padding="SAME", transpose=True),  # For 14 x 14 output
         ]
         super(ObjectDecoder, self).__init__(layout, check_output_shape=True, **kwargs)
@@ -100,11 +103,13 @@ class PassthroughDecoder(ScopedFunction):
 
 
 class ObjectDecoder28x28(FullyConvolutional):
+    n_channels = Param()
+
     def __init__(self, **kwargs):
         layout = [
-            dict(filters=128, kernel_size=3, strides=1, padding="VALID", transpose=True),
-            dict(filters=256, kernel_size=5, strides=1, padding="VALID", transpose=True),
-            dict(filters=256, kernel_size=3, strides=2, padding="SAME", transpose=True),
+            dict(filters=self.n_channels, kernel_size=3, strides=1, padding="VALID", transpose=True),
+            dict(filters=self.n_channels, kernel_size=5, strides=1, padding="VALID", transpose=True),
+            dict(filters=self.n_channels, kernel_size=3, strides=2, padding="SAME", transpose=True),
             dict(filters=3, kernel_size=3, strides=2, padding="SAME", transpose=True),  # For 28 x 28 output
         ]
         super(ObjectDecoder28x28, self).__init__(layout, check_output_shape=True, **kwargs)
@@ -129,25 +134,72 @@ class StaticObjectDecoder(ScopedFunction):
         return tf.tile(output[None, ...], (tf.shape(inp)[0],) + tuple(1 for s in output_shape))
 
 
-def reconstruction_cost(network_outputs):
+def reconstruction_cost(network_outputs, updater):
     return network_outputs['reconstruction_loss'][..., None, None, None]
 
 
-def area_cost(network_outputs):
+def specific_reconstruction_cost(network_outputs, updater):
+    centers_h = (np.arange(updater.H) + 0.5) * updater.pixels_per_cell[0]
+    centers_w = (np.arange(updater.W) + 0.5) * updater.pixels_per_cell[1]
+
+    loc_h = (np.arange(updater.image_height) + 0.5)[..., None]
+    loc_w = (np.arange(updater.image_width) + 0.5)[..., None]
+
+    dist_h = np.abs(loc_h - centers_h)
+    dist_w = np.abs(loc_w - centers_w)
+
+    all_filtered = []
+
+    for b in range(updater.B):
+        max_distance_h = updater.pixels_per_cell[0] / 2 + updater.max_hw * updater.anchor_boxes[b, 0] / 2
+        max_distance_w = updater.pixels_per_cell[1] / 2 + updater.max_hw * updater.anchor_boxes[b, 1] / 2
+
+        # Rectangle filtering
+        filt_h = (dist_h < max_distance_h).astype('f')
+        filt_w = (dist_w < max_distance_w).astype('f')
+
+        # Gaussian filtering
+        # h_means = (np.arange(H) + 0.5) * network_outputs["pixels_per_cell"][0]
+        # w_means = (np.arange(W) + 0.5) * network_outputs["pixels_per_cell"][1]
+
+        # std = 1.0
+
+        # filt_h = np.exp(-0.5 * (loc_h - h_means)**2 / std)
+        # filt_w = np.exp(-0.5 * (loc_w - w_means)**2 / std)
+
+        # if False:  # Normalize
+        #     filt_h /= np.sqrt(2 * np.pi) * std
+        #     filt_w /= np.sqrt(2 * np.pi) * std
+
+        pprl = network_outputs['per_pixel_reconstruction_loss']
+
+        # Sum over channel dimension
+        pprl = pprl.sum(axis=-1)
+
+        filtered = np.dot(pprl, filt_w)
+        filtered = np.tensordot(pprl, filt_h, [1, 0])
+        filtered = np.transpose(pprl, (0, 2, 1))
+
+        all_filtered.append(filtered)
+
+    return np.stack(all_filtered, axis=-1)[..., None]
+
+
+def area_cost(network_outputs, updater):
     return network_outputs['area_loss'][..., None, None, None]
 
 
-def specific_area_cost(network_outputs):
+def specific_area_cost(network_outputs, updater):
     return network_outputs['program_fields']['obj'] * network_outputs['area']
 
 
-def nonzero_cost(network_outputs):
+def nonzero_cost(network_outputs, updater):
     obj_samples = network_outputs['program_fields']['obj']
     obj_samples = obj_samples.reshape(obj_samples.shape[0], -1)
     return np.count_nonzero(obj_samples, axis=1)[..., None, None, None, None].astype('f')
 
 
-def specific_nonzero_cost(network_outputs):
+def specific_nonzero_cost(network_outputs, updater):
     return network_outputs['program_fields']['obj']
 
 
@@ -358,7 +410,7 @@ class YoloRL_Updater(Updater):
         sample_feed_dict = {self.samples[k]: v for k, v in network_outputs['samples'].items()}
 
         for name, (_, f, _) in self.COST_funcs.items():
-            sample_feed_dict[self.COST_components[name]] = self._process_cost(f(network_outputs))
+            sample_feed_dict[self.COST_components[name]] = self._process_cost(f(network_outputs, self))
 
         return sample_feed_dict
 
@@ -800,7 +852,11 @@ class YoloRL_Updater(Updater):
         original_batch_size = tf.shape(boxes)[0]
         new_batch_size = tf.shape(self.output)[0]
 
-        correct_shape = tf.Assert(tf.equal(original_batch_size, new_batch_size), [original_batch_size, new_batch_size, batch_indices], name="batch_size_check")
+        correct_shape = tf.Assert(
+            tf.equal(original_batch_size, new_batch_size),
+            [original_batch_size, new_batch_size, batch_indices],
+            name="batch_size_check")
+
         with tf.control_dependencies([correct_shape]):
             _output = tf.clip_by_value(self.output, 1e-6, 1-1e-6)
             self.output_logits = tf.log(_output / (1 - _output))
@@ -809,35 +865,43 @@ class YoloRL_Updater(Updater):
             self.network_outputs['output'] = self.output
             self.network_outputs['output_logits'] = self.output_logits
 
-    def build_area_loss(self):
+    def build_area_loss(self, batch=True):
         selected_area = self.area * self.program_fields['obj']
-        selected_area = tf_flatten(selected_area)
-        return tf.reduce_sum(selected_area, axis=1, keep_dims=True)
 
-    def build_xent_loss(self, logits, targets):
-        targets = tf_flatten(targets)
-        logits = tf_flatten(logits)
+        if batch:
+            selected_area = tf_flatten(selected_area)
+            return tf.reduce_sum(selected_area, axis=1, keep_dims=True)
+        else:
+            return selected_area
 
-        return tf.reduce_sum(
-            tf.nn.sigmoid_cross_entropy_with_logits(labels=targets, logits=logits),
-            keep_dims=True, axis=1
-        )
+    def build_xent_loss(self, logits, targets, batch=True):
+        per_pixel_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=targets, logits=logits)
 
-    def build_2norm_loss(self, logits, targets):
+        if batch:
+            per_pixel_loss = tf_flatten(per_pixel_loss)
+            return tf.reduce_sum(per_pixel_loss, keep_dims=True, axis=1)
+        else:
+            return per_pixel_loss
+
+    def build_squared_loss(self, logits, targets, batch=True):
         actions = tf.sigmoid(logits)
+        per_pixel_loss = (actions - targets)**2
 
-        targets = tf_flatten(targets)
-        actions = tf_flatten(actions)
+        if batch:
+            per_pixel_loss = tf_flatten(per_pixel_loss)
+            return tf.reduce_sum(per_pixel_loss, keep_dims=True, axis=1)
+        else:
+            return per_pixel_loss
 
-        return tf.sqrt(tf.reduce_sum((actions - targets)**2, keep_dims=True, axis=1))
-
-    def build_1norm_loss(self, logits, targets):
+    def build_1norm_loss(self, logits, targets, batch=True):
         actions = tf.sigmoid(logits)
+        per_pixel_loss = tf.abs(actions - targets)
 
-        targets = tf_flatten(targets)
-        actions = tf_flatten(actions)
-
-        return tf.reduce_sum(tf.abs(actions - targets), keep_dims=True, axis=1)
+        if batch:
+            per_pixel_loss = tf_flatten(per_pixel_loss)
+            return tf.reduce_sum(per_pixel_loss, keep_dims=True, axis=1)
+        else:
+            return per_pixel_loss
 
     def _build_graph(self):
         self.network_outputs = {}
@@ -858,12 +922,14 @@ class YoloRL_Updater(Updater):
         else:
             self._build_program_interpreter()
 
-        loss_key = 'xent_loss' if self.xent_loss else '2norm_loss'
+        loss_key = 'xent_loss' if self.xent_loss else 'squared_loss'
 
         recorded_tensors = {}
 
         reconstruction_loss = getattr(self, 'build_' + loss_key)(self.output_logits, self.inp)
         mean_reconstruction_loss = tf.reduce_mean(reconstruction_loss)
+
+        per_pixel_reconstruction_loss = getattr(self, 'build_' + loss_key)(self.output_logits, self.inp, batch=False)
 
         area_loss = self.build_area_loss()
         mean_area_loss = tf.reduce_mean(area_loss)
@@ -871,6 +937,7 @@ class YoloRL_Updater(Updater):
         # --- network output ---
 
         self.network_outputs.update(
+            per_pixel_reconstruction_loss=per_pixel_reconstruction_loss,
             reconstruction_loss=reconstruction_loss,
             area_loss=area_loss
         )
@@ -900,7 +967,7 @@ class YoloRL_Updater(Updater):
 
         recorded_tensors.update({
             name: tf.reduce_mean(getattr(self, 'build_' + name)(self.output_logits, self.inp))
-            for name in ['xent_loss', '2norm_loss', '1norm_loss']
+            for name in ['xent_loss', 'squared_loss', '1norm_loss']
         })
 
         recorded_tensors['attr'] = tf.reduce_mean(self.attr_dist['mean'])
@@ -1191,7 +1258,7 @@ class YoloRL_RenderHook(object):
                             _obj = obj[batch_idx, i, j, b, 0]
                             _act = activation[batch_idx, i, j, b, c]
 
-                            ax.set_title("obj, cls, obj*cls = {}, {}, {}".format(_cls, _obj, _act))
+                            ax.set_title("obj, cls, obj*cls = {}, {}, {}".format(_obj, _cls, _act))
                             ax.set_xlabel("(c, b) = ({}, {})".format(c, b))
 
                             if c == 0 and b == 0:
@@ -1203,7 +1270,11 @@ class YoloRL_RenderHook(object):
                             raw_idx += 1
 
             dir_name = ('sampled_' if sampled else '') + 'patches'
-            path = updater.exp_dir.path_for('plots', 'stage{}'.format(updater.stage_idx), dir_name, '{}.pdf'.format(batch_idx))
+            path = updater.exp_dir.path_for(
+                'plots',
+                'stage{}'.format(updater.stage_idx),
+                dir_name,
+                '{}.pdf'.format(batch_idx))
             fig.savefig(path)
             plt.close(fig)
 
@@ -1243,6 +1314,7 @@ config = Config(
     anchor_boxes=[[28, 28]],
     pixels_per_cell=(28, 28),
     kernel_size=(1, 1),
+    n_channels=128,
     D=3,
     C=1,
     A=100,
@@ -1346,7 +1418,7 @@ good_config = config.copy(
     fix_values=dict(),
     obj_exploration=0.0,
     nonzero_weight=0.0,
-    lr_schedule=1-4,
+    lr_schedule=1e-4,
 
     curriculum=[
         dict(fix_values=dict(obj=1), lr_schedule=1e-4, dynamic_partition=False),
@@ -1371,6 +1443,115 @@ good_config = config.copy(
 )
 
 
+class ScheduleHook(Hook):
+    def __init__(self, attr_name, query_name, initial_value=0.0, tolerance=0.05, base_configs=None):
+        self.attr_name = attr_name
+        self.query_name = query_name
+        self.initial_value = initial_value
+        self.tolerance = tolerance
+
+        if isinstance(base_configs, dict):
+            base_configs = [base_configs]
+        self.base_configs = base_configs or [{}]
+
+        self.n_fragments_added = 0
+
+        super(ScheduleHook, self).__init__()
+
+    def _attrs(self):
+        return "attr_name query_name initial_value tolerance base_configs".split()
+
+    def _attr_value_for_fragment(self):
+        raise Exception("NotImplemented")
+
+    def start_stage(self, training_loop, stage_idx):
+        if stage_idx == 0:
+            self.final_orig_stage = len(training_loop.curriculum) - 1
+
+    def end_stage(self, training_loop, stage_idx):
+
+        if stage_idx >= self.final_orig_stage:
+            attr_value = self._attr_value_for_fragment(self.n_fragments_added)
+            new_stages = [{self.attr_name: attr_value, **bc} for bc in self.base_configs]
+
+            if stage_idx == self.final_orig_stage:
+                self.original_performance = training_loop.data.history[-1][self.query_name]
+                self._print("End of original stages, adding 1st curriculum fragment:\n{}".format(new_stages))
+                for ns in new_stages:
+                    training_loop.add_stage(ns)
+                self.n_fragments_added = 1
+
+            elif not training_loop.curriculum_remaining:
+                # Check whether performance achieved on most recent stage was near that of the first stage.
+                current_stage_performance = training_loop.data.history[-1][self.query_name]
+                threshold = (1 + self.tolerance) * self.original_performance
+
+                self._print("End of {}-th curriculum fragment.".format(self.n_fragments_added))
+                self._print("Original <{}>: {}".format(self.query_name, self.original_performance))
+                self._print("<{}> for fragment {}: {}".format(
+                    self.query_name, self.n_fragments_added, current_stage_performance))
+                self._print("<{}> threshold: {}".format(self.query_name, threshold))
+
+                if current_stage_performance <= threshold:
+                    self.n_fragments_added += 1
+                    self._print("Threshold reached, adding {}-th "
+                                "curriculum fragment:\n{}".format(self.n_fragments_added, new_stages))
+                    for ns in new_stages:
+                        training_loop.add_stage(ns)
+
+                else:
+                    self._print("Threshold not reached, ending training run")
+            else:
+                self._print("In the middle of the {}-th curriculum fragment.".format(self.n_fragments_added))
+        else:
+            self._print("Still running initial stages.")
+
+
+class GeometricScheduleHook(ScheduleHook):
+    def __init__(self, *args, multiplier=2.0, **kwargs):
+        super(GeometricScheduleHook, self).__init__(*args, **kwargs)
+        self.multiplier = multiplier
+
+    def _attrs(self):
+        return super(GeometricScheduleHook, self)._attrs() + ["multiplier"]
+
+    def _attr_value_for_fragment(self, stage_idx):
+        return self.initial_value * (self.multiplier ** stage_idx)
+
+
+class PolynomialScheduleHook(ScheduleHook):
+    def __init__(self, *args, scale=10.0, power=1.0, **kwargs):
+        super(PolynomialScheduleHook, self).__init__(*args, **kwargs)
+        self.scale = scale
+        self.power = power
+
+    def _attrs(self):
+        return super(PolynomialScheduleHook, self)._attrs() + ["scale", "power"]
+
+    def _attr_value_for_fragment(self, stage_idx):
+        return self.initial_value + self.scale * (stage_idx ** self.power)
+
+
+good_experimental_config = good_config.copy(
+    lr_schedule=1e-4,
+    curriculum=[
+        dict(fix_values=dict(obj=1), dynamic_partition=False),
+    ],
+    hooks=[
+        PolynomialScheduleHook(
+            "nonzero_weight", "best_COST_reconstruction",
+            base_configs=[
+                dict(obj_exploration=0.2,),
+                dict(obj_exploration=0.1,),
+                dict(obj_exploration=0.05,),
+            ],
+            tolerance=0.1, scale=1., power=2., initial_value=1.0),
+    ],
+    colours="red",
+    max_overlap=100,
+)
+
+
 classification_config = config.copy(
     log_name="yolo_rl_classify",
     C=2,
@@ -1379,7 +1560,7 @@ classification_config = config.copy(
     sub_image_shape=(14, 14),
     object_shape=(14, 14),
     anchor_boxes=[[14, 14]],
-    kernel_size=(3, 3),
+    kernel_size=(1, 1),
     colours="red",
 
     use_specific_costs=True,
@@ -1387,17 +1568,22 @@ classification_config = config.copy(
     min_hw=0.5,
     max_chars=1,
     min_chars=1,
-    characters=[0, 1],
+    characters=list(range(10)),
 
     dynamic_partition=False,
-    fix_values=dict(obj=1),
+    fix_values=dict(obj=1, cell_x=0.5, cell_y=0.5, h=1.0, w=1.0),
     obj_exploration=0.0,
     nonzero_weight=0.0,
-    lr_schedule=1-4,
+    lr_schedule=1e-4,
 
     curriculum=[
-        dict()
+        dict(cls_exploration=0.5),
+        dict(cls_exploration=0.4),
+        dict(cls_exploration=0.3),
+        dict(cls_exploration=0.2),
+        dict(cls_exploration=0.1),
     ],
+    decoder_logit_scale=10.0,
 
     box_std=-1.,
     attr_std=0.0,
@@ -1410,7 +1596,27 @@ classification_config = config.copy(
     attr_target_mean=0.0,
     attr_target_std=100.0,
     **rl_mode,
+)
 
+
+test_stage_hooks = good_config.copy(
+    curriculum=[
+        dict(fix_values=dict(obj=1), lr_schedule=1e-4, dynamic_partition=False),
+        dict(fix_values=dict(obj=1), lr_schedule=1e-5, dynamic_partition=False),
+        dict(fix_values=dict(obj=1), lr_schedule=1e-6, dynamic_partition=False),
+    ],
+    hooks=[
+        PolynomialScheduleHook(
+            "nonzero_weight", "best_COST_reconstruction",
+            base_configs=[
+                dict(obj_exploration=0.2, lr_schedule=1e-6),
+                dict(obj_exploration=0.1, lr_schedule=1e-6),
+            ],
+            tolerance=0.1, scale=5.),
+    ],
+    max_steps=11,
+    n_train=100,
+    render_step=0,
 )
 
 
