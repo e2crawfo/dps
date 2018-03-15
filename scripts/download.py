@@ -29,7 +29,8 @@ def download_emnist(data_dir):
     with cd(data_dir):
         if not os.path.exists('matlab.zip'):
             print("Downloading...")
-            subprocess.run(('wget ' + emnist_url).split(), check=True)
+            command = "wget {} --no-check-certificate".format(emnist_url).split()
+            subprocess.run(command, check=True)
         else:
             print("Found existing copy of matlab.zip, not downloading.")
 

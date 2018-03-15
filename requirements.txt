@@ -9,6 +9,7 @@ progressbar2
 psutil
 pyskiplist
 pytest
+pytest-env
 scikit-image
 scipy
 tabulate

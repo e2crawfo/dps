@@ -168,6 +168,9 @@ class Hook(object):
         """ May return a list of summaries and a dictionary of recorded values, similar to an updater. """
         pass
 
+    def _print(self, s):
+        print("{}: {}".format(self.__class__.__name__, s))
+
 
 class TrainingLoop(object):
     """ A training loop.
@@ -271,7 +274,7 @@ class TrainingLoop(object):
         threshold_reached = True
         self.global_step = 0
         self.n_global_experiences = 0
-        self.curriculum_remaining = self.curriculum
+        self.curriculum_remaining = self.curriculum + []
         self.curriculum_complete = []
 
         stage_idx = 0
@@ -293,7 +296,9 @@ class TrainingLoop(object):
             with ExitStack() as stack:
 
                 # --------------- Stage set-up -------------------
-                print("New config values for this stage are: \n{}\n".format(pformat(stage_config)))
+                print("\n" + "-" * 10 + " Stage set-up " + "-" * 10)
+
+                print("\nNew config values for this stage are: \n{}\n".format(pformat(stage_config)))
                 stack.enter_context(stage_config)
 
                 for hook in cfg.hooks:
@@ -424,15 +429,17 @@ class TrainingLoop(object):
                 if cfg.start_tensorboard:
                     restart_tensorboard(cfg.log_dir, cfg.tbport, cfg.reload_interval)
 
+                print("\n" + "-" * 10 + " Running end-of-stage hooks " + "-" * 10 + "\n")
+
+                for hook in cfg.hooks:
+                    hook.end_stage(self, stage_idx)
+
                 if not (threshold_reached or cfg.power_through):
                     print("Failed to reach error threshold on stage {} "
                           "of the curriculum, terminating.".format(stage_idx))
                     break
 
-                for hook in cfg.hooks:
-                    hook.end_stage(self, stage_idx)
-
-                print("Done stage {} at {}, {} seconds after given start time.".format(
+                print("\nDone stage {} at {}, {} seconds after given start time.".format(
                     stage_idx, datetime.datetime.now(), time.time() - self.start_time))
                 print("=" * 50)
 
@@ -472,6 +479,8 @@ class TrainingLoop(object):
 
         # Run stage with time and memory limits
         print("{} seconds left at the beginning of stage {}.".format(self.time_remaining, stage_idx))
+
+        print("\n" + "-" * 10 + " Training begins " + "-" * 10 + "\n")
 
         phys_memory_before = memory_usage(physical=True)
 

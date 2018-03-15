@@ -19,6 +19,7 @@ setup(
         "scipy",
         "pandas",
         "pytest",
+        "pytest-env",
         "future",
         "gym",
         "tabulate",
