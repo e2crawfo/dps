@@ -245,8 +245,9 @@ class YoloRL_Updater(Updater):
     noise_schedule = Param()
     max_grad_norm = Param()
 
-    pass_samples=Param(),
+    pass_samples = Param()
     n_passthrough_features = Param()
+    pass_boxes_to_decoder = Param()
 
     xent_loss = Param()
 
@@ -730,8 +731,11 @@ class YoloRL_Updater(Updater):
         cls = self.program_fields['cls']
         attr = self.program_fields['attr']
 
-        object_decoder_in = tf.concat([boxes, attr], axis=-1)
-        object_decoder_in = tf.reshape(object_decoder_in, (-1, 1, 1, 4 + A))
+        if self.pass_boxes_to_decoder:
+            object_decoder_in = tf.concat([boxes, attr], axis=-1)
+            object_decoder_in = tf.reshape(attr, (-1, 1, 1, 4 + A))
+        else:
+            object_decoder_in = tf.reshape(attr, (-1, 1, 1, A))
 
         self.object_decoder_output = {}
         per_class_images = {}
@@ -821,8 +825,11 @@ class YoloRL_Updater(Updater):
             cls_off, cls_on = tf.dynamic_partition(cls[..., c:c+1], mask, 2)
             attr_off, attr_on = tf.dynamic_partition(attr, mask, 2)
 
-            object_decoder_in = tf.concat([boxes_on, attr_on], axis=-1)
-            object_decoder_in = tf.reshape(object_decoder_in, (-1, 1, 1, 4 + A))
+            if self.pass_boxes_to_decoder:
+                object_decoder_in = tf.concat([boxes_on, attr_on], axis=-1)
+                object_decoder_in = tf.reshape(object_decoder_in, (-1, 1, 1, 4 + A))
+            else:
+                object_decoder_in = tf.reshape(attr_on, (-1, 1, 1, A))
 
             batch_indices = tf.tile(tf.range(self.batch_size)[:, None, None, None], (1, H, W, B))
             _, batch_indices = tf.dynamic_partition(batch_indices, mask, 2)
@@ -1171,6 +1178,10 @@ class YoloRL_RenderHook(object):
             ax1.imshow(pred)
             ax1.set_title('reconstruction')
 
+            ax2 = axes[2*i+1, j]
+            ax2.imshow(gt)
+            ax2.set_title('actual')
+
             for o, c, b in zip(obj[n], max_cls[n], box[n]):
                 t, l, h, w = b
 
@@ -1179,10 +1190,11 @@ class YoloRL_RenderHook(object):
                     edgecolor=cfg.class_colours[int(c)], facecolor='none',
                     alpha=o)
                 ax1.add_patch(rect)
-
-            ax2 = axes[2*i+1, j]
-            ax2.imshow(gt)
-            ax2.set_title('actual')
+                rect = patches.Rectangle(
+                    (l, t), w, h, linewidth=3,
+                    edgecolor=cfg.class_colours[int(c)], facecolor='none',
+                    alpha=o)
+                ax2.add_patch(rect)
 
         fig.suptitle('Sampled={}. Stage={}. After {} experiences ({} updates, {} experiences per batch).'.format(
             sampled, updater.stage_idx, updater.n_experiences, updater.n_updates, cfg.batch_size))
@@ -1335,6 +1347,7 @@ config = Config(
 
     pass_samples=True,  # Note that AIR basically uses pass_samples=True
     n_passthrough_features=100,
+    pass_boxes_to_decoder=False,
 
     # display params
     class_colours=['xkcd:' + c for c in xkcd_colors],
@@ -1576,9 +1589,16 @@ good_denser_bigger_config = good_experimental_config.copy(
     n_train=100,
     hooks=[],
     curriculum=[dict()],
-    load_path="/home/eric/Dropbox/experiment_data/active/yolo_rl/quadratic_schedule_local_reconstruction_loss/weights/best_of_stage_30"
+    load_path="/data/dps_data/logs/yolo_rl/exp_yolo_rl_seed=347405995_2018_03_16_09_48_57/weights/best_of_stage_20"
 )
 
+static_decoder_config = good_experimental_config.copy(
+    build_object_decoder=StaticObjectDecoder,
+    C=1,
+    A=2,
+    characters=[0],
+    decoder_logit_scale=100.,
+)
 
 classification_config = config.copy(
     log_name="yolo_rl_classify",
@@ -1703,33 +1723,4 @@ passthrough_config = config.copy(
     hw_target_std=1.0,
     attr_target_mean=0.0,
     attr_target_std=1.0,
-)
-
-
-simple_config = config.copy(
-    log_name="yolo_rl_simple",
-    build_object_decoder=StaticObjectDecoder,
-    colours="red",
-    C=1,
-    A=2,
-    characters=[0],
-    pixels_per_cell=(16, 16),
-    object_shape=(28, 28),
-    anchor_boxes=[[28, 28]],
-    image_shape=(28, 28),
-    sub_image_shape=(28, 28),
-    decoder_logit_scale=100.,
-    max_hw=2.,
-    min_hw=.5,
-    **rl_mode,
-    curriculum=[
-        dict(fix_values=dict(obj=1), nonzero_weight=0.0),
-        dict(nonzero_weight=50.0, obj_exploration=1.0),
-        dict(nonzero_weight=50.0, obj_exploration=0.5),
-        dict(nonzero_weight=50.0, obj_exploration=0.3),
-        dict(nonzero_weight=50.0, obj_exploration=0.15),
-        dict(nonzero_weight=50.0, obj_exploration=0.075),
-        dict(nonzero_weight=50.0, obj_exploration=0.0375),
-        dict(nonzero_weight=50.0, obj_exploration=0.0),
-    ],
 )

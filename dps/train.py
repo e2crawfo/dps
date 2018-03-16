@@ -435,7 +435,7 @@ class TrainingLoop(object):
                     hook.end_stage(self, stage_idx)
 
                 if not (threshold_reached or cfg.power_through):
-                    print("Failed to reach error threshold on stage {} "
+                    print("Failed to reach stopping criteria threshold on stage {} "
                           "of the curriculum, terminating.".format(stage_idx))
                     break
 
@@ -459,34 +459,11 @@ class TrainingLoop(object):
         self.threshold_reached = False
         self.reason = ""
 
-        # Parse stopping criteria
-        stopping_criteria = cfg.get("stopping_criteria", None)
-        if not stopping_criteria:
-            stopping_criteria = updater.stopping_criteria
-
-        if isinstance(stopping_criteria, str):
-            stopping_criteria = stopping_criteria.split(",")
-
-        self.stopping_criteria_name = stopping_criteria[0]
-        if "max" in stopping_criteria[1]:
-            self.maximize_sc = True
-        elif "min" in stopping_criteria[1]:
-            self.maximize_sc = False
-        else:
-            raise Exception("Ambiguous stopping criteria specification: {}".format(stopping_criteria[1]))
-
-        early_stop = EarlyStopHook(patience=cfg.patience, maximize=self.maximize_sc)
-
-        # Run stage with time and memory limits
-        print("{} seconds left at the beginning of stage {}.".format(self.time_remaining, stage_idx))
-
-        print("\n" + "-" * 10 + " Training begins " + "-" * 10 + "\n")
-
         phys_memory_before = memory_usage(physical=True)
 
         with time_limit(self.time_remaining, verbose=True) as limiter:
             try:
-                self._run_stage(stage_idx, updater, early_stop)
+                self._run_stage(stage_idx, updater)
             except KeyboardInterrupt:
                 self.threshold_reached = False
                 self.reason = "User interrupt"
@@ -515,8 +492,32 @@ class TrainingLoop(object):
             if cfg.error_on_timeout:
                 raise Exception("Timed out.")
 
-    def _run_stage(self, stage_idx, updater, early_stop):
+    def _run_stage(self, stage_idx, updater):
         """ Run main training loop for a stage of the curriculum. """
+
+        # Parse stopping criteria
+        stopping_criteria = cfg.get("stopping_criteria", None)
+        if not stopping_criteria:
+            stopping_criteria = updater.stopping_criteria
+
+        if isinstance(stopping_criteria, str):
+            stopping_criteria = stopping_criteria.split(",")
+
+        self.stopping_criteria_name = stopping_criteria[0]
+        if "max" in stopping_criteria[1]:
+            self.maximize_sc = True
+        elif "min" in stopping_criteria[1]:
+            self.maximize_sc = False
+        else:
+            raise Exception("Ambiguous stopping criteria specification: {}".format(stopping_criteria[1]))
+
+        early_stop = EarlyStopHook(patience=cfg.patience, maximize=self.maximize_sc)
+
+        # Run stage with time and memory limits
+        print("{} seconds left at the beginning of stage {}.".format(self.time_remaining, stage_idx))
+
+        print("\n" + "-" * 10 + " Training begins " + "-" * 10 + "\n")
+
         threshold_reached = False
         reason = None
         total_train_time = 0.0
