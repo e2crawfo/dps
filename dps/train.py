@@ -739,7 +739,7 @@ class FrozenTrainingLoopData(ExperimentDirectory):
 
     @property
     def modes(self):
-        pass
+        return os.listdir(self.path_for('summaries'))
 
 
 class _TrainingLoopData(FrozenTrainingLoopData):

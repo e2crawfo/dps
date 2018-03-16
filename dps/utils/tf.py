@@ -786,6 +786,7 @@ def restart_tensorboard(logdir, port=6006, reload_interval=120):
         print(e.output)
     print("Restarting tensorboard process...")
     command = "tensorboard --logdir={} --port={} --reload_interval={}".format(logdir, port, reload_interval)
+    print(command)
     sp.Popen(command.split(), stdout=sp.DEVNULL, stderr=sp.DEVNULL)
     print("Done restarting tensorboard.\n")
 

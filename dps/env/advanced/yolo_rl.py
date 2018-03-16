@@ -6,7 +6,6 @@ from dps import cfg
 from dps.train import Hook
 from dps.datasets import EMNIST_ObjectDetection
 from dps.updater import Updater
-from dps.vision.attention import gaussian_filter
 from dps.utils import Config, Param
 from dps.utils.tf import (
     FullyConvolutional, build_gradient_train_op,
@@ -96,6 +95,19 @@ class ObjectDecoder(FullyConvolutional):
         super(ObjectDecoder, self).__init__(layout, check_output_shape=True, **kwargs)
 
 
+class ObjectEncoderDecoder(FullyConvolutional):
+    n_channels = Param()
+
+    def __init__(self, **kwargs):
+        layout = [
+            dict(filters=self.n_channels, kernel_size=3, strides=1, padding="VALID", transpose=True),
+            dict(filters=self.n_channels, kernel_size=5, strides=1, padding="VALID", transpose=True),
+            dict(filters=self.n_channels, kernel_size=3, strides=2, padding="SAME", transpose=True),
+            dict(filters=3, kernel_size=4, strides=1, padding="SAME", transpose=True),  # For 14 x 14 output
+        ]
+        super(ObjectDecoder, self).__init__(layout, check_output_shape=True, **kwargs)
+
+
 class PassthroughDecoder(ScopedFunction):
     def _call(self, inp, output_shape, is_training):
         _, input_glimpses = inp
@@ -171,16 +183,16 @@ def specific_reconstruction_cost(network_outputs, updater):
         #     filt_h /= np.sqrt(2 * np.pi) * std
         #     filt_w /= np.sqrt(2 * np.pi) * std
 
-        pprl = network_outputs['per_pixel_reconstruction_loss']
+        signal = network_outputs['per_pixel_reconstruction_loss']
 
         # Sum over channel dimension
-        pprl = pprl.sum(axis=-1)
+        signal = signal.sum(axis=-1)
 
-        filtered = np.dot(pprl, filt_w)
-        filtered = np.tensordot(pprl, filt_h, [1, 0])
-        filtered = np.transpose(pprl, (0, 2, 1))
+        signal = np.dot(signal, filt_w)
+        signal = np.tensordot(signal, filt_h, [1, 0])
+        signal = np.transpose(signal, (0, 2, 1))
 
-        all_filtered.append(filtered)
+        all_filtered.append(signal)
 
     return np.stack(all_filtered, axis=-1)[..., None]
 
@@ -242,6 +254,7 @@ class YoloRL_Updater(Updater):
     nonzero_weight = Param()
     area_weight = Param()
     use_specific_costs = Param()
+    use_specific_reconstruction = Param()
 
     obj_exploration = Param()
     obj_default = Param()
@@ -283,7 +296,8 @@ class YoloRL_Updater(Updater):
             cost_func = specific_area_cost if self.use_specific_costs else area_cost
             self.COST_funcs['area'] = (self.area_weight, cost_func, "obj")
 
-        self.COST_funcs['reconstruction'] = (1, reconstruction_cost, "both")
+        cost_func = specific_reconstruction_cost if self.use_specific_reconstruction else reconstruction_cost
+        self.COST_funcs['reconstruction'] = (1, cost_func, "both")
 
         self.scope = scope
         self._n_experiences = 0
@@ -1359,6 +1373,7 @@ config = Config(
     nonzero_weight=0.0,
     area_weight=0.0,
     use_specific_costs=False,
+    use_specific_reconstruction=False,
 
     curriculum=[
         rl_mode,
@@ -1408,6 +1423,7 @@ good_config = config.copy(
     kernel_size=(3, 3),
 
     use_specific_costs=True,
+    use_specific_reconstruction=False,
     max_hw=1.0,
     min_hw=0.5,
     max_chars=3,
@@ -1549,6 +1565,18 @@ good_experimental_config = good_config.copy(
     ],
     colours="red",
     max_overlap=100,
+    use_specific_reconstruction=True,
+)
+
+good_denser_bigger_config = good_experimental_config.copy(
+    do_train=False,
+    image_shape=(80, 80),
+    min_chars=1,
+    max_chars=11,
+    n_train=100,
+    hooks=[],
+    curriculum=[dict()],
+    load_path="/home/eric/Dropbox/experiment_data/active/yolo_rl/quadratic_schedule_local_reconstruction_loss/weights/best_of_stage_30"
 )
 
 
