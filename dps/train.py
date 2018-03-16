@@ -319,10 +319,6 @@ class TrainingLoop(object):
                     if gpu_allow_growth:
                         session_config.gpu_options.allow_growth = gpu_allow_growth
 
-                print("Available devices: ")
-                print(device_lib.list_local_devices())
-                print("\n")
-
                 if cfg.use_gpu:
                     print("Using GPU if available.")
                     print("Using {}% of GPU memory.".format(
@@ -331,6 +327,12 @@ class TrainingLoop(object):
 
                 graph = tf.Graph()
                 sess = tf.Session(graph=graph, config=session_config)
+
+                # This HAS to come after the creation of the session, otherwise
+                # it allocates all GPU memory if using the GPU.
+                # print("\nAvailable devices: ")
+                # print(device_lib.list_local_devices())
+                # print("\n")
 
                 if not cfg.use_gpu:
                     print("Not using GPU.")
@@ -632,6 +634,8 @@ class TrainingLoop(object):
                           "{}mb".format(memory_usage(physical=True)))
                     print("Virtual memory use: "
                           "{}mb".format(memory_usage(physical=False)))
+                    print("Avg time per batch: {}s".format(time_per_batch))
+                    print("Most recent time per batch: {}s".format(update_duration))
 
             for hook in cfg.hooks:
                 if hook.call_per_timestep:
