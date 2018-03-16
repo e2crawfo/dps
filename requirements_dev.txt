@@ -2,6 +2,7 @@
 dill==0.2.6
 future==0.16.0
 gym==0.9.5
+iso8601==0.1.12
 matplotlib==2.1.0
 numpy==1.13.3
 pandas==0.21.0

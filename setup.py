@@ -22,6 +22,7 @@ setup(
         "pytest-env",
         "future",
         "gym",
+        "iso8601",
         "tabulate",
         "psutil",
         "pyskiplist",
@@ -30,6 +31,7 @@ setup(
     ],
     entry_points={
         'console_scripts': ['dps-hyper=dps.hyper.command_line:dps_hyper_cl',
-                            'dps-run=dps.run:run']
+                            'dps-run=dps.run:run',
+                            'readme=dps.utils.base:view_readme_cl']
     }
 )

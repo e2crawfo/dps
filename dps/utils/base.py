@@ -31,6 +31,40 @@ import clify
 import dps
 
 
+def view_readme_cl():
+    return view_readme(".")
+
+
+def view_readme(path):
+    """ View readme files in a diretory of experiments, sorted by the time at
+        which the experiment began execution.
+
+    """
+    import iso8601
+
+    command = "find {} -name README.md".format(path).split()
+    p = subprocess.run(command, stdout=subprocess.PIPE)
+    readme_paths = [r for r in p.stdout.decode().split('\n') if r]
+    datetimes = []
+    for r in readme_paths:
+        d = os.path.split(r)[0]
+        with open(os.path.join(d, 'stdout'), 'r') as f:
+            line = ''
+            while not line.startswith("Starting training run"):
+                line = f.readline()
+        tokens = line.split()
+        assert len(tokens) == 13
+        dt = iso8601.parse_date(tokens[5] + " " + tokens[6][:-1])
+        datetimes.append(dt)
+
+    _sorted = sorted(zip(datetimes, readme_paths))
+
+    for d, r in _sorted:
+        print("\n" + "-" * 80 + "\n\n" + "====> {} <====".format(r))
+        with open(r, 'r') as f:
+            print(f.read())
+
+
 def confidence_interval(data, coverage):
     return stats.t.interval(
         coverage, len(data)-1, loc=np.mean(data), scale=stats.sem(data))
