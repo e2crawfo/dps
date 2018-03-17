@@ -4,7 +4,7 @@ import pkgutil
 from dps import cfg
 from dps.config import DEFAULT_CONFIG
 from dps.train import training_loop
-from dps.utils import pdb_postmortem, edit_text
+from dps.utils import pdb_postmortem
 from dps.rl import algorithms as alg_pkg
 import dps.env.advanced as env_pkg_advanced
 import dps.env.basic as env_pkg_basic
@@ -107,12 +107,12 @@ def run():
 
     if args.pdb:
         with pdb_postmortem():
-            _run(env, alg, get_readme=True)
+            _run(env, alg)
     else:
-        _run(env, alg, get_readme=True)
+        _run(env, alg)
 
 
-def _run(env_str, alg_str, _config=None, get_readme=False, **kwargs):
+def _run(env_str, alg_str, _config=None, **kwargs):
     env_config, alg_config = parse_env_alg(env_str, alg_str)
 
     config = DEFAULT_CONFIG.copy()
@@ -125,13 +125,6 @@ def _run(env_str, alg_str, _config=None, get_readme=False, **kwargs):
 
     with config:
         cfg.update_from_command_line()
-
-        if get_readme and not cfg.readme:
-            header = "README:"
-            readme = edit_text(prefix="dps_readme_", editor="vim", initial_text=header + "\n\n")
-            parts = readme.partition(header)
-            cfg.readme = parts[0] + parts[2]
-
         return training_loop()
 
 

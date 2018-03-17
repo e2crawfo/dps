@@ -3,7 +3,7 @@ import numpy as np
 import sonnet as snt
 
 from dps import cfg
-from dps.train import Hook
+from dps.train import PolynomialScheduleHook
 from dps.datasets import EMNIST_ObjectDetection
 from dps.updater import Updater
 from dps.utils import Config, Param
@@ -1472,95 +1472,6 @@ good_config = config.copy(
 )
 
 
-class ScheduleHook(Hook):
-    def __init__(self, attr_name, query_name, initial_value=0.0, tolerance=0.05, base_configs=None):
-        self.attr_name = attr_name
-        self.query_name = query_name
-        self.initial_value = initial_value
-        self.tolerance = tolerance
-
-        if isinstance(base_configs, dict):
-            base_configs = [base_configs]
-        self.base_configs = base_configs or [{}]
-
-        self.n_fragments_added = 0
-
-        super(ScheduleHook, self).__init__()
-
-    def _attrs(self):
-        return "attr_name query_name initial_value tolerance base_configs".split()
-
-    def _attr_value_for_fragment(self):
-        raise Exception("NotImplemented")
-
-    def start_stage(self, training_loop, stage_idx):
-        if stage_idx == 0:
-            self.final_orig_stage = len(training_loop.curriculum) - 1
-
-    def end_stage(self, training_loop, stage_idx):
-
-        if stage_idx >= self.final_orig_stage:
-            attr_value = self._attr_value_for_fragment(self.n_fragments_added)
-            new_stages = [{self.attr_name: attr_value, **bc} for bc in self.base_configs]
-
-            if stage_idx == self.final_orig_stage:
-                self.original_performance = training_loop.data.history[-1][self.query_name]
-                self._print("End of original stages, adding 1st curriculum fragment:\n{}".format(new_stages))
-                for ns in new_stages:
-                    training_loop.add_stage(ns)
-                self.n_fragments_added = 1
-
-            elif not training_loop.curriculum_remaining:
-                # Check whether performance achieved on most recent stage was near that of the first stage.
-                current_stage_performance = training_loop.data.history[-1][self.query_name]
-                threshold = (1 + self.tolerance) * self.original_performance
-
-                self._print("End of {}-th curriculum fragment.".format(self.n_fragments_added))
-                self._print("Original <{}>: {}".format(self.query_name, self.original_performance))
-                self._print("<{}> for fragment {}: {}".format(
-                    self.query_name, self.n_fragments_added, current_stage_performance))
-                self._print("<{}> threshold: {}".format(self.query_name, threshold))
-
-                if current_stage_performance <= threshold:
-                    self.n_fragments_added += 1
-                    self._print("Threshold reached, adding {}-th "
-                                "curriculum fragment:\n{}".format(self.n_fragments_added, new_stages))
-                    for ns in new_stages:
-                        training_loop.add_stage(ns)
-
-                else:
-                    self._print("Threshold not reached, ending training run")
-            else:
-                self._print("In the middle of the {}-th curriculum fragment.".format(self.n_fragments_added))
-        else:
-            self._print("Still running initial stages.")
-
-
-class GeometricScheduleHook(ScheduleHook):
-    def __init__(self, *args, multiplier=2.0, **kwargs):
-        super(GeometricScheduleHook, self).__init__(*args, **kwargs)
-        self.multiplier = multiplier
-
-    def _attrs(self):
-        return super(GeometricScheduleHook, self)._attrs() + ["multiplier"]
-
-    def _attr_value_for_fragment(self, stage_idx):
-        return self.initial_value * (self.multiplier ** stage_idx)
-
-
-class PolynomialScheduleHook(ScheduleHook):
-    def __init__(self, *args, scale=10.0, power=1.0, **kwargs):
-        super(PolynomialScheduleHook, self).__init__(*args, **kwargs)
-        self.scale = scale
-        self.power = power
-
-    def _attrs(self):
-        return super(PolynomialScheduleHook, self)._attrs() + ["scale", "power"]
-
-    def _attr_value_for_fragment(self, stage_idx):
-        return self.initial_value + self.scale * (stage_idx ** self.power)
-
-
 good_experimental_config = good_config.copy(
     lr_schedule=1e-4,
     curriculum=[
@@ -1594,133 +1505,139 @@ good_denser_bigger_config = good_experimental_config.copy(
 
 static_decoder_config = good_experimental_config.copy(
     build_object_decoder=StaticObjectDecoder,
-    C=1,
+    C=3,
     A=2,
-    characters=[0],
+    characters=[0, 1],
     decoder_logit_scale=100.,
-)
-
-classification_config = config.copy(
-    log_name="yolo_rl_classify",
-    C=2,
-    image_shape=(16, 16),
-    pixels_per_cell=(16, 16),
-    sub_image_shape=(14, 14),
-    object_shape=(14, 14),
-    anchor_boxes=[[14, 14]],
-    kernel_size=(1, 1),
-    colours="red",
-
-    use_specific_costs=True,
-    max_hw=1.0,
-    min_hw=0.5,
-    max_chars=1,
-    min_chars=1,
-    characters=list(range(10)),
-
-    dynamic_partition=False,
-    fix_values=dict(obj=1, cell_x=0.5, cell_y=0.5, h=1.0, w=1.0),
-    obj_exploration=0.0,
-    nonzero_weight=0.0,
-    lr_schedule=1e-4,
-
+    patience=20000,
     curriculum=[
-        dict(cls_exploration=0.5),
-        dict(cls_exploration=0.4),
-        dict(cls_exploration=0.3),
-        dict(cls_exploration=0.2),
-        dict(cls_exploration=0.1),
+        dict(fix_values=dict(obj=1), dynamic_partition=False, lr_schedule=1e-4),
+        dict(fix_values=dict(obj=1), dynamic_partition=False, lr_schedule=1e-5),
+        dict(fix_values=dict(obj=1), dynamic_partition=False, lr_schedule=1e-6),
     ],
-    decoder_logit_scale=10.0,
-
-    box_std=-1.,
-    attr_std=0.0,
-    minimize_kl=True,
-
-    cell_yx_target_mean=0.5,
-    cell_yx_target_std=100.0,
-    hw_target_mean=0.0,
-    hw_target_std=1.0,
-    attr_target_mean=0.0,
-    attr_target_std=100.0,
-    **rl_mode,
 )
 
-
-test_stage_hooks = good_config.copy(
-    curriculum=[
-        dict(fix_values=dict(obj=1), lr_schedule=1e-4, dynamic_partition=False),
-        dict(fix_values=dict(obj=1), lr_schedule=1e-5, dynamic_partition=False),
-        dict(fix_values=dict(obj=1), lr_schedule=1e-6, dynamic_partition=False),
-    ],
-    hooks=[
-        PolynomialScheduleHook(
-            "nonzero_weight", "best_COST_reconstruction",
-            base_configs=[
-                dict(obj_exploration=0.2, lr_schedule=1e-6),
-                dict(obj_exploration=0.1, lr_schedule=1e-6),
-            ],
-            tolerance=0.1, scale=5.),
-    ],
-    max_steps=11,
-    n_train=100,
-    render_step=0,
-)
-
-
-test_dynamic_partition_config = good_config.copy(
-    dynamic_partition=True,
-    curriculum=[
-        dict(obj_exploration=1.0, obj_default=0.5, dynamic_partition=False),
-        dict(obj_exploration=1.0, obj_default=0.9, dynamic_partition=False),
-        dict(obj_exploration=1.0, obj_default=0.1, dynamic_partition=False),
-        dict(obj_exploration=1.0, obj_default=0.5),
-        dict(obj_exploration=1.0, obj_default=0.9),
-        dict(obj_exploration=1.0, obj_default=0.1),
-    ],
-    max_steps=201,
-    display_step=10,
-)
-
-test_larger_config = good_config.copy(
-    curriculum=[
-        dict(load_path="/data/dps_data/logs/yolo_rl/exp_yolo_rl_seed=347405995_2018_03_12_21_50_31/weights/best_of_stage_0", do_train=False),
-    ],
-    image_shape=(80, 80),
-    n_train=100,
-)
-
-
-passthrough_config = config.copy(
-    log_name="yolo_passthrough",
-    build_object_decoder=PassthroughDecoder,
-    C=1,
-    A=2,
-    characters=[0],
-    # characters=[0, 1, 2],
-    object_shape=(28, 28),
-    anchor_boxes=[[28, 28]],
-    sub_image_shape=(28, 28),
-
-    use_input_attention=True,
-    decoders_output_logits=False,
-
-    fix_values=dict(cls=1),
-
-    lr_schedule=1e-6,
-    pixels_per_cell=(10, 10),
-    nonzero_weight=40.0,
-    obj_exploration=0.30,
-    cls_exploration=0.30,
-
-    box_std=-1.,
-    attr_std=0.0,
-    minimize_kl=True,
-
-    cell_yx_target_mean=0.5,
-    cell_yx_target_std=1.0,
-    hw_target_mean=0.0,
-    hw_target_std=1.0,
-    attr_target_mean=0.0,
-    attr_target_std=1.0,
-)
+# classification_config = config.copy(
+#     log_name="yolo_rl_classify",
+#     C=2,
+#     image_shape=(16, 16),
+#     pixels_per_cell=(16, 16),
+#     sub_image_shape=(14, 14),
+#     object_shape=(14, 14),
+#     anchor_boxes=[[14, 14]],
+#     kernel_size=(1, 1),
+#     colours="red",
+# 
+#     use_specific_costs=True,
+#     max_hw=1.0,
+#     min_hw=0.5,
+#     max_chars=1,
+#     min_chars=1,
+#     characters=list(range(10)),
+# 
+#     dynamic_partition=False,
+#     fix_values=dict(obj=1, cell_x=0.5, cell_y=0.5, h=1.0, w=1.0),
+#     obj_exploration=0.0,
+#     nonzero_weight=0.0,
+#     lr_schedule=1e-4,
+# 
+#     curriculum=[
+#         dict(cls_exploration=0.5),
+#         dict(cls_exploration=0.4),
+#         dict(cls_exploration=0.3),
+#         dict(cls_exploration=0.2),
+#         dict(cls_exploration=0.1),
+#     ],
+#     decoder_logit_scale=10.0,
+# 
+#     box_std=-1.,
+#     attr_std=0.0,
+#     minimize_kl=True,
+# 
+#     cell_yx_target_mean=0.5,
+#     cell_yx_target_std=100.0,
+#     hw_target_mean=0.0,
+#     hw_target_std=1.0,
+#     attr_target_mean=0.0,
+#     attr_target_std=100.0,
+#     **rl_mode,
+# )
+# 
+# 
+# test_stage_hooks = good_config.copy(
+#     curriculum=[
+#         dict(fix_values=dict(obj=1), lr_schedule=1e-4, dynamic_partition=False),
+#         dict(fix_values=dict(obj=1), lr_schedule=1e-5, dynamic_partition=False),
+#         dict(fix_values=dict(obj=1), lr_schedule=1e-6, dynamic_partition=False),
+#     ],
+#     hooks=[
+#         PolynomialScheduleHook(
+#             "nonzero_weight", "best_COST_reconstruction",
+#             base_configs=[
+#                 dict(obj_exploration=0.2, lr_schedule=1e-6),
+#                 dict(obj_exploration=0.1, lr_schedule=1e-6),
+#             ],
+#             tolerance=0.1, scale=5.),
+#     ],
+#     max_steps=11,
+#     n_train=100,
+#     render_step=0,
+# )
+# 
+# 
+# test_dynamic_partition_config = good_config.copy(
+#     dynamic_partition=True,
+#     curriculum=[
+#         dict(obj_exploration=1.0, obj_default=0.5, dynamic_partition=False),
+#         dict(obj_exploration=1.0, obj_default=0.9, dynamic_partition=False),
+#         dict(obj_exploration=1.0, obj_default=0.1, dynamic_partition=False),
+#         dict(obj_exploration=1.0, obj_default=0.5),
+#         dict(obj_exploration=1.0, obj_default=0.9),
+#         dict(obj_exploration=1.0, obj_default=0.1),
+#     ],
+#     max_steps=201,
+#     display_step=10,
+# )
+# 
+# test_larger_config = good_config.copy(
+#     curriculum=[
+#         dict(load_path="/data/dps_data/logs/yolo_rl/exp_yolo_rl_seed=347405995_2018_03_12_21_50_31/weights/best_of_stage_0", do_train=False),
+#     ],
+#     image_shape=(80, 80),
+#     n_train=100,
+# )
+# 
+# 
+# passthrough_config = config.copy(
+#     log_name="yolo_passthrough",
+#     build_object_decoder=PassthroughDecoder,
+#     C=1,
+#     A=2,
+#     characters=[0],
+#     # characters=[0, 1, 2],
+#     object_shape=(28, 28),
+#     anchor_boxes=[[28, 28]],
+#     sub_image_shape=(28, 28),
+# 
+#     use_input_attention=True,
+#     decoders_output_logits=False,
+# 
+#     fix_values=dict(cls=1),
+# 
+#     lr_schedule=1e-6,
+#     pixels_per_cell=(10, 10),
+#     nonzero_weight=40.0,
+#     obj_exploration=0.30,
+#     cls_exploration=0.30,
+# 
+#     box_std=-1.,
+#     attr_std=0.0,
+#     minimize_kl=True,
+# 
+#     cell_yx_target_mean=0.5,
+#     cell_yx_target_std=1.0,
+#     hw_target_mean=0.0,
+#     hw_target_std=1.0,
+#     attr_target_mean=0.0,
+#     attr_target_std=1.0,
+# )

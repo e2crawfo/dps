@@ -3,7 +3,6 @@ from __future__ import division
 import time
 from contextlib import ExitStack
 import tensorflow as tf
-from tensorflow.python.client import device_lib
 import numpy as np
 from pprint import pformat
 import datetime
@@ -122,54 +121,6 @@ def load_or_train(train_config, var_scope, path, target_var_scope=None, sess=Non
 
         saver.restore(sess, path)
     return success
-
-
-class Hook(object):
-    """ Hook called throughout training.
-
-    Parameters
-    ----------
-    n: int
-        Hook is called every n steps throughout training.
-    mode: str
-        The mode in which this hook is called (essentially determines where its summaries end up).
-    initial: bool
-        If True, this hook is called on the first step of a stage.
-
-    """
-    def __init__(self, n=None, mode=None, initial=False):
-        self.n = n
-        self.mode = mode
-        self.initial = initial
-
-    @property
-    def call_per_timestep(self):
-        return not (self.n is None or self.mode is None)
-
-    def _attrs(self):
-        return "n mode initial".split()
-
-    def __str__(self):
-        attr_string = ", ".join("{}={}".format(k, getattr(self, k)) for k in self._attrs())
-        return("{}({})".format(self.__class__.__name__, attr_string))
-
-    def __repr__(self):
-        return str(self)
-
-    def start_stage(self, training_loop, stage_idx):
-        """ Called at the beginning of every stage. """
-        pass
-
-    def end_stage(self, training_loop, stage_idx):
-        """ Called at the end of every stage. """
-        pass
-
-    def step(self, training_loop, updater, step_idx):
-        """ May return a list of summaries and a dictionary of recorded values, similar to an updater. """
-        pass
-
-    def _print(self, s):
-        print("{}: {}".format(self.__class__.__name__, s))
 
 
 class TrainingLoop(object):
@@ -331,6 +282,7 @@ class TrainingLoop(object):
                 # This HAS to come after the creation of the session, otherwise
                 # it allocates all GPU memory if using the GPU.
                 # print("\nAvailable devices: ")
+                # from tensorflow.python.client import device_lib
                 # print(device_lib.list_local_devices())
                 # print("\n")
 
@@ -891,3 +843,140 @@ class _TrainingLoopData(FrozenTrainingLoopData):
                         s += "* {}: {}\n".format(k, v)
 
         return s
+
+
+class Hook(object):
+    """ Hook called throughout training.
+
+    Parameters
+    ----------
+    n: int
+        Hook is called every n steps throughout training.
+    mode: str
+        The mode in which this hook is called (essentially determines where its summaries end up).
+    initial: bool
+        If True, this hook is called on the first step of a stage.
+
+    """
+    def __init__(self, n=None, mode=None, initial=False):
+        self.n = n
+        self.mode = mode
+        self.initial = initial
+
+    @property
+    def call_per_timestep(self):
+        return not (self.n is None or self.mode is None)
+
+    def _attrs(self):
+        return "n mode initial".split()
+
+    def __str__(self):
+        attr_string = ", ".join("{}={}".format(k, getattr(self, k)) for k in self._attrs())
+        return("{}({})".format(self.__class__.__name__, attr_string))
+
+    def __repr__(self):
+        return str(self)
+
+    def start_stage(self, training_loop, stage_idx):
+        """ Called at the beginning of every stage. """
+        pass
+
+    def end_stage(self, training_loop, stage_idx):
+        """ Called at the end of every stage. """
+        pass
+
+    def step(self, training_loop, updater, step_idx):
+        """ May return a list of summaries and a dictionary of recorded values, similar to an updater. """
+        pass
+
+    def _print(self, s):
+        print("{}: {}".format(self.__class__.__name__, s))
+
+
+class ScheduleHook(Hook):
+    def __init__(self, attr_name, query_name, initial_value=0.0, tolerance=0.05, base_configs=None):
+        self.attr_name = attr_name
+        self.query_name = query_name
+        self.initial_value = initial_value
+        self.tolerance = tolerance
+
+        if isinstance(base_configs, dict):
+            base_configs = [base_configs]
+        self.base_configs = base_configs or [{}]
+
+        self.n_fragments_added = 0
+
+        super(ScheduleHook, self).__init__()
+
+    def _attrs(self):
+        return "attr_name query_name initial_value tolerance base_configs".split()
+
+    def _attr_value_for_fragment(self):
+        raise Exception("NotImplemented")
+
+    def start_stage(self, training_loop, stage_idx):
+        if stage_idx == 0:
+            self.final_orig_stage = len(training_loop.curriculum) - 1
+
+    def end_stage(self, training_loop, stage_idx):
+
+        if stage_idx >= self.final_orig_stage:
+            attr_value = self._attr_value_for_fragment(self.n_fragments_added)
+            new_stages = [{self.attr_name: attr_value, **bc} for bc in self.base_configs]
+
+            if stage_idx == self.final_orig_stage:
+                self.original_performance = training_loop.data.history[-1][self.query_name]
+                self._print("End of original stages, adding 1st curriculum fragment:\n{}".format(new_stages))
+                for ns in new_stages:
+                    training_loop.add_stage(ns)
+                self.n_fragments_added = 1
+
+            elif not training_loop.curriculum_remaining:
+                # Check whether performance achieved on most recent stage was near that of the first stage.
+                current_stage_performance = training_loop.data.history[-1][self.query_name]
+                threshold = (1 + self.tolerance) * self.original_performance
+
+                self._print("End of {}-th curriculum fragment.".format(self.n_fragments_added))
+                self._print("Original <{}>: {}".format(self.query_name, self.original_performance))
+                self._print("<{}> for fragment {}: {}".format(
+                    self.query_name, self.n_fragments_added, current_stage_performance))
+                self._print("<{}> threshold: {}".format(self.query_name, threshold))
+
+                if current_stage_performance <= threshold:
+                    self.n_fragments_added += 1
+                    self._print("Threshold reached, adding {}-th "
+                                "curriculum fragment:\n{}".format(self.n_fragments_added, new_stages))
+                    for ns in new_stages:
+                        training_loop.add_stage(ns)
+
+                else:
+                    self._print("Threshold not reached, ending training run")
+            else:
+                self._print("In the middle of the {}-th curriculum fragment.".format(self.n_fragments_added))
+        else:
+            self._print("Still running initial stages.")
+
+
+class GeometricScheduleHook(ScheduleHook):
+    def __init__(self, *args, multiplier=2.0, **kwargs):
+        super(GeometricScheduleHook, self).__init__(*args, **kwargs)
+        self.multiplier = multiplier
+
+    def _attrs(self):
+        return super(GeometricScheduleHook, self)._attrs() + ["multiplier"]
+
+    def _attr_value_for_fragment(self, stage_idx):
+        return self.initial_value * (self.multiplier ** stage_idx)
+
+
+class PolynomialScheduleHook(ScheduleHook):
+    def __init__(self, *args, scale=10.0, power=1.0, **kwargs):
+        super(PolynomialScheduleHook, self).__init__(*args, **kwargs)
+        self.scale = scale
+        self.power = power
+
+    def _attrs(self):
+        return super(PolynomialScheduleHook, self)._attrs() + ["scale", "power"]
+
+    def _attr_value_for_fragment(self, stage_idx):
+        return self.initial_value + self.scale * (stage_idx ** self.power)
