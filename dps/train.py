@@ -163,6 +163,10 @@ class TrainingLoop(object):
             purposes of interrupting the training loop.
 
         """
+        prepare_func = cfg.get("prepare_func", None)
+        if callable(prepare_func):
+            prepare_func()  # Modify the config in arbitrary ways before training
+
         self.curriculum = cfg.curriculum + []
 
         if cfg.seed is None or cfg.seed < 0:
@@ -178,7 +182,7 @@ class TrainingLoop(object):
                 self.exp_name, cfg.seed, add_date=1, force_fresh=1, update_latest=cfg.update_latest)
             self.exp_dir = exp_dir
 
-            if cfg.make_latest_symlink:
+            if cfg.update_latest:
                 make_symlink(exp_dir.path, os.path.join(os.getenv("HOME"), "dps-latest-experiment"))
 
             self.data = _TrainingLoopData(exp_dir)
@@ -281,10 +285,10 @@ class TrainingLoop(object):
 
                 # This HAS to come after the creation of the session, otherwise
                 # it allocates all GPU memory if using the GPU.
-                # print("\nAvailable devices: ")
-                # from tensorflow.python.client import device_lib
-                # print(device_lib.list_local_devices())
-                # print("\n")
+                print("\nAvailable devices: ")
+                from tensorflow.python.client import device_lib
+                print(device_lib.list_local_devices())
+                print("\n")
 
                 if not cfg.use_gpu:
                     print("Not using GPU.")

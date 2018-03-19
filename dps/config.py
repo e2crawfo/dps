@@ -26,7 +26,6 @@ DEFAULT_CONFIG = Config(
     eval_step=100,
     checkpoint_step=5000,
     store_step_data=True,
-    make_latest_symlink=True,
 
     n_train=10000,
     n_val=500,

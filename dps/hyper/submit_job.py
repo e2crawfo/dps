@@ -120,7 +120,11 @@ class ParallelSession(object):
 
         # Create directory to run the job from - should be on scratch.
         scratch = os.path.abspath(os.path.expandvars(scratch))
-        es = ExperimentStore(scratch, max_experiments=None, delete_old=False)
+
+        es = ExperimentStore(
+            scratch, max_experiments=None,
+            delete_old=False, prefix="run_search")
+
         job_dir = es.new_experiment(name, 0, add_date=add_date, force_fresh=1)
         job_dir.record_environment(git_modules=[dps])
 
@@ -677,8 +681,8 @@ session.run()
             n_gpus = len([int(i) for i in gpu_set.split(',')])
             resources = "{} --gres=gpu:{}".format(resources, n_gpus)
 
-        project = "def-jpineau"
-        # project = "rpp-bengioy"
+        # project = "def-jpineau"
+        project = "rpp-bengioy"
         email = "eric.crawford@mail.mcgill.ca"
         if queue:
             queue = "-p " + queue

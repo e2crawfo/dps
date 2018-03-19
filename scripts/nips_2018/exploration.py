@@ -1,77 +1,60 @@
 import clify
-
-from dps.train import PolynomialScheduleHook, GeometricScheduleHook
 from dps.env.advanced import yolo_rl
 
 
-static_decoder_config = dict(
-    build_object_decoder=yolo_rl.StaticObjectDecoder,
-    C=1,
-    A=2,
-    characters=[0],
-    decoder_logit_scale=100.,
-)
+def prepare_func():
+    from dps import cfg
+    from dps.train import PolynomialScheduleHook, GeometricScheduleHook
+    fragment = [
+        dict(obj_exploration=0.2,),
+        dict(obj_exploration=0.1,),
+        dict(obj_exploration=0.05,),
+    ]
 
-static_decoder_multiclass_config = dict(
-    C=2,
-    characters=[0, 1],
-    **static_decoder_config,
-)
+    kwargs = dict(
+        attr_name="nonzero_weight", query_name="best_COST_reconstruction",
+        base_configs=fragment, tolerance=0.1, initial_value=1.0)
 
-poly_schedule3_config = dict(
-    hooks=[
-        PolynomialScheduleHook(
-            "nonzero_weight", "best_COST_reconstruction",
-            base_configs=[
-                dict(obj_exploration=0.2,),
-                dict(obj_exploration=0.1,),
-                dict(obj_exploration=0.05,),
-            ],
-            tolerance=0.1, scale=1., power=3., initial_value=1.0
-        ),
-    ],
-)
+    schedule = None
 
-poly_schedule4_config = dict(
-    hooks=[
-        PolynomialScheduleHook(
-            "nonzero_weight", "best_COST_reconstruction",
-            base_configs=[
-                dict(obj_exploration=0.2,),
-                dict(obj_exploration=0.1,),
-                dict(obj_exploration=0.05,),
-            ],
-            tolerance=0.1, scale=1., power=4., initial_value=1.0
-        ),
-    ],
-)
+    if cfg.schedule == "exp2":
+        print("Geometric schedule")
+        schedule = GeometricScheduleHook(**kwargs)
+    elif cfg.schedule == "exp3":
+        print("Geometric schedule")
+        schedule = GeometricScheduleHook(multiplier=3., **kwargs)
+    elif cfg.schedule == "exp4":
+        print("Geometric schedule")
+        schedule = GeometricScheduleHook(multiplier=4., **kwargs)
+    elif cfg.schedule == "poly2":
+        print("Polynomial2 schedule")
+        schedule = PolynomialScheduleHook(scale=1., power=2., **kwargs)
+    elif cfg.schedule == "poly3":
+        print("Polynomial3 schedule")
+        schedule = PolynomialScheduleHook(scale=1., power=3., **kwargs)
+    elif cfg.schedule == "poly4":
+        print("Polynomial4 schedule")
+        schedule = PolynomialScheduleHook(scale=1., power=4., **kwargs)
 
-exponential_schedule_config = dict(
-    hooks=[
-        GeometricScheduleHook(
-            "nonzero_weight", "best_COST_reconstruction",
-            base_configs=[
-                dict(obj_exploration=0.2,),
-                dict(obj_exploration=0.1,),
-                dict(obj_exploration=0.05,),
-            ],
-            tolerance=0.1, initial_value=1.0
-        ),
-    ],
-)
+    if schedule:
+        cfg.hooks = [schedule]
+
 
 grid = [
-    poly_schedule3_config,
-    poly_schedule4_config,
-    exponential_schedule_config,
+    dict(schedule="exp3"),
+    dict(schedule="exp4"),
     dict(max_hw=2.0),
+    dict(max_hw=1.5),
     dict(order="obj cls attr box"),
     dict(n_train=1e4),
 ]
 
 grid = grid + [dict(patience=2500, **d) for d in grid]
 
-config = yolo_rl.good_experimental_config.copy()
+config = yolo_rl.good_experimental_config.copy(
+    prepare_func=prepare_func,
+    schedule="exp2",
+)
 
 # import argparse
 # parser = argparse.ArgumentParser()
@@ -84,6 +67,5 @@ config = yolo_rl.good_experimental_config.copy()
 # else:
 #     raise Exception()
 
-from dps.hyper import build_and_submit, default_host_pool
-clify.wrap_function(build_and_submit)(
-    config=config, distributions=grid, n_param_settings=None, host_pool=default_host_pool)
+from dps.hyper import build_and_submit
+clify.wrap_function(build_and_submit)(config=config, distributions=grid)

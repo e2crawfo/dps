@@ -10,12 +10,13 @@ import sys
 import inspect
 from collections import namedtuple
 from tabulate import tabulate
-from pprint import pprint
+from pprint import pprint, pformat
 
 import clify
 
 import dps
 from dps import cfg
+from dps.config import DEFAULT_CONFIG
 from dps.utils import gen_seed, Config, ExperimentStore, edit_text
 from dps.parallel import Job, ReadOnlyJob
 from dps.train import FrozenTrainingLoopData
@@ -316,10 +317,6 @@ class _RunTrainingLoop(object):
     def __init__(self, base_config):
         self.base_config = base_config
 
-    @staticmethod
-    def _sanitize_string(s):
-        return str(s).replace('_', '-').replace(' ', '').replace('/', ',')
-
     def __call__(self, new):
         os.nice(10)
 
@@ -334,14 +331,12 @@ class _RunTrainingLoop(object):
         print("Base config: ")
         print(self.base_config)
 
-        keys = [k for k in sorted(new.keys()) if k not in 'seed idx repeat'.split()]
-        exp_name = '_'.join(
-            "{}={}".format(self._sanitize_string(k), self._sanitize_string(new[k]))
-            for k in keys)
+        exp_name = '_'.join("{}={}".format(k, new[k]) for k in 'idx repeat'.split())
 
         dps.reset_config()
 
-        config = copy.copy(self.base_config)
+        config = DEFAULT_CONFIG.copy()
+        config.update(self.base_config)
         config.update(new)
 
         with config:
@@ -383,7 +378,7 @@ def build_search(
         String specifiying context/purpose of search.
 
     """
-    es = ExperimentStore(path, max_experiments=None)
+    es = ExperimentStore(path, max_experiments=None, prefix="build_search")
 
     count = 0
     base_name = name
@@ -409,6 +404,9 @@ def build_search(
     job = Job(exp_dir.path)
 
     new_configs = sample_configs(distributions, n_repeats, n_param_settings)
+
+    with open(exp_dir.path_for("sampled_configs.txt"), "w") as f:
+        f.write("\n".join("idx={}: {}".format(config["idx"], pformat(config)) for config in new_configs))
 
     print("{} configs were sampled for parameter search.".format(len(new_configs)))
 

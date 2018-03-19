@@ -1,5 +1,4 @@
 import signal
-import numpy as np
 import os
 import types
 import sys
@@ -392,11 +391,11 @@ class Job(ReadOnlyJob):
             Only ops whose indices are in this set will be executed.
 
         """
-        if indices is not None and not isinstance(indices, set):
+        if indices is not None:
             try:
-                indices = set(indices)
+                indices = list(indices)
             except (TypeError, ValueError):
-                indices = set([indices])
+                indices = [indices]
 
         ops = self.get_ops(pattern)
 
@@ -438,12 +437,12 @@ class Job(ReadOnlyJob):
             assert ppn % n_gpus == 0
             assert ppn >= n_gpus
             procs_per_gpu = ppn // n_gpus
-            gpu_idx = int(np.floor(idx_in_node / procs_per_gpu))
-            gpu_to_use = gpus[gpu_idx]
-
-            env = dict(CUDA_VISIBLE_DEVICES=str(gpu_to_use))
+            gpu_idx = idx_in_node // procs_per_gpu
+            env = dict(CUDA_VISIBLE_DEVICES=str(gpus[gpu_idx]))
         else:
             env = {}
+
+        print("My environment is {}".format(env))
 
         if indices is not None:
             ops = [op for op in ops if op.idx in indices]

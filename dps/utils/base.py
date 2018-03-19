@@ -288,8 +288,10 @@ class ExperimentStore(object):
                     paths = [
                         os.path.join(self.path, p) for p in experiments
                         if p.startswith(self.prefix)]
+
                     sorted_by_modtime = sorted(
                         paths, key=lambda x: os.stat(x).st_mtime, reverse=True)
+
                     for p in sorted_by_modtime[self.max_experiments-1:]:
                         print("Deleting old experiment directory {}.".format(p))
                         try:
@@ -802,7 +804,7 @@ def catch(exception_types, action=None):
             action(e)
 
 
-class Alarm(Exception):
+class Alarm(BaseException):
     pass
 
 
