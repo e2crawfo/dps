@@ -16,7 +16,7 @@ import traceback
 import dps
 from dps import cfg
 from dps.utils import (
-    gen_seed, time_limit, memory_usage, ExperimentStore, ExperimentDirectory,
+    gen_seed, time_limit, memory_usage, ExperimentStore, ExperimentDirectory, nvidia_smi,
     memory_limit, du, Config, ClearConfig, redirect_stream, NumpySeed, make_symlink
 )
 from dps.utils.tf import (
@@ -586,12 +586,16 @@ class TrainingLoop(object):
 
                 if display:
                     print(self.data.summarize(local_step, global_step, n_local_experiences, n_global_experiences))
+                    print("\nMy PID: {}".format(os.getpid()))
                     print("\nPhysical memory use: "
                           "{}mb".format(memory_usage(physical=True)))
                     print("Virtual memory use: "
                           "{}mb".format(memory_usage(physical=False)))
                     print("Avg time per batch: {}s".format(time_per_batch))
                     print("Most recent time per batch: {}s".format(update_duration))
+
+                    if cfg.use_gpu:
+                        print(nvidia_smi())
 
             for hook in cfg.hooks:
                 if hook.call_per_timestep:

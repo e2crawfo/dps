@@ -31,6 +31,14 @@ import clify
 import dps
 
 
+def nvidia_smi():
+    try:
+        p = subprocess.run("nvidia-smi".split(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        return p.stdout.decode()
+    except Exception as e:
+        return "Exception while calling nvidia-smi: {}".format(e)
+
+
 def view_readme_cl():
     return view_readme(".")
 
