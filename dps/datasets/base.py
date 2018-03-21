@@ -199,12 +199,6 @@ class PatchesDataset(ImageDataset):
         self.draw_shape = self.draw_shape or self.image_shape
         self.draw_offset = self.draw_offset or (0, 0)
 
-        assert self.draw_offset[0] >= 0
-        assert self.draw_offset[1] >= 0
-
-        assert self.draw_offset[0] + self.draw_shape[0] <= self.image_shape[0]
-        assert self.draw_offset[1] + self.draw_shape[1] <= self.image_shape[1]
-
         x, y, self.patch_centres = self._make_dataset(self.n_examples)
         super(PatchesDataset, self).__init__(x, y, **kwargs)
 
@@ -296,15 +290,27 @@ class PatchesDataset(ImageDataset):
                     image_shape = image_shape + (self.depth,)
 
                 _x = np.zeros(image_shape, 'uint8')
-                y_start, x_start = self.draw_offset
-                y_end, x_end = y_start + self.draw_shape[0], x_start + self.draw_shape[1]
-                _x[y_start:y_end, x_start:x_end, ...] = x
+
+                draw_top = np.maximum(-self.draw_offset[0], 0)
+                draw_left = np.maximum(-self.draw_offset[1], 0)
+
+                draw_bottom = np.minimum(-self.draw_offset[0] + self.image_shape[0], self.draw_shape[0])
+                draw_right = np.minimum(-self.draw_offset[1] + self.image_shape[1], self.draw_shape[1])
+
+                image_top = np.maximum(self.draw_offset[0], 0)
+                image_left = np.maximum(self.draw_offset[1], 0)
+
+                image_bottom = np.minimum(self.draw_offset[0] + self.draw_shape[0], self.image_shape[0])
+                image_right = np.minimum(self.draw_offset[1] + self.draw_shape[1], self.image_shape[1])
+
+                _x[image_top:image_bottom, image_left:image_right, ...] = x[draw_top:draw_bottom, draw_left:draw_right, ...]
                 x = _x
 
             new_X.append(x)
             new_Y.append(y)
 
-            if j % 10000 == 0:
+            if j % 10 == 0:
+            # if j % 10000 == 0:
                 print(y)
                 print(image_to_string(x))
                 print("\n")
