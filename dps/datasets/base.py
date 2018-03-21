@@ -1,4 +1,5 @@
 import numpy as np
+from skimage.transform import resize
 
 from dps import cfg
 from dps.utils import image_to_string, Param, Parameterized, DataContainer
@@ -163,6 +164,9 @@ class Rect(object):
         self.left = x
         self.right = x+w
 
+        self.h = h
+        self.w = w
+
     def intersects(self, r2):
         r1 = self
         h_overlaps = (r1.left <= r2.right) and (r1.right >= r2.left)
@@ -186,6 +190,7 @@ class PatchesDataset(ImageDataset):
     draw_shape = Param(None)
     draw_offset = Param((0, 0))
     depth = Param(None)
+    sub_image_size_std = Param(None)
 
     def __init__(self, **kwargs):
         self.draw_shape = self.draw_shape or self.image_shape
@@ -206,14 +211,22 @@ class PatchesDataset(ImageDataset):
     def _sample_patch_locations(self, sub_image_shapes):
         """ Sample random locations within draw_shape. """
 
-        n_rects = len(sub_image_shapes)
+        sub_image_shapes = np.array(sub_image_shapes)
+        n_rects = sub_image_shapes.shape[0]
         i = 0
         while True:
+            if self.sub_image_size_std is None:
+                shape_multipliers = 1.
+            else:
+                shape_multipliers = np.maximum(np.random.randn(n_rects, 2) * self.sub_image_size_std + 1.0, 0.5)
+
+            _sub_image_shapes = np.ceil(shape_multipliers * sub_image_shapes[:, :2]).astype('i')
+
             rects = [
                 Rect(
                     np.random.randint(0, self.draw_shape[0]-m+1),
                     np.random.randint(0, self.draw_shape[1]-n+1), m, n)
-                for m, n, *_ in sub_image_shapes]
+                for m, n in _sub_image_shapes]
             area = np.zeros(self.draw_shape, 'uint8')
 
             for rect in rects:
@@ -265,6 +278,10 @@ class PatchesDataset(ImageDataset):
 
             # Populate rectangles
             for image, rect in zip(sub_images, rects):
+                rect_shape = (rect.h, rect.w)
+                if image.shape[:2] != rect_shape:
+                    image = resize(image, rect_shape, mode='edge', preserve_range=True)
+
                 patch = x[rect.top:rect.bottom, rect.left:rect.right, ...]
                 x[rect.top:rect.bottom, rect.left:rect.right, ...] = np.maximum(image, patch)
 

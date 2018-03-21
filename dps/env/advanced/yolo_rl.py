@@ -3,7 +3,7 @@ import numpy as np
 import sonnet as snt
 
 from dps import cfg
-from dps.train import PolynomialScheduleHook
+from dps.train import GeometricScheduleHook
 from dps.datasets import EMNIST_ObjectDetection
 from dps.updater import Updater
 from dps.utils import Config, Param
@@ -1477,19 +1477,37 @@ good_experimental_config = good_config.copy(
     curriculum=[
         dict(fix_values=dict(obj=1), dynamic_partition=False),
     ],
+    # hooks=[
+    #     PolynomialScheduleHook(
+    #         "nonzero_weight", "best_COST_reconstruction",
+    #         base_configs=[
+    #             dict(obj_exploration=0.2,),
+    #             dict(obj_exploration=0.1,),
+    #             dict(obj_exploration=0.05,),
+    #         ],
+    #         tolerance=0.1, scale=1., power=2., initial_value=1.0),
+    # ],
     hooks=[
-        PolynomialScheduleHook(
+        GeometricScheduleHook(
             "nonzero_weight", "best_COST_reconstruction",
             base_configs=[
                 dict(obj_exploration=0.2,),
                 dict(obj_exploration=0.1,),
                 dict(obj_exploration=0.05,),
             ],
-            tolerance=0.1, scale=1., power=2., initial_value=1.0),
+            multiplier=4.0, tolerance=0.1, initial_value=1.0
+        ),
     ],
     colours="red",
     max_overlap=100,
     use_specific_reconstruction=True,
+)
+
+test_size_config = good_experimental_config.copy(
+    sub_image_size_std=0.4,
+    max_hw=3.0,
+    max_overlap=150,
+    image_shape=(50, 50),
 )
 
 good_denser_bigger_config = good_experimental_config.copy(
@@ -1508,7 +1526,7 @@ static_decoder_config = good_experimental_config.copy(
     C=3,
     A=2,
     characters=[0, 1],
-    decoder_logit_scale=100.,
+    decoder_logit_scale=10.,
     patience=20000,
     curriculum=[
         dict(fix_values=dict(obj=1), dynamic_partition=False, lr_schedule=1e-4),
@@ -1527,20 +1545,20 @@ static_decoder_config = good_experimental_config.copy(
 #     anchor_boxes=[[14, 14]],
 #     kernel_size=(1, 1),
 #     colours="red",
-# 
+#
 #     use_specific_costs=True,
 #     max_hw=1.0,
 #     min_hw=0.5,
 #     max_chars=1,
 #     min_chars=1,
 #     characters=list(range(10)),
-# 
+#
 #     dynamic_partition=False,
 #     fix_values=dict(obj=1, cell_x=0.5, cell_y=0.5, h=1.0, w=1.0),
 #     obj_exploration=0.0,
 #     nonzero_weight=0.0,
 #     lr_schedule=1e-4,
-# 
+#
 #     curriculum=[
 #         dict(cls_exploration=0.5),
 #         dict(cls_exploration=0.4),
@@ -1549,11 +1567,11 @@ static_decoder_config = good_experimental_config.copy(
 #         dict(cls_exploration=0.1),
 #     ],
 #     decoder_logit_scale=10.0,
-# 
+#
 #     box_std=-1.,
 #     attr_std=0.0,
 #     minimize_kl=True,
-# 
+#
 #     cell_yx_target_mean=0.5,
 #     cell_yx_target_std=100.0,
 #     hw_target_mean=0.0,
@@ -1562,8 +1580,8 @@ static_decoder_config = good_experimental_config.copy(
 #     attr_target_std=100.0,
 #     **rl_mode,
 # )
-# 
-# 
+#
+#
 # test_stage_hooks = good_config.copy(
 #     curriculum=[
 #         dict(fix_values=dict(obj=1), lr_schedule=1e-4, dynamic_partition=False),
@@ -1583,8 +1601,8 @@ static_decoder_config = good_experimental_config.copy(
 #     n_train=100,
 #     render_step=0,
 # )
-# 
-# 
+#
+#
 # test_dynamic_partition_config = good_config.copy(
 #     dynamic_partition=True,
 #     curriculum=[
@@ -1598,7 +1616,7 @@ static_decoder_config = good_experimental_config.copy(
 #     max_steps=201,
 #     display_step=10,
 # )
-# 
+#
 # test_larger_config = good_config.copy(
 #     curriculum=[
 #         dict(load_path="/data/dps_data/logs/yolo_rl/exp_yolo_rl_seed=347405995_2018_03_12_21_50_31/weights/best_of_stage_0", do_train=False),
@@ -1606,8 +1624,8 @@ static_decoder_config = good_experimental_config.copy(
 #     image_shape=(80, 80),
 #     n_train=100,
 # )
-# 
-# 
+#
+#
 # passthrough_config = config.copy(
 #     log_name="yolo_passthrough",
 #     build_object_decoder=PassthroughDecoder,
@@ -1618,22 +1636,22 @@ static_decoder_config = good_experimental_config.copy(
 #     object_shape=(28, 28),
 #     anchor_boxes=[[28, 28]],
 #     sub_image_shape=(28, 28),
-# 
+#
 #     use_input_attention=True,
 #     decoders_output_logits=False,
-# 
+#
 #     fix_values=dict(cls=1),
-# 
+#
 #     lr_schedule=1e-6,
 #     pixels_per_cell=(10, 10),
 #     nonzero_weight=40.0,
 #     obj_exploration=0.30,
 #     cls_exploration=0.30,
-# 
+#
 #     box_std=-1.,
 #     attr_std=0.0,
 #     minimize_kl=True,
-# 
+#
 #     cell_yx_target_mean=0.5,
 #     cell_yx_target_std=1.0,
 #     hw_target_mean=0.0,
