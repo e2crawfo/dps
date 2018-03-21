@@ -18,10 +18,7 @@ class Dataset(Parameterized):
         self.n_examples = len(self.tracks[0])
         self.shuffle = shuffle
 
-        self._epochs_completed = 0
-        self._index_in_epoch = 0
-
-        self._reset_indices(self.shuffle)
+        self.reset()
 
         super(Dataset, self).__init__(**kwargs)
 
@@ -52,6 +49,11 @@ class Dataset(Parameterized):
     @property
     def completion(self):
         return self.epochs_completed + self.index_in_epoch / self.n_examples
+
+    def reset(self):
+        self._epochs_completed = 0
+        self._index_in_epoch = 0
+        self._reset_indices(self.shuffle)
 
     def _reset_indices(self, shuffle):
         indices = np.arange(self.n_examples)

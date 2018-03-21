@@ -17,7 +17,14 @@ tf_flatten = tf.layers.flatten
 
 
 class Env(object):
-    pass
+    def __init__(self):
+        train = EMNIST_ObjectDetection(n_examples=int(cfg.n_train), shuffle=True)
+        val = EMNIST_ObjectDetection(n_examples=int(cfg.n_val), shuffle=True)
+
+        self.datasets = dict(train=train, val=val)
+
+    def close(self):
+        pass
 
 
 def build_env():
@@ -25,7 +32,7 @@ def build_env():
 
 
 def get_updater(env):
-    return YoloRL_Updater()
+    return YoloRL_Updater(env)
 
 
 def prime_factors(n):
@@ -274,13 +281,15 @@ class YoloRL_Updater(Updater):
 
     eval_modes = "rl_val diff_val".split()
 
-    def __init__(self, scope=None, **kwargs):
+    def __init__(self, env, scope=None, **kwargs):
         self.anchor_boxes = np.array(self.anchor_boxes)
         self.H = int(np.ceil(self.image_shape[0] / self.pixels_per_cell[0]))
         self.W = int(np.ceil(self.image_shape[1] / self.pixels_per_cell[1]))
         self.B = len(self.anchor_boxes)
 
-        self._make_datasets()
+        self.datasets = env.datasets
+        for dset in self.datasets.values():
+            dset.reset()
 
         self.obs_shape = self.datasets['train'].x.shape[1:]
         self.image_height, self.image_width, self.image_depth = self.obs_shape
@@ -351,12 +360,6 @@ class YoloRL_Updater(Updater):
                 network=None
             ),
         )
-
-    def _make_datasets(self):
-        train = EMNIST_ObjectDetection(n_examples=int(cfg.n_train), shuffle=True)
-        val = EMNIST_ObjectDetection(n_examples=int(cfg.n_val), shuffle=True)
-
-        self.datasets = dict(train=train, val=val)
 
     @property
     def completion(self):
