@@ -1,5 +1,9 @@
 import pytest
 import time
+import logging
+
+
+logging.getLogger('PIL').setLevel(logging.WARNING)
 
 
 def pytest_addoption(parser):

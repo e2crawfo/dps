@@ -349,7 +349,7 @@ def test_determinism(dataset, test_config):
         name_params = 'classes include_blank shape n_controller_units'
         output_size = n_classes + 1
 
-        n_repeats = 10
+        n_repeats = 5
 
         output = defaultdict(int)
 
