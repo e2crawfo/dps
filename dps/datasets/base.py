@@ -134,6 +134,7 @@ class EmnistDataset(ImageDataset):
     one_hot = Param(True)
     balance = Param(False)
     classes = Param()
+    example_range = Param(None)
 
     class_pool = ''.join(
         [str(i) for i in range(10)] +
@@ -348,6 +349,7 @@ class VisualArithmeticDataset(PatchesDataset):
     one_hot = Param(False)
     largest_digit = Param(1000)
     op_scale = Param(1.0)
+    example_range = Param(None)
 
     reductions_dict = {
         "sum": sum,
@@ -377,7 +379,8 @@ class VisualArithmeticDataset(PatchesDataset):
             op_characters = sorted(reductions)
             emnist_x, emnist_y, character_map = load_emnist(cfg.data_dir, op_characters, balance=True,
                                                             shape=self.sub_image_shape, one_hot=False,
-                                                            n_examples=self.n_sub_image_examples)
+                                                            n_examples=self.n_sub_image_examples,
+                                                            example_range=self.example_range)
             emnist_y = np.squeeze(emnist_y, 1)
 
             self._remapped_reductions = {character_map[k]: v for k, v in reductions.items()}
@@ -390,7 +393,8 @@ class VisualArithmeticDataset(PatchesDataset):
 
         mnist_x, mnist_y, classmap = load_emnist(cfg.data_dir, self.digits, balance=True,
                                                  shape=self.sub_image_shape, one_hot=False,
-                                                 n_examples=self.n_sub_image_examples)
+                                                 n_examples=self.n_sub_image_examples,
+                                                 example_range=self.example_range)
         mnist_y = np.squeeze(mnist_y, 1)
         inverted_classmap = {v: k for k, v in classmap.items()}
         mnist_y = np.array([inverted_classmap[y] for y in mnist_y])
@@ -629,6 +633,7 @@ class SalienceDataset(PatchesDataset):
     min_digits = Param(1)
     max_digits = Param(1)
     n_sub_image_examples = Param(None)
+    example_range = Param(None)
     sub_image_shape = Param((14, 14))
     output_shape = Param((14, 14))
     std = Param(0.1)
@@ -638,7 +643,8 @@ class SalienceDataset(PatchesDataset):
     def __init__(self, **kwargs):
         classes = self.classes or emnist_classes()
         self.X, _, _ = load_emnist(
-            cfg.data_dir, classes, shape=self.sub_image_shape, n_examples=self.n_sub_image_examples)
+            cfg.data_dir, classes, shape=self.sub_image_shape,
+            n_examples=self.n_sub_image_examples, example_range=self.example_range)
 
         super(SalienceDataset, self).__init__(**kwargs)
 
@@ -714,6 +720,7 @@ class EMNIST_ObjectDetection(PatchesDataset):
     )
     sub_image_shape = Param((14, 14))
     n_sub_image_examples = Param(None)
+    example_range = Param(None)
     colours = Param('red green blue')
 
     def __init__(self, **kwargs):
@@ -731,7 +738,8 @@ class EMNIST_ObjectDetection(PatchesDataset):
 
         emnist_x, emnist_y, self.classmap = load_emnist(cfg.data_dir, self.characters, balance=True,
                                                         shape=self.sub_image_shape, one_hot=False,
-                                                        n_examples=self.n_sub_image_examples)
+                                                        n_examples=self.n_sub_image_examples,
+                                                        example_range=self.example_range)
         emnist_y = np.squeeze(emnist_y, 1)
 
         self.char_reps = DataContainer(emnist_x, emnist_y)

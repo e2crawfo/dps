@@ -63,7 +63,7 @@ def test_simple_add(test_config):
 
         use_gpu=False,
         display_step=500,
-        seed=1034340,
+        seed=0,
 
         # env-specific
         build_env=simple_addition.build_env,
@@ -83,13 +83,15 @@ def test_simple_add(test_config):
 
     results = defaultdict(int)
 
+    threshold = 0.15
+
     for i in range(n_repeats):
         config = config.copy()
         output = _raw_run(config)
         stdout = output.path_for('stdout')
         result = _get_deterministic_output(stdout)
         results[result] += 1
-        assert output.history[-1]['best_01_loss'] < 0.15
+        assert output.history[-1]['best_01_loss'] < threshold
 
     if len(results) != 1:
         for r in sorted(results):
@@ -110,7 +112,7 @@ def test_simple_add(test_config):
     stdout = output.path_for('stdout')
     result = _get_deterministic_output(stdout)
     results[result] += 1
-    assert output.history[-1]['best_01_loss'] < 0.15
+    assert output.history[-1]['best_01_loss'] < threshold
 
     # Load one of the hypotheses, don't train it at all, make sure the accuracy is still high.
     config.do_train = False
@@ -119,4 +121,4 @@ def test_simple_add(test_config):
     stdout = output.path_for('stdout')
     result = _get_deterministic_output(stdout)
     results[result] += 1
-    assert output.history[-1]['best_01_loss'] < 0.15
+    assert output.history[-1]['best_01_loss'] < threshold

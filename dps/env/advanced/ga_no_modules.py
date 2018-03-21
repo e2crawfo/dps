@@ -16,9 +16,9 @@ from dps.env.advanced.grid_arithmetic import config as ga_config
 def build_env():
     internal = GridArithmeticNoModules()
 
-    train = GridArithmeticDataset(n_examples=cfg.n_train, one_hot=False)
-    val = GridArithmeticDataset(n_examples=cfg.n_val, one_hot=False)
-    test = GridArithmeticDataset(n_examples=cfg.n_val, one_hot=False)
+    train = GridArithmeticDataset(n_examples=cfg.n_train, one_hot=False, example_range=(0.0, 0.9))
+    val = GridArithmeticDataset(n_examples=cfg.n_val, one_hot=False, example_range=(0.9, 0.95))
+    test = GridArithmeticDataset(n_examples=cfg.n_val, one_hot=False, example_range=(0.95, 1.))
     external = ClassificationEnv(train, val, test, one_hot=False)
 
     env = CompositeEnv(external, internal)

@@ -17,10 +17,10 @@ def get_differentiable_updater(env):
 
 
 def build_emnist_env():
-    train_dataset = EmnistDataset(n_examples=cfg.n_train, one_hot=True)
-    val_dataset = EmnistDataset(n_examples=cfg.n_val, one_hot=True)
-    test_dataset = EmnistDataset(n_examples=cfg.n_val, one_hot=True)
-    return ClassificationEnv(train_dataset, val_dataset, test_dataset, one_hot=True)
+    train = EmnistDataset(n_examples=cfg.n_train, one_hot=True, example_range=(0., 0.9))
+    val = EmnistDataset(n_examples=cfg.n_val, one_hot=True, example_range=(0.9, 0.95))
+    test = EmnistDataset(n_examples=cfg.n_val, one_hot=True, example_range=(0.95, 1.))
+    return ClassificationEnv(train, val, test, one_hot=True)
 
 
 # For training networks on EMNIST datasets.
@@ -54,10 +54,10 @@ EMNIST_CONFIG = DEFAULT_CONFIG.copy(
 
 
 def build_omniglot_env():
-    train_dataset = OmniglotDataset(indices=cfg.train_indices, one_hot=True)
-    val_dataset = OmniglotDataset(indices=cfg.val_indices, one_hot=True)
-    test_dataset = OmniglotDataset(indices=cfg.test_indices, one_hot=True)
-    return ClassificationEnv(train_dataset, val_dataset, test_dataset, one_hot=True)
+    train = OmniglotDataset(indices=cfg.train_indices, one_hot=True)
+    val = OmniglotDataset(indices=cfg.val_indices, one_hot=True)
+    test = OmniglotDataset(indices=cfg.test_indices, one_hot=True)
+    return ClassificationEnv(train, val, test, one_hot=True)
 
 
 # For training networks on OMNIGLOT datasets.
@@ -132,10 +132,10 @@ class salience_render_hook(object):
 
 
 def build_salience_env():
-    train_dataset = SalienceDataset(n_examples=cfg.n_train)
-    val_dataset = SalienceDataset(n_examples=cfg.n_val)
-    test_dataset = SalienceDataset(n_examples=cfg.n_val)
-    return RegressionEnv(train_dataset, val_dataset, test_dataset)
+    train = SalienceDataset(n_examples=cfg.n_train, example_range=(0., 0.9))
+    val = SalienceDataset(n_examples=cfg.n_val, example_range=(0.9, 0.95))
+    test = SalienceDataset(n_examples=cfg.n_val, example_range=(0.95, 1.))
+    return RegressionEnv(train, val, test)
 
 
 SALIENCE_CONFIG = DEFAULT_CONFIG.copy(

@@ -11,9 +11,10 @@ from dps.updater import DifferentiableUpdater
 
 def sl_build_env():
     largest_digit = max(int(i) for i in cfg.digits)
-    train = VisualArithmeticDataset(n_examples=cfg.n_train, one_hot=True, min_digits=1, max_digits=1, largest_digit=largest_digit)
-    val = VisualArithmeticDataset(n_examples=cfg.n_val, one_hot=True, min_digits=1, max_digits=1, largest_digit=largest_digit)
-    test = VisualArithmeticDataset(n_examples=cfg.n_val, one_hot=True, min_digits=1, max_digits=1, largest_digit=largest_digit)
+    kwargs = dict(one_hot=True, min_digits=1, max_digits=1, largest_digit=largest_digit)
+    train = VisualArithmeticDataset(n_examples=cfg.n_train, example_range=(0.0, 0.9), **kwargs)
+    val = VisualArithmeticDataset(n_examples=cfg.n_val, example_range=(0.9, 0.95), **kwargs)
+    test = VisualArithmeticDataset(n_examples=cfg.n_val, example_range=(0.95, 1.0), **kwargs)
 
     return ClassificationEnv(train, val, test, one_hot=True)
 

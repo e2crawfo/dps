@@ -14,9 +14,9 @@ tf_flatten = tf.layers.flatten
 
 
 def build_env():
-    train = EMNIST_ObjectDetection(n_examples=int(cfg.n_train))
-    val = EMNIST_ObjectDetection(n_examples=int(cfg.n_val))
-    test = EMNIST_ObjectDetection(n_examples=int(cfg.n_val))
+    train = EMNIST_ObjectDetection(n_examples=int(cfg.n_train), example_range=(0., 0.9))
+    val = EMNIST_ObjectDetection(n_examples=int(cfg.n_val), example_range=(0.9, 0.95))
+    test = EMNIST_ObjectDetection(n_examples=int(cfg.n_val), example_range=(0.95, 1.))
 
     return VQVAE_Env(train, val, test)
 

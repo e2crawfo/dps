@@ -11,7 +11,7 @@ from dps.datasets import VisualArithmeticDataset
 from dps.utils.tf import LeNet, MLP, SalienceMap, extract_glimpse_numpy_like
 from dps.utils import Param, Config, image_to_string
 from dps.updater import DifferentiableUpdater
-from dps.rl.policy import EpsilonSoftmax, Beta, ProductDist, Policy, SigmoidNormal, SigmoidBeta
+from dps.rl.policy import EpsilonSoftmax, ProductDist, Policy, SigmoidBeta
 
 
 digit_map = dict(both=list(range(10)), even=[0, 2, 4, 6, 8], odd=[1, 3, 5, 7, 9])
@@ -28,9 +28,10 @@ class ResizeSalienceDetector(object):
 
 def sl_build_env():
     digits = digit_map[cfg.parity]
-    train = VisualArithmeticDataset(n_examples=cfg.n_train, one_hot=True, digits=digits)
-    val = VisualArithmeticDataset(n_examples=cfg.n_val, one_hot=True, digits=digits)
-    test = VisualArithmeticDataset(n_examples=cfg.n_val, one_hot=True, digits=digits)
+    kwargs = dict(one_hot=True, digits=digits)
+    train = VisualArithmeticDataset(n_examples=cfg.n_train, example_range=(0.0, 0.9), **kwargs)
+    val = VisualArithmeticDataset(n_examples=cfg.n_val, example_range=(0.9, 0.95), **kwargs)
+    test = VisualArithmeticDataset(n_examples=cfg.n_val, example_range=(0.95, 1.), **kwargs)
     return ClassificationEnv(train, val, test, one_hot=True)
 
 
@@ -46,11 +47,13 @@ def build_env():
         internal = VisualArithmetic()
 
     digits = digit_map[cfg.parity]
-    train = VisualArithmeticDataset(n_examples=cfg.n_train, one_hot=False, image_shape=cfg.env_shape, digits=digits)
+    kwargs = dict(one_hot=False, image_shape=cfg.env_shape, digits=digits)
+
+    train = VisualArithmeticDataset(n_examples=cfg.n_train, example_range=(0.0, 0.9), **kwargs)
     for i in range(10):
         print(image_to_string(train.x[i, ...]))
-    val = VisualArithmeticDataset(n_examples=cfg.n_val, one_hot=False, image_shape=cfg.env_shape, digits=digits)
-    test = VisualArithmeticDataset(n_examples=cfg.n_val, one_hot=False, image_shape=cfg.env_shape, digits=digits)
+    val = VisualArithmeticDataset(n_examples=cfg.n_val, example_range=(0.9, 0.95), **kwargs)
+    test = VisualArithmeticDataset(n_examples=cfg.n_val, example_range=(0.95, 1.), **kwargs)
 
     external = IntegerRegressionEnv(train, val, test)
 

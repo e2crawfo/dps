@@ -74,7 +74,7 @@ def convert_emnist_and_store(path, new_image_shape):
 
 def load_emnist(
         path, classes, balance=False, include_blank=False,
-        shape=None, one_hot=False, n_examples=None, show=False):
+        shape=None, one_hot=False, n_examples=None, example_range=None, show=False):
     """ Load emnist data from disk by class.
 
     Elements of `classes` pick out which emnist classes to load, but different labels
@@ -102,6 +102,9 @@ def load_emnist(
         If True, labels are one-hot vectors instead of integers.
     n_examples: int
         Maximum number of examples returned. If not supplied, return all available data.
+    example_range: pair of floats
+        Pair of floats specifying, for each class, the range of examples that should be used.
+        Each element of the pair is a number in (0, 1), and the second number should be larger.
     show: bool
         If True, prints out an image from each class.
 
@@ -119,12 +122,20 @@ def load_emnist(
         else:
             needs_reshape = True
 
+    if example_range is not None:
+        assert 0.0 <= example_range[0] < example_range[1] <= 1.0
+
     y = []
     x = []
     class_map = {}
     for i, cls in enumerate(sorted(classes)):
         with gzip.open(os.path.join(emnist_dir, str(cls) + '.pklz'), 'rb') as f:
             _x = dill.load(f)
+
+        if example_range is not None:
+            low = int(example_range[0] * len(_x))
+            high = int(example_range[1] * len(_x))
+            _x = _x[low:high, ...]
 
         x.append(np.uint8(255*np.minimum(_x, 1)))
         y.extend([i] * x[-1].shape[0])

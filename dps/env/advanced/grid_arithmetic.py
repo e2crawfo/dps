@@ -19,9 +19,12 @@ from dps.env.advanced.visual_arithmetic import digit_map, classifier_head, Resiz
 
 def sl_build_env():
     digits = digit_map[cfg.parity]
-    train = GridArithmeticDataset(n_examples=cfg.n_train, one_hot=True, digits=digits)
-    val = GridArithmeticDataset(n_examples=cfg.n_val, one_hot=True, digits=digits)
-    test = GridArithmeticDataset(n_examples=cfg.n_val, one_hot=True, digits=digits)
+    kwargs = dict(one_hot=True, digits=digits)
+
+    train = GridArithmeticDataset(n_examples=cfg.n_train, example_range=(0.0, 0.9), **kwargs)
+    val = GridArithmeticDataset(n_examples=cfg.n_val, example_range=(0.9, 0.95), **kwargs)
+    test = GridArithmeticDataset(n_examples=cfg.n_val, example_range=(0.95, 1.), **kwargs)
+
     return ClassificationEnv(train, val, test, one_hot=True)
 
 
@@ -257,9 +260,11 @@ def build_env():
             test = GridOmniglotDataset(n_examples=cfg.n_val, indices=range(15, 20))
     else:
         digits = digit_map[cfg.parity]
-        train = GridArithmeticDataset(n_examples=cfg.n_train, one_hot=False, digits=digits)
-        val = GridArithmeticDataset(n_examples=cfg.n_val, one_hot=False, digits=digits)
-        test = GridArithmeticDataset(n_examples=cfg.n_val, one_hot=False, digits=digits)
+        kwargs = dict(one_hot=False, digits=digits)
+
+        train = GridArithmeticDataset(n_examples=cfg.n_train, example_range=(0.0, 0.9), **kwargs)
+        val = GridArithmeticDataset(n_examples=cfg.n_val, example_range=(0.9, 0.95), **kwargs)
+        test = GridArithmeticDataset(n_examples=cfg.n_val, example_range=(0.95, 1.), **kwargs)
 
     external = IntegerRegressionEnv(train, val, test)
 
