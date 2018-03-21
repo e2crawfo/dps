@@ -210,6 +210,8 @@ class PatchesDataset(ImageDataset):
 
     def _sample_patch_locations(self, sub_image_shapes):
         """ Sample random locations within draw_shape. """
+        if not sub_image_shapes:
+            return []
 
         sub_image_shapes = np.array(sub_image_shapes)
         n_rects = sub_image_shapes.shape[0]
