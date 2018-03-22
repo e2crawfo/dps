@@ -316,9 +316,9 @@ class TrainingLoop(object):
 
                 # Build updater
                 updater = cfg.get_updater(self.env)
-                updater.build_graph()
                 updater.stage_idx = stage_idx
                 updater.exp_dir = self.exp_dir
+                updater.build_graph()
 
                 # Optionally initialize policy weights
                 if cfg.load_path:

@@ -309,8 +309,7 @@ class PatchesDataset(ImageDataset):
             new_X.append(x)
             new_Y.append(y)
 
-            if j % 10 == 0:
-            # if j % 10000 == 0:
+            if j % 10000 == 0:
                 print(y)
                 print(image_to_string(x))
                 print("\n")

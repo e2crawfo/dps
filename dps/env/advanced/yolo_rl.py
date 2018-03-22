@@ -1,12 +1,14 @@
 import tensorflow as tf
 import numpy as np
 import sonnet as snt
+import matplotlib.pyplot as plt
+import os
 
 from dps import cfg
-from dps.train import GeometricScheduleHook
+from dps.train import PolynomialScheduleHook, GeometricScheduleHook
 from dps.datasets import EMNIST_ObjectDetection
 from dps.updater import Updater
-from dps.utils import Config, Param
+from dps.utils import Config, Param, square_subplots
 from dps.utils.tf import (
     FullyConvolutional, build_gradient_train_op,
     trainable_variables, build_scheduled_value,
@@ -288,6 +290,7 @@ class YoloRL_Updater(Updater):
         self.B = len(self.anchor_boxes)
 
         self.datasets = env.datasets
+
         for dset in self.datasets.values():
             dset.reset()
 
@@ -1031,11 +1034,16 @@ class YoloRL_Updater(Updater):
             recorded_tensors['diff_loss'] += self.cls_sparsity * recorded_tensors['_cls_sparsity_loss']
 
         if self.minimize_kl:
-            recorded_tensors['diff_loss'] -= recorded_tensors['cls_entropy']
-            recorded_tensors['diff_loss'] -= recorded_tensors['obj_entropy']
+            if "cls" not in self.fix_values:
+                recorded_tensors['diff_loss'] -= recorded_tensors['cls_entropy']
+            if "obj" not in self.fix_values:
+                recorded_tensors['diff_loss'] -= recorded_tensors['obj_entropy']
 
-            recorded_tensors['diff_loss'] += recorded_tensors['cell_yx_kl']
-            recorded_tensors['diff_loss'] += recorded_tensors['hw_kl']
+            if "cell_y" not in self.fix_values and "cell_x" not in self.fix_values:
+                recorded_tensors['diff_loss'] += recorded_tensors['cell_yx_kl']
+            if "h" not in self.fix_values and "w" not in self.fix_values:
+                recorded_tensors['diff_loss'] += recorded_tensors['hw_kl']
+
             recorded_tensors['diff_loss'] += recorded_tensors['attr_kl']
 
         self.diff_loss = recorded_tensors['diff_loss']
@@ -1077,8 +1085,8 @@ class YoloRL_Updater(Updater):
 
         _rl_recorded_tensors['surrogate_loss'] = _rl_recorded_tensors['rl_loss'] + mean_reconstruction_loss
 
-        # if self.area_weight > 0.0:
-        #     _rl_recorded_tensors['surrogate_loss'] += self.area_weight * mean_area_loss
+        if self.area_weight > 0.0:
+            _rl_recorded_tensors['surrogate_loss'] += self.area_weight * mean_area_loss
 
         if self.minimize_kl:
             _rl_recorded_tensors['surrogate_loss'] -= recorded_tensors['cls_entropy']
@@ -1086,6 +1094,18 @@ class YoloRL_Updater(Updater):
 
             _rl_recorded_tensors['surrogate_loss'] += recorded_tensors['cell_yx_kl']
             _rl_recorded_tensors['surrogate_loss'] += recorded_tensors['hw_kl']
+            _rl_recorded_tensors['surrogate_loss'] += recorded_tensors['attr_kl']
+
+            if "cls" not in self.fix_values:
+                _rl_recorded_tensors['surrogate_loss'] -= recorded_tensors['cls_entropy']
+            if "obj" not in self.fix_values:
+                _rl_recorded_tensors['surrogate_loss'] -= recorded_tensors['obj_entropy']
+
+            if "cell_y" not in self.fix_values and "cell_x" not in self.fix_values:
+                _rl_recorded_tensors['surrogate_loss'] += recorded_tensors['cell_yx_kl']
+            if "h" not in self.fix_values and "w" not in self.fix_values:
+                _rl_recorded_tensors['surrogate_loss'] += recorded_tensors['hw_kl']
+
             _rl_recorded_tensors['surrogate_loss'] += recorded_tensors['attr_kl']
 
         self.surrogate_loss = _rl_recorded_tensors['surrogate_loss']
@@ -1116,13 +1136,26 @@ class YoloRL_Updater(Updater):
 
 
 class YoloRL_RenderHook(object):
-    def __call__(self, updater, N=16):
-        rl_fetched = self._fetch(N, updater, True)
+    def __init__(self, N=16):
+        self.N = N
+
+    def __call__(self, updater):
+        if updater.stage_idx == 0:
+            path = updater.exp_dir.path_for('plots', 'frames.pdf')
+            if not os.path.exists(path):
+                fig, axes = square_subplots(16)
+                for ax, frame in zip(axes.flatten(), updater.datasets['train'].x):
+                    ax.imshow(frame)
+
+                fig.savefig(path)
+                plt.close(fig)
+
+        rl_fetched = self._fetch(self.N, updater, True)
 
         self._plot_reconstruction(updater, rl_fetched, True)
         self._plot_patches(updater, rl_fetched, True)
 
-        diff_fetched = self._fetch(N, updater, False)
+        diff_fetched = self._fetch(self.N, updater, False)
 
         self._plot_reconstruction(updater, diff_fetched, False)
         self._plot_patches(updater, diff_fetched, False)
@@ -1439,7 +1472,7 @@ good_config = config.copy(
     kernel_size=(3, 3),
 
     use_specific_costs=True,
-    use_specific_reconstruction=False,
+    use_specific_reconstruction=True,
     max_hw=1.0,
     min_hw=0.5,
     max_chars=3,
@@ -1503,14 +1536,36 @@ good_experimental_config = good_config.copy(
     ],
     colours="red",
     max_overlap=100,
-    use_specific_reconstruction=True,
 )
 
-test_size_config = good_experimental_config.copy(
-    sub_image_size_std=0.4,
+experimental_config = good_config.copy(
+    lr_schedule=1e-4,
+    curriculum=[
+        dict(fix_values=dict(obj=1), dynamic_partition=False, max_steps=25000),
+    ],
+    hooks=[
+        PolynomialScheduleHook(
+            "area_weight", "best_COST_reconstruction",
+            base_configs=[
+                dict(obj_exploration=0.2,),
+                dict(obj_exploration=0.1,),
+                dict(obj_exploration=0.05,),
+            ],
+            tolerance=0.1, scale=1.0, power=1., initial_value=2.0),
+    ],
+    colours="red",
+    max_overlap=100,
+    area_weight=1.0,
+    nonzero_weight=10.0,
+
+    box_std=0.1,
+    attr_std=0.0,
+    minimize_kl=False,
+
     max_hw=3.0,
-    max_overlap=150,
+    min_hw=0.25,
     image_shape=(50, 50),
+    sub_image_size_std=0.4,
 )
 
 good_denser_bigger_config = good_experimental_config.copy(

@@ -31,6 +31,14 @@ import clify
 import dps
 
 
+def square_subplots(N):
+    sqrt_N = int(np.ceil(np.sqrt(N)))
+    m = int(np.ceil(N / sqrt_N))
+    import matplotlib.pyplot as plt
+    fig, axes = plt.subplots(m, sqrt_N)
+    return fig, axes
+
+
 def nvidia_smi():
     try:
         p = subprocess.run("nvidia-smi".split(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

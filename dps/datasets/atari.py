@@ -2,7 +2,7 @@ import gym
 import numpy as np
 
 from dps.datasets import ImageDataset
-from dps.utils import Param
+from dps.utils import Param, square_subplots
 
 
 class RandomAgent(object):
@@ -56,10 +56,12 @@ class AtariAutoencodeDataset(ImageDataset):
         0, help="If 0, scan over each image, extracting as many non-overlapping "
                 "sub-images of shape `image_shape` as possible. Otherwise, from each image "
                 "we sample `samples_per_frame` sub-images at random.")
+    atari_render = Param(False)
+    density = Param(1.0)
     default_shape = (210, 160)
 
     def __init__(self, **kwargs):
-        frames = gather_atari_frames(self.game, self.policy, self.n_examples)
+        frames = gather_atari_frames(self.game, self.policy, self.n_examples, render=self.atari_render, density=self.density)
         frame_shape = frames.shape[1:3]
         channel_dim = frames.shape[3]
 
@@ -89,27 +91,24 @@ class AtariAutoencodeDataset(ImageDataset):
                         _frames.append(image)
                 frames = _frames
 
+        frames = np.array(frames)
+        np.random.shuffle(frames)
+
         super(AtariAutoencodeDataset, self).__init__(frames)
 
 
 def show_frames(frames):
-    N = len(frames)
-    sqrt_N = int(np.ceil(np.sqrt(N)))
-    m = int(np.ceil(N / sqrt_N))
-
-    import matplotlib.pyplot as plt
-
-    fig, axes = plt.subplots(m, sqrt_N)
-
+    _, axes = square_subplots(len(frames))
     for ax, frame in zip(axes.flatten(), frames):
         ax.imshow(frame)
+    import matplotlib.pyplot as plt
     plt.show()
 
 
 if __name__ == "__main__":
     game = "SpaceInvadersNoFrameskip-v4"
     # game = "AsteroidsNoFrameskip-v4"
-    dset = AtariAutoencodeDataset(game=game, policy=None, n_examples=100, density=0.3)
+    dset = AtariAutoencodeDataset(game=game, policy=None, n_examples=100, density=0.01, atari_render=False)
     show_frames(dset.x[:10])
     # dset = AtariAutoencodeDataset(
     #     game=game, policy=None, n_examples=100, samples_per_frame=2, image_shape=(50, 50))
