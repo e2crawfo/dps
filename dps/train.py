@@ -912,7 +912,8 @@ class ScheduleHook(Hook):
         self.initial_value = initial_value
 
         if tolerance is None:
-            self.tolerance = np.inf
+            tolerance = np.inf
+        self.tolerance = tolerance
 
         if isinstance(base_configs, dict):
             base_configs = [base_configs]

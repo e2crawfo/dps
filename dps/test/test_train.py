@@ -38,7 +38,7 @@ class DummyHook(Hook):
 
     def end_stage(self, training_loop, stage_idx):
         if stage_idx < self.n_stages - 1:
-            training_loop.add_stage(self.base_config.copy())
+            training_loop.edit_remaining_stage(0, self.base_config)
 
 
 def test_stage_hook(test_config):

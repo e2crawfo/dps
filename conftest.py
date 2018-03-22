@@ -79,4 +79,5 @@ def test_config(request):
         save_plots=request.config.getoption("--save-plots"),
         render_step=0,
         readme="testing",
+        use_dataset_cache=False,
     )

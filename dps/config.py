@@ -18,6 +18,8 @@ DEFAULT_CONFIG = Config(
     power_through=True,  # Whether to complete the entire curriculum, even if threshold not reached.
     robust=True,
 
+    use_dataset_cache=False,
+
     slim=False,  # If true, tries to use little disk space
     patience=np.inf,
 

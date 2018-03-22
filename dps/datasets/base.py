@@ -1,15 +1,57 @@
 import numpy as np
 from skimage.transform import resize
+import abc
+import os
+import dill
 
 from dps import cfg
-from dps.utils import image_to_string, Param, Parameterized, DataContainer
+from dps.utils import image_to_string, Param, Parameterized, DataContainer, get_param_hash
 from dps.datasets import load_emnist, load_omniglot, emnist_classes, omniglot_classes
 
 
-class Dataset(Parameterized):
+class Dataset(Parameterized, metaclass=abc.ABCMeta):
+    use_dataset_cache = Param(False)
     n_examples = Param(None)
 
-    def __init__(self, *tracks, shuffle=True, **kwargs):
+    def __init__(self, shuffle=True, **kwargs):
+        if self.use_dataset_cache:
+            print("Trying to load dataset from cache...")
+            if isinstance(self.use_dataset_cache, str):
+                directory = os.path.join(self.use_dataset_cache, self.__class__.__name__)
+            else:
+                directory = os.path.join(cfg.data_dir, "cached_datasets", self.__class__.__name__)
+            os.makedirs(directory, exist_ok=True)
+
+            params = self.param_values()
+            param_hash = get_param_hash(params)
+            print("Params: {}".format(params))
+            print("Param hash: {}".format(param_hash))
+
+            filename = os.path.join(directory, str(param_hash))
+
+            loaded = False
+            try:
+                with open(filename + ".pkl", 'rb') as f:
+                    tracks = dill.load(f)
+                loaded = True
+            except FileNotFoundError:
+                pass
+            finally:
+                if not loaded:
+                    print("File not found, creating dataset and storing...")
+                    tracks = self._make()
+                    with open(filename + ".pkl", 'wb') as f:
+                        dill.dump(tracks, f, protocol=dill.HIGHEST_PROTOCOL)
+                    with open(filename + ".cfg", 'w') as f:
+                        f.write(str(params))
+        else:
+            tracks = self._make()
+            loaded = False
+
+        self.loaded = loaded
+
+        print("Done.")
+
         length = len(tracks[0])
         assert all(len(t) == length for t in tracks[1:])
 
@@ -21,6 +63,10 @@ class Dataset(Parameterized):
         self.reset()
 
         super(Dataset, self).__init__(**kwargs)
+
+    @abc.abstractmethod
+    def _make(self):
+        raise Exception("NotImplemented")
 
     @property
     def x(self):
@@ -111,6 +157,17 @@ class Dataset(Parameterized):
 
 
 class ImageDataset(Dataset):
+
+    def __init__(self, shuffle=True, **kwargs):
+        super(ImageDataset, self).__init__(shuffle, **kwargs)
+
+        for j in range(len(self.tracks[0])):
+            if j % 10000 == 0:
+                print(image_to_string(self.tracks[0][j]))
+                if len(self.tracks) > 1:
+                    print(self.tracks[1][j])
+                print("\n")
+
     def post_process_batch(self, x):
         x = super(ImageDataset, self).post_process_batch(x)
 
@@ -147,14 +204,17 @@ class EmnistDataset(ImageDataset):
         classes = np.random.choice(len(EmnistDataset.class_pool), n_classes, replace=False)
         return [EmnistDataset.class_pool[i] for i in classes]
 
-    def __init__(self, **kwargs):
-        x, y, class_map = load_emnist(cfg.data_dir, **self.param_values())
+    def _make(self):
+        param_values = self.param_values()
+        del param_values["use_dataset_cache"]
+
+        x, y, class_map = load_emnist(cfg.data_dir, **param_values)
 
         if x.shape[0] < self.n_examples:
             raise Exception(
                 "Too few datapoints. Requested {}, "
                 "only {} are available.".format(self.n_examples, x.shape[0]))
-        super(EmnistDataset, self).__init__(x, y)
+        return x, y
 
 
 # VISUAL_ARITHMETIC ***************************************
@@ -195,66 +255,12 @@ class PatchesDataset(ImageDataset):
     depth = Param(None)
     sub_image_size_std = Param(None)
 
-    def __init__(self, **kwargs):
+    def _make(self):
         self.draw_shape = self.draw_shape or self.image_shape
         self.draw_offset = self.draw_offset or (0, 0)
 
-        x, y, self.patch_centres = self._make_dataset(self.n_examples)
-        super(PatchesDataset, self).__init__(x, y, **kwargs)
+        n_examples = self.n_examples
 
-    def _sample_patches(self):
-        raise Exception("AbstractMethod")
-
-    def _sample_patch_locations(self, sub_image_shapes):
-        """ Sample random locations within draw_shape. """
-        if not sub_image_shapes:
-            return []
-
-        sub_image_shapes = np.array(sub_image_shapes)
-        n_rects = sub_image_shapes.shape[0]
-        i = 0
-        while True:
-            if self.sub_image_size_std is None:
-                shape_multipliers = 1.
-            else:
-                shape_multipliers = np.maximum(np.random.randn(n_rects, 2) * self.sub_image_size_std + 1.0, 0.5)
-
-            _sub_image_shapes = np.ceil(shape_multipliers * sub_image_shapes[:, :2]).astype('i')
-
-            rects = [
-                Rect(
-                    np.random.randint(0, self.draw_shape[0]-m+1),
-                    np.random.randint(0, self.draw_shape[1]-n+1), m, n)
-                for m, n in _sub_image_shapes]
-            area = np.zeros(self.draw_shape, 'uint8')
-
-            for rect in rects:
-                area[rect.top:rect.bottom, rect.left:rect.right] += 1
-
-            if (area >= 2).sum() < self.max_overlap:
-                break
-
-            i += 1
-
-            if i > 10000:
-                raise Exception(
-                    "Could not fit rectangles. "
-                    "(n_rects: {}, draw_shape: {}, max_overlap: {})".format(
-                        n_rects, self.draw_shape, self.max_overlap))
-        return rects
-
-    def _post_process_label(self, label, rects):
-        """ To be used in cases where the labels depend on the locations. """
-        return label
-
-    def _post_process(self, new_X, new_Y):
-        new_X = np.array(new_X, dtype=np.uint8)
-        new_Y = np.array(new_Y, dtype='i')
-        if new_Y.ndim == 1:
-            new_Y = new_Y[..., None]
-        return new_X, new_Y
-
-    def _make_dataset(self, n_examples):
         if n_examples == 0:
             return np.zeros((0,) + self.image_shape).astype('uint8'), np.zeros((0, 1)).astype('i')
 
@@ -316,7 +322,61 @@ class PatchesDataset(ImageDataset):
 
         new_X, new_Y = self._post_process(new_X, new_Y)
 
-        return new_X, new_Y, patch_centres
+        self.patch_centres = patch_centres
+
+        return new_X, new_Y
+
+    def _sample_patches(self):
+        raise Exception("AbstractMethod")
+
+    def _sample_patch_locations(self, sub_image_shapes):
+        """ Sample random locations within draw_shape. """
+        if not sub_image_shapes:
+            return []
+
+        sub_image_shapes = np.array(sub_image_shapes)
+        n_rects = sub_image_shapes.shape[0]
+        i = 0
+        while True:
+            if self.sub_image_size_std is None:
+                shape_multipliers = 1.
+            else:
+                shape_multipliers = np.maximum(np.random.randn(n_rects, 2) * self.sub_image_size_std + 1.0, 0.5)
+
+            _sub_image_shapes = np.ceil(shape_multipliers * sub_image_shapes[:, :2]).astype('i')
+
+            rects = [
+                Rect(
+                    np.random.randint(0, self.draw_shape[0]-m+1),
+                    np.random.randint(0, self.draw_shape[1]-n+1), m, n)
+                for m, n in _sub_image_shapes]
+            area = np.zeros(self.draw_shape, 'uint8')
+
+            for rect in rects:
+                area[rect.top:rect.bottom, rect.left:rect.right] += 1
+
+            if (area >= 2).sum() < self.max_overlap:
+                break
+
+            i += 1
+
+            if i > 10000:
+                raise Exception(
+                    "Could not fit rectangles. "
+                    "(n_rects: {}, draw_shape: {}, max_overlap: {})".format(
+                        n_rects, self.draw_shape, self.max_overlap))
+        return rects
+
+    def _post_process_label(self, label, rects):
+        """ To be used in cases where the labels depend on the locations. """
+        return label
+
+    def _post_process(self, new_X, new_Y):
+        new_X = np.array(new_X, dtype=np.uint8)
+        new_Y = np.array(new_Y, dtype='i')
+        if new_Y.ndim == 1:
+            new_Y = new_Y[..., None]
+        return new_X, new_Y
 
     def visualize(self, n=9):
         import matplotlib.pyplot as plt
@@ -364,7 +424,7 @@ class VisualArithmeticDataset(PatchesDataset):
         "len": len,
     }
 
-    def __init__(self, **kwargs):
+    def _make(self):
         self.digits = [int(d) for d in self.digits]
         assert self.min_digits <= self.max_digits
 
@@ -406,10 +466,12 @@ class VisualArithmeticDataset(PatchesDataset):
 
         self.digit_reps = DataContainer(mnist_x, mnist_y)
 
-        super(VisualArithmeticDataset, self).__init__(**kwargs)
+        result = super(VisualArithmeticDataset, self)._make()
 
         del self.digit_reps
         del self.op_reps
+
+        return result
 
     def _sample_patches(self):
         n = np.random.randint(self.min_digits, self.max_digits+1)
@@ -440,7 +502,7 @@ class VisualArithmeticDataset(PatchesDataset):
 class VisualArithmeticDatasetColour(VisualArithmeticDataset):
     colours = Param('red green blue')
 
-    def __init__(self, **kwargs):
+    def _make(self):
         self.depth = 3
         colours = self.colours
         if isinstance(colours, str):
@@ -450,7 +512,7 @@ class VisualArithmeticDatasetColour(VisualArithmeticDataset):
         colour_map = mpl.colors.get_named_colors_mapping()
         self._colours = [np.array(mpl.colors.to_rgb(colour_map[cn]))[None, None, :] for cn in colours]
 
-        super(VisualArithmeticDatasetColour, self).__init__(**kwargs)
+        return super(VisualArithmeticDatasetColour, self)._make()
 
     def colourize(self, img, colour_idx=None):
         if colour_idx is None:
@@ -493,7 +555,7 @@ class GridArithmeticDataset(VisualArithmeticDataset):
     draw_shape_grid = Param((2, 2))
     op_loc = Param(None)
 
-    def __init__(self, **kwargs):
+    def _make(self):
         self.image_shape = tuple(gs*s for gs, s in zip(self.image_shape_grid, self.sub_image_shape))
 
         if self.draw_shape_grid is None:
@@ -504,7 +566,7 @@ class GridArithmeticDataset(VisualArithmeticDataset):
         if self.op_loc is not None:
             self.op_loc_idx = np.ravel_multi_index(self.op_loc, self.draw_shape_grid)
 
-        super(GridArithmeticDataset, self).__init__(**kwargs)
+        return super(GridArithmeticDataset, self)._make()
 
     def _sample_patch_locations(self, sub_image_shapes):
         """ Sample random locations within draw_shape. """
@@ -539,11 +601,12 @@ class OmniglotDataset(ImageDataset):
         classes = np.random.choice(len(class_pool), n_classes, replace=False)
         return [class_pool[i] for i in classes]
 
-    def __init__(self, indices, **kwargs):
+    def _make(self, **kwargs):
         pv = self.param_values()
         del pv['n_examples']
+        del pv['use_dataset_cache']
         x, y, class_map = load_omniglot(cfg.data_dir, **pv)
-        super(OmniglotDataset, self).__init__(x, y)
+        return x, y
 
 
 class OmniglotCountingDataset(PatchesDataset):
@@ -555,7 +618,7 @@ class OmniglotCountingDataset(PatchesDataset):
     target_scale = Param(0.5)
     indices = Param(list(range(20)))
 
-    def __init__(self, **kwargs):
+    def _make(self):
         assert self.min_digits <= self.max_digits
         assert np.product(self.draw_shape) >= self.max_digits + 1
 
@@ -566,9 +629,11 @@ class OmniglotCountingDataset(PatchesDataset):
         omniglot_y = np.squeeze(omniglot_y, 1)
         self.omni_reps = DataContainer(omniglot_x, omniglot_y)
 
-        super(OmniglotCountingDataset, self).__init__(**kwargs)
+        tracks = super(OmniglotCountingDataset, self)._make()
 
         del self.omni_reps
+
+        return tracks
 
     def _sample_patches(self):
         n = np.random.randint(self.min_digits, self.max_digits+1)
@@ -600,7 +665,7 @@ class GridOmniglotDataset(OmniglotCountingDataset):
     draw_shape_grid = Param()
     target_loc = Param()
 
-    def __init__(self, **kwargs):
+    def _make(self):
         self.image_shape = tuple(gs*s for gs, s in zip(self.image_shape_grid, self.sub_image_shape))
 
         if self.draw_shape_grid is None:
@@ -611,7 +676,7 @@ class GridOmniglotDataset(OmniglotCountingDataset):
         if self.target_loc is not None:
             self.target_loc_idx = np.ravel_multi_index(self.target_loc, self.draw_shape_grid)
 
-        super(GridOmniglotDataset, self).__init__(**kwargs)
+        return super(GridOmniglotDataset, self)._make()
 
     def _sample_patch_locations(self, sub_image_shapes):
         """ Sample random locations within draw_shape. """
@@ -645,19 +710,19 @@ class SalienceDataset(PatchesDataset):
     flatten_output = Param(False)
     point = Param(False)
 
-    def __init__(self, **kwargs):
+    def _make(self, **kwargs):
         classes = self.classes or emnist_classes()
         self.X, _, _ = load_emnist(
             cfg.data_dir, classes, shape=self.sub_image_shape,
             n_examples=self.n_sub_image_examples, example_range=self.example_range)
 
-        super(SalienceDataset, self).__init__(**kwargs)
+        x, _ = super(SalienceDataset, self)._make()
 
         del self.X
 
         y = []
 
-        for x, pc in zip(self.x, self.patch_centres):
+        for pc in self.patch_centres:
             _y = np.zeros(self.output_shape)
             for centre in pc:
                 if self.point:
@@ -675,13 +740,14 @@ class SalienceDataset(PatchesDataset):
         y = np.array(y)
         if self.flatten_output:
             y = y.reshape(y.shape[0], -1)
-        self.y = y
 
-        for j in range(self.y.shape[0]):
+        for j in range(y.shape[0]):
             if j % 10000 == 0:
-                print(image_to_string(self.y[j, ...]))
-                print(image_to_string(self.x[j, ...]))
+                print(image_to_string(y[j, ...]))
+                print(image_to_string(x[j, ...]))
                 print("\n")
+
+        return x, y
 
     def _sample_patches(self):
         n = np.random.randint(self.min_digits, self.max_digits+1)
@@ -728,7 +794,7 @@ class EMNIST_ObjectDetection(PatchesDataset):
     example_range = Param(None)
     colours = Param('red green blue')
 
-    def __init__(self, **kwargs):
+    def _make(self):
         self.depth = 3
 
         colours = self.colours
@@ -749,9 +815,11 @@ class EMNIST_ObjectDetection(PatchesDataset):
 
         self.char_reps = DataContainer(emnist_x, emnist_y)
 
-        super(EMNIST_ObjectDetection, self).__init__(**kwargs)
+        result = super(EMNIST_ObjectDetection, self)._make()
 
         del self.char_reps
+
+        return result
 
     def _post_process_label(self, label, rects):
         """ To be used in cases where the labels depend on the locations. """

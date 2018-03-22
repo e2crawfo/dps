@@ -33,7 +33,7 @@ config = Config(
 class HelloWorldDataset(Dataset):
     order = Param()
 
-    def __init__(self, **kwargs):
+    def _make(self):
         x = np.random.randn(self.n_examples, 2)
         x = np.concatenate((x.copy(), np.zeros((x.shape[0], 1))), axis=1)
         y = x[:, :2].copy()
@@ -42,8 +42,7 @@ class HelloWorldDataset(Dataset):
                 y[:, 0] = y[:, 0] + y[:, 1]
             else:
                 y[:, 1] = y[:, 0] * y[:, 1]
-
-        super(HelloWorldDataset, self).__init__(x, y)
+        return x, y
 
 
 class HelloWorld(InternalEnv):

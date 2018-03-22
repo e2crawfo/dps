@@ -110,7 +110,7 @@ def get_param_hash(d, name_params=None):
     if not name_params:
         name_params = d.keys()
     param_str = []
-    for name in name_params:
+    for name in sorted(name_params):
         value = d[name]
 
         if callable(value):

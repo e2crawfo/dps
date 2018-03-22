@@ -38,10 +38,10 @@ class SimpleAdditionDataset(Dataset):
     width = Param()
     base = Param()
 
-    def __init__(self, **kwargs):
+    def _make(self):
         x = np.random.randint(0, self.base, size=(self.n_examples, 2*self.width+1))
         y = x[:, :1] + x[:, -1:]
-        super(SimpleAdditionDataset, self).__init__(x, y)
+        return x, y
 
 
 class SimpleAddition(InternalEnv):

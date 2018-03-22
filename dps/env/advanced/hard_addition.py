@@ -35,7 +35,7 @@ class HardAdditionDataset(Dataset):
     height = Param()
     base = Param()
 
-    def __init__(self, **kwargs):
+    def _make(self):
         width, height = self.width, self.height
         x = np.random.randint(0, self.base, size=(self.n_examples, width*height))
         for h in range(height):
@@ -49,8 +49,7 @@ class HardAdditionDataset(Dataset):
         if height > 2:
             raise Exception(
                 "Need to specify greater number of digits when adding > 2 numbers.")
-
-        super(HardAdditionDataset, self).__init__(x, y)
+        return x, y
 
 
 class HardAddition(InternalEnv):

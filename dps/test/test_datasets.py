@@ -1,7 +1,57 @@
-from dps.utils import NumpySeed
+import shutil
+
+from dps.utils import NumpySeed, remove
 from dps.datasets import (
     EmnistDataset, VisualArithmeticDataset, GridArithmeticDataset, OmniglotDataset
 )
+
+
+def test_cache_dataset():
+    with NumpySeed(100):
+
+        kwargs = dict(
+            shape=(14, 14), include_blank=True, one_hot=False,
+            balance=True, classes=[1, 2, 3], n_examples=100)
+
+        cache_dir = "/tmp/dps_test/cached_datasets"
+
+        shutil.rmtree(cache_dir, ignore_errors=True)
+
+        with remove(cache_dir):
+            dataset = EmnistDataset(**kwargs, use_dataset_cache=cache_dir)
+            assert not dataset.loaded
+
+            assert set(dataset.y.flatten()) == set([0, 1, 2, 3])
+            assert dataset.x.shape == (100, 14, 14)
+            assert dataset.y.shape == (100, 1)
+            assert dataset.x.min() == 0.0
+            assert 0.0 <= dataset.x.min() <= 10.0
+            assert 200.0 <= dataset.x.max() <= 255.0
+
+            dataset2 = EmnistDataset(**kwargs, use_dataset_cache=cache_dir)
+            assert dataset2.loaded
+
+            assert set(dataset2.y.flatten()) == set([0, 1, 2, 3])
+            assert dataset2.x.shape == (100, 14, 14)
+            assert dataset2.y.shape == (100, 1)
+            assert dataset2.x.min() == 0.0
+            assert 0.0 <= dataset2.x.min() <= 10.0
+            assert 200.0 <= dataset2.x.max() <= 255.0
+
+            assert (dataset.x == dataset2.x).all()
+            assert (dataset.y == dataset2.y).all()
+
+            dataset3 = EmnistDataset(**kwargs, use_dataset_cache=False)
+
+            assert set(dataset3.y.flatten()) == set([0, 1, 2, 3])
+            assert dataset3.x.shape == (100, 14, 14)
+            assert dataset3.y.shape == (100, 1)
+            assert dataset3.x.min() == 0.0
+            assert 0.0 <= dataset3.x.min() <= 10.0
+            assert 200.0 <= dataset3.x.max() <= 255.0
+
+            assert (dataset3.x != dataset2.x).any()
+            assert (dataset3.y != dataset2.y).any()
 
 
 def test_emnist_dataset():

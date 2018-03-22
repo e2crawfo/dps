@@ -89,7 +89,7 @@ class SimpleGridArithmeticDataset(Dataset):
         "len": len,
     }
 
-    def __init__(self, **kwargs):
+    def _make(self):
         if not self.draw_shape:
             self.draw_shape = self.env_shape
 
@@ -137,7 +137,7 @@ class SimpleGridArithmeticDataset(Dataset):
             one_hot=self.one_hot, largest_digit=self.largest_digit,
             draw_offset=self.draw_offset, draw_shape=self.draw_shape)
 
-        super(SimpleGridArithmeticDataset, self).__init__(x, y)
+        return x, y
 
 
 class SimpleGridArithmetic(InternalEnv):

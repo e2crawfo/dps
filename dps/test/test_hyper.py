@@ -1,22 +1,11 @@
 import pytest
 import os
-import shutil
-from contextlib import contextmanager
 import numpy as np
 
 from dps.hyper import build_and_submit
 from dps.env.advanced import simple_addition
 from dps.rl.algorithms import a2c
 from dps.config import DEFAULT_CONFIG
-
-
-@contextmanager
-def remove_tree(path):
-    path = os.path.abspath(path)
-    try:
-        yield
-    finally:
-        shutil.rmtree(str(path), ignore_errors=True)
 
 
 @pytest.mark.slow

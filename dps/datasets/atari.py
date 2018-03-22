@@ -60,7 +60,7 @@ class AtariAutoencodeDataset(ImageDataset):
     density = Param(1.0)
     default_shape = (210, 160)
 
-    def __init__(self, **kwargs):
+    def _make(self):
         frames = gather_atari_frames(self.game, self.policy, self.n_examples, render=self.atari_render, density=self.density)
         frame_shape = frames.shape[1:3]
         channel_dim = frames.shape[3]
@@ -92,9 +92,8 @@ class AtariAutoencodeDataset(ImageDataset):
                 frames = _frames
 
         frames = np.array(frames)
-        np.random.shuffle(frames)
 
-        super(AtariAutoencodeDataset, self).__init__(frames)
+        return [frames]
 
 
 def show_frames(frames):

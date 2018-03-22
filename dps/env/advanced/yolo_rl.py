@@ -1363,6 +1363,8 @@ config = Config(
     xent_loss=True,
     sub_image_shape=(14, 14),
 
+    use_dataset_cache=True,
+
     render_hook=YoloRL_RenderHook(),
     render_step=5000,
 
@@ -1541,7 +1543,8 @@ good_experimental_config = good_config.copy(
 experimental_config = good_config.copy(
     lr_schedule=1e-4,
     curriculum=[
-        dict(fix_values=dict(obj=1), dynamic_partition=False, max_steps=25000),
+        # dict(fix_values=dict(obj=1), dynamic_partition=False, max_steps=25000),
+        dict(load_path="/data/dps_data/logs/yolo_rl/good_area_testing/weights/best_of_stage_0", do_train=False),
     ],
     hooks=[
         PolynomialScheduleHook(
@@ -1551,12 +1554,13 @@ experimental_config = good_config.copy(
                 dict(obj_exploration=0.1,),
                 dict(obj_exploration=0.05,),
             ],
-            tolerance=0.1, scale=1.0, power=1., initial_value=2.0),
+            tolerance=0.1, scale=0.01, power=1., initial_value=0.02),
     ],
     colours="red",
     max_overlap=100,
-    area_weight=1.0,
+    area_weight=0.01,
     nonzero_weight=10.0,
+    render_step=5000,
 
     box_std=0.1,
     attr_std=0.0,
