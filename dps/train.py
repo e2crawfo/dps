@@ -150,8 +150,12 @@ class TrainingLoop(object):
         else:
             return cfg.max_time - self.elapsed_time
 
-    def add_stage(self, stage_config):
-        self.curriculum_remaining.append(stage_config)
+    def edit_remaining_stage(self, idx, stage_config):
+        if len(self.curriculum_remaining) < idx+1:
+            for i in range(idx+1 - len(self.curriculum_remaining)):
+                self.curriculum_remaining.append(dict())
+
+        self.curriculum_remaining[idx].update(stage_config)
 
     def run(self, start_time):
         """ Run the training loop.
@@ -906,7 +910,9 @@ class ScheduleHook(Hook):
         self.attr_name = attr_name
         self.query_name = query_name
         self.initial_value = initial_value
-        self.tolerance = tolerance
+
+        if tolerance is None:
+            self.tolerance = np.inf
 
         if isinstance(base_configs, dict):
             base_configs = [base_configs]
@@ -935,8 +941,8 @@ class ScheduleHook(Hook):
             if stage_idx == self.final_orig_stage:
                 self.original_performance = training_loop.data.history[-1][self.query_name]
                 self._print("End of original stages, adding 1st curriculum fragment:\n{}".format(new_stages))
-                for ns in new_stages:
-                    training_loop.add_stage(ns)
+                for i, ns in enumerate(new_stages):
+                    training_loop.edit_remaining_stage(i, ns)
                 self.n_fragments_added = 1
 
             elif not training_loop.curriculum_remaining:
@@ -954,8 +960,9 @@ class ScheduleHook(Hook):
                     self.n_fragments_added += 1
                     self._print("Threshold reached, adding {}-th "
                                 "curriculum fragment:\n{}".format(self.n_fragments_added, new_stages))
-                    for ns in new_stages:
-                        training_loop.add_stage(ns)
+
+                    for i, ns in enumerate(new_stages):
+                        training_loop.edit_remaining_stage(i, ns)
 
                 else:
                     self._print("Threshold not reached, ending training run")

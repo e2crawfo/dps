@@ -236,7 +236,7 @@ class PatchesDataset(ImageDataset):
 
             i += 1
 
-            if i > 1000:
+            if i > 10000:
                 raise Exception(
                     "Could not fit rectangles. "
                     "(n_rects: {}, draw_shape: {}, max_overlap: {})".format(
