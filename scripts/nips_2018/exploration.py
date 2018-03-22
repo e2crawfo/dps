@@ -4,7 +4,8 @@ from dps.env.advanced import yolo_rl
 
 def prepare_func():
     from dps import cfg
-    from dps.train import PolynomialScheduleHook, GeometricScheduleHook
+    from dps.train import PolynomialScheduleHook
+
     fragment = [
         dict(obj_exploration=0.2,),
         dict(obj_exploration=0.1,),
@@ -12,60 +13,60 @@ def prepare_func():
     ]
 
     kwargs = dict(
-        attr_name="nonzero_weight", query_name="best_COST_reconstruction",
-        base_configs=fragment, tolerance=0.1, initial_value=1.0)
+        query_name="best_COST_reconstruction",
+        base_configs=fragment, tolerance=None,
+        initial_value=10.0, scale=10.0, power=1.0)
 
-    schedule = None
+    schedules = cfg.get("schedule", "").split()
 
-    if cfg.schedule == "exp2":
-        print("Geometric schedule")
-        schedule = GeometricScheduleHook(**kwargs)
-    elif cfg.schedule == "exp3":
-        print("Geometric schedule")
-        schedule = GeometricScheduleHook(multiplier=3., **kwargs)
-    elif cfg.schedule == "exp4":
-        print("Geometric schedule")
-        schedule = GeometricScheduleHook(multiplier=4., **kwargs)
-    elif cfg.schedule == "poly2":
-        print("Polynomial2 schedule")
-        schedule = PolynomialScheduleHook(scale=1., power=2., **kwargs)
-    elif cfg.schedule == "poly3":
-        print("Polynomial3 schedule")
-        schedule = PolynomialScheduleHook(scale=1., power=3., **kwargs)
-    elif cfg.schedule == "poly4":
-        print("Polynomial4 schedule")
-        schedule = PolynomialScheduleHook(scale=1., power=4., **kwargs)
+    hooks = []
 
-    if schedule:
-        cfg.hooks = [schedule]
+    if "nonzero" in schedules:
+        hooks.append(
+            PolynomialScheduleHook(attr_name="nonzero_weight", **kwargs))
+    elif "area" in schedules:
+        hooks.append(
+            PolynomialScheduleHook(attr_name="area_weight", **kwargs))
+
+    cfg.hooks = hooks
 
 
-grid = [
-    dict(schedule="exp3"),
-    dict(schedule="exp4"),
-    dict(max_hw=2.0),
-    dict(max_hw=1.5),
-    dict(order="obj cls attr box"),
-    dict(n_train=1e4),
+_grid = [
+    dict(),
+    dict(order="obj attr cls box"),
+    # dict(n_train=1e4),
 ]
 
-grid = grid + [dict(patience=2500, **d) for d in grid]
+
+grid = []
+grid += [dict(schedule="area", **g) for g in _grid]
+grid += [dict(schedule="nonzero", **g) for g in _grid]
+grid += [dict(schedule="nonzero area", **g) for g in _grid]
+
 
 config = yolo_rl.good_experimental_config.copy(
     prepare_func=prepare_func,
-    schedule="exp2",
-)
+    patience=2500,
+    lr_schedule=1e-4,
 
-# import argparse
-# parser = argparse.ArgumentParser()
-# parser.add_argument("--task", choices="B C".split(), default='')
-# args, _ = parser.parse_known_args()
-# if args.task == "B":
-#     config.curriculum = [dict(parity='even', n_train=2**17), dict(parity='odd')]
-# elif args.task == "C":
-#     config.curriculum = [dict(parity='odd')]
-# else:
-#     raise Exception()
+    dynamic_partition=True,
+    fix_values=dict(),
+    nonzero_weight=10.0,
+    area_weight=10.0,
+
+    curriculum=[
+        dict(
+            fix_values=dict(obj=1), dynamic_partition=False, patience=100000,
+            area_weight=0.0, nonzero_weight=0.0, max_steps=2500),
+    ],
+
+    sub_image_size_std=0.4,
+    max_hw=3.0,
+    min_hw=0.25,
+    max_overlap=40,
+    image_shape=(50, 50),
+    hooks=[],
+)
 
 from dps.hyper import build_and_submit
 clify.wrap_function(build_and_submit)(config=config, distributions=grid)
