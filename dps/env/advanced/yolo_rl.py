@@ -256,7 +256,6 @@ class YoloRL_Updater(Updater):
 
     pass_samples = Param()
     n_passthrough_features = Param()
-    pass_boxes_to_decoder = Param()
 
     xent_loss = Param()
 
@@ -737,11 +736,7 @@ class YoloRL_Updater(Updater):
         cls = self.program_fields['cls']
         attr = self.program_fields['attr']
 
-        if self.pass_boxes_to_decoder:
-            object_decoder_in = tf.concat([boxes, attr], axis=-1)
-            object_decoder_in = tf.reshape(attr, (-1, 1, 1, 4 + A))
-        else:
-            object_decoder_in = tf.reshape(attr, (-1, 1, 1, A))
+        object_decoder_in = tf.reshape(attr, (-1, 1, 1, A))
 
         self.object_decoder_output = {}
         per_class_images = {}
@@ -831,11 +826,7 @@ class YoloRL_Updater(Updater):
             cls_off, cls_on = tf.dynamic_partition(cls[..., c:c+1], mask, 2)
             attr_off, attr_on = tf.dynamic_partition(attr, mask, 2)
 
-            if self.pass_boxes_to_decoder:
-                object_decoder_in = tf.concat([boxes_on, attr_on], axis=-1)
-                object_decoder_in = tf.reshape(object_decoder_in, (-1, 1, 1, 4 + A))
-            else:
-                object_decoder_in = tf.reshape(attr_on, (-1, 1, 1, A))
+            object_decoder_in = tf.reshape(attr_on, (-1, 1, 1, A))
 
             batch_indices = tf.tile(tf.range(self.batch_size)[:, None, None, None], (1, H, W, B))
             _, batch_indices = tf.dynamic_partition(batch_indices, mask, 2)
@@ -1382,7 +1373,6 @@ config = Config(
 
     pass_samples=True,  # Note that AIR basically uses pass_samples=True
     n_passthrough_features=100,
-    pass_boxes_to_decoder=False,
 
     # display params
     class_colours=['xkcd:' + c for c in xkcd_colors],
@@ -1540,8 +1530,10 @@ good_experimental_config = good_config.copy(
 experimental_config = good_config.copy(
     lr_schedule=1e-4,
     curriculum=[
-        dict(fix_values=dict(obj=1), dynamic_partition=False, max_steps=10000),
-        # dict(load_path="/data/dps_data/logs/yolo_rl/good_area_testing/weights/best_of_stage_0", do_train=False),
+        # dict(fix_values=dict(obj=1), dynamic_partition=False, max_steps=10000),
+        dict(
+            load_path="/data/dps_data/logs/yolo_rl/exp_yolo_rl_seed=347405995_2018_03_24_10_38_18/weights/best_of_stage_0",
+            do_train=False),
     ],
     hooks=[
         PolynomialScheduleHook(
@@ -1551,12 +1543,12 @@ experimental_config = good_config.copy(
                 dict(obj_exploration=0.1,),
                 dict(obj_exploration=0.05,),
             ],
-            tolerance=0.5, scale=0.01, power=1., initial_value=0.02),
+            tolerance=0.5, scale=0.01, power=1., initial_value=0.1),
     ],
     colours="red",
     max_overlap=100,
     area_weight=0.01,
-    nonzero_weight=5.0,
+    # nonzero_weight=5.0,
     render_step=5000,
 
     box_std=0.1,

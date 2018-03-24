@@ -10,7 +10,7 @@ from tensorflow.python.framework import ops
 from tensorflow.contrib.slim import fully_connected
 
 import dps
-from dps.utils.base import _bool, popleft, Parameterized
+from dps.utils.base import _bool, popleft, Parameterized, Param
 from dps.utils.inspect_checkpoint import get_tensors_from_checkpoint_file  # noqa: F401
 
 
@@ -135,7 +135,7 @@ class ScopedFunction(Parameterized):
         scope to be created within the variable scope where this function is first called.
 
     """
-    def __init__(self, scope=None):
+    def __init__(self, scope=None, **kwargs):
         if scope is None:
             scope = self.__class__.__name__
 
@@ -379,7 +379,7 @@ class FullyConvolutional(ScopedFunction):
         tanh=tf.nn.tanh
     )
 
-    def __init__(self, layout, check_output_shape=False, scope=None):
+    def __init__(self, layout, check_output_shape=False, scope=None, **kwargs):
         self.layout = layout
         self.check_output_shape = check_output_shape
         self.volumes = []
@@ -475,6 +475,63 @@ class FullyConvolutional(ScopedFunction):
                     "match desired shape {}.".format(actual_shape, output_size))
 
         return volume
+
+
+class VectorQuantization(ScopedFunction):
+    H = Param()
+    W = Param()
+    K = Param()
+    D = Param()
+    common_embedding = Param(help="If True, all latent variables share a common set of embedding vectors.")
+
+    _embedding = None
+
+    def __call__(self, inp, output_size, is_training):
+        if self._embedding is None:
+            initializer = tf.truncated_normal_initializer(stddev=0.1)
+            shape = (self.K, self.D)
+            if not self.common_embedding:
+                shape = (self.H, self.W,) + shape
+            self._embedding = tf.get_variable("embedding", shape, initializer=initializer)
+
+        self.z_e = inp
+
+        if self.common_embedding:
+            # self._embedding has shape (K, D), i.e. same dictionary used for all latents
+            embedding = self._embedding[None, None, None, ...]
+        elif len(self._embedding.shape) == 4:
+            # self._embedding has shape (H, W, K, D), i.e. different dictionary for each latent
+            embedding = self._embedding[None, ...]
+        # shape of embedding should now be (1, H, W, K, D) either way
+
+        z_e = self.z_e[..., None, :]  # (batch, H, W, 1, D)
+        sum_squared_error = tf.reduce_sum((z_e - embedding) ** 2, axis=-1)
+        self.k = k = tf.argmin(sum_squared_error, axis=-1)  # (batch, H, W)
+        one_hot_k = tf.stop_gradient(tf.one_hot(k, self.K)[..., None])
+        self.z_q = tf.reduce_sum(self._embedding[None, ...] * one_hot_k, axis=3)  # (batch, H, W, D)
+
+        # On the forward pass z_q gets sent through, but the gradient gets sent back to z_e
+        return tf.stop_gradient(self.z_q - self.z_e) + self.z_e
+
+
+class VQ_FullyConvolutional(FullyConvolutional):
+    H = Param()
+    W = Param()
+    K = Param()
+    D = Param()
+
+    common_embedding = Param(help="If True, all latent variables share a common set of embedding vectors.")
+
+    _vq = None
+
+    def _call(self, inp, output_size, is_training):
+        if self._vq is None:
+            self._vq = VectorQuantization(
+                H=self.H, W=self.W, K=self.K, D=self.D,
+                common_embedding=self.common_embedding)
+
+        inp = self._vq(inp, (self.H, self.W, self.D), is_training)
+        return super(VQ_FullyConvolutional, self)._call(inp, output_size, is_training)
 
 
 class SalienceMap(ScopedFunction):
