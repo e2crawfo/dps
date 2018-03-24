@@ -60,6 +60,7 @@ continuation_config = config.copy(
             tolerance=0.5, scale=0.05, power=1., initial_value=1),
             # tolerance=0.5, scale=0.05, power=1., initial_value=0.05),
     ],
+    nonzero_weight=50.0,
 )
 
 large_config = config.copy(

@@ -197,7 +197,7 @@ class GitSummary(object):
 
             s.append("\ndiff:\n")
             if diff:
-                diff = _run_cmd('git diff')
+                diff = _run_cmd('git diff HEAD')
                 s.append(diff)
             else:
                 s.append("<ommitted>")
