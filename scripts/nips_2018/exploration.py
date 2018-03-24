@@ -27,7 +27,7 @@ def prepare_func():
 
 
 distributions = dict(
-    order=["box obj cls attr", "obj attr cls box"],
+    order=["box obj attr", "obj attr box"],
     area_weight=list(np.e ** np.linspace(-8, -3, 10)),
     nonzero_weight=list(np.linspace(5, 50, 10))
 )
