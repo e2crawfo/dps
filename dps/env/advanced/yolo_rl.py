@@ -303,7 +303,7 @@ class YoloRL_Updater(Updater):
 
         if self.nonzero_weight is not None:
             cost_func = specific_nonzero_cost if self.use_specific_costs else nonzero_cost
-            self.COST_funcs['nonzero'] = (self.nonzero_weight, nonzero_cost, "obj")
+            self.COST_funcs['nonzero'] = (self.nonzero_weight, cost_func, "obj")
 
         if self.area_weight > 0.0:
             cost_func = specific_area_cost if self.use_specific_costs else area_cost
@@ -1153,12 +1153,12 @@ class YoloRL_RenderHook(object):
         rl_fetched = self._fetch(self.N, updater, True)
 
         self._plot_reconstruction(updater, rl_fetched, True)
-        self._plot_patches(updater, rl_fetched, True)
+        self._plot_patches(updater, rl_fetched, True, 4)
 
         diff_fetched = self._fetch(self.N, updater, False)
 
         self._plot_reconstruction(updater, diff_fetched, False)
-        self._plot_patches(updater, diff_fetched, False)
+        self._plot_patches(updater, diff_fetched, False, 4)
 
     def _fetch(self, N, updater, sampled):
         feed_dict = updater.make_feed_dict(N, 'val', True)
@@ -1241,9 +1241,9 @@ class YoloRL_RenderHook(object):
 
         plt.close(fig)
 
-    def _plot_patches(self, updater, fetched, sampled):
+    def _plot_patches(self, updater, fetched, sampled, N):
         if updater.dynamic_partition:
-            return self._plot_patches_dynamic(updater, fetched, sampled)
+            return self._plot_patches_dynamic(updater, fetched, sampled, N)
 
         # Create a plot showing what each object is generating
         import matplotlib.pyplot as plt
@@ -1251,8 +1251,6 @@ class YoloRL_RenderHook(object):
         object_decoder_output = fetched['object_decoder_output']
 
         H, W, C, B = [getattr(updater, a) for a in "H W C B".split()]
-
-        N = fetched['images'].shape[0]
 
         obj = fetched['obj']
         cls = fetched['cls']
@@ -1285,7 +1283,7 @@ class YoloRL_RenderHook(object):
             fig.savefig(path)
             plt.close(fig)
 
-    def _plot_patches_dynamic(self, updater, fetched, sampled):
+    def _plot_patches_dynamic(self, updater, fetched, sampled, N):
 
         # Create a plot showing what each object is generating
         import matplotlib.pyplot as plt
@@ -1294,14 +1292,13 @@ class YoloRL_RenderHook(object):
         batch_indices = fetched['batch_indices']
         box_indices = fetched['box_indices']
 
-        batch_size = fetched['images'].shape[0]
         H, W, C, B = [getattr(updater, a) for a in "H W C B".split()]
 
         obj = fetched['obj']
         cls = fetched['cls']
         activation = obj * cls
 
-        for batch_idx in range(batch_size):
+        for batch_idx in range(N):
             fig, axes = plt.subplots(H * C, W * B, figsize=(20, 20))
             axes = np.array(axes).reshape(H * C, W * B)
 
@@ -1543,8 +1540,8 @@ good_experimental_config = good_config.copy(
 experimental_config = good_config.copy(
     lr_schedule=1e-4,
     curriculum=[
-        # dict(fix_values=dict(obj=1), dynamic_partition=False, max_steps=25000),
-        dict(load_path="/data/dps_data/logs/yolo_rl/good_area_testing/weights/best_of_stage_0", do_train=False),
+        dict(fix_values=dict(obj=1), dynamic_partition=False, max_steps=10000),
+        # dict(load_path="/data/dps_data/logs/yolo_rl/good_area_testing/weights/best_of_stage_0", do_train=False),
     ],
     hooks=[
         PolynomialScheduleHook(
@@ -1554,12 +1551,12 @@ experimental_config = good_config.copy(
                 dict(obj_exploration=0.1,),
                 dict(obj_exploration=0.05,),
             ],
-            tolerance=0.1, scale=0.01, power=1., initial_value=0.02),
+            tolerance=0.5, scale=0.01, power=1., initial_value=0.02),
     ],
     colours="red",
     max_overlap=100,
     area_weight=0.01,
-    nonzero_weight=10.0,
+    nonzero_weight=5.0,
     render_step=5000,
 
     box_std=0.1,
@@ -1570,6 +1567,7 @@ experimental_config = good_config.copy(
     min_hw=0.25,
     image_shape=(50, 50),
     sub_image_size_std=0.4,
+    n_val=16,
 )
 
 good_denser_bigger_config = good_experimental_config.copy(
@@ -1596,128 +1594,3 @@ static_decoder_config = good_experimental_config.copy(
         dict(fix_values=dict(obj=1), dynamic_partition=False, lr_schedule=1e-6),
     ],
 )
-
-# classification_config = config.copy(
-#     log_name="yolo_rl_classify",
-#     C=2,
-#     image_shape=(16, 16),
-#     pixels_per_cell=(16, 16),
-#     sub_image_shape=(14, 14),
-#     object_shape=(14, 14),
-#     anchor_boxes=[[14, 14]],
-#     kernel_size=(1, 1),
-#     colours="red",
-#
-#     use_specific_costs=True,
-#     max_hw=1.0,
-#     min_hw=0.5,
-#     max_chars=1,
-#     min_chars=1,
-#     characters=list(range(10)),
-#
-#     dynamic_partition=False,
-#     fix_values=dict(obj=1, cell_x=0.5, cell_y=0.5, h=1.0, w=1.0),
-#     obj_exploration=0.0,
-#     nonzero_weight=0.0,
-#     lr_schedule=1e-4,
-#
-#     curriculum=[
-#         dict(cls_exploration=0.5),
-#         dict(cls_exploration=0.4),
-#         dict(cls_exploration=0.3),
-#         dict(cls_exploration=0.2),
-#         dict(cls_exploration=0.1),
-#     ],
-#     decoder_logit_scale=10.0,
-#
-#     box_std=-1.,
-#     attr_std=0.0,
-#     minimize_kl=True,
-#
-#     cell_yx_target_mean=0.5,
-#     cell_yx_target_std=100.0,
-#     hw_target_mean=0.0,
-#     hw_target_std=1.0,
-#     attr_target_mean=0.0,
-#     attr_target_std=100.0,
-#     **rl_mode,
-# )
-#
-#
-# test_stage_hooks = good_config.copy(
-#     curriculum=[
-#         dict(fix_values=dict(obj=1), lr_schedule=1e-4, dynamic_partition=False),
-#         dict(fix_values=dict(obj=1), lr_schedule=1e-5, dynamic_partition=False),
-#         dict(fix_values=dict(obj=1), lr_schedule=1e-6, dynamic_partition=False),
-#     ],
-#     hooks=[
-#         PolynomialScheduleHook(
-#             "nonzero_weight", "best_COST_reconstruction",
-#             base_configs=[
-#                 dict(obj_exploration=0.2, lr_schedule=1e-6),
-#                 dict(obj_exploration=0.1, lr_schedule=1e-6),
-#             ],
-#             tolerance=0.1, scale=5.),
-#     ],
-#     max_steps=11,
-#     n_train=100,
-#     render_step=0,
-# )
-#
-#
-# test_dynamic_partition_config = good_config.copy(
-#     dynamic_partition=True,
-#     curriculum=[
-#         dict(obj_exploration=1.0, obj_default=0.5, dynamic_partition=False),
-#         dict(obj_exploration=1.0, obj_default=0.9, dynamic_partition=False),
-#         dict(obj_exploration=1.0, obj_default=0.1, dynamic_partition=False),
-#         dict(obj_exploration=1.0, obj_default=0.5),
-#         dict(obj_exploration=1.0, obj_default=0.9),
-#         dict(obj_exploration=1.0, obj_default=0.1),
-#     ],
-#     max_steps=201,
-#     display_step=10,
-# )
-#
-# test_larger_config = good_config.copy(
-#     curriculum=[
-#         dict(load_path="/data/dps_data/logs/yolo_rl/exp_yolo_rl_seed=347405995_2018_03_12_21_50_31/weights/best_of_stage_0", do_train=False),
-#     ],
-#     image_shape=(80, 80),
-#     n_train=100,
-# )
-#
-#
-# passthrough_config = config.copy(
-#     log_name="yolo_passthrough",
-#     build_object_decoder=PassthroughDecoder,
-#     C=1,
-#     A=2,
-#     characters=[0],
-#     # characters=[0, 1, 2],
-#     object_shape=(28, 28),
-#     anchor_boxes=[[28, 28]],
-#     sub_image_shape=(28, 28),
-#
-#     use_input_attention=True,
-#     decoders_output_logits=False,
-#
-#     fix_values=dict(cls=1),
-#
-#     lr_schedule=1e-6,
-#     pixels_per_cell=(10, 10),
-#     nonzero_weight=40.0,
-#     obj_exploration=0.30,
-#     cls_exploration=0.30,
-#
-#     box_std=-1.,
-#     attr_std=0.0,
-#     minimize_kl=True,
-#
-#     cell_yx_target_mean=0.5,
-#     cell_yx_target_std=1.0,
-#     hw_target_mean=0.0,
-#     hw_target_std=1.0,
-#     attr_target_mean=0.0,
-#     attr_target_std=1.0,
-# )

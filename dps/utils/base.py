@@ -61,22 +61,31 @@ def view_readme(path):
     command = "find {} -name README.md".format(path).split()
     p = subprocess.run(command, stdout=subprocess.PIPE)
     readme_paths = [r for r in p.stdout.decode().split('\n') if r]
-    datetimes = []
+    dates_paths = []
     for r in readme_paths:
         d = os.path.split(r)[0]
+
         with open(os.path.join(d, 'stdout'), 'r') as f:
             line = ''
-            while not line.startswith("Starting training run"):
-                line = f.readline()
-        tokens = line.split()
-        assert len(tokens) == 13
-        dt = iso8601.parse_date(tokens[5] + " " + tokens[6][:-1])
-        datetimes.append(dt)
+            try:
+                while not line.startswith("Starting training run"):
+                    line = next(f)
+            except StopIteration:
+                line = None
 
-    _sorted = sorted(zip(datetimes, readme_paths))
+        if line is not None:
+            tokens = line.split()
+            assert len(tokens) == 13
+            dt = iso8601.parse_date(tokens[5] + " " + tokens[6][:-1])
+            dates_paths.append((dt, r))
+        else:
+            print("Omitting {} which has no valid `stdout` file.".format(r))
+
+    _sorted = sorted(dates_paths)
 
     for d, r in _sorted:
         print("\n" + "-" * 80 + "\n\n" + "====> {} <====".format(r))
+        print("Experiment started on {}\n".format(d))
         with open(r, 'r') as f:
             print(f.read())
 
