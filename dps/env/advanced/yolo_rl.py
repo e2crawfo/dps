@@ -1563,10 +1563,10 @@ experimental_config = good_config.copy(
     attr_std=0.0,
     minimize_kl=False,
 
+    sub_image_size_std=0.4,
     max_hw=3.0,
     min_hw=0.25,
     image_shape=(50, 50),
-    sub_image_size_std=0.4,
     n_val=16,
 )
 

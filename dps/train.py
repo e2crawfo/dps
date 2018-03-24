@@ -981,8 +981,8 @@ class GeometricScheduleHook(ScheduleHook):
     def _attrs(self):
         return super(GeometricScheduleHook, self)._attrs() + ["multiplier"]
 
-    def _attr_value_for_fragment(self, stage_idx):
-        return self.initial_value * (self.multiplier ** stage_idx)
+    def _attr_value_for_fragment(self, fragment_idx):
+        return self.initial_value * (self.multiplier ** fragment_idx)
 
 
 class PolynomialScheduleHook(ScheduleHook):
@@ -994,5 +994,5 @@ class PolynomialScheduleHook(ScheduleHook):
     def _attrs(self):
         return super(PolynomialScheduleHook, self)._attrs() + ["scale", "power"]
 
-    def _attr_value_for_fragment(self, stage_idx):
-        return self.initial_value + self.scale * (stage_idx ** self.power)
+    def _attr_value_for_fragment(self, fragment_idx):
+        return self.initial_value + self.scale * (fragment_idx ** self.power)

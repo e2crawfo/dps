@@ -1,5 +1,7 @@
 import clify
+import numpy as np
 from dps.env.advanced import yolo_rl
+from dps.datasets import EMNIST_ObjectDetection
 
 
 def prepare_func():
@@ -12,61 +14,49 @@ def prepare_func():
         dict(obj_exploration=0.05,),
     ]
 
-    kwargs = dict(
-        query_name="best_COST_reconstruction",
-        base_configs=fragment, tolerance=None,
-        initial_value=10.0, scale=10.0, power=1.0)
+    area_weight_factor = cfg.area_weight
 
-    schedules = cfg.get("schedule", "").split()
-
-    hooks = []
-
-    if "nonzero" in schedules:
-        hooks.append(
-            PolynomialScheduleHook(attr_name="nonzero_weight", **kwargs))
-    elif "area" in schedules:
-        hooks.append(
-            PolynomialScheduleHook(attr_name="area_weight", **kwargs))
-
-    cfg.hooks = hooks
+    cfg.hooks = [
+        PolynomialScheduleHook(
+            attr_name="area_weight",
+            query_name="best_COST_reconstruction",
+            base_configs=fragment, tolerance=None,
+            initial_value=area_weight_factor,
+            scale=area_weight_factor, power=1.0)
+    ]
 
 
-_grid = [
-    dict(),
-    dict(order="obj attr cls box"),
-    # dict(n_train=1e4),
-]
+distributions = dict(
+    order=["box obj cls attr", "obj attr cls box"],
+    area_weight=list(np.e ** np.linspace(-8, -3, 10)),
+    nonzero_weight=list(np.linspace(5, 50, 10))
+)
 
-
-grid = []
-grid += [dict(schedule="area", **g) for g in _grid]
-grid += [dict(schedule="nonzero", **g) for g in _grid]
-grid += [dict(schedule="nonzero area", **g) for g in _grid]
-
-
-config = yolo_rl.good_experimental_config.copy(
+config = yolo_rl.experimental_config.copy(
     prepare_func=prepare_func,
     patience=2500,
     lr_schedule=1e-4,
+    render_step=100000,
+    max_overlap=40,
+    hooks=[],
+    n_val=32,
+    use_dataset_cache=True,
+    eval_step=1000,
 
     dynamic_partition=True,
     fix_values=dict(),
-    nonzero_weight=10.0,
-    area_weight=10.0,
 
     curriculum=[
         dict(
-            fix_values=dict(obj=1), dynamic_partition=False, patience=100000,
-            area_weight=0.0, nonzero_weight=0.0, max_steps=2500),
+            fix_values=dict(obj=1), dynamic_partition=False,
+            patience=100000, max_steps=10000),
     ],
-
-    sub_image_size_std=0.4,
-    max_hw=3.0,
-    min_hw=0.25,
-    max_overlap=40,
-    image_shape=(50, 50),
-    hooks=[],
 )
 
+# Create the datasets if necessary.
+with config:
+    train = EMNIST_ObjectDetection(n_examples=int(config.n_train), shuffle=True, example_range=(0.0, 0.9))
+    val = EMNIST_ObjectDetection(n_examples=int(config.n_val), shuffle=True, example_range=(0.9, 1.))
+
 from dps.hyper import build_and_submit
-clify.wrap_function(build_and_submit)(config=config, distributions=grid)
+clify.wrap_function(build_and_submit)(config=config, distributions=distributions, n_param_settings=32)
