@@ -374,7 +374,7 @@ def nms(bbox_bounds, class_probs, prob_threshold, iou_threshold):
             best_idx = np.argmax(_class_probs)
             best_bbox = _bbox_bounds[best_idx]
 
-            selected.append([c, _class_probs[best_idx], *best_bbox])
+            selected.append([c, _class_probs[best_idx], *best_bbox[:4]])
 
             iou = compute_iou(best_bbox, _bbox_bounds)
             _valid = iou < iou_threshold
@@ -396,7 +396,7 @@ def top_n(n, bbox_bounds, class_probs):
         order = sorted(range(class_probs.shape[0]), key=lambda i: -class_probs[i, c])
 
         for idx in order[:n]:
-            selected.append([c, class_probs[idx, c], *bbox_bounds[idx, :]])
+            selected.append([c, class_probs[idx, c], *bbox_bounds[idx, :4]])
 
     return selected
 
@@ -509,6 +509,8 @@ def mAP(pred_boxes, gt_boxes, n_classes, recall_values=None, iou_threshold=0.5):
         for pred, gt in zip(pred_boxes, gt_boxes):
             # Within a single image
             pred_c = sorted([b for cls, *b in pred if cls == c], key=lambda k: -k[0])
+            area = [(ymax - ymin) * (xmax - xmin) for _, ymin, ymax, xmin, xmax in pred_c]
+            pred_c = [(*b, a) for b, a in zip(pred_c, area)]
 
             gt_c = [b for cls, *b in gt if cls == c]
             n_positives += len(gt_c)

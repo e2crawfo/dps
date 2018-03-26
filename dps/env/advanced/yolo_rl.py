@@ -13,6 +13,7 @@ from dps.utils.tf import (
     trainable_variables, build_scheduled_value,
     tf_normal_kl, tf_mean_sum, ScopedFunction
 )
+from dps.env.advanced.yolo import mAP
 
 tf_flatten = tf.layers.flatten
 
@@ -223,6 +224,49 @@ def specific_nonzero_cost(network_outputs, updater):
     return network_outputs['program_fields']['obj']
 
 
+def negative_mAP_cost(network_outputs, updater):
+    if updater.annotations is None:
+        return np.zeros((1, 1, 1, 1, 1))
+    else:
+        gt = []
+        pred_boxes = []
+
+        obj = network_outputs['program_fields']['obj']
+        xs, xt, ys, yt = np.split(network_outputs['program_fields']['box'], 4, axis=-1)
+
+        top = updater.image_height * 0.5 * (yt - ys + 1)
+        height = updater.image_height * ys
+        bottom = top + height
+
+        left = updater.image_width * 0.5 * (xt - xs + 1)
+        width = updater.image_width * xs
+        right = left + width
+
+        for idx, a in enumerate(updater.annotations):
+            _a = [[0, *rest] for cls, *rest in a]
+            gt.append(_a)
+
+            pb = []
+
+            for i in range(updater.H):
+                for j in range(updater.W):
+                    for b in range(updater.B):
+                        o = obj[idx, i, j, b, 0]
+                        if o > 0.0:
+                            pb.append(
+                                [0, o,
+                                 top[idx, i, j, b, 0],
+                                 bottom[idx, i, j, b, 0],
+                                 left[idx, i, j, b, 0],
+                                 right[idx, i, j, b, 0]])
+
+            pred_boxes.append(pb)
+
+        _map = mAP(pred_boxes, gt, 1)
+        _map = _map.reshape((-1, 1, 1, 1, 1))
+        return -_map
+
+
 class YoloRL_Updater(Updater):
     pixels_per_cell = Param()
     image_shape = Param()
@@ -260,6 +304,7 @@ class YoloRL_Updater(Updater):
     nonzero_weight = Param()
     area_weight = Param()
     use_specific_costs = Param()
+    compute_mAP = Param()
 
     obj_exploration = Param()
     obj_default = Param()
@@ -304,6 +349,9 @@ class YoloRL_Updater(Updater):
 
         cost_func = specific_reconstruction_cost if self.use_specific_costs else reconstruction_cost
         self.COST_funcs['reconstruction'] = (1, cost_func)
+
+        if self.compute_mAP:
+            self.COST_funcs['negative_mAP'] = (0, negative_mAP_cost)
 
         self.scope = scope
         self._n_experiences = 0
@@ -412,7 +460,6 @@ class YoloRL_Updater(Updater):
         sess = tf.get_default_session()
 
         network_outputs = sess.run(self.network_outputs, feed_dict=feed_dict)
-        network_outputs['shape'] = self.H, self.W, self.B
 
         sample_feed_dict = {self.samples[k]: v for k, v in network_outputs['samples'].items()}
 
@@ -448,7 +495,12 @@ class YoloRL_Updater(Updater):
         return record, summary
 
     def make_feed_dict(self, batch_size, mode, evaluate):
-        inp, *_ = self.datasets[mode].next_batch(batch_size=batch_size, advance=not evaluate)
+        data = self.datasets[mode].next_batch(batch_size=batch_size, advance=not evaluate)
+        if len(data) == 1:
+            inp, self.annotations = data, None
+        elif len(data) == 2:
+            inp, self.annotations = data
+
         return {self.inp: inp, self.is_training: not evaluate}
 
     def _build_placeholders(self):
@@ -1320,6 +1372,7 @@ config = Config(
     fix_values=dict(),
     dynamic_partition=False,
     order="box obj attr",
+    compute_mAP=False,
 )
 
 

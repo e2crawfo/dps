@@ -41,6 +41,7 @@ config = yolo_rl.good_config.copy(
         dict(obj_exploration=0.1),
         dict(obj_exploration=0.05),
     ],
+    compute_mAP=False,
 )
 
 large_config = config.copy(
