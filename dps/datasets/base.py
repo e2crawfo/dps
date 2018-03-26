@@ -1,6 +1,5 @@
 import numpy as np
 from skimage.transform import resize
-import abc
 import os
 import dill
 
@@ -9,48 +8,49 @@ from dps.utils import image_to_string, Param, Parameterized, DataContainer, get_
 from dps.datasets import load_emnist, load_omniglot, emnist_classes, omniglot_classes
 
 
-class Dataset(Parameterized, metaclass=abc.ABCMeta):
+class Dataset(Parameterized):
     use_dataset_cache = Param(False)
     n_examples = Param(None)
 
-    def __init__(self, shuffle=True, **kwargs):
-        if self.use_dataset_cache:
-            print("Trying to load dataset from cache...")
-            if isinstance(self.use_dataset_cache, str):
-                directory = os.path.join(self.use_dataset_cache, self.__class__.__name__)
+    def __init__(self, shuffle=True, tracks=None, **kwargs):
+        if tracks is None:
+            if self.use_dataset_cache:
+                print("Trying to load dataset from cache...")
+                if isinstance(self.use_dataset_cache, str):
+                    directory = os.path.join(self.use_dataset_cache, self.__class__.__name__)
+                else:
+                    directory = os.path.join(cfg.data_dir, "cached_datasets", self.__class__.__name__)
+                os.makedirs(directory, exist_ok=True)
+
+                params = self.param_values()
+                param_hash = get_param_hash(params)
+                print("Params: {}".format(params))
+                print("Param hash: {}".format(param_hash))
+
+                filename = os.path.join(directory, str(param_hash))
+
+                loaded = False
+                try:
+                    with open(filename + ".pkl", 'rb') as f:
+                        tracks = dill.load(f)
+                    loaded = True
+                except FileNotFoundError:
+                    pass
+                finally:
+                    if not loaded:
+                        print("File not found, creating dataset and storing...")
+                        tracks = self._make()
+                        with open(filename + ".pkl", 'wb') as f:
+                            dill.dump(tracks, f, protocol=dill.HIGHEST_PROTOCOL)
+                        with open(filename + ".cfg", 'w') as f:
+                            f.write(str(params))
             else:
-                directory = os.path.join(cfg.data_dir, "cached_datasets", self.__class__.__name__)
-            os.makedirs(directory, exist_ok=True)
+                tracks = self._make()
+                loaded = False
 
-            params = self.param_values()
-            param_hash = get_param_hash(params)
-            print("Params: {}".format(params))
-            print("Param hash: {}".format(param_hash))
+            self.loaded = loaded
 
-            filename = os.path.join(directory, str(param_hash))
-
-            loaded = False
-            try:
-                with open(filename + ".pkl", 'rb') as f:
-                    tracks = dill.load(f)
-                loaded = True
-            except FileNotFoundError:
-                pass
-            finally:
-                if not loaded:
-                    print("File not found, creating dataset and storing...")
-                    tracks = self._make()
-                    with open(filename + ".pkl", 'wb') as f:
-                        dill.dump(tracks, f, protocol=dill.HIGHEST_PROTOCOL)
-                    with open(filename + ".cfg", 'w') as f:
-                        f.write(str(params))
-        else:
-            tracks = self._make()
-            loaded = False
-
-        self.loaded = loaded
-
-        print("Done.")
+            print("Done.")
 
         length = len(tracks[0])
         assert all(len(t) == length for t in tracks[1:])
@@ -64,9 +64,9 @@ class Dataset(Parameterized, metaclass=abc.ABCMeta):
 
         super(Dataset, self).__init__(**kwargs)
 
-    @abc.abstractmethod
     def _make(self):
-        raise Exception("NotImplemented")
+        raise Exception("NotImplemented. When insantiating `Dataset` directly, "
+                        "`tracks` must be provided as an argument to `__init__`.")
 
     @property
     def x(self):
@@ -158,8 +158,8 @@ class Dataset(Parameterized, metaclass=abc.ABCMeta):
 
 class ImageDataset(Dataset):
 
-    def __init__(self, shuffle=True, **kwargs):
-        super(ImageDataset, self).__init__(shuffle, **kwargs)
+    def __init__(self, **kwargs):
+        super(ImageDataset, self).__init__(**kwargs)
 
         for j in range(len(self.tracks[0])):
             if j % 10000 == 0:
@@ -254,6 +254,8 @@ class PatchesDataset(ImageDataset):
     draw_offset = Param((0, 0))
     depth = Param(None)
     sub_image_size_std = Param(None)
+    distractor_shape = Param((3, 3))
+    n_distractors_per_image = Param(0)
 
     def _make(self):
         self.draw_shape = self.draw_shape or self.image_shape
@@ -270,7 +272,7 @@ class PatchesDataset(ImageDataset):
         for j in range(n_examples):
             sub_images, y = self._sample_patches()
             sub_image_shapes = [img.shape for img in sub_images]
-            rects = self._sample_patch_locations(sub_image_shapes)
+            rects = self._sample_patch_locations(sub_image_shapes, self.max_overlap, self.sub_image_size_std)
             y = self._post_process_label(y, rects)
 
             patch_centres.append([r.centre() for r in rects])
@@ -290,12 +292,25 @@ class PatchesDataset(ImageDataset):
                 patch = x[rect.top:rect.bottom, rect.left:rect.right, ...]
                 x[rect.top:rect.bottom, rect.left:rect.right, ...] = np.maximum(image, patch)
 
+            # Add distractors
+            if self.n_distractors_per_image > 0:
+                distractor_images = self._sample_distractors()
+                distractor_shapes = [img.shape for img in distractor_images]
+                distractor_rects = self._sample_patch_locations(distractor_shapes)
+
+                for image, rect in zip(distractor_images, distractor_rects):
+                    rect_shape = (rect.h, rect.w)
+                    if image.shape[:2] != rect_shape:
+                        image = resize(image, rect_shape, mode='edge', preserve_range=True)
+
+                    patch = x[rect.top:rect.bottom, rect.left:rect.right, ...]
+                    x[rect.top:rect.bottom, rect.left:rect.right, ...] = np.maximum(image, patch)
+
+            # Possible sub-sample entire image
             if self.draw_shape != self.image_shape or self.draw_offset != (0, 0):
                 image_shape = self.image_shape
                 if self.depth is not None:
                     image_shape = image_shape + (self.depth,)
-
-                _x = np.zeros(image_shape, 'uint8')
 
                 draw_top = np.maximum(-self.draw_offset[0], 0)
                 draw_left = np.maximum(-self.draw_offset[1], 0)
@@ -309,7 +324,9 @@ class PatchesDataset(ImageDataset):
                 image_bottom = np.minimum(self.draw_offset[0] + self.draw_shape[0], self.image_shape[0])
                 image_right = np.minimum(self.draw_offset[1] + self.draw_shape[1], self.image_shape[1])
 
+                _x = np.zeros(image_shape, 'uint8')
                 _x[image_top:image_bottom, image_left:image_right, ...] = x[draw_top:draw_bottom, draw_left:draw_right, ...]
+
                 x = _x
 
             new_X.append(x)
@@ -329,7 +346,7 @@ class PatchesDataset(ImageDataset):
     def _sample_patches(self):
         raise Exception("AbstractMethod")
 
-    def _sample_patch_locations(self, sub_image_shapes):
+    def _sample_patch_locations(self, sub_image_shapes, max_overlap=None, size_std=None):
         """ Sample random locations within draw_shape. """
         if not sub_image_shapes:
             return []
@@ -338,10 +355,10 @@ class PatchesDataset(ImageDataset):
         n_rects = sub_image_shapes.shape[0]
         i = 0
         while True:
-            if self.sub_image_size_std is None:
+            if size_std is None:
                 shape_multipliers = 1.
             else:
-                shape_multipliers = np.maximum(np.random.randn(n_rects, 2) * self.sub_image_size_std + 1.0, 0.5)
+                shape_multipliers = np.maximum(np.random.randn(n_rects, 2) * size_std + 1.0, 0.5)
 
             _sub_image_shapes = np.ceil(shape_multipliers * sub_image_shapes[:, :2]).astype('i')
 
@@ -355,7 +372,7 @@ class PatchesDataset(ImageDataset):
             for rect in rects:
                 area[rect.top:rect.bottom, rect.left:rect.right] += 1
 
-            if (area >= 2).sum() < self.max_overlap:
+            if max_overlap is None or (area >= 2).sum() < max_overlap:
                 break
 
             i += 1
@@ -364,8 +381,30 @@ class PatchesDataset(ImageDataset):
                 raise Exception(
                     "Could not fit rectangles. "
                     "(n_rects: {}, draw_shape: {}, max_overlap: {})".format(
-                        n_rects, self.draw_shape, self.max_overlap))
+                        n_rects, self.draw_shape, max_overlap))
         return rects
+
+    def _sample_distractors(self):
+        distractor_images = []
+
+        sub_images = []
+        while not sub_images:
+            sub_images, y = self._sample_patches()
+
+        for i in range(self.n_distractors_per_image):
+            idx = np.random.randint(len(sub_images))
+            sub_image = sub_images[idx]
+            m, n, *_ = sub_image.shape
+            source_y = np.random.randint(0, m-self.distractor_shape[0]+1)
+            source_x = np.random.randint(0, n-self.distractor_shape[1]+1)
+
+            img = sub_image[
+                source_y:source_y+self.distractor_shape[0],
+                source_x:source_x+self.distractor_shape[1]]
+
+            distractor_images.append(img)
+
+        return distractor_images
 
     def _post_process_label(self, label, rects):
         """ To be used in cases where the labels depend on the locations. """
@@ -568,7 +607,7 @@ class GridArithmeticDataset(VisualArithmeticDataset):
 
         return super(GridArithmeticDataset, self)._make()
 
-    def _sample_patch_locations(self, sub_image_shapes):
+    def _sample_patch_locations(self, sub_image_shapes, **kwargs):
         """ Sample random locations within draw_shape. """
         n_images = len(sub_image_shapes)
         indices = np.random.choice(self.grid_size, n_images, replace=False)
@@ -678,7 +717,7 @@ class GridOmniglotDataset(OmniglotCountingDataset):
 
         return super(GridOmniglotDataset, self)._make()
 
-    def _sample_patch_locations(self, sub_image_shapes):
+    def _sample_patch_locations(self, sub_image_shapes, **kwargs):
         """ Sample random locations within draw_shape. """
         n_images = len(sub_image_shapes)
         indices = np.random.choice(self.grid_size, n_images, replace=False)

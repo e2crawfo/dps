@@ -26,7 +26,7 @@ distributions = dict(
 )
 
 
-config = yolo_rl.experimental_config.copy(
+config = yolo_rl.good_config.copy(
     prepare_func=prepare_func,
     patience=10000,
     render_step=100000,
@@ -34,7 +34,6 @@ config = yolo_rl.experimental_config.copy(
     max_overlap=40,
     hooks=[],
     n_val=16,
-    use_dataset_cache=True,
     eval_step=1000,
     max_steps=100000,
 

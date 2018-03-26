@@ -35,7 +35,6 @@ config = yolo_atari.config.copy(
     max_overlap=40,
     hooks=[],
     n_val=16,
-    use_dataset_cache=True,
     eval_step=1000,
     max_steps=100000,
 

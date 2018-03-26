@@ -14,7 +14,7 @@ class RandomAgent(object):
         return self.action_space.sample()
 
 
-def gather_atari_frames(game, policy, n_frames, image_shape=None, density=1.0, render=False):
+def gather_atari_frames(game, policy, n_frames, density=1.0, render=False):
     assert 0 < density <= 1.0
 
     env = gym.make(game)
@@ -48,6 +48,73 @@ def gather_atari_frames(game, policy, n_frames, image_shape=None, density=1.0, r
     return np.array(frames[:n_frames])
 
 
+def gather_atari_human_frames(game, n_frames, density=1.0):
+    assert 0 < density <= 1.0
+
+    human_agent_action = 0
+    human_wants_restart = False
+    human_sets_pause = False
+
+    def key_press(key, mod):
+        nonlocal human_agent_action, human_wants_restart, human_sets_pause
+        if key==0xff0d: human_wants_restart = True
+        if key==32: human_sets_pause = not human_sets_pause
+        a = int(key - ord('0'))
+        if a <= 0 or a >= ACTIONS: return
+        human_agent_action = a
+
+    def key_release(key, mod):
+        nonlocal human_agent_action
+        a = int(key - ord('0'))
+        if a <= 0 or a >= ACTIONS: return
+        if human_agent_action == a:
+            human_agent_action = 0
+
+    env = gym.make(game)
+
+    ACTIONS = env.action_space.n
+    SKIP_CONTROL = 0
+
+    outdir = '/tmp/random-agent-results'
+    env = gym.wrappers.Monitor(env, directory=outdir, force=True)
+
+    env.seed(0)
+
+    env.render()
+    env.unwrapped.viewer.window.on_key_press = key_press
+    env.unwrapped.viewer.window.on_key_release = key_release
+
+    np.random.seed(0)
+
+    reward = 0
+    done = False
+    frames = []
+    skip = 0
+
+    env.reset()
+
+    while len(frames) < n_frames:
+        if not skip:
+            action = human_agent_action
+            skip = SKIP_CONTROL
+        else:
+            skip -= 1
+
+        ob, reward, done, _ = env.step(action)
+
+        env.render()
+
+        if np.random.binomial(1, density):
+            frames.append(ob)
+        print(len(frames))
+
+        if done:
+            env.reset()
+
+    env.close()
+    return np.array(frames[:n_frames])
+
+
 class AtariAutoencodeDataset(ImageDataset):
     game = Param(aliases="atari_game")
     policy = Param()
@@ -61,7 +128,12 @@ class AtariAutoencodeDataset(ImageDataset):
     default_shape = (210, 160)
 
     def _make(self):
-        frames = gather_atari_frames(self.game, self.policy, self.n_examples, render=self.atari_render, density=self.density)
+        if self.policy == "keyboard":
+            frames = gather_atari_human_frames(self.game, self.n_examples, density=self.density)
+        else:
+            frames = gather_atari_frames(
+                self.game, self.policy, self.n_examples, render=self.atari_render, density=self.density)
+
         frame_shape = frames.shape[1:3]
         channel_dim = frames.shape[3]
 
@@ -92,6 +164,7 @@ class AtariAutoencodeDataset(ImageDataset):
                 frames = _frames
 
         frames = np.array(frames)
+        np.random.shuffle(frames)
 
         return [frames]
 

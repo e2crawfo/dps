@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 import os
 
 from dps import cfg
-from dps.train import PolynomialScheduleHook, GeometricScheduleHook
 from dps.datasets import EMNIST_ObjectDetection
 from dps.updater import Updater
 from dps.utils import Config, Param, square_subplots
@@ -1324,19 +1323,20 @@ config = Config(
 )
 
 
-nonzero_weight = 37.5
-
-
 good_config = config.copy(
-    image_shape=(40, 40),
+    image_shape=(50, 50),
     object_shape=(14, 14),
     anchor_boxes=[[14, 14]],
     pixels_per_cell=(12, 12),
     kernel_size=(3, 3),
 
-    use_specific_costs=True,
-    max_hw=1.0,
-    min_hw=0.5,
+    max_hw=3.0,
+    min_hw=0.25,
+
+    colours="red",
+    max_overlap=100,
+
+    sub_image_size_std=0.4,
     max_chars=3,
     min_chars=1,
     characters=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
@@ -1344,117 +1344,33 @@ good_config = config.copy(
     dynamic_partition=True,
     fix_values=dict(),
     obj_exploration=0.0,
-    nonzero_weight=0.0,
     lr_schedule=1e-4,
+    use_specific_costs=True,
 
-    curriculum=[
-        dict(fix_values=dict(obj=1), lr_schedule=1e-4, dynamic_partition=False),
-        dict(fix_values=dict(obj=1), lr_schedule=1e-5, dynamic_partition=False),
-        dict(fix_values=dict(obj=1), lr_schedule=1e-6, dynamic_partition=False),
-        dict(obj_exploration=0.2, nonzero_weight=nonzero_weight, lr_schedule=1e-6),
-        dict(obj_exploration=0.1, nonzero_weight=nonzero_weight, lr_schedule=1e-6),
-        dict(obj_exploration=0.05, nonzero_weight=nonzero_weight, lr_schedule=1e-6),
-    ],
-
-    box_std=-1.,
-    attr_std=0.0,
-    minimize_kl=True,
-
-    cell_yx_target_mean=0.5,
-    cell_yx_target_std=100.0,
-    hw_target_mean=0.0,
-    hw_target_std=1.0,
-    attr_target_mean=0.0,
-    attr_target_std=100.0,
-    **rl_mode,
-)
-
-
-good_experimental_config = good_config.copy(
-    lr_schedule=1e-4,
-    curriculum=[
-        dict(fix_values=dict(obj=1), dynamic_partition=False),
-    ],
-    # hooks=[
-    #     PolynomialScheduleHook(
-    #         "nonzero_weight", "best_COST_reconstruction",
-    #         base_configs=[
-    #             dict(obj_exploration=0.2,),
-    #             dict(obj_exploration=0.1,),
-    #             dict(obj_exploration=0.05,),
-    #         ],
-    #         tolerance=0.1, scale=1., power=2., initial_value=1.0),
-    # ],
-    hooks=[
-        GeometricScheduleHook(
-            "nonzero_weight", "best_COST_reconstruction",
-            base_configs=[
-                dict(obj_exploration=0.2,),
-                dict(obj_exploration=0.1,),
-                dict(obj_exploration=0.05,),
-            ],
-            multiplier=4.0, tolerance=0.1, initial_value=1.0
-        ),
-    ],
-    colours="red",
-    max_overlap=100,
-)
-
-experimental_config = good_config.copy(
-    lr_schedule=1e-4,
     curriculum=[
         dict(fix_values=dict(obj=1), dynamic_partition=False, max_steps=10000),
-        # dict(
-        #     load_path="/data/dps_data/logs/yolo_rl/exp_yolo_rl_seed=347405995_2018_03_24_10_38_18/weights/best_of_stage_0",
-        #     do_train=False),
+        dict(obj_exploration=0.2),
+        dict(obj_exploration=0.1),
+        dict(obj_exploration=0.05),
     ],
-    hooks=[
-        PolynomialScheduleHook(
-            "area_weight", "best_COST_reconstruction",
-            base_configs=[
-                dict(obj_exploration=0.2,),
-                dict(obj_exploration=0.1,),
-                dict(obj_exploration=0.05,),
-            ],
-            tolerance=0.5, scale=0.01, power=1., initial_value=0.1),
-    ],
-    colours="red",
-    max_overlap=100,
-    area_weight=0.01,
-    # nonzero_weight=5.0,
-    render_step=5000,
+
+    nonzero_weight=10.,
+    area_weight=0.02,
 
     box_std=0.1,
     attr_std=0.0,
     minimize_kl=False,
 
-    sub_image_size_std=0.4,
-    max_hw=3.0,
-    min_hw=0.25,
-    image_shape=(50, 50),
     n_val=16,
+    render_step=5000,
+
+    n_distractors_per_image=0,
+
+    **rl_mode,
 )
 
-good_denser_bigger_config = good_experimental_config.copy(
-    do_train=False,
-    image_shape=(80, 80),
-    min_chars=1,
-    max_chars=11,
-    n_train=100,
-    hooks=[],
-    curriculum=[dict()],
-    load_path="/data/dps_data/logs/yolo_rl/exp_yolo_rl_seed=347405995_2018_03_16_09_48_57/weights/best_of_stage_20"
-)
-
-static_decoder_config = good_experimental_config.copy(
-    build_object_decoder=StaticObjectDecoder,
-    A=2,
-    characters=[0, 1],
-    decoder_logit_scale=10.,
-    patience=20000,
-    curriculum=[
-        dict(fix_values=dict(obj=1), dynamic_partition=False, lr_schedule=1e-4),
-        dict(fix_values=dict(obj=1), dynamic_partition=False, lr_schedule=1e-5),
-        dict(fix_values=dict(obj=1), dynamic_partition=False, lr_schedule=1e-6),
-    ],
+uniform_size_config = good_config.copy(
+    max_hw=1.5,
+    min_hw=0.5,
+    sub_image_size_std=0.0,
 )

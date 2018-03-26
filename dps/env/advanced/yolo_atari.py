@@ -1,13 +1,14 @@
 from dps import cfg
 from dps.env.advanced import yolo_rl
 from dps.datasets.atari import AtariAutoencodeDataset
-from dps.train import PolynomialScheduleHook, GeometricScheduleHook
+from dps.datasets import ImageDataset
 
 
 class Env(object):
     def __init__(self):
-        train = AtariAutoencodeDataset(n_examples=int(cfg.n_train))
-        val = AtariAutoencodeDataset(n_examples=int(cfg.n_val))
+        dset = AtariAutoencodeDataset(n_examples=int(cfg.n_train))
+        train = ImageDataset(tracks=[dset.tracks[0][:-cfg.n_val]])
+        val = ImageDataset(tracks=[dset.tracks[0][-cfg.n_val:]])
         self.datasets = dict(train=train, val=val)
 
     def close(self):
@@ -18,49 +19,28 @@ def build_env():
     return Env()
 
 
-config = yolo_rl.experimental_config.copy(
+config = yolo_rl.good_config.copy(
     log_name="yolo_atari",
+    build_env=build_env,
+
     game="SpaceInvadersNoFrameskip-v4",
     policy=None,
     n_train=5000,
     samples_per_frame=5,
     image_shape=(60, 60),
-    build_env=build_env,
-    n_val=16,
     density=0.1,
     show_images=16,
-    max_hw=3.0,
-    min_hw=0.25,
-    hooks=[
-        PolynomialScheduleHook(
-            "nonzero_weight", "best_COST_reconstruction",
-            base_configs=[
-                dict(obj_exploration=0.2,),
-                dict(obj_exploration=0.1,),
-                dict(obj_exploration=0.05,),
-            ],
-            tolerance=0.5, scale=5, power=1., initial_value=1.0),
-    ],
-    nonzero_weight=0.0,
-    area_weight=0.02,
-)
 
-continuation_config = config.copy(
+    n_val=16,
+    area_weight=0.25,
+    nonzero_weight=60.0,
+
     curriculum=[
-        dict(fix_values=dict(obj=1), do_train=False, load_path="/home/eric/Dropbox/experiment_data/active/yolo_rl/space_invaders_area/weights/best_of_stage_0"),
+        dict(fix_values=dict(obj=1), dynamic_partition=False, max_steps=10000, area_weight=0.01),
+        dict(obj_exploration=0.2),
+        dict(obj_exploration=0.1),
+        dict(obj_exploration=0.05),
     ],
-    hooks=[
-        PolynomialScheduleHook(
-            "area_weight", "best_COST_reconstruction",
-            base_configs=[
-                dict(obj_exploration=0.2,),
-                dict(obj_exploration=0.1,),
-                dict(obj_exploration=0.05,),
-            ],
-            tolerance=0.5, scale=0.05, power=1., initial_value=1),
-            # tolerance=0.5, scale=0.05, power=1., initial_value=0.05),
-    ],
-    nonzero_weight=50.0,
 )
 
 large_config = config.copy(
@@ -76,4 +56,17 @@ large_config = config.copy(
     use_gpu=False,
     dynamic_partition=True,
     density=0.01
+)
+
+keyboard_config = config.copy(
+    policy="keyboard",
+)
+
+throwaway_config = config.copy(
+    load_path="/data/dps_data/logs/yolo_atari/exp_yolo_atari_seed=347405995_2018_03_24_16_02_44/weights/best_of_stage_3",
+    do_train=False,
+    hooks=[],
+    curriculum=[dict()],
+    use_gpu=True,
+    obj_exploration=0.0,
 )

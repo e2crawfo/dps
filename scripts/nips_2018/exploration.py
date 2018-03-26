@@ -32,15 +32,14 @@ distributions = dict(
     nonzero_weight=list(np.linspace(5, 50, 10))
 )
 
-config = yolo_rl.experimental_config.copy(
+config = yolo_rl.good_config.copy(
     prepare_func=prepare_func,
     patience=2500,
     lr_schedule=1e-4,
     render_step=100000,
     max_overlap=40,
     hooks=[],
-    n_val=32,
-    use_dataset_cache=True,
+    n_val=16,
     eval_step=1000,
 
     dynamic_partition=True,
