@@ -1160,10 +1160,10 @@ class YoloRL_RenderHook(object):
                 t, l, h, w = b
 
                 rect = patches.Rectangle(
-                    (l, t), w, h, linewidth=1, edgecolor="white", facecolor='none', alpha=o)
+                    (l, t), w, h, linewidth=1, edgecolor="xkcd:azure", facecolor='none', alpha=o)
                 ax1.add_patch(rect)
                 rect = patches.Rectangle(
-                    (l, t), w, h, linewidth=1, edgecolor="white", facecolor='none', alpha=o)
+                    (l, t), w, h, linewidth=1, edgecolor="xkcd:azure", facecolor='none', alpha=o)
                 ax2.add_patch(rect)
 
         fig.suptitle('Sampled={}. Stage={}. After {} experiences ({} updates, {} experiences per batch).'.format(
@@ -1386,7 +1386,7 @@ good_config = config.copy(
     max_hw=3.0,
     min_hw=0.25,
 
-    colours="red",
+    colours="white",
     max_overlap=100,
 
     sub_image_size_std=0.4,
@@ -1407,7 +1407,7 @@ good_config = config.copy(
         dict(obj_exploration=0.05),
     ],
 
-    nonzero_weight=10.,
+    nonzero_weight=50.,
     area_weight=0.02,
 
     box_std=0.1,
@@ -1418,6 +1418,7 @@ good_config = config.copy(
     render_step=5000,
 
     n_distractors_per_image=0,
+    compute_mAP=True,
 
     **rl_mode,
 )
