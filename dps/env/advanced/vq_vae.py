@@ -31,8 +31,10 @@ class Encoder(FullyConvolutional):
         layout = [
             dict(filters=128, kernel_size=4, strides=2, padding="SAME"),
             dict(filters=128, kernel_size=4, strides=2, padding="SAME"),
+            dict(filters=128, kernel_size=4, strides=1, padding="VALID"),
+            # dict(filters=128, kernel_size=5, strides=1, padding="VALID"),
             # dict(filters=128, kernel_size=6, strides=1, padding="VALID"),
-            dict(filters=128, kernel_size=7, strides=7, padding="SAME"),
+            # dict(filters=128, kernel_size=7, strides=7, padding="SAME"),
         ]
         super(Encoder, self).__init__(layout, check_output_shape=True)
 
@@ -40,8 +42,10 @@ class Encoder(FullyConvolutional):
 class VQ_Decoder(VQ_FullyConvolutional):
     def __init__(self):
         layout = [
+            dict(filters=128, kernel_size=4, strides=1, padding="VALID", transpose=True),
+            # dict(filters=128, kernel_size=5, strides=1, padding="VALID", transpose=True),
             # dict(filters=128, kernel_size=6, strides=1, padding="VALID", transpose=True),
-            dict(filters=128, kernel_size=7, strides=7, padding="SAME", transpose=True),
+            # dict(filters=128, kernel_size=7, strides=7, padding="SAME", transpose=True),
             dict(filters=128, kernel_size=4, strides=2, padding="SAME", transpose=True),
             dict(filters=3, kernel_size=4, strides=2, padding="SAME", transpose=True),
         ]
@@ -84,10 +88,10 @@ class VQVAE_Env(BernoulliSigmoid):
         vq = self.f._decoder._vq
 
         commitment_error = (vq.z_e - tf.stop_gradient(vq.z_q))**2
-        recorded_tensors['commitment_error'] = tf_mean_sum(commitment_error)
+        recorded_tensors['commitment_error'] = tf.reduce_mean(tf.reduce_sum(commitment_error, axis=-1))
 
         embedding_error = (tf.stop_gradient(vq.z_e) - vq.z_q)**2
-        recorded_tensors['embedding_error'] = tf_mean_sum(embedding_error)
+        recorded_tensors['embedding_error'] = tf.reduce_mean(tf.reduce_sum(embedding_error, axis=-1))
 
         loss_key = 'xent_loss' if self.xent_loss else 'squared_loss'
 
@@ -201,15 +205,15 @@ config = Config(
     render_step=500,
     display_step=1000,
 
-    beta=0.1,
+    beta=4.0,
 
     image_shape=(28, 28),
 
     use_dataset_cache=True,
 
-    H=1,
-    W=1,
-    K=100,
+    H=4,
+    W=4,
+    K=10,
     D=100,
     common_embedding=False,
 

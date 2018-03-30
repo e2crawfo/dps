@@ -5,7 +5,8 @@ import tensorflow as tf
 
 from dps.utils import Parameterized, Param
 from dps.utils.tf import (
-    build_gradient_train_op, trainable_variables, scheduled_value_summaries)
+    build_gradient_train_op, trainable_variables,
+    get_scheduled_value_summaries)
 
 
 class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
@@ -35,7 +36,10 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
 
             self._build_graph()
 
-            self.scheduled_value_summary_op = tf.summary.merge(scheduled_value_summaries())
+            scheduled_value_summaries = get_scheduled_value_summaries()
+            self.scheduled_value_summary_op = None
+            if scheduled_value_summaries:
+                self.scheduled_value_summary_op = tf.summary.merge(scheduled_value_summaries)
 
             global_step = tf.train.get_or_create_global_step()
             self.inc_global_step_op = tf.assign_add(global_step, 1)
@@ -53,7 +57,9 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
 
         sess = tf.get_default_session()
 
-        scheduled_value_summary = sess.run(self.scheduled_value_summary_op)
+        scheduled_value_summary = b''
+        if self.scheduled_value_summary_op is not None:
+            scheduled_value_summary = sess.run(self.scheduled_value_summary_op)
 
         update_result = self._update(batch_size, collect_summaries)
         update_result = {mode: (record, summary + scheduled_value_summary)
@@ -73,7 +79,11 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
             record, summary = self._evaluate(batch_size, mode)
 
             sess = tf.get_default_session()
-            scheduled_value_summary = sess.run(self.scheduled_value_summary_op)
+
+            scheduled_value_summary = b''
+            if self.scheduled_value_summary_op is not None:
+                scheduled_value_summary = sess.run(self.scheduled_value_summary_op)
+
             summary += scheduled_value_summary
             results[mode] = record, summary
 

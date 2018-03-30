@@ -889,7 +889,7 @@ def vec_to_lst(vec, reference):
         raise Exception()
 
 
-def scheduled_value_summaries():
+def get_scheduled_value_summaries():
     return tf.get_collection('scheduled_value_summaries')
 
 

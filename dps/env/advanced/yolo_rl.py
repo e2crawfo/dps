@@ -9,10 +9,11 @@ from dps.datasets import EMNIST_ObjectDetection
 from dps.updater import Updater
 from dps.utils import Config, Param, square_subplots
 from dps.utils.tf import (
-    FullyConvolutional, build_gradient_train_op,
+    VectorQuantization, FullyConvolutional, build_gradient_train_op,
     trainable_variables, build_scheduled_value,
     tf_normal_kl, tf_mean_sum, ScopedFunction
 )
+from dps.train import PolynomialScheduleHook
 from dps.env.advanced.yolo import mAP
 
 tf_flatten = tf.layers.flatten
@@ -92,16 +93,47 @@ class NextStep(FullyConvolutional):
 
 
 class ObjectDecoder(FullyConvolutional):
-    n_channels = Param()
+    n_decoder_channels = Param()
 
     def __init__(self, **kwargs):
         layout = [
-            dict(filters=self.n_channels, kernel_size=3, strides=1, padding="VALID", transpose=True),
-            dict(filters=self.n_channels, kernel_size=5, strides=1, padding="VALID", transpose=True),
-            dict(filters=self.n_channels, kernel_size=3, strides=2, padding="SAME", transpose=True),
+            dict(filters=self.n_decoder_channels, kernel_size=3, strides=1, padding="VALID", transpose=True),
+            dict(filters=self.n_decoder_channels, kernel_size=5, strides=1, padding="VALID", transpose=True),
+            dict(filters=self.n_decoder_channels, kernel_size=3, strides=2, padding="SAME", transpose=True),
             dict(filters=3, kernel_size=4, strides=1, padding="SAME", transpose=True),  # For 14 x 14 output
         ]
         super(ObjectDecoder, self).__init__(layout, check_output_shape=True, **kwargs)
+
+
+class VQ_ObjectDecoder(FullyConvolutional):
+    vq_input_shape = Param()
+    K = Param()
+    common_embedding = Param()
+    n_decoder_channels = Param()
+    beta = Param()
+
+    _vq = None
+
+    def __init__(self, **kwargs):
+        layout = [
+            dict(filters=self.n_decoder_channels, kernel_size=3, strides=1, padding="VALID", transpose=True),
+            dict(filters=self.n_decoder_channels, kernel_size=5, strides=1, padding="VALID", transpose=True),
+            dict(filters=self.n_decoder_channels, kernel_size=3, strides=2, padding="SAME", transpose=True),
+            dict(filters=3, kernel_size=4, strides=1, padding="SAME", transpose=True),  # For 14 x 14 output
+        ]
+        super(VQ_ObjectDecoder, self).__init__(layout, check_output_shape=True, **kwargs)
+
+    def _call(self, inp, output_size, is_training):
+        if self._vq is None:
+            H, W, D = self.vq_input_shape
+            self._vq = VectorQuantization(
+                H=H, W=W, D=D, K=self.K, common_embedding=self.common_embedding)
+
+        batch_size = tf.shape(inp)[0]
+        inp = tf.reshape(inp, (batch_size,) + self.vq_input_shape)
+
+        quantized_inp = self._vq(inp, self.vq_input_shape, is_training)
+        return super(VQ_ObjectDecoder, self)._call(quantized_inp, output_size, is_training)
 
 
 class ObjectEncoderDecoder(FullyConvolutional):
@@ -497,9 +529,11 @@ class YoloRL_Updater(Updater):
     def make_feed_dict(self, batch_size, mode, evaluate):
         data = self.datasets[mode].next_batch(batch_size=batch_size, advance=not evaluate)
         if len(data) == 1:
-            inp, self.annotations = data, None
+            inp, self.annotations = data[0], None
         elif len(data) == 2:
             inp, self.annotations = data
+        else:
+            raise Exception()
 
         return {self.inp: inp, self.is_training: not evaluate}
 
@@ -748,6 +782,22 @@ class YoloRL_Updater(Updater):
 
         object_decoder_output = self.object_decoder(object_decoder_in, object_shape + (image_depth,), self.is_training)
 
+        if isinstance(self.object_decoder, VQ_ObjectDecoder):
+            vq = self.object_decoder._vq
+
+            z_e = tf.reshape(vq.z_e, (self.batch_size, H, W, B) + self.object_decoder.vq_input_shape)
+            z_q = tf.reshape(vq.z_q, (self.batch_size, H, W, B) + self.object_decoder.vq_input_shape)
+
+            nonzero = tf.maximum(tf.to_float(tf.count_nonzero(obj)), 1.0)
+            p = self.object_decoder.vq_input_shape[0] * self.object_decoder.vq_input_shape[1]
+            N = tf.to_float(nonzero) * float(p)
+
+            commitment_error = obj[..., None, None] * (z_e - tf.stop_gradient(z_q))**2
+            self.commitment_error = tf.reduce_sum(commitment_error) / N
+
+            embedding_error = obj[..., None, None] * (tf.stop_gradient(z_e) - z_q)**2
+            self.embedding_error = tf.reduce_sum(embedding_error) / N
+
         if self.decoder_outputs_logits:
             object_decoder_output = tf.nn.sigmoid(
                 self.decoder_logit_scale * tf.clip_by_value(object_decoder_output, -10., 10.))
@@ -827,6 +877,18 @@ class YoloRL_Updater(Updater):
             object_decoder_in = [object_decoder_in, input_glimpses]
 
         object_decoder_output = self.object_decoder(object_decoder_in, object_shape + (image_depth,), self.is_training)
+
+        if isinstance(self.object_decoder, VQ_ObjectDecoder):
+            vq = self.object_decoder._vq
+
+            p = self.object_decoder.vq_input_shape[0] * self.object_decoder.vq_input_shape[1]
+            N = tf.to_float(tf.shape(attr_on)[0]) * float(p)
+
+            commitment_error = obj_on[..., None, None] * (vq.z_e - tf.stop_gradient(vq.z_q))**2
+            self.commitment_error = tf.reduce_sum(commitment_error) / N
+
+            embedding_error = obj_on[..., None, None] * (tf.stop_gradient(vq.z_e) - vq.z_q)**2
+            self.embedding_error = tf.reduce_sum(embedding_error) / N
 
         if self.decoder_outputs_logits:
             object_decoder_output = tf.nn.sigmoid(
@@ -1002,6 +1064,13 @@ class YoloRL_Updater(Updater):
 
             recorded_tensors['diff_loss'] += recorded_tensors['attr_kl']
 
+        if isinstance(self.object_decoder, VQ_ObjectDecoder):
+            recorded_tensors['decoder_commitment_error'] = self.commitment_error
+            recorded_tensors['decoder_embedding_error'] = self.embedding_error
+
+            recorded_tensors['diff_loss'] += recorded_tensors['decoder_embedding_error']
+            recorded_tensors['diff_loss'] += self.object_decoder.beta * recorded_tensors['decoder_commitment_error']
+
         self.diff_loss = recorded_tensors['diff_loss']
         self.recorded_tensors = recorded_tensors
 
@@ -1033,10 +1102,6 @@ class YoloRL_Updater(Updater):
         if self.minimize_kl:
             _rl_recorded_tensors['surrogate_loss'] -= recorded_tensors['obj_entropy']
 
-            _rl_recorded_tensors['surrogate_loss'] += recorded_tensors['cell_yx_kl']
-            _rl_recorded_tensors['surrogate_loss'] += recorded_tensors['hw_kl']
-            _rl_recorded_tensors['surrogate_loss'] += recorded_tensors['attr_kl']
-
             if "obj" not in self.fix_values:
                 _rl_recorded_tensors['surrogate_loss'] -= recorded_tensors['obj_entropy']
 
@@ -1046,6 +1111,10 @@ class YoloRL_Updater(Updater):
                 _rl_recorded_tensors['surrogate_loss'] += recorded_tensors['hw_kl']
 
             _rl_recorded_tensors['surrogate_loss'] += recorded_tensors['attr_kl']
+
+        if isinstance(self.object_decoder, VQ_ObjectDecoder):
+            _rl_recorded_tensors['surrogate_loss'] += recorded_tensors['decoder_embedding_error']
+            _rl_recorded_tensors['surrogate_loss'] += self.object_decoder.beta * recorded_tensors['decoder_commitment_error']
 
         self.surrogate_loss = _rl_recorded_tensors['surrogate_loss']
 
@@ -1272,43 +1341,65 @@ combined_mode = dict(rl_weight=1.0, diff_weight=1.0)
 
 config = Config(
     log_name="yolo_rl",
-    build_env=build_env,
     get_updater=get_updater,
+
+    # dataset params
+
+    build_env=build_env,
     min_chars=1,
     max_chars=1,
     characters=[0, 1, 2],
     n_sub_image_examples=0,
+    xent_loss=True,
+    sub_image_shape=(14, 14),
+    use_dataset_cache=True,
+
+    n_train=1e5,
+    n_val=1e2,
+    n_test=1e2,
+
+    # training loop params
+
+    lr_schedule=1e-4,
+    preserve_env=True,
+    batch_size=16,
+    eval_step=100,
+    display_step=1000,
+    max_steps=1e7,
+    patience=10000,
+    optimizer_spec="adam",
+    use_gpu=True,
+    gpu_allow_growth=True,
+    seed=347405995,
+    stopping_criteria="TOTAL_COST,min",
+    eval_mode="rl_val",
+    threshold=-np.inf,
+    max_grad_norm=1.0,
+    max_experiments=None,
+    render_hook=YoloRL_RenderHook(),
+    render_step=5000,
+
+    # model params
+
     build_backbone=Backbone,
     build_next_step=NextStep,
     build_object_decoder=ObjectDecoder,
-    xent_loss=True,
-    sub_image_shape=(14, 14),
-
-    use_dataset_cache=True,
-
-    render_hook=YoloRL_RenderHook(),
-    render_step=5000,
 
     use_input_attention=False,
     decoder_outputs_logits=True,
     decoder_logit_scale=10.0,
 
-    # model params
     image_shape=(28, 28),
     object_shape=(14, 14),
     anchor_boxes=[[28, 28]],
     pixels_per_cell=(28, 28),
     kernel_size=(1, 1),
     n_channels=128,
-    D=3,
+    n_decoder_channels=128,
     A=100,
 
     pass_samples=True,  # Note that AIR basically uses pass_samples=True
     n_passthrough_features=100,
-
-    n_train=1e5,
-    n_val=1e2,
-    n_test=1e2,
 
     diff_weight=0.0,
     rl_weight=0.0,
@@ -1343,36 +1434,21 @@ config = Config(
         rl_mode,
     ],
 
-    # training params
-    beta=1.0,
-    lr_schedule=1e-4,
-    preserve_env=True,
-    batch_size=16,
-    eval_step=100,
-    display_step=1000,
-    max_steps=1e7,
-    patience=10000,
-    optimizer_spec="adam",
-    use_gpu=True,
-    gpu_allow_growth=True,
-    seed=347405995,
-    stopping_criteria="TOTAL_COST,min",
-    eval_mode="rl_val",
-    threshold=-np.inf,
-    max_grad_norm=1.0,
-
-    max_experiments=None,
-
     fixed_box=False,
     fixed_obj=False,
     fixed_attr=False,
-
     fixed_object_decoder=False,
 
     fix_values=dict(),
     dynamic_partition=False,
     order="box obj attr",
     compute_mAP=False,
+
+    # VQ object decoder params
+    beta=4.0,
+    vq_input_shape=(3, 3, 25),
+    K=5,
+    common_embedding=False,
 )
 
 
@@ -1401,14 +1477,14 @@ good_config = config.copy(
     use_specific_costs=True,
 
     curriculum=[
-        dict(fix_values=dict(obj=1), dynamic_partition=False, max_steps=10000),
+        dict(fix_values=dict(obj=1), dynamic_partition=False, max_steps=10000, area_weight=0.02),
         dict(obj_exploration=0.2),
         dict(obj_exploration=0.1),
         dict(obj_exploration=0.05),
     ],
 
-    nonzero_weight=50.,
-    area_weight=0.02,
+    nonzero_weight=90.,
+    area_weight=0.1,
 
     box_std=0.1,
     attr_std=0.0,
@@ -1427,4 +1503,48 @@ uniform_size_config = good_config.copy(
     max_hw=1.5,
     min_hw=0.5,
     sub_image_size_std=0.0,
+)
+
+vq_config = good_config.copy(
+    # VQ object decoder params
+    build_object_decoder=VQ_ObjectDecoder,
+    beta=4.0,
+    vq_input_shape=(2, 2, 25),
+    K=5,
+    common_embedding=False,
+)
+
+experimental_config = good_config.copy(
+    curriculum=[
+        dict(area_weight=0.00),
+    ],
+    dynamic_partition=False,
+    fix_values=dict(obj=1),
+    hooks=[
+        PolynomialScheduleHook(
+            attr_name="area_weight", query_name="best_COST_reconstruction", initial_value=0.01, scale=0.01
+        )
+    ],
+    patience=2500,
+)
+
+experimental2_config = good_config.copy(
+    area_weight=1.16,
+    curriculum=[
+        dict(nonzero_weight=0.0, do_train=False, fix_values=dict(obj=1), dynamic_partition=False),
+    ],
+    load_path="/home/eric/Dropbox/experiment_data/active/nips2018/long_first_stage/weights/best_of_stage_114",
+    dynamic_partition=True,
+    hooks=[
+        PolynomialScheduleHook(
+            attr_name="nonzero_weight", query_name="best_COST_reconstruction",
+            initial_value=10., scale=10., tolerance=2.0,
+            base_configs=[
+                dict(obj_exploration=0.2),
+                dict(obj_exploration=0.1),
+                dict(obj_exploration=0.05),
+            ]
+        )
+    ],
+    patience=2500,
 )

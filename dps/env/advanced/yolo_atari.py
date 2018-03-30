@@ -24,7 +24,7 @@ config = yolo_rl.good_config.copy(
     build_env=build_env,
 
     game="SpaceInvadersNoFrameskip-v4",
-    policy=None,
+    policy="keyboard",
     n_train=5000,
     samples_per_frame=5,
     image_shape=(60, 60),
@@ -33,7 +33,7 @@ config = yolo_rl.good_config.copy(
 
     n_val=16,
     area_weight=0.25,
-    nonzero_weight=60.0,
+    nonzero_weight=80.0,
 
     curriculum=[
         dict(fix_values=dict(obj=1), dynamic_partition=False, max_steps=10000, area_weight=0.01),
@@ -59,10 +59,6 @@ large_config = config.copy(
     density=0.01
 )
 
-keyboard_config = config.copy(
-    policy="keyboard",
-)
-
 throwaway_config = config.copy(
     load_path="/data/dps_data/logs/yolo_atari/exp_yolo_atari_seed=347405995_2018_03_24_16_02_44/weights/best_of_stage_3",
     do_train=False,
@@ -70,4 +66,12 @@ throwaway_config = config.copy(
     curriculum=[dict()],
     use_gpu=True,
     obj_exploration=0.0,
+)
+
+vq_config = config.copy(
+    build_object_decoder=yolo_rl.VQ_ObjectDecoder,
+    beta=4.0,
+    vq_input_shape=(1, 1, 100),
+    K=20,
+    common_embedding=False,
 )
