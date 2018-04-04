@@ -757,9 +757,9 @@ class Parameterized(object):
                         value = param.default
                     else:
                         raise AttributeError(
-                            "Could not find value for parameter {} for class {} "
+                            "Could not find value for parameter `{}` for class `{}` "
                             "in either kwargs or config, and no default was provided.".format(
-                                name, self.__class__))
+                                name, self.__class__.__name__))
 
                 if param.type is not None:
                     value = param.type(value)

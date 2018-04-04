@@ -1,6 +1,9 @@
 import gym
+from gym_recording.playback import scan_recorded_traces
 import numpy as np
+import os
 
+from dps import cfg
 from dps.datasets import ImageDataset
 from dps.utils import Param, square_subplots
 
@@ -177,13 +180,61 @@ def show_frames(frames):
     plt.show()
 
 
+class AtariCallback(object):
+    def __init__(self):
+        self.episodes = []
+
+    def __call__(self, o, a, r):
+        self.episodes.append((o, a, r))
+
+
+class StaticAtariDataset(ImageDataset):
+    game = Param(aliases="atari_game")
+    image_shape = Param(None)
+    samples_per_frame = Param(
+        0, help="If 0, scan over each image, extracting as many non-overlapping "
+                "sub-images of shape `image_shape` as possible. Otherwise, from each image "
+                "we sample `samples_per_frame` sub-images at random.")
+    after_warp = Param(False)
+    default_shape = (210, 160)
+
+    def _make(self):
+        directory = os.path.join(cfg.data_dir, "atari_data")
+        dirs = os.listdir(directory)
+        starts_with = "atari_data_env={}.datetime=".format(self.game)
+        dirs = [d for d in dirs if d.startswith(starts_with)]
+        assert len(dirs) == 1
+
+        directory = os.path.join(directory, dirs[0])
+
+        if self.after_warp:
+            directory = os.path.join(directory, "after_warp_recording")
+        else:
+            directory = os.path.join(directory, "before_warp_recording")
+
+        callback = AtariCallback()
+        scan_recorded_traces(directory, callback)
+
+        frames = []
+        for o, _, _ in callback.episodes:
+            frames.extend(o)
+
+        frames = np.array(frames)
+        np.random.shuffle(frames)
+
+        return [frames]
+
+
 if __name__ == "__main__":
-    game = "SpaceInvadersNoFrameskip-v4"
     # game = "AsteroidsNoFrameskip-v4"
-    dset = AtariAutoencodeDataset(game=game, policy=None, n_examples=100, density=0.01, atari_render=False)
-    show_frames(dset.x[:10])
+    # dset = AtariAutoencodeDataset(game=game, policy=None, n_examples=100, density=0.01, atari_render=False)
+    # show_frames(dset.x[:10])
     # dset = AtariAutoencodeDataset(
     #     game=game, policy=None, n_examples=100, samples_per_frame=2, image_shape=(50, 50))
     # show_frames(dset.x[:100])
     # dset = AtariAutoencodeDataset(
     #     game=game, policy=None, n_examples=100, samples_per_frame=0, image_shape=(30, 40))
+    game = "IcyHockeyNoFrameskip-v4"
+    dset = StaticAtariDataset(game)
+
+
