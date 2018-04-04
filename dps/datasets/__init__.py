@@ -1,4 +1,4 @@
-from .load import load_emnist, emnist_classes, load_omniglot, omniglot_classes
+from .load import load_emnist, emnist_classes, load_omniglot, omniglot_classes, load_backgrounds, background_names
 from .base import (
     Dataset, ImageDataset, EmnistDataset, PatchesDataset, VisualArithmeticDataset,
     VisualArithmeticDatasetColour, GridArithmeticDataset, OmniglotDataset, OmniglotCountingDataset,

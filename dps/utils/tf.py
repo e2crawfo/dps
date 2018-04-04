@@ -398,10 +398,11 @@ class FullyConvolutional(ScopedFunction):
             out_dim = int((inp_dim - f) / s) + 1
         return out_dim
 
-    def output_shape(self, input_shape):
+    @staticmethod
+    def predict_output_shape(input_shape, layout):
         """ Get spatial shape of the output given a spatial shape of the input. """
         shape = [int(i) for i in input_shape]
-        for layer in self.layout:
+        for layer in layout:
             kernel_size = layer['kernel_size']
             if isinstance(kernel_size, tuple):
                 f0, f1 = kernel_size
@@ -417,8 +418,8 @@ class FullyConvolutional(ScopedFunction):
             padding = layer.get('padding', 'VALID')
             pool = layer.get('pool', False)
 
-            shape[0] = self._output_shape_1d(shape[0], f0, strides0, padding, pool)
-            shape[1] = self._output_shape_1d(shape[1], f1, strides1, padding, pool)
+            shape[0] = FullyConvolutional._output_shape_1d(shape[0], f0, strides0, padding, pool)
+            shape[1] = FullyConvolutional._output_shape_1d(shape[1], f1, strides1, padding, pool)
 
         return shape
 
@@ -458,7 +459,7 @@ class FullyConvolutional(ScopedFunction):
         volume = inp
         self.volumes = [volume]
 
-        print("Predicted output shape is: {}".format(self.output_shape(inp.shape[1:3])))
+        print("Predicted output shape is: {}".format(self.predict_output_shape(inp.shape[1:3], self.layout)))
 
         for i, layer_spec in enumerate(self.layout):
             volume = self._apply_layer(volume, layer_spec, i, i == len(self.layout) - 1)

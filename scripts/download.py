@@ -13,12 +13,31 @@ from dps.utils import image_to_string, cd, process_path, remove
 from dps.datasets.load import convert_emnist_and_store
 
 
+background_url = "https://github.com/e2crawfo/backgrounds.git"
+
+
+def download_backgrounds(data_dir):
+    """
+    Download backgrounds. Result is that a file called `emnist-byclass.mat` is stored in `data_dir`.
+
+    Parameters
+    ----------
+    path: str
+        Path to directory where files should be stored.
+
+    """
+    with cd(data_dir):
+        if not os.path.exists('backgrounds'):
+            command = "git clone {}".format(background_url).split()
+            subprocess.run(command, check=True)
+
+
 emnist_url = 'http://www.itl.nist.gov/iaui/vip/cs_links/EMNIST/matlab.zip'
 
 
 def download_emnist(data_dir):
     """
-    Download the emnist data. Results is that a file called `emnist-byclass.mat` is stored in `data_dir`.
+    Download the emnist data. Result is that a file called `emnist-byclass.mat` is stored in `data_dir`.
 
     Parameters
     ----------
@@ -216,7 +235,7 @@ def process_omniglot(data_dir, quiet):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('kind', type=str, choices=['emnist', 'omniglot'])
+    parser.add_argument('kind', type=str, choices=['emnist', 'omniglot', 'backgrounds'])
     parser.add_argument('path', type=str)
     parser.add_argument('-q', action='count', default=0)
     parser.add_argument(
@@ -235,5 +254,7 @@ if __name__ == "__main__":
             process_emnist(args.path, args.q)
     elif args.kind == 'omniglot':
         process_omniglot(args.path, args.q)
+    elif args.kind == 'backgrounds':
+        download_backgrounds(args.path)
     else:
         raise Exception("NotImplemented")

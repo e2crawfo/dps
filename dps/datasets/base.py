@@ -5,7 +5,10 @@ import dill
 
 from dps import cfg
 from dps.utils import image_to_string, Param, Parameterized, DataContainer, get_param_hash
-from dps.datasets import load_emnist, load_omniglot, emnist_classes, omniglot_classes
+from dps.datasets import (
+    load_emnist, load_omniglot, emnist_classes, omniglot_classes,
+    load_backgrounds, background_names
+)
 
 
 class Dataset(Parameterized):
@@ -256,6 +259,15 @@ class PatchesDataset(ImageDataset):
     sub_image_size_std = Param(None)
     distractor_shape = Param((3, 3))
     n_distractors_per_image = Param(0)
+    backgrounds = Param(
+        "", help="Can be either be 'all', in which a random background will be selected for "
+                 "each constructed image, or a list of strings, giving the names of backgrounds "
+                 "to use.")
+    backgrounds_sample_every = Param(
+        False, help="If True, sample a new sub-region of background for each image. Otherwise, "
+                    "sample a small set of regions initially, and use those for all images.")
+    backgrounds_resize = Param(False)
+    background_colours = Param("")
 
     def _make(self):
         self.draw_shape = self.draw_shape or self.image_shape
@@ -269,6 +281,45 @@ class PatchesDataset(ImageDataset):
         new_X, new_Y = [], []
         patch_centres = []
 
+        draw_shape = self.draw_shape
+        if self.depth is not None:
+            draw_shape = draw_shape + (self.depth,)
+
+        if self.backgrounds == "all":
+            backgrounds = background_names()
+        elif isinstance(self.backgrounds, str):
+            backgrounds = self.backgrounds.split()
+        else:
+            backgrounds = self.backgrounds
+
+        if backgrounds:
+            if self.backgrounds_resize:
+                backgrounds = load_backgrounds(backgrounds, draw_shape)
+            else:
+                backgrounds = load_backgrounds(backgrounds)
+
+                if not self.backgrounds_sample_every:
+                    _backgrounds = []
+                    for b in backgrounds:
+                        top = np.random.randint(b.shape[0] - draw_shape[0] + 1)
+                        left = np.random.randint(b.shape[1] - draw_shape[1] + 1)
+                        _backgrounds.append(
+                            b[top:top+draw_shape[0], left:left+draw_shape[1], ...] + 0
+                        )
+                    backgrounds = _backgrounds
+
+        background_colours = self.background_colours
+        if isinstance(self.background_colours, str):
+            background_colours = background_colours.split()
+        _background_colours = []
+        from matplotlib.colors import to_rgb
+        for bc in background_colours:
+            color = to_rgb(bc)
+            color = np.array(color)[None, None, :]
+            color = np.uint8(255. * color)
+            _background_colours.append(color)
+        background_colours = _background_colours
+
         for j in range(n_examples):
             sub_images, y = self._sample_patches()
             sub_image_shapes = [img.shape for img in sub_images]
@@ -277,11 +328,20 @@ class PatchesDataset(ImageDataset):
 
             patch_centres.append([r.centre() for r in rects])
 
-            draw_shape = self.draw_shape
-            if self.depth is not None:
-                draw_shape = draw_shape + (self.depth,)
-
-            x = np.zeros(draw_shape, 'uint8')
+            if backgrounds:
+                b_idx = np.random.randint(len(backgrounds))
+                background = backgrounds[b_idx]
+                if self.backgrounds_sample_every:
+                    top = np.random.randint(background.shape[0] - draw_shape[0] + 1)
+                    left = np.random.randint(background.shape[1] - draw_shape[1] + 1)
+                    x = background[top:top+draw_shape[0], left:left+draw_shape[1], ...] + 0
+                else:
+                    x = background + 0
+            elif background_colours:
+                color = background_colours[np.random.randint(len(background_colours))]
+                x = color * np.ones(draw_shape, 'uint8')
+            else:
+                x = np.zeros(draw_shape, 'uint8')
 
             # Populate rectangles
             for image, rect in zip(sub_images, rects):
@@ -289,8 +349,14 @@ class PatchesDataset(ImageDataset):
                 if image.shape[:2] != rect_shape:
                     image = resize(image, rect_shape, mode='edge', preserve_range=True)
 
-                patch = x[rect.top:rect.bottom, rect.left:rect.right, ...]
-                x[rect.top:rect.bottom, rect.left:rect.right, ...] = np.maximum(image, patch)
+                if image.shape[-1] == 4:
+                    alpha, image = np.split(image, [3, 1], axis=-1)
+
+                    patch = x[rect.top:rect.bottom, rect.left:rect.right, ...]
+                    x[rect.top:rect.bottom, rect.left:rect.right, ...] = alpha * image + (1 - alpha) * patch
+                else:
+                    patch = x[rect.top:rect.bottom, rect.left:rect.right, ...]
+                    x[rect.top:rect.bottom, rect.left:rect.right, ...] = np.maximum(image, patch)
 
             # Add distractors
             if self.n_distractors_per_image > 0:
@@ -303,8 +369,14 @@ class PatchesDataset(ImageDataset):
                     if image.shape[:2] != rect_shape:
                         image = resize(image, rect_shape, mode='edge', preserve_range=True)
 
-                    patch = x[rect.top:rect.bottom, rect.left:rect.right, ...]
-                    x[rect.top:rect.bottom, rect.left:rect.right, ...] = np.maximum(image, patch)
+                    if image.shape[-1] == 4:
+                        alpha, image = np.split(image, [3, 1], axis=-1)
+
+                        patch = x[rect.top:rect.bottom, rect.left:rect.right, ...]
+                        x[rect.top:rect.bottom, rect.left:rect.right, ...] = alpha * image + (1 - alpha) * patch
+                    else:
+                        patch = x[rect.top:rect.bottom, rect.left:rect.right, ...]
+                        x[rect.top:rect.bottom, rect.left:rect.right, ...] = np.maximum(image, patch)
 
             # Possible sub-sample entire image
             if self.draw_shape != self.image_shape or self.draw_offset != (0, 0):

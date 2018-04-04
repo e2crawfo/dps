@@ -11,6 +11,30 @@ from dps import cfg
 from dps.utils import image_to_string, cd
 
 
+def background_names():
+    backgrounds_dir = os.path.join(cfg.data_dir, 'backgrounds')
+    return sorted(f.split()[0] for f in os.listdir(backgrounds_dir))
+
+
+def load_backgrounds(background_names, shape=None):
+    backgrounds_dir = os.path.join(cfg.data_dir, 'backgrounds')
+    backgrounds = []
+    for name in background_names:
+        f = os.path.join(backgrounds_dir, '{}.jpg'.format(name))
+        try:
+            b = scipy.misc.imread(f)
+        except FileNotFoundError:
+            f = os.path.join(backgrounds_dir, '{}.png'.format(name))
+            b = scipy.misc.imread(f)
+
+        if shape is not None and b.shape != shape:
+            b = resize(b, shape, mode='edge', preserve_range=True)
+            b = np.uint8(b)
+
+        backgrounds.append(b)
+    return backgrounds
+
+
 def emnist_classes():
     return (
         [str(i) for i in range(10)] +
