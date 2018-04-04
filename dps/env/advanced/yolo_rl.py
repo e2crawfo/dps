@@ -3,6 +3,8 @@ import numpy as np
 import sonnet as snt
 import matplotlib.pyplot as plt
 import os
+from sklearn.cluster import k_means
+from kmodes.kmodes import KModes
 
 from dps import cfg
 from dps.datasets import EMNIST_ObjectDetection
@@ -187,69 +189,6 @@ class StaticObjectDecoder(ScopedFunction):
         return tf.tile(output[None, ...], (tf.shape(inp)[0],) + tuple(1 for s in output_shape))
 
 
-class BackgroundNetwork(ScopedFunction):
-    code_shape = Param()
-    image_shape = Param()
-
-    def __init__(self, scope=None, **kwargs):
-        self._encoder = None
-        self._decoder = None
-        super(BackgroundNetwork, self).__init__(scope=scope)
-
-    def process_code(self, code, is_training):
-        return code
-
-    def _call(self, inp, output_size, is_training):
-        if self._encoder is None:
-            # -- encoder --
-            layout = [
-                dict(filters=64, kernel_size=5, strides=2, padding="SAME"),
-                dict(filters=64, kernel_size=5, strides=2, padding="SAME"),
-            ]
-
-            output_shape = FullyConvolutional.predict_output_shape(self.image_shape[:2], layout)
-            kernel_size = (
-                output_shape[0] - self.code_shape[0] + 1,
-                output_shape[1] - self.code_shape[1] + 1,
-            )
-
-            layout.append(
-                dict(filters=self.code_shape[2], kernel_size=kernel_size, strides=1, padding="VALID")
-            )
-
-            self._encoder = FullyConvolutional(layout, check_output_shape=True)
-
-            # -- decoder --
-            decoder_layout = [dict(transpose=True, **d) for d in layout]
-            decoder_layout.reverse()
-            decoder_layout[-1]["filters"] = 3
-
-            self._decoder = FullyConvolutional(decoder_layout, check_output_shape=True)
-
-        code = self._encoder(inp, self.code_shape, is_training)
-        code = self.process_code(code, is_training)
-        logits = self._decoder(code, output_size, is_training)
-        return tf.nn.sigmoid(10. * tf.clip_by_value(logits, -10, 10))
-
-
-class VQ_BackgroundNetwork(BackgroundNetwork):
-    beta = Param()
-    K = Param()
-    common_embedding = Param()
-
-    _vq = None
-
-    def process_code(self, code, is_training):
-        # -- vq --
-        if self._vq is None:
-            H, W, D = (int(i) for i in code.shape[1:4])
-            self._vq = VectorQuantization(
-                H=H, W=W, D=D, K=self.K, common_embedding=self.common_embedding)
-
-        code = self._vq(code, self.code_shape, is_training)
-        return code
-
-
 def reconstruction_cost(network_outputs, updater):
     return network_outputs['reconstruction_loss'][..., None, None, None]
 
@@ -407,9 +346,7 @@ class YoloRL_Updater(Updater):
     fixed_box = Param()
     fixed_obj = Param()
     fixed_attr = Param()
-
     fixed_object_decoder = Param()
-    fixed_background_network = Param()
 
     fix_values = Param()
     dynamic_partition = Param()
@@ -454,7 +391,6 @@ class YoloRL_Updater(Updater):
         self._n_updates = 0
 
         self.object_decoder = None
-        self.background_network = None
 
         self.predict_box_std = False
         try:
@@ -504,9 +440,6 @@ class YoloRL_Updater(Updater):
             [self.object_decoder] +
             [self.layer_params[kind]["network"] for kind in self.order]
         )
-
-        if self.background_network is not None:
-            scoped_functions.append(self.background_network)
 
         tvars = []
 
@@ -897,16 +830,13 @@ class YoloRL_Updater(Updater):
             axis=1,
         )
 
-        if self.background_network is not None:
-            weighted_alphas = obj[..., None, None] * transformed_alphas
-            self.alpha = tf.reduce_max(
-                tf.reshape(weighted_alphas, [-1, H*W*B, image_height, image_width, 1]),
-                axis=1,
-            )
+        weighted_alphas = obj[..., None, None] * transformed_alphas
+        self.alpha = tf.reduce_max(
+            tf.reshape(weighted_alphas, [-1, H*W*B, image_height, image_width, 1]),
+            axis=1,
+        )
 
-            self.output = self.alpha * self.foreground + (1 - self.alpha) * self.background
-        else:
-            self.output = self.foreground
+        self.output = self.alpha * self.foreground + (1 - self.alpha) * self.background
 
         self.output = tf.clip_by_value(self.output, 1e-6, 1-1e-6)
         self.output_logits = tf.log(self.output / (1 - self.output))
@@ -1059,30 +989,32 @@ class YoloRL_Updater(Updater):
             if self.fixed_object_decoder:
                 self.object_decoder.fix_variables()
 
-        with cfg.background_cfg:
+        if cfg.background_cfg.mode == "static":
+            with cfg.background_cfg.static_cfg:
+                print("Clustering...")
+                print(cfg.background_cfg.static_cfg)
 
-            if cfg.build_background_network is not None:
-                if self.background_network is None:
-                    self.background_network = cfg.build_background_network(scope="background")
+                cluster_data = self.datasets["train"].X
+                image_shape = cluster_data.shape[1:]
+                indices = np.random.choice(
+                    cluster_data.shape[0], replace=False, size=cfg.n_clustering_examples)
+                cluster_data = cluster_data[indices, ...]
+                cluster_data = cluster_data.reshape(cluster_data.shape[0], -1)
 
-                    if self.fixed_background_network:
-                        self.background_network.fix_variables()
+                if cfg.use_k_modes:
+                    km = KModes(n_clusters=cfg.n_clusters, init='Huang', n_init=1, verbose=1)
+                    km.fit(cluster_data)
+                    centroids = km.cluster_centroids_ / 255.
+                else:
+                    cluster_data = cluster_data / 255.
+                    result = k_means(cluster_data, cfg.n_clusters)
+                    centroids = result[0]
 
-                self.background = self.background_network(
-                    self.inp, (self.image_height, self.image_width, self.image_depth), self.is_training)
-
-                if isinstance(self.background_network, VQ_BackgroundNetwork):
-                    vq = self.background_network._vq
-
-                    p = self.background_network.code_shape[0] * self.background_network.code_shape[1]
-
-                    commitment_error = (vq.z_e - tf.stop_gradient(vq.z_q))**2
-                    self.background_commitment_error = tf.reduce_sum(commitment_error) / float(p) / tf.to_float(self.batch_size)
-
-                    embedding_error = (tf.stop_gradient(vq.z_e) - vq.z_q)**2
-                    self.background_embedding_error = tf.reduce_sum(embedding_error) / float(p) / tf.to_float(self.batch_size)
-            else:
-                self.background = tf.zeros_like(self.inp)
+                centroids = np.maximum(centroids, 1e-6)
+                centroids = np.minimum(centroids, 1-1e-6)
+                centroids = centroids.reshape(cfg.n_clusters, *image_shape)
+        else:
+            self.background = tf.zeros_like(self.inp)
 
         if self.dynamic_partition:
             self._build_program_interpreter_with_dynamic_partition()
@@ -1183,13 +1115,6 @@ class YoloRL_Updater(Updater):
             recorded_tensors['diff_loss'] += recorded_tensors['decoder_embedding_error']
             recorded_tensors['diff_loss'] += self.object_decoder.beta * recorded_tensors['decoder_commitment_error']
 
-        if isinstance(self.background_network, VQ_BackgroundNetwork):
-            recorded_tensors['background_commitment_error'] = self.background_commitment_error
-            recorded_tensors['background_embedding_error'] = self.background_embedding_error
-
-            recorded_tensors['diff_loss'] += recorded_tensors['background_embedding_error']
-            recorded_tensors['diff_loss'] += self.background_network.beta * recorded_tensors['background_commitment_error']
-
         self.diff_loss = recorded_tensors['diff_loss']
         self.recorded_tensors = recorded_tensors
 
@@ -1234,10 +1159,6 @@ class YoloRL_Updater(Updater):
         if isinstance(self.object_decoder, VQ_ObjectDecoder):
             _rl_recorded_tensors['surrogate_loss'] += recorded_tensors['decoder_embedding_error']
             _rl_recorded_tensors['surrogate_loss'] += self.object_decoder.beta * recorded_tensors['decoder_commitment_error']
-
-        if isinstance(self.background_network, VQ_BackgroundNetwork):
-            _rl_recorded_tensors['surrogate_loss'] += recorded_tensors['background_embedding_error']
-            _rl_recorded_tensors['surrogate_loss'] += self.background_network.beta * recorded_tensors['background_commitment_error']
 
         self.surrogate_loss = _rl_recorded_tensors['surrogate_loss']
 
@@ -1300,7 +1221,6 @@ class YoloRL_RenderHook(object):
         to_fetch["output"] = updater.output
         to_fetch["object_decoder_images"] = updater.object_decoder_images
         to_fetch["object_decoder_alpha"] = updater.object_decoder_alpha
-        to_fetch["background"] = updater.background
 
         if updater.dynamic_partition:
             to_fetch["batch_indices"] = updater.batch_indices
@@ -1518,8 +1438,18 @@ config = Config(
     build_backbone=Backbone,
     build_next_step=NextStep,
     build_object_decoder=ObjectDecoder,
-    build_background_network=None,
-    background_cfg=dict(),
+
+    background_cfg=dict(
+        mode="none",
+
+        static_cfg=dict(
+            n_clusters=4,
+            use_k_modes=True,  # If False, use k_means.
+            n_clustering_examples=True,
+            n_clustering_bins=None,
+            min_cluster_distance=None,
+        ),
+    ),
 
     use_input_attention=False,
     decoder_outputs_logits=True,
@@ -1578,7 +1508,6 @@ config = Config(
     fixed_obj=False,
     fixed_attr=False,
     fixed_object_decoder=False,
-    fixed_background_network=False,
 
     fix_values=dict(),
     dynamic_partition=False,
@@ -1641,27 +1570,16 @@ good_config = config.copy(
 )
 
 with_background_config = good_config.copy(
-    # background_colours="red blue",
     backgrounds="red_x blue_x green_x red_circle blue_circle green_circle",
-    # build_background_network=BackgroundNetwork,
-    # background_cfg=dict(code_shape=(1, 1, 10)),
-
-    build_background_network=VQ_BackgroundNetwork,
-    background_cfg=dict(
-        code_shape=(1, 1, 10), beta=4.0, K=10, common_embedding=False),
     backgrounds_resize=True,
-
     image_shape=(48, 48),
-
     dynamic_partition=False,
-    fixed_background_network=True,
 
     curriculum=[
         dict(
             fix_values=dict(obj=0), patience=5000,
             area_weight=0.00,
             nonzero_weight=0.00,
-            fixed_background_network=False,
             fixed_object_decoder=True,
             fixed_box=True,
             fixed_attr=True,
@@ -1669,33 +1587,16 @@ with_background_config = good_config.copy(
         dict(
             fix_values=dict(obj=1, alpha=1-1e-6),
             area_weight=0.0,
-            patience=5000,
-            fixed_background_network=True),
+            patience=5000,),
         dict(
             fix_values=dict(obj=1, alpha=1-1e-6),
             area_weight=0.02,
-            patience=5000,
-            fixed_background_network=True),
+            patience=5000,)
     ],
+
     max_hw=1.5,
     min_hw=0.5,
     sub_image_size_std=0.0,
-)
-
-with_background_reset_config = with_background_config.copy(
-    load_path="/media/data/dps_data/logs/yolo_rl/exp_yolo_rl_seed=347405995_2018_04_03_17_01_08/weights/best_of_stage_0",
-    curriculum=[
-        dict(
-            fix_values=dict(obj=1, alpha=1-1e-6),
-            area_weight=0.02,
-            patience=10000,
-            fixed_background_network=False),
-        dict(
-            fix_values=dict(obj=1, alpha=1-1e-6),
-            area_weight=0.02,
-            patience=10000,
-            fixed_background_network=True),
-    ],
 )
 
 uniform_size_config = good_config.copy(
