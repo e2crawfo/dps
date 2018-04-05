@@ -2,6 +2,7 @@
 dill==0.2.6
 future
 gym==0.9.5
+-e git+https://github.com/e2crawfo/gym-recording.git@master#egg=gym_recording
 iso8601
 matplotlib
 numpy>=1.7

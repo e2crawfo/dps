@@ -22,6 +22,7 @@ setup(
         "pytest-env",
         "future",
         "gym",
+        "gym_recording",
         "iso8601",
         "tabulate",
         "psutil",
