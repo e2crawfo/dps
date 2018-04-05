@@ -31,6 +31,20 @@ import clify
 import dps
 
 
+def prime_factors(n):
+    i = 2
+    factors = []
+    while i * i <= n:
+        if n % i:
+            i += 1
+        else:
+            n //= i
+            factors.append(i)
+    if n > 1:
+        factors.append(n)
+    return factors
+
+
 def square_subplots(N):
     sqrt_N = int(np.ceil(np.sqrt(N)))
     m = int(np.ceil(N / sqrt_N))

@@ -38,11 +38,10 @@ config = yolo_atari.config.copy(
     eval_step=1000,
     max_steps=100000,
 
-    dynamic_partition=True,
     fix_values=dict(),
 
     curriculum=[
-        dict(fix_values=dict(obj=1), dynamic_partition=False, max_steps=10000),
+        dict(fix_values=dict(obj=1), max_steps=10000),
         dict(obj_exploration=0.2,),
         dict(obj_exploration=0.1,),
         dict(obj_exploration=0.1, lr_schedule=1e-5),

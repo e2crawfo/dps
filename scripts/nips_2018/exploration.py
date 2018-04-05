@@ -42,13 +42,10 @@ config = yolo_rl.good_config.copy(
     n_val=16,
     eval_step=1000,
 
-    dynamic_partition=True,
     fix_values=dict(),
 
     curriculum=[
-        dict(
-            fix_values=dict(obj=1), dynamic_partition=False,
-            patience=100000, max_steps=10000),
+        dict(fix_values=dict(obj=1), patience=100000, max_steps=10000),
     ],
 )
 
