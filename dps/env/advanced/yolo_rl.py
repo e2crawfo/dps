@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import os
 from sklearn.cluster import k_means
 from kmodes.kmodes import KModes
+import collections
 
 from dps import cfg
 from dps.datasets import EMNIST_ObjectDetection
@@ -137,6 +138,22 @@ class VQ_ObjectDecoder(FullyConvolutional):
         quantized_inp = self._vq(inp, self.vq_input_shape, is_training)
         return super(VQ_ObjectDecoder, self)._call(quantized_inp, output_size, is_training)
 
+def compute_background(data, mode_threshold):
+    assert data.dtype == np.uint8
+    mask = np.zeros(data.shape[1:3])
+    background = np.zeros(data.shape[1:4])
+
+    for i in range(data.shape[1]):
+        for j in range(data.shape[2]):
+            print("Doing {}".format((i, j)))
+            channel = [tuple(cell) for cell in data[:, i, j, ...]]
+            counts = collections.Counter(channel)
+            mode, mode_count = counts.most_common(1)[0]
+            if mode_count / data.shape[0] > mode_threshold:
+                mask[i, j] = 1
+                background[i, j, ...] = mode_count
+            else:
+                mask[i, j] = 0
 
 class ObjectEncoderDecoder(FullyConvolutional):
     n_channels = Param()
@@ -187,6 +204,7 @@ class StaticObjectDecoder(ScopedFunction):
             trainable=True,
         )
         return tf.tile(output[None, ...], (tf.shape(inp)[0],) + tuple(1 for s in output_shape))
+    return mask, background
 
 
 def reconstruction_cost(network_outputs, updater):
@@ -205,6 +223,8 @@ def specific_reconstruction_cost(network_outputs, updater):
 
     all_filtered = []
 
+    loss = network_outputs['per_pixel_reconstruction_loss']
+
     for b in range(updater.B):
         max_distance_h = updater.pixels_per_cell[0] / 2 + updater.max_hw * updater.anchor_boxes[b, 0] / 2
         max_distance_w = updater.pixels_per_cell[1] / 2 + updater.max_hw * updater.anchor_boxes[b, 1] / 2
@@ -213,23 +233,8 @@ def specific_reconstruction_cost(network_outputs, updater):
         filt_h = (dist_h < max_distance_h).astype('f')
         filt_w = (dist_w < max_distance_w).astype('f')
 
-        # Gaussian filtering
-        # h_means = (np.arange(H) + 0.5) * network_outputs["pixels_per_cell"][0]
-        # w_means = (np.arange(W) + 0.5) * network_outputs["pixels_per_cell"][1]
-
-        # std = 1.0
-
-        # filt_h = np.exp(-0.5 * (loc_h - h_means)**2 / std)
-        # filt_w = np.exp(-0.5 * (loc_w - w_means)**2 / std)
-
-        # if False:  # Normalize
-        #     filt_h /= np.sqrt(2 * np.pi) * std
-        #     filt_w /= np.sqrt(2 * np.pi) * std
-
-        signal = network_outputs['per_pixel_reconstruction_loss']
-
         # Sum over channel dimension
-        signal = signal.sum(axis=-1)
+        signal = loss.sum(axis=-1)
 
         signal = np.dot(signal, filt_w)
         signal = np.tensordot(signal, filt_h, [1, 0])
@@ -529,6 +534,17 @@ class YoloRL_Updater(Updater):
 
     def make_feed_dict(self, batch_size, mode, evaluate):
         data = self.datasets[mode].next_batch(batch_size=batch_size, advance=not evaluate)
+
+        discrete = np.uint8(np.floor(data * 255.))
+        discrete = discrete.reshape(batch_size, -1, discrete.shape[-1])
+
+        modes = []
+        for row in discrete:
+            counts = collections.Counter(tuple(t) for t in row)
+            mode, mode_count = counts.most_common(0)
+            modes.append(mode)
+        modes = np.array(modes) / 255
+
         if len(data) == 1:
             inp, self.annotations = data[0], None
         elif len(data) == 2:
@@ -536,11 +552,17 @@ class YoloRL_Updater(Updater):
         else:
             raise Exception()
 
-        return {self.inp: inp, self.is_training: not evaluate}
+        return {
+            self.inp: inp,
+            self.inp_mode: modes,
+            self.is_training: not evaluate
+        }
 
     def _build_placeholders(self):
         inp = tf.placeholder(tf.float32, (None,) + self.obs_shape, name="inp_ph")
         self.inp = tf.clip_by_value(inp, 1e-6, 1-1e-6, name="inp")
+
+        self.inp_mode = tf.placeholder(tf.float32, (None,), name="inp_mode_ph")
 
         self.diff = tf.placeholder(tf.bool, ())
         self.float_diff = tf.to_float(self.diff)
@@ -1013,6 +1035,13 @@ class YoloRL_Updater(Updater):
                 centroids = np.maximum(centroids, 1e-6)
                 centroids = np.minimum(centroids, 1-1e-6)
                 centroids = centroids.reshape(cfg.n_clusters, *image_shape)
+        elif cfg.background_cfg.mode == "mode":
+            mask, background = compute_background(
+                self.datasets["train"].X, cfg.background_cfg.mode_threshold)
+            mask = mask[None, :, :, None]
+            background = background[None, ...]
+            inp_mode = self.inp_mode[:, None, None, :]
+            self.background = (1 - mask) * inp_mode + background
         else:
             self.background = tf.zeros_like(self.inp)
 
