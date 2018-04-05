@@ -13,8 +13,7 @@ from dps.updater import Updater
 from dps.utils import Config, Param, square_subplots, prime_factors
 from dps.utils.tf import (
     VectorQuantization, FullyConvolutional, build_gradient_train_op,
-    trainable_variables, build_scheduled_value, tf_normal_kl, tf_mean_sum)
-from dps.train import PolynomialScheduleHook
+    trainable_variables, build_scheduled_value, tf_mean_sum)
 from dps.env.advanced.yolo import mAP
 
 tf_flatten = tf.layers.flatten
@@ -238,7 +237,6 @@ class YoloRL_Updater(Updater):
 
     box_std = Param()
     attr_std = Param()
-    minimize_kl = Param()
 
     optimizer_spec = Param()
     lr_schedule = Param()
@@ -303,20 +301,6 @@ class YoloRL_Updater(Updater):
 
         self.object_decoder = None
 
-        self.predict_box_std = False
-        try:
-            box_std = float(self.box_std)
-            self.predict_box_std = box_std < 0
-        except (TypeError, ValueError):
-            pass
-
-        self.predict_attr_std = False
-        try:
-            attr_std = float(self.attr_std)
-            self.predict_attr_std = attr_std < 0
-        except (TypeError, ValueError):
-            pass
-
         if isinstance(self.order, str):
             self.order = self.order.split()
         assert set(self.order) == set("box obj attr".split())
@@ -325,7 +309,7 @@ class YoloRL_Updater(Updater):
             box=dict(
                 rep_builder=self._build_box,
                 fixed=self.fixed_box,
-                output_size=4*(2 if self.predict_box_std else 1),
+                output_size=4,
                 network=None
             ),
             obj=dict(
@@ -337,7 +321,7 @@ class YoloRL_Updater(Updater):
             attr=dict(
                 rep_builder=self._build_attr,
                 fixed=self.fixed_box,
-                output_size=self.A*(2 if self.predict_attr_std else 1),
+                output_size=self.A,
                 network=None
             ),
         )
@@ -440,22 +424,22 @@ class YoloRL_Updater(Updater):
     def make_feed_dict(self, batch_size, mode, evaluate):
         data = self.datasets[mode].next_batch(batch_size=batch_size, advance=not evaluate)
 
-        # Compute the mode colour of each image.
-        discrete = np.uint8(np.floor(data * 255.))
-        discrete = discrete.reshape(batch_size, -1, discrete.shape[-1])
-        modes = []
-        for row in discrete:
-            counts = collections.Counter(tuple(t) for t in row)
-            mode, mode_count = counts.most_common(0)
-            modes.append(mode)
-        modes = np.array(modes) / 255
-
         if len(data) == 1:
             inp, self.annotations = data[0], None
         elif len(data) == 2:
             inp, self.annotations = data
         else:
             raise Exception()
+
+        # Compute the mode colour of each image.
+        discrete = np.uint8(np.floor(inp * 255.))
+        discrete = discrete.reshape(discrete.shape[0], -1, discrete.shape[-1])
+        modes = []
+        for row in discrete:
+            counts = collections.Counter(tuple(t) for t in row)
+            mode, mode_count = counts.most_common(1)[0]
+            modes.append(mode)
+        modes = np.array(modes) / 255
 
         return {
             self.inp: inp,
@@ -467,7 +451,7 @@ class YoloRL_Updater(Updater):
         inp = tf.placeholder(tf.float32, (None,) + self.obs_shape, name="inp_ph")
         self.inp = tf.clip_by_value(inp, 1e-6, 1-1e-6, name="inp")
 
-        self.inp_mode = tf.placeholder(tf.float32, (None,), name="inp_mode_ph")
+        self.inp_mode = tf.placeholder(tf.float32, (None, self.image_depth), name="inp_mode_ph")
 
         self.diff = tf.placeholder(tf.bool, ())
         self.float_diff = tf.to_float(self.diff)
@@ -487,37 +471,41 @@ class YoloRL_Updater(Updater):
             weight = build_scheduled_value(weight, "COST_{}_weight".format(name))
             self.COST += weight * cost
 
-    def _build_box(self, box_params, is_training):
+    def _build_box(self, box_mean_logits, is_training):
         H, W, B = self.H, self.W, self.B
         image_height, image_width = self.image_height, self.image_width
 
-        if self.predict_box_std:
-            box_mean_logits, box_std_logits = tf.split(box_params, 2, axis=-1)
-            box_std = tf.nn.sigmoid(tf.clip_by_value(box_std_logits, -10., 10.))
-        else:
-            box_mean_logits = box_params
-            _box_std = build_scheduled_value(self.box_std)
-            box_std = _box_std * tf.ones_like(box_mean_logits)
-
+        box_std = build_scheduled_value(self.box_std, name="box_std")
         cell_yx_logits, hw_logits = tf.split(box_mean_logits, 2, axis=-1)
-        cell_yx_std, hw_std = tf.split(box_std, 2, axis=-1)
 
         # ------
 
         cell_yx = tf.nn.sigmoid(tf.clip_by_value(cell_yx_logits, -10., 10.))
 
         cell_y, cell_x = tf.split(cell_yx, 2, axis=-1)
-
         if "cell_y" in self.fix_values:
             cell_y = float(self.fix_values["cell_y"]) * tf.ones_like(cell_y, dtype=tf.float32)
         if "cell_x" in self.fix_values:
             cell_x = float(self.fix_values["cell_x"]) * tf.ones_like(cell_x, dtype=tf.float32)
-
         cell_yx = tf.concat([cell_y, cell_x], axis=-1)
 
         cell_yx_noise = tf.random_normal(tf.shape(cell_yx), name="cell_yx_noise")
+        noisy_cell_yx = cell_yx + cell_yx_noise * box_std * self.float_is_training
 
-        noisy_cell_yx = cell_yx + cell_yx_noise * cell_yx_std * self.float_is_training
+        noisy_cell_y, noisy_cell_x = tf.split(noisy_cell_yx, 2, axis=-1)
+
+        noisy_y = (
+            (noisy_cell_y + tf.range(H, dtype=tf.float32)[None, :, None, None, None]) *
+            (self.pixels_per_cell[0] / self.image_shape[0])
+        )
+        noisy_x = (
+            (noisy_cell_x + tf.range(W, dtype=tf.float32)[None, None, :, None, None]) *
+            (self.pixels_per_cell[1] / self.image_shape[1])
+        )
+
+        # Transform to the co-ordinate system expected by AffineGridWarper
+        yt = 2 * noisy_y - 1
+        xt = 2 * noisy_x - 1
 
         # ------
 
@@ -532,39 +520,24 @@ class YoloRL_Updater(Updater):
 
         hw_noise = tf.random_normal(tf.shape(hw), name="hw_noise")
 
-        noisy_hw = hw + hw_noise * hw_std * self.float_is_training
+        noisy_hw = hw + hw_noise * box_std * self.float_is_training
 
         normalized_anchor_boxes = self.anchor_boxes / [image_height, image_width]
         normalized_anchor_boxes = normalized_anchor_boxes.reshape(1, 1, 1, B, 2)
 
         noisy_hw = noisy_hw * normalized_anchor_boxes
-
-        # ------
-
-        noisy_cell_y, noisy_cell_x = tf.split(noisy_cell_yx, 2, axis=-1)
         noisy_h, noisy_w = tf.split(noisy_hw, 2, axis=-1)
 
+        # Transform to the co-ordinate system expected by AffineGridWarper
         ys = noisy_h
         xs = noisy_w
 
-        noisy_y = (
-            (noisy_cell_y + tf.range(H, dtype=tf.float32)[None, :, None, None, None]) *
-            (self.pixels_per_cell[0] / self.image_shape[0])
-        )
-        noisy_x = (
-            (noisy_cell_x + tf.range(W, dtype=tf.float32)[None, None, :, None, None]) *
-            (self.pixels_per_cell[1] / self.image_shape[1])
-        )
-
-        yt = 2 * noisy_y - 1
-        xt = 2 * noisy_x - 1
+        # ------
 
         self.area = (ys * float(self.image_height)) * (xs * float(self.image_width))
 
         self.cell_y, self.cell_x = tf.split(cell_yx, 2, axis=-1)
         self.h, self.w = tf.split(hw, 2, axis=-1)
-        self.cell_yx_dist = dict(mean=cell_yx, std=cell_yx_std)
-        self.hw_dist = dict(mean=hw, std=hw_std)
 
         self.samples.update(cell_yx=cell_yx_noise, hw=hw_noise)
 
@@ -573,7 +546,6 @@ class YoloRL_Updater(Updater):
 
     def _build_obj(self, obj_logits, is_training):
         obj_logits = tf.clip_by_value(obj_logits, -10., 10.)
-        self.obj_logits = obj_logits
 
         obj_params = tf.nn.sigmoid(obj_logits)
         obj_exploration = build_scheduled_value(self.obj_exploration, "obj_exploration") * self.float_is_training
@@ -594,26 +566,21 @@ class YoloRL_Updater(Updater):
         if "obj" in self.fix_values:
             obj_representation = float(self.fix_values["obj"]) * tf.ones_like(obj_representation, dtype=tf.float32)
 
+        self.obj_logits = obj_logits
         self.samples["obj"] = obj_samples
         self.entropy["obj"] = obj_entropy
         self.log_probs["obj"] = obj_log_probs
 
         return obj_representation
 
-    def _build_attr(self, attr_params, is_training):
-        if self.predict_attr_std:
-            attr, attr_std_logits = tf.split(attr_params, 2, axis=-1)
-            attr_std = tf.exp(attr_std_logits)
-        else:
-            attr = attr_params
-            _attr_std = build_scheduled_value(self.attr_std)
-            attr_std = _attr_std * tf.ones_like(attr)
+    def _build_attr(self, attr_mean, is_training):
+        attr_std = build_scheduled_value(self.attr_std, name="attr_std")
+        attr_noise = tf.random_normal(tf.shape(attr_mean), name="attr_noise")
 
-        attr_noise = tf.random_normal(tf.shape(attr_std), name="attr_noise")
-        noisy_attr = attr + attr_noise * attr_std * self.float_is_training
+        noisy_attr = attr_mean + attr_noise * attr_std * self.float_is_training
 
-        self.attr_dist = dict(mean=attr, std=attr_std)
         self.samples["attr"] = attr_noise
+        self.attr = noisy_attr
 
         return noisy_attr
 
@@ -871,22 +838,6 @@ class YoloRL_Updater(Updater):
             area_loss=area_loss
         )
 
-        # --- kl ---
-        cell_yx_kl = tf_normal_kl(
-            self.cell_yx_dist['mean'], self.cell_yx_dist['std'],
-            cfg.cell_yx_target_mean, cfg.cell_yx_target_std)
-        recorded_tensors['cell_yx_kl'] = tf_mean_sum(cell_yx_kl)
-
-        hw_kl = tf_normal_kl(
-            self.hw_dist['mean'], self.hw_dist['std'],
-            cfg.hw_target_mean, cfg.hw_target_std)
-        recorded_tensors['hw_kl'] = tf_mean_sum(hw_kl)
-
-        attr_kl = tf_normal_kl(
-            self.attr_dist['mean'], self.attr_dist['std'],
-            cfg.attr_target_mean, cfg.attr_target_std)
-        recorded_tensors['attr_kl'] = tf_mean_sum(attr_kl)
-
         # --- entropy ---
 
         recorded_tensors['obj_entropy'] = tf_mean_sum(self.entropy['obj'])
@@ -898,21 +849,15 @@ class YoloRL_Updater(Updater):
             for name in ['xent_loss', 'squared_loss', '1norm_loss']
         })
 
-        recorded_tensors['attr'] = tf.reduce_mean(self.attr_dist['mean'])
-        recorded_tensors['attr_std'] = tf.reduce_mean(self.attr_dist['std'])
+        recorded_tensors['attr'] = tf.reduce_mean(self.attr)
 
         recorded_tensors['cell_y'] = tf.reduce_mean(self.cell_y)
         recorded_tensors['cell_x'] = tf.reduce_mean(self.cell_x)
 
-        recorded_tensors['cell_yx_std'] = tf.reduce_mean(self.cell_yx_dist['std'])
-
         recorded_tensors['h'] = tf.reduce_mean(self.h)
         recorded_tensors['w'] = tf.reduce_mean(self.w)
 
-        recorded_tensors['hw_std'] = tf.reduce_mean(self.hw_dist['std'])
-
         recorded_tensors['obj_logits'] = tf.reduce_mean(self.obj_logits)
-
         recorded_tensors['obj'] = tf.reduce_mean(self.program_fields['obj'])
 
         recorded_tensors['reconstruction_loss'] = mean_reconstruction_loss
@@ -926,17 +871,6 @@ class YoloRL_Updater(Updater):
         if self.obj_sparsity:
             recorded_tensors['obj_sparsity_loss'] = tf_mean_sum(self.program_fields['obj'])
             recorded_tensors['diff_loss'] += self.obj_sparsity * recorded_tensors['obj_sparsity_loss']
-
-        if self.minimize_kl:
-            if "obj" not in self.fix_values:
-                recorded_tensors['diff_loss'] -= recorded_tensors['obj_entropy']
-
-            if "cell_y" not in self.fix_values and "cell_x" not in self.fix_values:
-                recorded_tensors['diff_loss'] += recorded_tensors['cell_yx_kl']
-            if "h" not in self.fix_values and "w" not in self.fix_values:
-                recorded_tensors['diff_loss'] += recorded_tensors['hw_kl']
-
-            recorded_tensors['diff_loss'] += recorded_tensors['attr_kl']
 
         if isinstance(self.object_decoder, VQ_ObjectDecoder):
             recorded_tensors['decoder_commitment_error'] = self.decoder_commitment_error
@@ -972,19 +906,6 @@ class YoloRL_Updater(Updater):
 
         if self.area_weight > 0.0:
             _rl_recorded_tensors['surrogate_loss'] += self.area_weight * mean_area_loss
-
-        if self.minimize_kl:
-            _rl_recorded_tensors['surrogate_loss'] -= recorded_tensors['obj_entropy']
-
-            if "obj" not in self.fix_values:
-                _rl_recorded_tensors['surrogate_loss'] -= recorded_tensors['obj_entropy']
-
-            if "cell_y" not in self.fix_values and "cell_x" not in self.fix_values:
-                _rl_recorded_tensors['surrogate_loss'] += recorded_tensors['cell_yx_kl']
-            if "h" not in self.fix_values and "w" not in self.fix_values:
-                _rl_recorded_tensors['surrogate_loss'] += recorded_tensors['hw_kl']
-
-            _rl_recorded_tensors['surrogate_loss'] += recorded_tensors['attr_kl']
 
         if isinstance(self.object_decoder, VQ_ObjectDecoder):
             _rl_recorded_tensors['surrogate_loss'] += recorded_tensors['decoder_embedding_error']
@@ -1051,6 +972,7 @@ class YoloRL_RenderHook(object):
         to_fetch["output"] = updater.output
         to_fetch["object_decoder_images"] = updater.object_decoder_images
         to_fetch["object_decoder_alpha"] = updater.object_decoder_alpha
+        to_fetch["background"] = updater.background
 
         sess = tf.get_default_session()
         fetched = sess.run(to_fetch, feed_dict=feed_dict)
@@ -1256,14 +1178,6 @@ config = Config(
     # VAE
     box_std=0.1,
     attr_std=0.0,
-    minimize_kl=False,
-
-    cell_yx_target_mean=0.5,
-    cell_yx_target_std=1.0,
-    hw_target_mean=0.5,
-    hw_target_std=1.0,
-    attr_target_mean=0.0,
-    attr_target_std=1.0,
 
     obj_exploration=0.05,
     obj_default=0.5,
@@ -1329,7 +1243,6 @@ good_config = config.copy(
 
     box_std=0.1,
     attr_std=0.0,
-    minimize_kl=False,
 
     n_val=16,
     render_step=5000,
@@ -1338,6 +1251,35 @@ good_config = config.copy(
 
     **rl_mode,
 )
+
+
+uniform_size_config = good_config.copy(
+    max_hw=1.5,
+    min_hw=0.5,
+    sub_image_size_std=0.0,
+)
+
+
+uniform_size_reset_config = uniform_size_config.copy(
+    box_std=0.0,
+    curriculum=[
+        dict(obj_exploration=0.2,
+             load_path="/media/data/dps_data/logs/yolo_rl/exp_yolo_rl_seed=347405995_2018_04_05_09_50_56/weights/best_of_stage_1",),
+        dict(obj_exploration=0.1),
+        dict(obj_exploration=0.05),
+    ]
+)
+
+small_test_config = good_config.copy(
+    kernel_size=(1, 3),
+    min_chars=1,
+    max_chars=2,
+    object_shape=(14, 14),
+    anchor_boxes=[[7, 7]],
+    image_shape=(14, 28),
+    max_overlap=200,
+)
+
 
 with_background_config = good_config.copy(
     backgrounds="red_x blue_x green_x red_circle blue_circle green_circle",
@@ -1368,12 +1310,6 @@ with_background_config = good_config.copy(
     sub_image_size_std=0.0,
 )
 
-uniform_size_config = good_config.copy(
-    max_hw=1.5,
-    min_hw=0.5,
-    sub_image_size_std=0.0,
-)
-
 vq_config = good_config.copy(
     # VQ object decoder params
     build_object_decoder=VQ_ObjectDecoder,
@@ -1381,37 +1317,4 @@ vq_config = good_config.copy(
     vq_input_shape=(2, 2, 25),
     K=5,
     common_embedding=False,
-)
-
-experimental_config = good_config.copy(
-    curriculum=[
-        dict(area_weight=0.00),
-    ],
-    fix_values=dict(obj=1),
-    hooks=[
-        PolynomialScheduleHook(
-            attr_name="area_weight", query_name="best_COST_reconstruction", initial_value=0.01, scale=0.01
-        )
-    ],
-    patience=2500,
-)
-
-experimental2_config = good_config.copy(
-    area_weight=1.16,
-    curriculum=[
-        dict(nonzero_weight=0.0, do_train=False, fix_values=dict(obj=1)),
-    ],
-    load_path="/home/eric/Dropbox/experiment_data/active/nips2018/long_first_stage/weights/best_of_stage_114",
-    hooks=[
-        PolynomialScheduleHook(
-            attr_name="nonzero_weight", query_name="best_COST_reconstruction",
-            initial_value=10., scale=10., tolerance=2.0,
-            base_configs=[
-                dict(obj_exploration=0.2),
-                dict(obj_exploration=0.1),
-                dict(obj_exploration=0.05),
-            ]
-        )
-    ],
-    patience=2500,
 )
