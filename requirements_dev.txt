@@ -4,6 +4,7 @@ future==0.16.0
 gym==0.9.5
 -e git+https://github.com/e2crawfo/gym-recording.git@master#egg=gym_recording
 iso8601==0.1.12
+kmodes==0.8
 matplotlib==2.1.0
 numpy==1.13.3
 pandas==0.21.0
@@ -12,6 +13,7 @@ psutil==5.4.1
 pyskiplist==1.0.0
 pytest==3.3.0
 pytest-env==0.6.2
-scikit-image
+scikit-image==0.13.1
+scikit-learn==0.19.1
 scipy==1.0.0
 tabulate==0.8.2
