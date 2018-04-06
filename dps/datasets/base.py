@@ -323,8 +323,9 @@ class PatchesDataset(ImageDataset):
         for j in range(n_examples):
             sub_images, y = self._sample_patches()
             sub_image_shapes = [img.shape for img in sub_images]
-            rects = self._sample_patch_locations(sub_image_shapes, self.max_overlap, self.sub_image_size_std)
-            y = self._post_process_label(y, rects)
+            rects = self._sample_patch_locations(
+                sub_image_shapes, max_overlap=self.max_overlap, size_std=self.sub_image_size_std)
+            y = self._post_process_labels(sub_images, rects, y)
 
             patch_centres.append([r.centre() for r in rects])
 
@@ -478,9 +479,9 @@ class PatchesDataset(ImageDataset):
 
         return distractor_images
 
-    def _post_process_label(self, label, rects):
+    def _post_process_labels(self, sub_images, rects, labels):
         """ To be used in cases where the labels depend on the locations. """
-        return label
+        return labels
 
     def _post_process(self, new_X, new_Y):
         new_X = np.array(new_X, dtype=np.uint8)
@@ -932,9 +933,35 @@ class EMNIST_ObjectDetection(PatchesDataset):
 
         return result
 
-    def _post_process_label(self, label, rects):
+    def _post_process_labels(self, sub_images, rects, labels):
         """ To be used in cases where the labels depend on the locations. """
-        return [[l, r.top, r.bottom, r.left, r.right] for l, r in zip(label, rects)]
+        new_labels = []
+        for img, r, l in zip(sub_images, rects, labels):
+            nz_y, nz_x = np.nonzero(img.sum(axis=2))
+
+            # In draw co-ordinates
+            top = (nz_y.min() / img.shape[0]) * r.h + r.top
+            bottom = (nz_y.max() / img.shape[0]) * r.h + r.top
+            left = (nz_x.min() / img.shape[1]) * r.w + r.left
+            right = (nz_x.max() / img.shape[1]) * r.w + r.left
+
+            # Transform to image co-ordinates
+            top = top + self.draw_offset[0]
+            bottom = bottom + self.draw_offset[0]
+            left = left + self.draw_offset[1]
+            right = right + self.draw_offset[1]
+
+            top = np.clip(top, 0, self.image_shape[0])
+            bottom = np.clip(bottom, 0, self.image_shape[0])
+            left = np.clip(left, 0, self.image_shape[1])
+            right = np.clip(right, 0, self.image_shape[1])
+
+            invalid = (bottom - top < 1e-6) or (right - left < 1e-6)
+
+            if not invalid:
+                new_labels.append((l, top, bottom, left, right))
+
+        return new_labels
 
     def _post_process(self, new_X, new_Y):
         new_X = np.array(new_X, dtype=np.uint8)

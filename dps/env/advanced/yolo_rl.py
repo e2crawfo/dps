@@ -977,6 +977,9 @@ class YoloRL_RenderHook(object):
         sess = tf.get_default_session()
         fetched = sess.run(to_fetch, feed_dict=feed_dict)
         fetched.update(images=images)
+
+        fetched["annotations"] = updater.annotations
+
         return fetched
 
     def _plot_reconstruction(self, updater, fetched, sampled):
@@ -989,6 +992,10 @@ class YoloRL_RenderHook(object):
         _, image_height, image_width, _ = images.shape
 
         obj = fetched['obj'].reshape(N, -1)
+
+        annotations = fetched["annotations"]
+        if annotations is None:
+            annotations = [[]] * N
 
         xs, xt, ys, yt = np.split(fetched['box'].reshape(-1, 4), 4, axis=-1)
 
@@ -1019,6 +1026,7 @@ class YoloRL_RenderHook(object):
             ax2.imshow(gt)
             ax2.set_title('actual')
 
+            # Plot proposed bounding boxes
             for o, b in zip(obj[n], box[n]):
                 t, l, h, w = b
 
@@ -1027,6 +1035,20 @@ class YoloRL_RenderHook(object):
                 ax1.add_patch(rect)
                 rect = patches.Rectangle(
                     (l, t), w, h, linewidth=1, edgecolor="xkcd:azure", facecolor='none', alpha=o)
+                ax2.add_patch(rect)
+
+            # Plot true bounding boxes
+            for a in annotations[n]:
+                _, top, bottom, left, right = a
+                h = bottom - top
+                w = right - left
+
+                rect = patches.Rectangle(
+                    (left, top), w, h, linewidth=1, edgecolor="xkcd:yellow", facecolor='none')
+                ax1.add_patch(rect)
+
+                rect = patches.Rectangle(
+                    (left, top), w, h, linewidth=1, edgecolor="xkcd:yellow", facecolor='none')
                 ax2.add_patch(rect)
 
             ax3 = axes[3*i+2, j]
