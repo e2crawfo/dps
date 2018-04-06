@@ -1270,14 +1270,14 @@ uniform_size_reset_config = uniform_size_config.copy(
     ]
 )
 
-small_test_config = good_config.copy(
-    kernel_size=(1, 3),
+small_test_config = uniform_size_config.copy(
+    kernel_size=(3, 3),
     min_chars=1,
-    max_chars=2,
+    max_chars=3,
     object_shape=(14, 14),
     anchor_boxes=[[7, 7]],
-    image_shape=(14, 28),
-    max_overlap=200,
+    image_shape=(28, 28),
+    max_overlap=100,
 )
 
 

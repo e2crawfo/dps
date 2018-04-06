@@ -444,7 +444,7 @@ class PatchesDataset(ImageDataset):
             for rect in rects:
                 area[rect.top:rect.bottom, rect.left:rect.right] += 1
 
-            if max_overlap is None or (area >= 2).sum() < max_overlap:
+            if max_overlap is None or (area[area >= 2]-1).sum() < max_overlap:
                 break
 
             i += 1
