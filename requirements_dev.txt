@@ -13,6 +13,7 @@ psutil==5.4.1
 pyskiplist==1.0.0
 pytest==3.3.0
 pytest-env==0.6.2
+python-dateutil==2.6.1  # To satisfy botocore
 scikit-image==0.13.1
 scikit-learn==0.19.1
 scipy==1.0.0

@@ -5,6 +5,10 @@ pip install -r requirements_dev.txt
 pip install tensorflow==1.4
 pip install dm-sonnet==1.16
 pip install -e .
+
+pip install pipdeptree
+pipdeptree
+
 mkdir data
 
 echo "\nDownloading and processing emnist data..."
