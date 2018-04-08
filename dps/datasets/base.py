@@ -323,9 +323,16 @@ class PatchesDataset(ImageDataset):
         for j in range(n_examples):
             sub_images, y = self._sample_patches()
             sub_image_shapes = [img.shape for img in sub_images]
+
+            if self.draw_offset == "random":
+                shape = sub_image_shapes[0]
+                draw_offset = (-np.random.randint(shape[0]), -np.random.randint(shape[1]))
+            else:
+                draw_offset = self.draw_offset
+
             rects = self._sample_patch_locations(
                 sub_image_shapes, max_overlap=self.max_overlap, size_std=self.sub_image_size_std)
-            y = self._post_process_labels(sub_images, rects, y)
+            y = self._post_process_labels(draw_offset, sub_images, rects, y)
 
             patch_centres.append([r.centre() for r in rects])
 
@@ -379,23 +386,23 @@ class PatchesDataset(ImageDataset):
                         patch = x[rect.top:rect.bottom, rect.left:rect.right, ...]
                         x[rect.top:rect.bottom, rect.left:rect.right, ...] = np.maximum(image, patch)
 
-            # Possible sub-sample entire image
-            if self.draw_shape != self.image_shape or self.draw_offset != (0, 0):
+            # Possibly sub-sample entire image
+            if self.draw_shape != self.image_shape or draw_offset != (0, 0):
                 image_shape = self.image_shape
                 if self.depth is not None:
                     image_shape = image_shape + (self.depth,)
 
-                draw_top = np.maximum(-self.draw_offset[0], 0)
-                draw_left = np.maximum(-self.draw_offset[1], 0)
+                draw_top = np.maximum(-draw_offset[0], 0)
+                draw_left = np.maximum(-draw_offset[1], 0)
 
-                draw_bottom = np.minimum(-self.draw_offset[0] + self.image_shape[0], self.draw_shape[0])
-                draw_right = np.minimum(-self.draw_offset[1] + self.image_shape[1], self.draw_shape[1])
+                draw_bottom = np.minimum(-draw_offset[0] + self.image_shape[0], self.draw_shape[0])
+                draw_right = np.minimum(-draw_offset[1] + self.image_shape[1], self.draw_shape[1])
 
-                image_top = np.maximum(self.draw_offset[0], 0)
-                image_left = np.maximum(self.draw_offset[1], 0)
+                image_top = np.maximum(draw_offset[0], 0)
+                image_left = np.maximum(draw_offset[1], 0)
 
-                image_bottom = np.minimum(self.draw_offset[0] + self.draw_shape[0], self.image_shape[0])
-                image_right = np.minimum(self.draw_offset[1] + self.draw_shape[1], self.image_shape[1])
+                image_bottom = np.minimum(draw_offset[0] + self.draw_shape[0], self.image_shape[0])
+                image_right = np.minimum(draw_offset[1] + self.draw_shape[1], self.image_shape[1])
 
                 _x = np.zeros(image_shape, 'uint8')
                 _x[image_top:image_bottom, image_left:image_right, ...] = x[draw_top:draw_bottom, draw_left:draw_right, ...]
@@ -479,7 +486,7 @@ class PatchesDataset(ImageDataset):
 
         return distractor_images
 
-    def _post_process_labels(self, sub_images, rects, labels):
+    def _post_process_labels(self, draw_offset, sub_images, rects, labels):
         """ To be used in cases where the labels depend on the locations. """
         return labels
 
@@ -933,7 +940,7 @@ class EMNIST_ObjectDetection(PatchesDataset):
 
         return result
 
-    def _post_process_labels(self, sub_images, rects, labels):
+    def _post_process_labels(self, draw_offset, sub_images, rects, labels):
         """ To be used in cases where the labels depend on the locations. """
         new_labels = []
         for img, r, l in zip(sub_images, rects, labels):
@@ -946,10 +953,10 @@ class EMNIST_ObjectDetection(PatchesDataset):
             right = (nz_x.max() / img.shape[1]) * r.w + r.left
 
             # Transform to image co-ordinates
-            top = top + self.draw_offset[0]
-            bottom = bottom + self.draw_offset[0]
-            left = left + self.draw_offset[1]
-            right = right + self.draw_offset[1]
+            top = top + draw_offset[0]
+            bottom = bottom + draw_offset[0]
+            left = left + draw_offset[1]
+            right = right + draw_offset[1]
 
             top = np.clip(top, 0, self.image_shape[0])
             bottom = np.clip(bottom, 0, self.image_shape[0])
@@ -992,12 +999,35 @@ class EMNIST_ObjectDetection(PatchesDataset):
         for i, ax in enumerate(subplots.flatten()):
             ax.imshow(self.x[i, ...])
             for cls, top, bottom, left, right in self.y[i]:
-                width = bottom - top
-                height = right - left
+                width = right - left
+                height = bottom - top
                 rect = patches.Rectangle(
-                    (left, top), width, height, linewidth=1, edgecolor='r', facecolor='none')
+                    (left, top), width, height, linewidth=1, edgecolor='white', facecolor='none')
                 ax.add_patch(rect)
         plt.show()
+
+
+class GridEMNIST_ObjectDetection(EMNIST_ObjectDetection):
+    draw_shape_grid = Param((2, 2))
+    spacing = Param((0, 0))
+
+    def _make(self):
+        self.draw_shape = tuple(gs*s + (gs-1) * space for gs, s, space in zip(self.draw_shape_grid, self.sub_image_shape, self.spacing))
+        if self.image_shape is None:
+            self.image_shape = self.draw_shape
+        self.grid_size = np.product(self.draw_shape_grid)
+
+        return super(GridEMNIST_ObjectDetection, self)._make()
+
+    def _sample_patch_locations(self, sub_image_shapes, **kwargs):
+        """ Sample random locations within draw_shape. """
+        n_images = len(sub_image_shapes)
+        indices = np.random.choice(self.grid_size, n_images, replace=False)
+
+        grid_locs = np.array(list(zip(*np.unravel_index(indices, self.draw_shape_grid))))
+        top_left = grid_locs * self.sub_image_shape + np.maximum(0, grid_locs) * self.spacing
+
+        return [Rect(t, l, m, n) for (t, l), (m, n, _) in zip(top_left, sub_image_shapes)]
 
 
 if __name__ == "__main__":
@@ -1007,5 +1037,11 @@ if __name__ == "__main__":
 
     # dset = OmniglotCountingDataset(classes=classes, n_examples=10, sub_image_shape=(28, 28))
     # dset = SalienceDataset(min_digits=1, max_digits=4, sub_image_n_exmaples=100, n_examples=10)
-    dset = EMNIST_ObjectDetection(min_chars=1, max_chars=10, n_sub_image_examples=100, n_examples=10)
+    # dset = EMNIST_ObjectDetection(min_chars=1, max_chars=10, n_sub_image_examples=100, n_examples=10)
+    # dset.visualize()
+
+    dset = GridEMNIST_ObjectDetection(
+        min_chars=25, max_chars=25, n_sub_image_examples=100, n_examples=10,
+        draw_shape_grid=(5, 5), image_shape=(5*14, 5*14), draw_offset="random", spacing=(0, 0),
+        characters=list(range(10)), colours="white")
     dset.visualize()
