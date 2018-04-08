@@ -3,7 +3,7 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
 from tensorflow.contrib import distributions as dist
-from tensorflow.contrib.rnn import RNNCell
+from tensorflow.contrib.rnn import RNNCell as _RNNCell
 import numpy as np
 from matplotlib.colors import hsv_to_rgb
 import matplotlib.pyplot as plt
@@ -26,14 +26,6 @@ class Env(object):
 
     def close(self):
         pass
-
-
-def build_env():
-    return Env()
-
-
-def get_updater(env):
-    return NeuralEM_Updater(env)
 
 
 # -------------------------------- utils.py ------------------------------------------------
@@ -63,7 +55,7 @@ def get_gamma_colors(nr_colors):
 
 
 def overview_plot(i, gammas, preds, inputs, corrupted=None, **kwargs):
-    T, B, K, W, H, C = gammas.shape
+    T, B, K, H, W, C = gammas.shape
     T -= 1  # the initialization doesn't count as iteration
     corrupted = corrupted if corrupted is not None else inputs
     gamma_colors = get_gamma_colors(K)
@@ -131,6 +123,20 @@ def overview_plot(i, gammas, preds, inputs, corrupted=None, **kwargs):
 
 # -------------------------------- network.py ------------------------------------------------
 
+class RNNCell(_RNNCell):
+    def __call__(self, inputs, state, scope=None):
+        output, state = self._call(inputs, state, scope)
+        name = getattr(self, "_name", "<None>")
+
+        if isinstance(output, tf.Tensor):
+            print("Predicted output size after {} with name {}: {}".format(self.__class__.__name__, name, output.shape))
+
+        if isinstance(state, tf.Tensor):
+            print("Predicted state size after {} with name {}: {}".format(self.__class__.__name__, name, state.shape))
+
+        return output, state
+
+
 class InputWrapper(RNNCell):
     """Adding an input projection to the given cell."""
 
@@ -147,7 +153,7 @@ class InputWrapper(RNNCell):
     def output_size(self):
         return self._cell.output_size
 
-    def __call__(self, inputs, state, scope=None):
+    def _call(self, inputs, state, scope=None):
         projected = None
         with tf.variable_scope(scope or self._name):
             if self._spec['name'] == 'fc':
@@ -175,7 +181,7 @@ class OutputWrapper(RNNCell):
     def output_size(self):
         return self._spec['size']
 
-    def __call__(self, inputs, state, scope=None):
+    def _call(self, inputs, state, scope=None):
         output, res_state = self._cell(inputs, state)
 
         projected = None
@@ -208,7 +214,7 @@ class ReshapeWrapper(RNNCell):
     def output_size(self):
         return self._cell.output_size
 
-    def __call__(self, inputs, state, scope=None):
+    def _call(self, inputs, state, scope=None):
         batch_size = tf.shape(inputs)[0]
 
         if self._apply_to == 'input':
@@ -240,7 +246,7 @@ class ActivationFunctionWrapper(RNNCell):
     def output_size(self):
         return self._cell.output_size
 
-    def __call__(self, inputs, state, scope=None):
+    def _call(self, inputs, state, scope=None):
         if self._apply_to == 'input':
             inputs = self._activation(inputs)
             return self._cell(inputs, state)
@@ -270,7 +276,7 @@ class LayerNormWrapper(RNNCell):
     def output_size(self):
         return self._cell.output_size
 
-    def __call__(self, inputs, state, scope=None):
+    def _call(self, inputs, state, scope=None):
         if self._apply_to == 'input':
             with tf.variable_scope(scope or self._name):
                 inputs = slim.layer_norm(inputs)
@@ -302,7 +308,7 @@ class InputNormalizationWrapper(RNNCell):
     def output_size(self):
         return self._cell.output_size
 
-    def __call__(self, inputs, state, scope=None):
+    def _call(self, inputs, state, scope=None):
         with tf.variable_scope(scope or self._name):
             mean, var = tf.nn.moments(inputs, axes=[1])
             inputs = (inputs - tf.expand_dims(mean, axis=1)) / tf.sqrt(tf.expand_dims(var, axis=1))
@@ -325,7 +331,7 @@ class _NEMCell(RNNCell):
     def output_size(self):
         return self._num_units
 
-    def __call__(self, inputs, state, scope=None):
+    def _call(self, inputs, state, scope=None):
         with tf.variable_scope(scope or self._name):
             with tf.variable_scope(scope or "lr"):
                 lr = tf.get_variable("scalar", shape=(1, 1), dtype=tf.float32)
@@ -352,7 +358,7 @@ class NEMOutputWrapper(RNNCell):
     def output_size(self):
         return self._size
 
-    def __call__(self, inputs, state, scope=None):
+    def _call(self, inputs, state, scope=None):
         output, res_state = self._cell(inputs, state)
 
         with tf.variable_scope("multi_rnn_cell/cell_0/_NEMCell/input", reuse=True):
@@ -369,6 +375,8 @@ class NEMOutputWrapper(RNNCell):
 def build_network(out_size, output_dist, input, recurrent, output, use_NEM_formulation=False):
     with tf.name_scope('inner_RNN'):
         # use proper mathematical formulation
+
+        print("**** Handling NEM formulation *****")
         if use_NEM_formulation:
             cell = _NEMCell(recurrent[0]['size'])
             cell = tf.contrib.rnn.MultiRNNCell([cell])
@@ -377,6 +385,8 @@ def build_network(out_size, output_dist, input, recurrent, output, use_NEM_formu
             cell = ActivationFunctionWrapper(cell, output[0]['act'])
 
             return cell
+
+        print("**** Handling recurrent *****")
 
         # build recurrent
         cell_list = []
@@ -396,6 +406,8 @@ def build_network(out_size, output_dist, input, recurrent, output, use_NEM_formu
 
         cell = tf.contrib.rnn.MultiRNNCell(cell_list)
 
+        print("**** Handling input *****")
+
         # build input
         for i, layer in reversed(list(enumerate(input))):
             print(sorted([(k, v) for k, v in layer.items()]))
@@ -407,6 +419,8 @@ def build_network(out_size, output_dist, input, recurrent, output, use_NEM_formu
                 cell = ActivationFunctionWrapper(cell, layer['act'], apply_to='input')
                 cell = LayerNormWrapper(cell, apply_to='input', name='LayerNormI{}'.format(i)) if layer['ln'] else cell
                 cell = InputWrapper(cell, layer, name="InputWrapper{}".format(i))
+
+        print("**** Handling output *****")
 
         # build output
         for i, layer in enumerate(output):
@@ -507,12 +521,12 @@ class NEMCell(RNNCell):
         with tf.name_scope('inner_RNN_init'):
             h = self.cell.zero_state(batch_size * K, dtype)
 
-        # initial prediction (B, K, W, H, C)
+        # initial prediction (B, K, H, W, C)
         with tf.name_scope('pred_init'):
             pred_shape = tf.stack([batch_size, K] + self._input_shape.as_list())
             pred = tf.ones(shape=pred_shape, dtype=dtype) * self.pred_init
 
-        # initial gamma (B, K, W, H, 1)
+        # initial gamma (B, K, H, W, 1)
         with tf.name_scope('gamma_init'):
             gamma_shape = self.gamma_shape.as_list()
             shape = tf.stack([batch_size, K] + gamma_shape)
@@ -531,11 +545,11 @@ class NEMCell(RNNCell):
     def delta_predictions(predictions, data):
         """Compute the derivative of the prediction wrt. to the loss.
         For binary and real with just μ this reduces to (predictions - data).
-        :param predictions: (B, K, W, H, C)
+        :param predictions: (B, K, H, W, C)
            Note: This is a list to later support getting both μ and σ.
-        :param data: (B, 1, W, H, C)
+        :param data: (B, 1, H, W, C)
 
-        :return: deltas (B, K, W, H, C)
+        :return: deltas (B, K, H, W, C)
         """
         with tf.name_scope('delta_predictions'):
             return data - predictions  # implicitly broadcasts over K
@@ -543,11 +557,11 @@ class NEMCell(RNNCell):
     @staticmethod
     def mask_rnn_inputs(rnn_inputs, gamma, gradient_gamma):
         """Mask the deltas (inputs to RNN) by gamma.
-        :param rnn_inputs: (B, K, W, H, C)
+        :param rnn_inputs: (B, K, H, W, C)
             Note: This is a list to later support multiple inputs
-        :param gamma: (B, K, W, H, 1)
+        :param gamma: (B, K, H, W, 1)
 
-        :return: masked deltas (B, K, W, H, C)
+        :return: masked deltas (B, K, H, W, C)
         """
         with tf.name_scope('mask_rnn_inputs'):
             if not gradient_gamma:
@@ -570,9 +584,9 @@ class NEMCell(RNNCell):
     def compute_em_probabilities(self, predictions, data, epsilon=1e-6):
         """Compute pixelwise probability of predictions (wrt. the data).
 
-        :param predictions: (B, K, W, H, C)
-        :param data: (B, 1, W, H, C)
-        :return: local loss (B, K, W, H, 1)
+        :param predictions: (B, K, H, W, C)
+        :param data: (B, 1, H, W, C)
+        :return: local loss (B, K, H, W, 1)
         """
 
         with tf.name_scope('em_loss_{}'.format(self.distribution)):
@@ -604,7 +618,7 @@ class NEMCell(RNNCell):
 
             return gamma
 
-    def __call__(self, inputs, state, scope=None):
+    def _call(self, inputs, state, scope=None):
         # unpack
         input_data, target_data = inputs
         h_old, preds_old, gamma_old = state
@@ -829,18 +843,18 @@ class NeuralEM_Updater(Updater):
         # Get dimensions
         input_shape = tf.shape(self.inp)
         assert input_shape.get_shape()[0].value == 6, (
-            "Requires 6D input (T, B, K, W, H, C) but {}".format(input_shape.get_shape()[0].value))
+            "Requires 6D input (T, B, K, H, W, C) but {}".format(input_shape.get_shape()[0].value))
 
         # T = time, B = batch size, K = number of components, the rest are image size...
 
-        W, H, C = (x.value for x in self.inp.get_shape()[-3:])
+        H, W, C = (x.value for x in self.inp.get_shape()[-3:])
 
         # set pixel distribution
         pixel_dist = 'bernoulli' if self.binary else 'gaussian'
 
         # set up inner cells and nem cells
         inner_cell = build_network(
-            W * H * C,
+            H * W * C,
             output_dist=pixel_dist,
             input=self.input_network,
             recurrent=self.recurrent_network,
@@ -848,7 +862,7 @@ class NeuralEM_Updater(Updater):
             use_NEM_formulation=self.use_NEM_formulation)
 
         nem_cell = NEMCell(
-            inner_cell, input_shape=(W, H, C), distribution=pixel_dist,
+            inner_cell, input_shape=(H, W, C), distribution=pixel_dist,
             pred_init=self.pred_init, e_sigma=self.e_sigma, gradient_gamma=self.gradient_gamma)
 
         # compute prior
@@ -890,19 +904,14 @@ class NeuralEM_Updater(Updater):
 
         thetas, preds, gammas = zip(*outputs)
         self.thetas = tf.stack(thetas)               # (T, 1, B*K, M)
-        self.preds = tf.stack(preds)                 # (T, B, K, W, H, C)
-        self.gammas = tf.stack(gammas)               # (T, B, K, W, H, C)
+        self.preds = tf.stack(preds)                 # (T, B, K, H, W, C)
+        self.gammas = tf.stack(gammas)               # (T, B, K, H, W, C)
 
         intra_losses = tf.stack(intra_losses)   # (T,)
         inter_losses = tf.stack(inter_losses)   # (T,)
         upper_bound_losses = tf.stack(upper_bound_losses)  # (T,)
 
         total_loss = tf.reduce_sum(tf.stack(total_losses))
-        # self.train_op = set_up_optimizer(
-        #     total_loss, self.optimizer,
-        #     dict(learning_rate=self.learning_rate),
-        #     self.clip_gradients
-        # )
 
         tvars = self.trainable_variables(for_opt=True)
         self.train_op, train_summary = build_gradient_train_op(
@@ -954,13 +963,14 @@ class NeuralEM_RenderHook(object):
         images = fetched['images']
         preds = fetched['preds']
         gammas = fetched['gammas']
+        hard_gammas = np.argmax(gammas, axis=2)
 
         N = images.shape[0]
 
         _, image_height, image_width, _ = images.shape
 
         for i in range(N):
-            fig, axes = plt.subplots(updater.k + 2, updater.n_steps+1, figsize=(20, 20))
+            fig, axes = plt.subplots(2*updater.k + 2, updater.n_steps+1, figsize=(20, 20))
 
             for t in range(updater.n_steps+1):
                 ax = axes[0, t]
@@ -982,7 +992,15 @@ class NeuralEM_RenderHook(object):
                     img = gammas[t, i, k, :, :, 0]
                     ax.imshow(img)
                     if t == 0:
-                        ax.set_title("component {}".format(k))
+                        ax.set_title("component {} - soft".format(k))
+                    ax.set_xlabel("t = {}".format(t))
+
+                for k in range(updater.k):
+                    ax = axes[updater.k + k + 2, t]
+                    img = hard_gammas[t, i, :, :, 0] == k
+                    ax.imshow(img)
+                    if t == 0:
+                        ax.set_title("component {} - hard".format(k))
                     ax.set_xlabel("t = {}".format(t))
 
             fig.suptitle('Stage={}. After {} experiences ({} updates, {} experiences per batch).'.format(
@@ -995,18 +1013,22 @@ class NeuralEM_RenderHook(object):
 
 config = Config(
     log_name="nem",
-    build_env=build_env,
-    get_updater=get_updater,
+    get_updater=NeuralEM_Updater,
+    build_env=Env,
+
+    # env
     min_chars=1,
-    max_chars=1,
+    max_chars=2,
     characters=[0, 1, 2],
     n_sub_image_examples=0,
     image_shape=(24, 24),
     sub_image_shape=(14, 14),
-    xent_loss=True,
+    max_overlap=200,
 
     optimizer_spec="adam",
     lr_schedule=0.001,
+    max_grad_norm=None,
+
     n_train=1e5,
     n_val=1e2,
     n_test=1e2,
@@ -1015,7 +1037,6 @@ config = Config(
 
     eval_step=100,
     display_step=1000,
-    max_grad_norm=None,
     batch_size=64,
     max_steps=1e7,
 
@@ -1092,4 +1113,9 @@ config = Config(
         {'name': 'r_conv', 'size': 3, 'act': 'sigmoid', 'stride': [2, 2], 'kernel': (4, 4), 'ln': False},
         {'name': 'reshape', 'shape': -1}
     ]
+)
+
+reset_config = config.copy(
+    load_path="/media/data/dps_data/logs/nem/exp_nem_seed=23499123_2018_04_06_15_11_20/weights/best_of_stage_0",
+    do_train=False
 )
