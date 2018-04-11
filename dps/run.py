@@ -8,6 +8,7 @@ from dps.utils import pdb_postmortem
 from dps.rl import algorithms as alg_pkg
 import dps.env.advanced as env_pkg_advanced
 import dps.env.basic as env_pkg_basic
+import dps.env.nips_2018 as env_pkg_nips_2018
 
 
 def get_module_specs(*packages):
@@ -30,7 +31,7 @@ def get_module_from_spec(spec):
 
 
 def parse_env_alg(env, alg=None):
-    env_module_specs = get_module_specs(env_pkg_advanced, env_pkg_basic)
+    env_module_specs = get_module_specs(env_pkg_advanced, env_pkg_basic)  # , env_pkg_nips_2018)
 
     if "." in env:
         env_file, env_suffix = env.split('.')

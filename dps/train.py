@@ -368,7 +368,7 @@ class TrainingLoop(object):
                       "from file {}...".format(best_path))
                 updater.restore(sess, best_path)
 
-                eval_results = updater.evaluate(cfg.n_val)
+                eval_results = updater.evaluate(cfg.batch_size)
 
                 print("\n" + "-" * 10 + " Final evaluation " + "-" * 10)
                 for mode, (record, _) in eval_results.items():
@@ -536,7 +536,7 @@ class TrainingLoop(object):
             # --------------- Possibly evaluate -------------------
 
             if evaluate or display:
-                eval_results = updater.evaluate(cfg.n_val)
+                eval_results = updater.evaluate(cfg.batch_size)
 
                 self.data.store_step_data_and_summaries(
                     stage_idx, local_step, global_step,

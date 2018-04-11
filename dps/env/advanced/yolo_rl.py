@@ -398,36 +398,44 @@ class YoloRL_Updater(Updater):
     def _evaluate(self, batch_size, mode):
         assert mode in self.eval_modes
 
-        feed_dict = self.make_feed_dict(None, 'val', True)
-
         sess = tf.get_default_session()
+        feed_dicts = self.make_feed_dict(batch_size, 'val', True, whole_epoch=True)
 
-        record, summary = {}, b''
+        record = collections.defaultdict(float)
+        summary = b''
+        n_points = 0
 
-        if mode == "rl_val":
-            feed_dict[self.diff] = False
+        for _batch_size, feed_dict in feed_dicts:
+            if mode == "rl_val":
+                feed_dict[self.diff] = False
 
-            sample_feed_dict = self._sample(feed_dict)
-            feed_dict.update(sample_feed_dict)
+                sample_feed_dict = self._sample(feed_dict)
+                feed_dict.update(sample_feed_dict)
 
-            record, summary = sess.run(
-                [self.rl_recorded_tensors, self.rl_summary_op], feed_dict=feed_dict)
+                _record, summary = sess.run(
+                    [self.rl_recorded_tensors, self.rl_summary_op], feed_dict=feed_dict)
 
-        elif mode == "diff_val":
-            feed_dict[self.diff] = True
+            elif mode == "diff_val":
+                feed_dict[self.diff] = True
 
-            record, summary = sess.run(
-                [self.recorded_tensors, self.diff_summary_op], feed_dict=feed_dict)
+                _record, summary = sess.run(
+                    [self.recorded_tensors, self.diff_summary_op], feed_dict=feed_dict)
+
+            for k, v in _record.items():
+                record[k] += _batch_size * v
+
+            n_points += _batch_size
+
+        for k, v in record.items():
+            record[k] /= n_points
 
         return record, summary
 
-    def make_feed_dict(self, batch_size, mode, evaluate):
-        data = self.datasets[mode].next_batch(batch_size=batch_size, advance=not evaluate)
-
-        if len(data) == 1:
-            inp, self.annotations = data[0], None
-        elif len(data) == 2:
-            inp, self.annotations = data
+    def _make_feed_dict(self, batch, evaluate):
+        if len(batch) == 1:
+            inp, self.annotations = batch[0], None
+        elif len(batch) == 2:
+            inp, self.annotations = batch
         else:
             raise Exception()
 
@@ -441,16 +449,45 @@ class YoloRL_Updater(Updater):
             modes.append(mode)
         modes = np.array(modes) / 255
 
-        return {
-            self.inp: inp,
+        feed_dict = {
+            self.inp_ph: inp,
             self.inp_mode: modes,
             self.is_training: not evaluate
         }
+        return inp.shape[0], feed_dict
+
+    def make_feed_dict(self, batch_size, mode, evaluate, whole_epoch=False):
+        """
+        If `whole_epoch` is True, create multiple feed dicts, each containing at most
+        `batch_size` data points, until the epoch is completed. In this case return a list
+        whose elements are of the form `(batch_size, feed_dict)`.
+
+        """
+        dicts = []
+        dset = self.datasets[mode]
+
+        if whole_epoch:
+            dset.reset_epoch()
+
+        epochs_before = dset.epochs_completed
+
+        while True:
+            batch = dset.next_batch(batch_size=batch_size, advance=True, rollover=not whole_epoch)
+            actual_batch_size, feed_dict = self._make_feed_dict(batch, evaluate)
+
+            if whole_epoch:
+                dicts.append((actual_batch_size, feed_dict))
+
+                if dset.epochs_completed != epochs_before:
+                    break
+            else:
+                return feed_dict
+
+        return dicts
 
     def _build_placeholders(self):
-        inp = tf.placeholder(tf.float32, (None,) + self.obs_shape, name="inp_ph")
-        self.inp = tf.clip_by_value(inp, 1e-6, 1-1e-6, name="inp")
-
+        self.inp_ph = tf.placeholder(tf.float32, (None,) + self.obs_shape, name="inp_ph")
+        self.inp = tf.clip_by_value(self.inp_ph, 1e-6, 1-1e-6, name="inp")
         self.inp_mode = tf.placeholder(tf.float32, (None, self.image_depth), name="inp_mode_ph")
 
         self.diff = tf.placeholder(tf.bool, ())
@@ -1266,7 +1303,6 @@ good_config = config.copy(
     box_std=0.1,
     attr_std=0.0,
 
-    n_val=16,
     render_step=5000,
 
     n_distractors_per_image=0,

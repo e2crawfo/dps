@@ -101,6 +101,9 @@ class Dataset(Parameterized):
 
     def reset(self):
         self._epochs_completed = 0
+        self.reset_epoch()
+
+    def reset_epoch(self):
         self._index_in_epoch = 0
         self._reset_indices(self.shuffle)
 
@@ -113,7 +116,7 @@ class Dataset(Parameterized):
     def post_process_batch(self, output):
         return tuple(np.array(t) for t in output)
 
-    def next_batch(self, batch_size=None, advance=True):
+    def next_batch(self, batch_size=None, advance=True, rollover=True):
         """ Return the next ``batch_size`` examples from this data set.
 
         If ``batch_size`` not specified, return rest of the examples in the current epoch.
@@ -137,6 +140,9 @@ class Dataset(Parameterized):
             rest_indices = self.indices[start:]
 
             self._reset_indices(self.shuffle and advance)
+
+            if not rollover:
+                batch_size = len(rest_indices)
 
             # Start next epoch
             end = batch_size - len(rest_indices)
@@ -268,6 +274,7 @@ class PatchesDataset(ImageDataset):
                     "sample a small set of regions initially, and use those for all images.")
     backgrounds_resize = Param(False)
     background_colours = Param("")
+    max_attempts = Param(10000)
 
     def _make(self):
         self.draw_shape = self.draw_shape or self.image_shape
@@ -457,7 +464,7 @@ class PatchesDataset(ImageDataset):
 
             i += 1
 
-            if i > 10000:
+            if i > self.max_attempts:
                 raise Exception(
                     "Could not fit rectangles. "
                     "(n_rects: {}, draw_shape: {}, max_overlap: {})".format(
@@ -1040,8 +1047,30 @@ if __name__ == "__main__":
     # dset = EMNIST_ObjectDetection(min_chars=1, max_chars=10, n_sub_image_examples=100, n_examples=10)
     # dset.visualize()
 
-    dset = GridEMNIST_ObjectDetection(
-        min_chars=25, max_chars=25, n_sub_image_examples=100, n_examples=10,
-        draw_shape_grid=(5, 5), image_shape=(5*14, 5*14), draw_offset="random", spacing=(0, 0),
-        characters=list(range(10)), colours="white")
+    # dset = GridEMNIST_ObjectDetection(
+    #     min_chars=25, max_chars=25, n_sub_image_examples=100, n_examples=10,
+    #     draw_shape_grid=(5, 5), image_shape=(5*14, 5*14), draw_offset="random", spacing=(0, 0),
+    #     characters=list(range(10)), colours="white")
+
+    # n_chars = 15
+    # finished = False
+    # while not finished:
+    #     print("Trying n_chars={}...".format(n_chars))
+    #     try:
+    #         dset = EMNIST_ObjectDetection(
+    #             min_chars=n_chars, max_chars=n_chars, n_sub_image_examples=100, n_examples=10,
+    #             image_shape=(5*14, 5*14), characters=list(range(10)), colours="white",
+    #             max_overlap=400, max_attempts=10000)
+    #     except Exception as e:
+    #         print(e)
+    #         n_chars -= 1
+    #     else:
+    #         dset.visualize()
+    #         finished = True
+
+    n_chars = 5
+    dset = EMNIST_ObjectDetection(
+        min_chars=n_chars, max_chars=n_chars, n_sub_image_examples=100, n_examples=10,
+        image_shape=(5*14, 5*14), characters=list(range(10)), colours="white",
+        max_overlap=400, max_attempts=10000)
     dset.visualize()
