@@ -17,7 +17,7 @@
 
 #define EIGEN_USE_GPU
 
-#include "tensorflow/contrib/render_sprites/kernels/render_sprites_ops.h"
+#include "render_sprites_ops.h"
 
 #include <stdio.h>
 #include <cmath>

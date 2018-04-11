@@ -17,6 +17,9 @@ def background_names():
 
 
 def load_backgrounds(background_names, shape=None):
+    if isinstance(background_names, str):
+        background_names = background_names.split()
+
     backgrounds_dir = os.path.join(cfg.data_dir, 'backgrounds')
     backgrounds = []
     for name in background_names:

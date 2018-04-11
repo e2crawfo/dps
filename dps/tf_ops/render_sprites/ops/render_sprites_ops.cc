@@ -81,7 +81,7 @@ REGISTER_OP("RenderSpritesGrad")
       TF_RETURN_IF_ERROR(c->WithRank(c->input(2), 3, &scales));
       TF_RETURN_IF_ERROR(c->WithRank(c->input(3), 3, &offsets));
       TF_RETURN_IF_ERROR(c->WithRank(c->input(4), 4, &backgrounds));
-      TF_RETURN_IF_ERROR(c->WithRank(c->input(5), 5, &grad_output));
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(5), 4, &grad_output));
 
       c->set_output(0, sprites);
       c->set_output(1, n_sprites);

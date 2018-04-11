@@ -412,6 +412,8 @@ struct RenderSpritesGrad2DFunctor<CPUDevice, T>{
     T zero = static_cast<T>(0.0);
     T one = static_cast<T>(1.0);
 
+    std::cout << "In the kernel!" << std::endl;
+
     auto update_grads_for_batches = [&](const int start, const int limit) {
 
       auto get_sprite_data = [&](const int batch_id,
