@@ -8,7 +8,7 @@ from copy import deepcopy
 import os
 import sys
 import inspect
-from collections import namedtuple
+from collections import namedtuple, defaultdict
 from tabulate import tabulate
 from pprint import pprint, pformat
 
@@ -66,110 +66,171 @@ class HyperSearch(object):
         exp_dirs = os.listdir(experiments_dir)
         return [os.path.join(experiments_dir, ed) for ed in exp_dirs]
 
-    def extract_summary_data(self):
-        """ Extract high-level data about the training runs. """
+    def extract_stage_data(self, fields=None, bare=False):
+        """ Extract stage-by-stage data about the training runs.
 
-        config_keys = self.dist_keys() + 'seed repeat idx'.split()
+        Parameters
+        ----------
+        bare: boolean
+            If True, only returns the data. Otherwise, additionally returns the stage-by-stage config and meta-data.
 
-        records = []
+        Returns
+        -------
+        A nested data structure containing the requested data.
+
+        {param-setting-key: {(repeat, seed): (pd.DataFrame(), [dict()], dict())}}
+
+        """
+        stage_data = defaultdict(dict)
+        if isinstance(fields, str):
+            fields = fields.split()
+
+        config_keys = list(set(self.dist_keys() + ['idx']))
+
+        KeyTuple = namedtuple(self.__class__.__name__ + "Key", config_keys)
+
         for exp_path in self.experiment_paths:
             exp_data = FrozenTrainingLoopData(exp_path)
-            record = exp_data.history[-1].copy()
 
-            record['host'] = exp_data.host
-            if 'best_path' in record:
-                del record['best_path']
-
+            md = {}
+            md['host'] = exp_data.host
             for k in config_keys:
-                record[k] = exp_data.config[k]
+                md[k] = exp_data.config[k]
 
-            total_steps = sum(h.get('n_steps', 0) for h in exp_data.history)
+            sc = []
+            records = []
+            for stage in exp_data.history:
+                record = stage.copy()
 
-            record.update(total_steps=total_steps, latest_stage=exp_data.n_stages-1)
+                if 'best_path' in record:
+                    del record['best_path']
 
-            records.append(record)
+                sc.append(record['stage_config'])
+                del record['stage_config']
 
-        df = pd.DataFrame.from_records(records)
-        for key in config_keys:
-            df[key] = df[key].fillna(-np.inf)
+                # Fix and filter keys
+                _record = {}
+                for k, v in record.items():
+                    if k.startswith("best_"):
+                        k = k[5:]
 
-        return df
+                    if (fields and k in fields) or not fields:
+                        _record[k] = v
 
-    def extract_step_data(self, mode, field=None, stage=None):
-        """ Extract per-step data across all training runs.
+                records.append(_record)
+
+            key = KeyTuple(*(exp_data.config[k] for k in config_keys))
+
+            repeat = exp_data.config["repeat"]
+            seed = exp_data.config["seed"]
+
+            if bare:
+                stage_data[key][(repeat, seed)] = pd.DataFrame.from_records(records)
+            else:
+                stage_data[key][(repeat, seed)] = (pd.DataFrame.from_records(records), sc, md)
+
+        return stage_data
+
+    def extract_step_data(self, mode, fields=None, stage=None):
+        """ Extract per-step data across all experiments.
 
         Parameters
         ----------
         mode: str
-            Data-collection mode to extract data from. Must be one of
-            `train`, `off_policy`, `val`, `test`.
-        field: str
-            Name of field to extract data for. If not supplied, data for all
+            Data-collection mode to extract data from.
+        fields: str
+            Names of fields to extract data for. If not supplied, data for all
             fields is returned.
         stage: int or slice or tuple
             Specification of the stages to collect data for. If not supplied, data
             from all stages is returned.
 
+        Returns
+        -------
+
+        A nested data structure containing the requested data.
+
+        {param-setting-key: {(repeat, seed): pd.DataFrame()}}
+
         """
-        step_data = {}
+        step_data = defaultdict(dict)
+        if isinstance(fields, str):
+            fields = fields.split()
 
-        config_keys = self.dist_keys() + 'seed repeat idx'.split()
+        config_keys = list(set(self.dist_keys() + ['idx']))
 
-        KeyTuple = namedtuple(
-            self.__class__.__name__ + "Key", config_keys)
+        KeyTuple = namedtuple(self.__class__.__name__ + "Key", config_keys)
 
         for exp_path in self.experiment_paths:
             exp_data = FrozenTrainingLoopData(exp_path)
 
             _step_data = exp_data.step_data(mode, stage)
-            if field:
-                _step_data = _step_data[field]
+
+            if fields:
+                try:
+                    _step_data = _step_data[fields]
+                except KeyError:
+                    print("Valid keys are: {}".format(_step_data.keys()))
+                    raise
 
             key = KeyTuple(*(exp_data.config[k] for k in config_keys))
-            step_data[key] = _step_data
+
+            repeat = exp_data.config["repeat"]
+            seed = exp_data.config["seed"]
+
+            step_data[key][(repeat, seed)] = _step_data
 
         return step_data
 
-    def print_summary(self, print_config=True, verbose=False):
+    def print_summary(self, print_config=True, verbose=False, criteria=None, maximize=False):
         """ Get all completed ops, get their outputs. Summarize em. """
 
-        print("Summarizing self stored at {}.".format(os.path.realpath(self.path)))
+        print("Summarizing search stored at {}.".format(os.path.realpath(self.path)))
 
-        dist = Config(self.dist())
+        criteria_key = criteria if criteria else "stopping_criteria"
+
         keys = self.dist_keys()
-        df = self.extract_summary_data()
+        stage_data = self.extract_stage_data()
 
-        groups = df.groupby(keys)
+        best = []
 
-        data = []
-        for k, _df in groups:
-            _df = _df.sort_values(['latest_stage', 'best_stopping_criteria'])
-            data.append(dict(
-                data=_df,
-                keys=[k] if len(dist) == 1 else k,
-                latest_stage=_df.latest_stage.max(),
-                stage_sum=_df.latest_stage.sum(),
-                best_stopping_criteria=_df.best_stopping_criteria.mean()))
+        # For each parameter setting, identify the stage where it got the lowest value for `criteria_key`.
+        for i, (key, value) in enumerate(sorted(stage_data.items())):
+            _best = []
 
-        data = sorted(data, reverse=False, key=lambda x: (x['latest_stage'], x['best_stopping_criteria'], x['stage_sum']))
+            for (repeat, seed), (df, sc, md) in value.items():
+                if maximize:
+                    _best.append(dict(df.iloc[df[criteria_key].idxmax()]))
+                else:
+                    _best.append(dict(df.iloc[df[criteria_key].idxmin()]))
 
-        _column_order = ['latest_stage', 'best_stopping_criteria', 'seed', 'reason', 'total_steps', 'n_steps', 'host']
+                for key in keys:
+                    _best[-1][key] = md[key]
 
-        column_order = [c for c in _column_order if c in data]
-        remaining = [k for k in data[0]['data'].keys() if k not in column_order and k not in keys]
+            _best = pd.DataFrame.from_records(_best)
+            _best = _best.sort_values(criteria_key)
+            sc = _best[criteria_key].mean()
+            best.append((sc, _best))
+
+        best = sorted(best, reverse=not maximize, key=lambda x: x[0])
+        best = [df for _, df in best]
+
+        _column_order = [criteria_key, 'seed', 'reason', 'n_steps', 'host']
+        column_order = [c for c in _column_order if c in best[0]]
+        remaining = [k for k in best[0].keys() if k not in column_order and k not in keys]
         column_order = column_order + sorted(remaining)
 
         with pd.option_context('display.max_rows', None, 'display.max_columns', None):
             print('\n' + '*' * 100)
-            print("RESULTS GROUPED BY PARAM VALUES, ORDER OF INCREASING VALUE OF <best_stopping_criteria>: ")
+            direction = "DECREASING" if not maximize else "INCREASING"
+            print("RESULTS GROUPED BY PARAM VALUES, ORDER OF {} VALUE OF <{}>: ".format(direction, criteria_key))
 
-            for i, d in enumerate(data):
-                print('\n {} '.format(len(data)-i) + '*' * 40)
-                pprint({n: v for n, v in zip(keys, d['keys'])})
-                _data = d['data'].drop(keys, axis=1)
-                _data = _data[column_order]
+            for i, b in enumerate(best):
+                print('\n {} '.format(len(best)-i) + '*' * 40)
+                pprint({k: b[k].iloc[0] for k in keys})
+                b = b.drop(keys, axis=1)[column_order]
                 with_stats = pd.merge(
-                    _data.transpose(), _data.describe().transpose(),
+                    b.transpose(), b.describe().transpose(),
                     left_index=True, right_index=True, how='outer')
 
                 profile_rows = [k for k in with_stats.index if 'time' in k or 'duration' in k or 'memory' in k]
@@ -185,7 +246,7 @@ class HyperSearch(object):
 
             print('\n' + '*' * 100)
             print("PARAMETER DISTRIBUTION")
-            pprint(dist)
+            pprint(self.dist())
 
         print(self.job.summary(verbose=verbose))
 
@@ -194,7 +255,8 @@ def nested_sample(param_dist, n_samples=1):
     """ Generate all samples from a distribution.
 
     Distribution must be specified as a dictionary mapping
-    from names to lists of possible values or param_dist.
+    from names to either a list of possible values or a distribution
+    (i.e. has a method `rvs`).
 
     """
     assert isinstance(param_dist, dict)

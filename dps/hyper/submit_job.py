@@ -26,7 +26,7 @@ DEFAULT_HOST_POOL = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33
 class ParallelSession(object):
     """ Run a Job in parallel using gnu-parallel.
 
-    A directory for this Job execution is created in `scratch`, and results are saved there.
+    A directory for this job execution is created in `scratch`, and results are saved there.
 
     Parameters
     ----------
@@ -46,10 +46,12 @@ class ParallelSession(object):
     wall_time: str
         String specifying the maximum wall-time allotted to running the selected ops.
     cleanup_time: str
-        String specifying the amount of cleanup time to allow per step.
+        String specifying the amount of cleanup time to allow per step. Affects the time-limit
+        that we pass to `gnu-parallel`, as well as the time limit passed to the python script.
     slack_time: float
         String specifying the amount of slack time to allow per step. Corresponds to
         time allotted to each process to respond to the signal that the step's time is up.
+        Affects the time limit that we pass to the python script.
     add_date: bool
         Whether to add current date/time to the name of the directory where results are stored.
     dry_run: bool

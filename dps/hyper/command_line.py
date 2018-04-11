@@ -25,27 +25,56 @@ def _print_config_cmd(path):
     pprint(dist)
 
 
-def _summarize_search_cmd(path, no_config, verbose):
+def _summarize_search_cmd(path, no_config, verbose, criteria, maximize):
     search = HyperSearch(path)
-    search.print_summary(print_config=not no_config, verbose=verbose)
+    search.print_summary(print_config=not no_config, verbose=verbose, criteria=criteria, maximize=maximize)
 
 
-def _value_plot_cmd(path, mode, field, style):
+def _value_plot_cmd(path, mode, field, stage, x_axis, ylim, style):
     """ Plot the trajectory of a single value, specified by field, for each parameter
         setting in a hyperparameter search.
 
+    Example:
+         dps-hyper value_plot . rl_val COST_negative_mAP None --x-axis=stages --ylim="-1,0"
+
+    Parameters
+    ----------
+    path: str
+        Path passed to `HyperSearch`.
+    mode: str
+        Run mode to plot from (e.g. train, val).
+    field: str
+        Name of value to plot.
+    stage: str
+        String that is eval-ed to get an object specifying the stages to plot data from.
+    x_axis: str, one of {steps, experiences, stages}
+        Specifiation of value to use as x-axis for plots. If `stages` is used, then only
+        the value obtained by the "chosen" hypothesis for that stage is used.
+    ylim: str
+        String that is eval-ed to get a tuple specifying y-limits for plots.
+    style: str
+        Matplotlib style to use for plot.
+
     """
-    path = process_path(path)
+    print("Plotting {} value of field {} from experiments stored at `{}`.".format(mode, field, path))
 
-    assert mode in "train val test update".split()
-
-    print("Plotting {} value of field {} from experiments "
-          "stored at {}.".format(mode, field, path))
+    assert x_axis in "steps experiences stages"
+    x_axis_key = dict(
+        steps="global_step",
+        experiences="n_global_experiences",
+        stages="stage_idx")[x_axis]
 
     search = HyperSearch(path)
-    keys = search.dist_keys()
 
-    data = search.extract_step_data(mode, field, -1)
+    stage = eval(stage) if stage else ""
+    ylim = eval(ylim) if ylim else ""
+
+    fields = [field, x_axis_key]
+
+    if x_axis == "stages":
+        data = search.extract_stage_data(fields, bare=True)
+    else:
+        data = search.extract_step_data(mode, fields, stage)
 
     n_plots = len(data) + 1
     w = int(np.ceil(np.sqrt(n_plots)))
@@ -53,22 +82,31 @@ def _value_plot_cmd(path, mode, field, style):
 
     with plt.style.context(style):
         fig, axes = plt.subplots(h, w, sharex=True, sharey=True, figsize=(15, 10))
+        fig.suptitle("{} vs {}".format(field, x_axis_key))
+
         axes = np.atleast_2d(axes)
         final_ax = axes[-1, -1]
 
         label_order = []
 
-        for n, key in enumerate(sorted(data)):
-            label = ",".join("{}={}".format(k, v) for k, v in zip(keys, key))
+        for i, (key, value) in enumerate(sorted(data.items())):
+            label = ",".join("{}={}".format(*kv) for kv in zip(key._fields, key))
+            i = int(key.idx / w)
+            j = key.idx % w
+            ax = axes[i, j]
+
+            if ylim:
+                ax.set_ylim(ylim)
+
+            ax.set_title(label)
             label_order.append(label)
 
-            i = int(n / w)
-            j = n % w
-            ax = axes[i, j]
-            for vd in data[key]:
-                ax.plot(vd)
-            ax.set_title(label)
-            mean = pd.concat(data[key], axis=1).mean(axis=1)
+            for (repeat, seed), _data in value.items():
+                ax.plot(_data[x_axis_key], _data[field])
+
+            to_concat = [_data.set_index(x_axis_key) for _data in value.values()]
+            concat = pd.concat(to_concat, axis=1, ignore_index=True)
+            mean = concat.mean(axis=1)
             final_ax.plot(mean, label=label)
 
         legend_handles = {l: h for h, l in zip(*final_ax.get_legend_handles_labels())}
@@ -78,10 +116,12 @@ def _value_plot_cmd(path, mode, field, style):
             ordered_handles, label_order, loc='center left',
             bbox_to_anchor=(1.05, 0.5), ncol=1)
 
-        plt.subplots_adjust(
-            left=0.05, bottom=0.05, right=0.86, top=0.97, wspace=0.05, hspace=0.18)
+        if ylim:
+            final_ax.set_ylim(ylim)
 
-        plt.savefig('valueplot_mode={}_field={}'.format(mode, field))
+        plt.subplots_adjust(left=0.05, bottom=0.05, right=0.9, top=0.90, wspace=0.05, hspace=0.18)
+
+        plt.savefig('value_plot_mode={}_field={}_stage={}'.format(mode, field, stage))
         plt.show()
 
 
@@ -210,8 +250,9 @@ def dps_hyper_cl():
 
     summary_cmd.add_argument('path', help="Location of directory for hyper-parameter search.", type=str)
     summary_cmd.add_argument('--no-config', help="If supplied, don't print out config.", action='store_true')
-    summary_cmd.add_argument(
-        '-v', '--verbose', action='count', default=0, help="Increase verbosity.")
+    summary_cmd.add_argument('-v', '--verbose', action='count', default=0, help="Increase verbosity.")
+    summary_cmd.add_argument('--criteria', type=str, help="Criteria to order parameter settings by.")
+    summary_cmd.add_argument('--maximize', action='store_true', help="Specify that the goal is to maximize the criteria.")
 
     style_list = ['default', 'classic'] + sorted(style for style in plt.style.available if style != 'classic')
 
@@ -219,13 +260,18 @@ def dps_hyper_cl():
         'value_plot', 'Plot the trajectory of a value throughout all training runs.',
         _value_plot_cmd)
 
-    value_plot_cmd.add_argument('path', help="Path to directory for search.", type=str, default="results.zip", nargs='+')
-    value_plot_cmd.add_argument('mode', help="Data-collection mode to plot data from.", choices="train val test update".split(), default="")
+    value_plot_cmd.add_argument('path', help="Path to directory for search.", type=str, default="results.zip")
+    value_plot_cmd.add_argument('mode', help="Data-collection mode to plot data from.", default="val")
     value_plot_cmd.add_argument('field', help="Field to plot.", default="")
+    value_plot_cmd.add_argument('stage', help="Stages to plot.", default="")
+    value_plot_cmd.add_argument('--x-axis', help="Type of x-axis.", default="steps")
+    value_plot_cmd.add_argument('--ylim', help="Y limits.", default="")
     value_plot_cmd.add_argument('--style', help="Style for plot.", choices=style_list, default="ggplot")
 
     search_plot_cmd = SubCommand(
-        'search_plot', 'Plot a the search.', _search_plot_cmd)
+        'search_plot', 'Plot a the search.',
+        _search_plot_cmd)
+
     search_plot_cmd.add_argument('path', help="Path to directory for search.", type=str)
     search_plot_cmd.add_argument('x_field', help="Name of field used as plot x-values.", type=str)
     search_plot_cmd.add_argument('y_field', help="Name of field used as plot y-values.", type=str)
