@@ -227,11 +227,6 @@ class YoloRL_Updater(Updater):
     use_input_attention = Param()
     decoder_logit_scale = Param()
 
-    diff_weight = Param()
-    rl_weight = Param()
-
-    obj_sparsity = Param()
-
     max_hw = Param()
     min_hw = Param()
 
@@ -263,7 +258,7 @@ class YoloRL_Updater(Updater):
     fix_values = Param()
     order = Param()
 
-    eval_modes = "rl_val diff_val".split()
+    eval_modes = "val".split()
 
     def __init__(self, env, scope=None, **kwargs):
         self.anchor_boxes = np.array(self.anchor_boxes)
@@ -278,8 +273,6 @@ class YoloRL_Updater(Updater):
 
         self.obs_shape = self.datasets['train'].x.shape[1:]
         self.image_height, self.image_width, self.image_depth = self.obs_shape
-
-        assert self.diff_weight > 0 or self.rl_weight > 0
 
         self.COST_funcs = {}
 
@@ -348,34 +341,18 @@ class YoloRL_Updater(Updater):
 
         result = {}
 
-        if self.diff_weight > 0:
-            feed_dict[self.diff] = True
+        sample_feed_dict = self._sample(feed_dict)
+        feed_dict.update(sample_feed_dict)
 
-            diff_summary = b''
-            if collect_summaries:
-                _, diff_record, diff_summary = sess.run(
-                    [self.diff_train_op, self.recorded_tensors, self.diff_summary_op], feed_dict=feed_dict)
-            else:
-                _, diff_record = sess.run(
-                    [self.diff_train_op, self.recorded_tensors], feed_dict=feed_dict)
+        summary = b''
+        if collect_summaries:
+            _, record, summary = sess.run(
+                [self.train_op, self.recorded_tensors, self.summary_op], feed_dict=feed_dict)
+        else:
+            _, record = sess.run(
+                [self.train_op, self.recorded_tensors], feed_dict=feed_dict)
 
-            result.update(diff=(diff_record, diff_summary))
-
-        if self.rl_weight > 0:
-            feed_dict[self.diff] = False
-
-            sample_feed_dict = self._sample(feed_dict)
-            feed_dict.update(sample_feed_dict)
-
-            rl_summary = b''
-            if collect_summaries:
-                _, rl_record, rl_summary = sess.run(
-                    [self.rl_train_op, self.rl_recorded_tensors, self.rl_summary_op], feed_dict=feed_dict)
-            else:
-                _, rl_record = sess.run(
-                    [self.rl_train_op, self.rl_recorded_tensors], feed_dict=feed_dict)
-
-            result.update(rl=(rl_record, rl_summary))
+        result.update(train=(record, summary))
 
         return result
 
@@ -406,20 +383,11 @@ class YoloRL_Updater(Updater):
         n_points = 0
 
         for _batch_size, feed_dict in feed_dicts:
-            if mode == "rl_val":
-                feed_dict[self.diff] = False
+            sample_feed_dict = self._sample(feed_dict)
+            feed_dict.update(sample_feed_dict)
 
-                sample_feed_dict = self._sample(feed_dict)
-                feed_dict.update(sample_feed_dict)
-
-                _record, summary = sess.run(
-                    [self.rl_recorded_tensors, self.rl_summary_op], feed_dict=feed_dict)
-
-            elif mode == "diff_val":
-                feed_dict[self.diff] = True
-
-                _record, summary = sess.run(
-                    [self.recorded_tensors, self.diff_summary_op], feed_dict=feed_dict)
+            _record, summary = sess.run(
+                [self.recorded_tensors, self.summary_op], feed_dict=feed_dict)
 
             for k, v in _record.items():
                 record[k] += _batch_size * v
@@ -489,9 +457,6 @@ class YoloRL_Updater(Updater):
         self.inp_ph = tf.placeholder(tf.float32, (None,) + self.obs_shape, name="inp_ph")
         self.inp = tf.clip_by_value(self.inp_ph, 1e-6, 1-1e-6, name="inp")
         self.inp_mode = tf.placeholder(tf.float32, (None, self.image_depth), name="inp_mode_ph")
-
-        self.diff = tf.placeholder(tf.bool, ())
-        self.float_diff = tf.to_float(self.diff)
 
         self.is_training = tf.placeholder(tf.bool, ())
         self.float_is_training = tf.to_float(self.is_training)
@@ -597,8 +562,7 @@ class YoloRL_Updater(Updater):
         obj_log_probs = tf.where(tf.is_nan(obj_log_probs), -100.0 * tf.ones_like(obj_log_probs), obj_log_probs)
 
         obj_entropy = obj_dist.entropy()
-
-        obj_representation = self.float_diff * obj_params + (1 - self.float_diff) * obj_samples
+        obj_representation = obj_samples
 
         if "obj" in self.fix_values:
             obj_representation = float(self.fix_values["obj"]) * tf.ones_like(obj_representation, dtype=tf.float32)
@@ -857,8 +821,6 @@ class YoloRL_Updater(Updater):
 
         loss_key = 'xent_loss' if self.xent_loss else 'squared_loss'
 
-        recorded_tensors = {}
-
         reconstruction_loss = getattr(self, 'build_' + loss_key)(self.output_logits, self.inp)
         mean_reconstruction_loss = tf.reduce_mean(reconstruction_loss)
 
@@ -875,11 +837,11 @@ class YoloRL_Updater(Updater):
             area_loss=area_loss
         )
 
-        # --- entropy ---
+        # --- recorded tensors ---
+
+        recorded_tensors = {}
 
         recorded_tensors['obj_entropy'] = tf_mean_sum(self.entropy['obj'])
-
-        # --- recorded values ---
 
         recorded_tensors.update({
             name: tf.reduce_mean(getattr(self, 'build_' + name)(self.output_logits, self.inp))
@@ -900,79 +862,46 @@ class YoloRL_Updater(Updater):
         recorded_tensors['reconstruction_loss'] = mean_reconstruction_loss
         recorded_tensors['area_loss'] = mean_area_loss
 
-        recorded_tensors['diff_loss'] = mean_reconstruction_loss
-
-        if self.area_weight > 0.0:
-            recorded_tensors['diff_loss'] += self.area_weight * mean_area_loss
-
-        if self.obj_sparsity:
-            recorded_tensors['obj_sparsity_loss'] = tf_mean_sum(self.program_fields['obj'])
-            recorded_tensors['diff_loss'] += self.obj_sparsity * recorded_tensors['obj_sparsity_loss']
-
-        if isinstance(self.object_decoder, VQ_ObjectDecoder):
-            recorded_tensors['decoder_commitment_error'] = self.decoder_commitment_error
-            recorded_tensors['decoder_embedding_error'] = self.decoder_embedding_error
-
-            recorded_tensors['diff_loss'] += recorded_tensors['decoder_embedding_error']
-            recorded_tensors['diff_loss'] += self.object_decoder.beta * recorded_tensors['decoder_commitment_error']
-
-        self.diff_loss = recorded_tensors['diff_loss']
-        self.recorded_tensors = recorded_tensors
-
         # --- rl recorded values ---
 
-        _rl_recorded_tensors = {}
-
         for name, _ in self.COST_funcs.items():
-            _rl_recorded_tensors["COST_{}".format(name)] = tf.reduce_mean(self.COST_components[name])
+            recorded_tensors["COST_{}".format(name)] = tf.reduce_mean(self.COST_components[name])
 
-        _rl_recorded_tensors["COST"] = tf.reduce_mean(self.COST)
-        _rl_recorded_tensors["TOTAL_COST"] = _rl_recorded_tensors["COST"]
+        recorded_tensors["COST"] = tf.reduce_mean(self.COST)
+        recorded_tensors["TOTAL_COST"] = recorded_tensors["COST"]
 
-        _rl_recorded_tensors["obj_log_probs"] = tf.reduce_mean(self.log_probs['obj'])
+        recorded_tensors["obj_log_probs"] = tf.reduce_mean(self.log_probs['obj'])
 
         if self.use_baseline:
             adv = self.COST - tf.reduce_mean(self.COST, axis=0, keep_dims=True)
         else:
             adv = self.COST
 
-        self.rl_surrogate_loss_map = adv * self.log_probs['obj']
-        _rl_recorded_tensors['rl_loss'] = tf.reduce_mean(self.rl_surrogate_loss_map)
-
-        _rl_recorded_tensors['surrogate_loss'] = _rl_recorded_tensors['rl_loss'] + mean_reconstruction_loss
+        surrogate_loss_map = adv * self.log_probs['obj']
+        recorded_tensors['surrogate_loss'] = tf.reduce_mean(surrogate_loss_map)
+        recorded_tensors['loss'] = recorded_tensors['surrogate_loss'] + mean_reconstruction_loss
 
         if self.area_weight > 0.0:
-            _rl_recorded_tensors['surrogate_loss'] += self.area_weight * mean_area_loss
+            recorded_tensors['loss'] += self.area_weight * mean_area_loss
 
         if isinstance(self.object_decoder, VQ_ObjectDecoder):
-            _rl_recorded_tensors['surrogate_loss'] += recorded_tensors['decoder_embedding_error']
-            _rl_recorded_tensors['surrogate_loss'] += self.object_decoder.beta * recorded_tensors['decoder_commitment_error']
+            recorded_tensors['loss'] += recorded_tensors['decoder_embedding_error']
+            recorded_tensors['loss'] += self.object_decoder.beta * recorded_tensors['decoder_commitment_error']
 
-        self.surrogate_loss = _rl_recorded_tensors['surrogate_loss']
-
-        self.rl_recorded_tensors = _rl_recorded_tensors.copy()
-        self.rl_recorded_tensors.update(self.recorded_tensors)
+        self.loss = recorded_tensors['loss']
+        self.recorded_tensors = recorded_tensors
 
         _summary = [tf.summary.scalar(name, t) for name, t in self.recorded_tensors.items()]
-        _rl_summary = [tf.summary.scalar(name, t) for name, t in _rl_recorded_tensors.items()]
 
-        # --- rl train op ---
+        # --- train op ---
 
         tvars = self.trainable_variables(for_opt=True)
 
-        self.rl_train_op, rl_train_summary = build_gradient_train_op(
-            self.surrogate_loss, tvars, self.optimizer_spec, self.lr_schedule,
-            self.max_grad_norm, self.noise_schedule, summary_prefix="surrogate")
-
-        self.rl_summary_op = tf.summary.merge(_summary + _rl_summary + rl_train_summary)
-
-        # --- diff train op ---
-
-        self.diff_train_op, diff_train_summary = build_gradient_train_op(
-            self.diff_loss, tvars, self.optimizer_spec, self.lr_schedule,
+        self.train_op, train_summary = build_gradient_train_op(
+            self.loss, tvars, self.optimizer_spec, self.lr_schedule,
             self.max_grad_norm, self.noise_schedule)
 
-        self.diff_summary_op = tf.summary.merge(_summary + diff_train_summary)
+        self.summary_op = tf.summary.merge(_summary + train_summary)
 
 
 class YoloRL_RenderHook(object):
@@ -990,20 +919,14 @@ class YoloRL_RenderHook(object):
                 fig.savefig(path)
                 plt.close(fig)
 
-        rl_fetched = self._fetch(self.N, updater, True)
+        fetched = self._fetch(self.N, updater)
 
-        self._plot_reconstruction(updater, rl_fetched, True)
-        self._plot_patches(updater, rl_fetched, True, 4)
+        self._plot_reconstruction(updater, fetched)
+        self._plot_patches(updater, fetched, 4)
 
-        diff_fetched = self._fetch(self.N, updater, False)
-
-        self._plot_reconstruction(updater, diff_fetched, False)
-        self._plot_patches(updater, diff_fetched, False, 4)
-
-    def _fetch(self, N, updater, sampled):
+    def _fetch(self, N, updater):
         feed_dict = updater.make_feed_dict(N, 'val', True)
         images = feed_dict[updater.inp]
-        feed_dict[updater.diff] = not sampled
 
         to_fetch = updater.program_fields.copy()
         to_fetch["output"] = updater.output
@@ -1019,7 +942,7 @@ class YoloRL_RenderHook(object):
 
         return fetched
 
-    def _plot_reconstruction(self, updater, fetched, sampled):
+    def _plot_reconstruction(self, updater, fetched):
         images = fetched['images']
         background = fetched['background']
         N = images.shape[0]
@@ -1092,16 +1015,15 @@ class YoloRL_RenderHook(object):
             ax3.imshow(bg)
             ax3.set_title('background')
 
-        fig.suptitle('Sampled={}. Stage={}. After {} experiences ({} updates, {} experiences per batch).'.format(
-            sampled, updater.stage_idx, updater.n_experiences, updater.n_updates, cfg.batch_size))
+        fig.suptitle('Stage={}. After {} experiences ({} updates, {} experiences per batch).'.format(
+            updater.stage_idx, updater.n_experiences, updater.n_updates, cfg.batch_size))
 
-        plot_name = ('sampled_' if sampled else '') + 'reconstruction.pdf'
-        path = updater.exp_dir.path_for('plots', 'stage{}'.format(updater.stage_idx), plot_name)
+        path = updater.exp_dir.path_for('plots', 'stage{}'.format(updater.stage_idx), 'sampled_reconstruction.pdf')
         fig.savefig(path)
 
         plt.close(fig)
 
-    def _plot_patches(self, updater, fetched, sampled, N):
+    def _plot_patches(self, updater, fetched, N):
         # Create a plot showing what each object is generating
         import matplotlib.pyplot as plt
 
@@ -1134,18 +1056,12 @@ class YoloRL_RenderHook(object):
                         ax = axes[2*i+1, j * B + b]
                         ax.imshow(object_decoder_alpha[idx, i, j, b, :, :, 0])
 
-            dir_name = ('sampled_' if sampled else '') + 'patches'
-            path = updater.exp_dir.path_for('plots', 'stage{}'.format(updater.stage_idx), dir_name, '{}.pdf'.format(idx))
+            path = updater.exp_dir.path_for('plots', 'stage{}'.format(updater.stage_idx), 'sampled_patches', '{}.pdf'.format(idx))
             fig.savefig(path)
             plt.close(fig)
 
 
 xkcd_colors = 'viridian,cerulean,vermillion,lavender,celadon,fuchsia,saffron,cinnamon,greyish,vivid blue'.split(',')
-
-
-diff_mode = dict(rl_weight=0.0, diff_weight=1.0)
-rl_mode = dict(rl_weight=1.0, diff_weight=0.0)
-combined_mode = dict(rl_weight=1.0, diff_weight=1.0)
 
 
 config = Config(
@@ -1181,7 +1097,7 @@ config = Config(
     gpu_allow_growth=True,
     seed=347405995,
     stopping_criteria="TOTAL_COST,min",
-    eval_mode="rl_val",
+    eval_mode="val",
     threshold=-np.inf,
     max_grad_norm=1.0,
     max_experiments=None,
@@ -1226,11 +1142,6 @@ config = Config(
 
     n_passthrough_features=100,
 
-    diff_weight=0.0,
-    rl_weight=0.0,
-
-    obj_sparsity=0.0,  # Within a single image, we want as few bounding boxes to be active as possible
-
     max_hw=1.0,  # Maximum for the bounding box multiplier.
     min_hw=0.0,  # Minimum for the bounding box multiplier.
 
@@ -1248,7 +1159,7 @@ config = Config(
     use_specific_costs=False,
 
     curriculum=[
-        rl_mode,
+        dict()
     ],
 
     fixed_box=False,
@@ -1306,8 +1217,6 @@ good_config = config.copy(
     render_step=5000,
 
     n_distractors_per_image=0,
-
-    **rl_mode,
 )
 
 
