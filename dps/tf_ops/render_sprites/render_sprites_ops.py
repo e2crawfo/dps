@@ -21,13 +21,25 @@ from __future__ import division
 from __future__ import print_function
 
 import os
+import traceback
 
 import tensorflow as tf
 from tensorflow.python.framework import ops
 
-loc = os.path.join(os.path.split(__file__)[0], "_render_sprites.so")
-print("Loading library at {}.".format(loc))
-_render_sprites_so = tf.load_op_library(loc)
+load_successful = False
+try:
+    loc = os.path.join(os.path.split(__file__)[0], "_render_sprites.so")
+    print("Loading render_sprites library at {}.".format(loc))
+    _render_sprites_so = tf.load_op_library(loc)
+except Exception as e:
+    print("Failed. Reason:\n{}".format(traceback.format_exc()))
+else:
+    print("Success.")
+    load_successful = True
+
+
+def lib_avail():
+    return load_successful
 
 
 def render_sprites(sprites, n_sprites, scales, offsets, backgrounds, name="render_sprites"):

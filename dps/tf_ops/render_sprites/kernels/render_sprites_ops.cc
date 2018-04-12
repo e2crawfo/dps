@@ -366,8 +366,6 @@ struct RenderSpritesGrad2DFunctor<CPUDevice, T>{
                    const T* __restrict__ backgrounds,
                    const T* __restrict__ grad_output,
 
-                   T* __restrict__ scratch,
-
                    T* __restrict__ grad_sprites,
                    T* __restrict__ grad_n_sprites,
                    T* __restrict__ grad_scales,
@@ -411,8 +409,6 @@ struct RenderSpritesGrad2DFunctor<CPUDevice, T>{
 
     T zero = static_cast<T>(0.0);
     T one = static_cast<T>(1.0);
-
-    std::cout << "In the kernel!" << std::endl;
 
     auto update_grads_for_batches = [&](const int start, const int limit) {
 
@@ -488,6 +484,8 @@ struct RenderSpritesGrad2DFunctor<CPUDevice, T>{
                      sprite_id * 2 + 1] += value;
       };
 
+      std::vector<T> pixel_value((max_sprites + 1) * n_channels, zero);
+
       for (int batch_id = start; batch_id < limit; ++batch_id) {
 
         for (int img_y = 0; img_y < img_height; ++img_y) {
@@ -496,13 +494,13 @@ struct RenderSpritesGrad2DFunctor<CPUDevice, T>{
           for (int img_x = 0; img_x < img_width; ++img_x) {
             const T img_x_T = static_cast<T>(img_x);
 
-            // Set first values for scratch
-            const int bg_pointer_offset = batch_id * img_batch_stride +
-                                          img_y * img_row_stride +
-                                          img_x * n_channels;
-            memcpy(scratch, backgrounds + bg_pointer_offset, n_channels);
+            for (int chan = 0; chan < n_channels; ++chan) {
+                pixel_value[chan] = backgrounds[batch_id * img_batch_stride +
+                                                img_y * img_row_stride +
+                                                img_x * n_channels + chan];
+            }
 
-            // redo forward pass, storing pixel values in `scratch`
+            // redo forward pass, storing intermediate pixel values in `pixel_value`
             for (int sprite_id = 0; sprite_id < n_sprites[batch_id]; ++sprite_id) {
               const T scale_y = scales[batch_id * scales_batch_stride + sprite_id * 2];
               const T scale_x = scales[batch_id * scales_batch_stride + sprite_id * 2 + 1];
@@ -551,9 +549,9 @@ struct RenderSpritesGrad2DFunctor<CPUDevice, T>{
                                  dx * (one - dy) * img_fxcy +
                                  (one - dx) * dy * img_cxfy;
 
-                // Store in scratch instead of writing to output as we do in regular forward pass
-                const T current = scratch[sprite_id * n_channels + chan];
-                scratch[(sprite_id + 1) * n_channels + chan] = alpha * interp + (1 - alpha) * current;
+                // Store in `pixel_value` instead of writing to output as we do in regular forward pass
+                const T current = pixel_value[sprite_id * n_channels + chan];
+                pixel_value[(sprite_id + 1) * n_channels + chan] = alpha * interp + (1 - alpha) * current;
               } // channel
             } // sprite_id - forward pass
 
@@ -626,7 +624,7 @@ struct RenderSpritesGrad2DFunctor<CPUDevice, T>{
 
                 // ------ update gradient through alpha ------
 
-                const T bg = scratch[sprite_id * n_channels + chan];
+                const T bg = pixel_value[sprite_id * n_channels + chan];
                 const T alpha_premult = premult * (interp - bg);
 
                 update_grad_scales_y(batch_id, sprite_id, alpha_premult * alpha_y_factor * grad_y_wrt_scale_y);
@@ -659,7 +657,7 @@ struct RenderSpritesGrad2DFunctor<CPUDevice, T>{
                 update_grad_sprites(batch_id, sprite_id, cx, fy, chan, sprite_premult * (1-dx) * dy);
               } // channel
 
-              one_minus_alpha_prod *= (1 - alpha);
+              one_minus_alpha_prod *= (one - alpha);
             } // sprite_id - backward pass
 
             for (int chan = 0; chan < n_channels; ++chan) {
@@ -799,15 +797,10 @@ class RenderSpritesGradOp : public ::tensorflow::OpKernel {
     ::tensorflow::Tensor* grad_backgrounds = nullptr;
 
     OP_REQUIRES_OK(ctx, ctx->allocate_output(0, sprites.shape(), &grad_sprites));
-    OP_REQUIRES_OK(ctx, ctx->allocate_output(0, n_sprites.shape(), &grad_n_sprites));
-    OP_REQUIRES_OK(ctx, ctx->allocate_output(0, scales.shape(), &grad_scales));
-    OP_REQUIRES_OK(ctx, ctx->allocate_output(0, offsets.shape(), &grad_offsets));
-    OP_REQUIRES_OK(ctx, ctx->allocate_output(0, backgrounds.shape(), &grad_backgrounds));
-
-    ::tensorflow::Tensor* scratch = nullptr;
-    const ::tensorflow::TensorShape& scratch_shape{n_channels * (max_sprites + 1)};
-
-    OP_REQUIRES_OK(ctx, ctx->allocate_temp(sprites.dtype(), scratch_shape, scratch));
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(1, n_sprites.shape(), &grad_n_sprites));
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(2, scales.shape(), &grad_scales));
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(3, offsets.shape(), &grad_offsets));
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(4, backgrounds.shape(), &grad_backgrounds));
 
     functor::RenderSpritesGrad2DFunctor<Device, T>()(ctx,
                                                      ctx->eigen_device<Device>(),
@@ -818,8 +811,6 @@ class RenderSpritesGradOp : public ::tensorflow::OpKernel {
                                                      offsets.flat<T>().data(),
                                                      backgrounds.flat<T>().data(),
                                                      grad_output.flat<T>().data(),
-
-                                                     scratch->flat<T>().data(),
 
                                                      grad_sprites->flat<T>().data(),
                                                      grad_n_sprites->flat<T>().data(),

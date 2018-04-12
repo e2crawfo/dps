@@ -459,7 +459,7 @@ __global__ void RenderSpritesGrad2DKernel(const T* __restrict__ sprites,
         const T alpha_y_factor = dx * (alpha_fxcy - alpha_fxfy) + (1 - dx) * (alpha_cxcy - alpha_cxfy);
         const T alpha_x_factor = dy * (alpha_cxfy - alpha_fxfy) + (1 - dy) * (alpha_cxcy - alpha_fxcy);
 
-        const T bg = scratch[sprite_id * n_channels + chan];
+        const T bg = scratch[sprite_id];
 
         const T alpha_premult = premult * (interp - bg);
 
@@ -542,8 +542,6 @@ struct RenderSpritesGrad2DFunctor<GPUDevice, T>{
                    const T* __restrict__ backgrounds,
                    const T* __restrict__ grad_output,
 
-                   T* __restrict__ scratch,
-
                    T* __restrict__ grad_sprites,
                    T* __restrict__ grad_n_sprites,
                    T* __restrict__ grad_scales,
@@ -587,6 +585,9 @@ struct RenderSpritesGrad2DFunctor<GPUDevice, T>{
 
     const int shared_mem_bytes_per_block = 49152;  // 48 KB * 1024.
     config = ::tensorflow::GetCudaLaunchConfig(grad_backgrounds_size, d, RenderSpritesGrad2DKernel<T>, shared_mem_bytes_per_block, 0);
+
+    // std::cout << "block_count: " << config.block_count << ", thread_per_block: " << config.thread_per_block << std::endl;
+    // std::cout << "n_threads: " << grad_backgrounds_size << std::endl;
 
     RenderSpritesGrad2DKernel<T>
         <<<config.block_count, config.thread_per_block, shared_mem_bytes_per_block, d.stream()>>>(

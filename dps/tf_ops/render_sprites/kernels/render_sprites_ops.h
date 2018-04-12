@@ -65,8 +65,6 @@ struct RenderSpritesGrad2DFunctor {
                    const T* __restrict__ backgrounds,
                    const T* __restrict__ grad_output,
 
-                   T* __restrict__ scratch,
-
                    T* __restrict__ grad_sprites,
                    T* __restrict__ grad_n_sprites,
                    T* __restrict__ grad_scales,

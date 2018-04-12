@@ -18,4 +18,4 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from .render_sprites_ops import render_sprites, _render_sprites_grad
+from .render_sprites_ops import render_sprites, _render_sprites_grad, lib_avail
