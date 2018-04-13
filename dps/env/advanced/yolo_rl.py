@@ -1,6 +1,5 @@
 import tensorflow as tf
 import numpy as np
-import sonnet as snt
 import matplotlib.pyplot as plt
 import os
 from sklearn.cluster import k_means
@@ -15,6 +14,8 @@ from dps.utils.tf import (
     VectorQuantization, FullyConvolutional, build_gradient_train_op,
     trainable_variables, build_scheduled_value, tf_mean_sum)
 from dps.env.advanced.yolo import mAP
+from dps.tf_ops import render_sprites
+from dps.train import PolynomialScheduleHook
 
 tf_flatten = tf.layers.flatten
 
@@ -161,17 +162,17 @@ def area_cost(network_outputs, updater):
 
 
 def specific_area_cost(network_outputs, updater):
-    return network_outputs['program_fields']['obj'] * network_outputs['area']
+    return network_outputs['program']['obj'] * network_outputs['area']
 
 
 def nonzero_cost(network_outputs, updater):
-    obj_samples = network_outputs['program_fields']['obj']
+    obj_samples = network_outputs['program']['obj']
     obj_samples = obj_samples.reshape(obj_samples.shape[0], -1)
     return np.count_nonzero(obj_samples, axis=1)[..., None, None, None, None].astype('f')
 
 
 def specific_nonzero_cost(network_outputs, updater):
-    return network_outputs['program_fields']['obj']
+    return network_outputs['program']['obj']
 
 
 def negative_mAP_cost(network_outputs, updater):
@@ -181,15 +182,15 @@ def negative_mAP_cost(network_outputs, updater):
         gt = []
         pred_boxes = []
 
-        obj = network_outputs['program_fields']['obj']
-        xs, xt, ys, yt = np.split(network_outputs['program_fields']['box'], 4, axis=-1)
+        obj = network_outputs['program']['obj']
+        top, left, height, width = np.split(network_outputs['normalized_box'], 4, axis=-1)
 
-        top = updater.image_height * 0.5 * (yt - ys + 1)
-        height = updater.image_height * ys
+        top = updater.image_height * top
+        height = updater.image_height * height
         bottom = top + height
 
-        left = updater.image_width * 0.5 * (xt - xs + 1)
-        width = updater.image_width * xs
+        left = updater.image_width * left
+        width = updater.image_width * width
         right = left + width
 
         for idx, a in enumerate(updater.annotations):
@@ -250,9 +251,13 @@ class YoloRL_Updater(Updater):
     obj_exploration = Param()
     obj_default = Param()
 
+    z_std = Param()
+
     fixed_box = Param()
     fixed_obj = Param()
+    fixed_z = Param()
     fixed_attr = Param()
+
     fixed_object_decoder = Param()
 
     fix_values = Param()
@@ -278,15 +283,15 @@ class YoloRL_Updater(Updater):
 
         if self.nonzero_weight is not None:
             cost_func = specific_nonzero_cost if self.use_specific_costs else nonzero_cost
-            self.COST_funcs['nonzero'] = (self.nonzero_weight, cost_func)
+            self.COST_funcs['nonzero'] = (self.nonzero_weight, cost_func, "obj")
 
         if self.area_weight > 0.0:
             cost_func = specific_area_cost if self.use_specific_costs else area_cost
-            self.COST_funcs['area'] = (self.area_weight, cost_func)
+            self.COST_funcs['area'] = (self.area_weight, cost_func, "obj")
 
         cost_func = specific_reconstruction_cost if self.use_specific_costs else reconstruction_cost
-        self.COST_funcs['reconstruction'] = (1, cost_func)
-        self.COST_funcs['negative_mAP'] = (0, negative_mAP_cost)
+        self.COST_funcs['reconstruction'] = (1, cost_func, "both")
+        self.COST_funcs['negative_mAP'] = (0, negative_mAP_cost, "obj")
 
         self.scope = scope
         self._n_experiences = 0
@@ -296,7 +301,7 @@ class YoloRL_Updater(Updater):
 
         if isinstance(self.order, str):
             self.order = self.order.split()
-        assert set(self.order) == set("box obj attr".split())
+        assert set(self.order) == set("box obj z attr".split())
 
         self.layer_params = dict(
             box=dict(
@@ -311,9 +316,15 @@ class YoloRL_Updater(Updater):
                 output_size=1,
                 network=None
             ),
+            z=dict(
+                rep_builder=self._build_z,
+                fixed=self.fixed_z,
+                output_size=1,
+                network=None
+            ),
             attr=dict(
                 rep_builder=self._build_attr,
-                fixed=self.fixed_box,
+                fixed=self.fixed_attr,
                 output_size=self.A,
                 network=None
             ),
@@ -335,15 +346,75 @@ class YoloRL_Updater(Updater):
 
         return tvars
 
+    def _process_cost(self, cost):
+        assert cost.ndim == 5
+        return cost * np.ones((1, self.H, self.W, self.B, 1))
+
+    def _compute_routing(self, program):
+        """ Compute a routing matrix based on sampled program, for use in program interpretation step.
+
+        Returns
+        -------
+        max_objects: int
+            Maximum number of objects in a single batch element.
+        n_objects: (batch_size,) ndarray
+            Number of objects in each batch element.
+        routing: (batch_size, max_objects, 4) ndarray
+            Routing array used as input to tf.gather_nd when interpreting program to form an image.
+
+        """
+        batch_size = program['obj'].shape[0]
+        flat_obj = program['obj'].reshape(batch_size, -1)
+        n_objects = np.sum(flat_obj, axis=1).astype('i')
+        max_objects = n_objects.max()
+        flat_z = program['z'].reshape(batch_size, -1)
+        target_shape = program['attr'].shape[1:4]
+        assert len(target_shape) == 3  # (batch_size, H, W, B)
+
+        routing = np.zeros((batch_size, max_objects, 4))
+
+        for b, fz in enumerate(flat_z):
+            indexed = [(_fz, i) for (i, _fz) in enumerate(fz) if flat_obj[b, i] > 0]
+
+            # Sort turned-on objects by increasing z value
+            _sorted = sorted(indexed)
+
+            for j, (_, i) in enumerate(_sorted):
+                routing[b, j, :] = (b,) + np.unravel_index(i, target_shape)
+
+        return max_objects, n_objects, routing
+
+    def _update_feed_dict_with_routing(self, feed_dict):
+        # --- sample program only
+
+        sess = tf.get_default_session()
+        program, samples = sess.run([self.program, self.samples], feed_dict=feed_dict)
+        feed_dict.update({self.samples[k]: v for k, v in samples.items()})
+
+        # --- compute routing based on sampled program
+
+        max_objects, n_objects, routing = self._compute_routing(program)
+        feed_dict[self.max_objects] = max_objects
+        feed_dict[self.n_objects] = n_objects
+        feed_dict[self.routing] = routing
+
+    def _update_feed_dict_with_costs(self, feed_dict):
+        sess = tf.get_default_session()
+        network_outputs = sess.run(self.network_outputs, feed_dict=feed_dict)
+
+        costs = {
+            self.COST_tensors[name]: self._process_cost(f(network_outputs, self))
+            for name, (_, f, _) in self.COST_funcs.items()
+        }
+        feed_dict.update(costs)
+
     def _update(self, batch_size, collect_summaries):
         feed_dict = self.make_feed_dict(batch_size, 'train', False)
+
+        self._update_feed_dict_with_routing(feed_dict)
+        self._update_feed_dict_with_costs(feed_dict)
+
         sess = tf.get_default_session()
-
-        result = {}
-
-        sample_feed_dict = self._sample(feed_dict)
-        feed_dict.update(sample_feed_dict)
-
         summary = b''
         if collect_summaries:
             _, record, summary = sess.run(
@@ -352,25 +423,7 @@ class YoloRL_Updater(Updater):
             _, record = sess.run(
                 [self.train_op, self.recorded_tensors], feed_dict=feed_dict)
 
-        result.update(train=(record, summary))
-
-        return result
-
-    def _process_cost(self, cost):
-        assert cost.ndim == 5
-        return cost * np.ones((1, self.H, self.W, self.B, 1))
-
-    def _sample(self, feed_dict):
-        sess = tf.get_default_session()
-
-        network_outputs = sess.run(self.network_outputs, feed_dict=feed_dict)
-
-        sample_feed_dict = {self.samples[k]: v for k, v in network_outputs['samples'].items()}
-
-        for name, (_, f) in self.COST_funcs.items():
-            sample_feed_dict[self.COST_components[name]] = self._process_cost(f(network_outputs, self))
-
-        return sample_feed_dict
+        return dict(train=(record, summary))
 
     def _evaluate(self, batch_size, mode):
         assert mode in self.eval_modes
@@ -383,8 +436,8 @@ class YoloRL_Updater(Updater):
         n_points = 0
 
         for _batch_size, feed_dict in feed_dicts:
-            sample_feed_dict = self._sample(feed_dict)
-            feed_dict.update(sample_feed_dict)
+            self._update_feed_dict_with_routing(feed_dict)
+            self._update_feed_dict_with_costs(feed_dict)
 
             _record, summary = sess.run(
                 [self.recorded_tensors, self.summary_op], feed_dict=feed_dict)
@@ -458,93 +511,52 @@ class YoloRL_Updater(Updater):
         self.inp = tf.clip_by_value(self.inp_ph, 1e-6, 1-1e-6, name="inp")
         self.inp_mode = tf.placeholder(tf.float32, (None, self.image_depth), name="inp_mode_ph")
 
+        self.max_objects = tf.placeholder(tf.int32, (), name="max_objects")
+        self.n_objects = tf.placeholder(tf.int32, (None,), name="n_objects")
+        self.routing = tf.placeholder(tf.int32, (None, None, 4), name="routing")
+
         self.is_training = tf.placeholder(tf.bool, ())
         self.float_is_training = tf.to_float(self.is_training)
 
         self.batch_size = tf.shape(self.inp)[0]
         H, W, B = self.H, self.W, self.B
 
-        self.COST_components = {}
-        self.COST = tf.zeros((self.batch_size, H, W, B, 1))
+        self.COST_tensors = {}
 
-        for name, (weight, _) in self.COST_funcs.items():
-            cost = self.COST_components[name] = tf.placeholder(
+        for name, _ in self.COST_funcs.items():
+            cost = tf.placeholder(
                 tf.float32, (None, H, W, B, 1), name="COST_{}_ph".format(name))
-            weight = build_scheduled_value(weight, "COST_{}_weight".format(name))
-            self.COST += weight * cost
+            self.COST_tensors[name] = cost
 
-    def _build_box(self, box_mean_logits, is_training):
-        H, W, B = self.H, self.W, self.B
-        image_height, image_width = self.image_height, self.image_width
+    def _build_box(self, box_logits, is_training):
+        box = tf.nn.sigmoid(tf.clip_by_value(box_logits, -10., 10.))
+        cell_y, cell_x, h, w = tf.split(box, 4, axis=-1)
 
-        box_std = build_scheduled_value(self.box_std, name="box_std")
-        cell_yx_logits, hw_logits = tf.split(box_mean_logits, 2, axis=-1)
+        h = float(self.max_hw - self.min_hw) * h + self.min_hw
+        w = float(self.max_hw - self.min_hw) * w + self.min_hw
 
-        # ------
-
-        cell_yx = tf.nn.sigmoid(tf.clip_by_value(cell_yx_logits, -10., 10.))
-
-        cell_y, cell_x = tf.split(cell_yx, 2, axis=-1)
-        if "cell_y" in self.fix_values:
-            cell_y = float(self.fix_values["cell_y"]) * tf.ones_like(cell_y, dtype=tf.float32)
-        if "cell_x" in self.fix_values:
-            cell_x = float(self.fix_values["cell_x"]) * tf.ones_like(cell_x, dtype=tf.float32)
-        cell_yx = tf.concat([cell_y, cell_x], axis=-1)
-
-        cell_yx_noise = tf.random_normal(tf.shape(cell_yx), name="cell_yx_noise")
-        noisy_cell_yx = cell_yx + cell_yx_noise * box_std * self.float_is_training
-
-        noisy_cell_y, noisy_cell_x = tf.split(noisy_cell_yx, 2, axis=-1)
-
-        noisy_y = (
-            (noisy_cell_y + tf.range(H, dtype=tf.float32)[None, :, None, None, None]) *
-            (self.pixels_per_cell[0] / self.image_shape[0])
-        )
-        noisy_x = (
-            (noisy_cell_x + tf.range(W, dtype=tf.float32)[None, None, :, None, None]) *
-            (self.pixels_per_cell[1] / self.image_shape[1])
-        )
-
-        # Transform to the co-ordinate system expected by AffineGridWarper
-        yt = 2 * noisy_y - 1
-        xt = 2 * noisy_x - 1
-
-        # ------
-
-        hw = float(self.max_hw - self.min_hw) * tf.nn.sigmoid(tf.clip_by_value(hw_logits, -10., 10.)) + self.min_hw
-
-        h, w = tf.split(hw, 2, axis=-1)
         if "h" in self.fix_values:
             h = float(self.fix_values["h"]) * tf.ones_like(h, dtype=tf.float32)
         if "w" in self.fix_values:
             w = float(self.fix_values["w"]) * tf.ones_like(w, dtype=tf.float32)
-        hw = tf.concat([h, w], axis=-1)
+        if "cell_y" in self.fix_values:
+            cell_y = float(self.fix_values["cell_y"]) * tf.ones_like(cell_y, dtype=tf.float32)
+        if "cell_x" in self.fix_values:
+            cell_x = float(self.fix_values["cell_x"]) * tf.ones_like(cell_x, dtype=tf.float32)
 
-        hw_noise = tf.random_normal(tf.shape(hw), name="hw_noise")
+        box = tf.concat([cell_y, cell_x, h, w], axis=-1)
 
-        noisy_hw = hw + hw_noise * box_std * self.float_is_training
+        box_std = build_scheduled_value(self.box_std, name="box_std")
+        box_noise = tf.random_normal(tf.shape(box), name="box_noise")
+        noisy_box = box + box_noise * box_std * self.float_is_training
 
-        normalized_anchor_boxes = self.anchor_boxes / [image_height, image_width]
-        normalized_anchor_boxes = normalized_anchor_boxes.reshape(1, 1, 1, B, 2)
+        self.network_outputs["cell_y"] = cell_y
+        self.network_outputs["cell_x"] = cell_x
+        self.network_outputs["h"] = h
+        self.network_outputs["w"] = w
+        self.samples["box"] = box_noise
 
-        noisy_hw = noisy_hw * normalized_anchor_boxes
-        noisy_h, noisy_w = tf.split(noisy_hw, 2, axis=-1)
-
-        # Transform to the co-ordinate system expected by AffineGridWarper
-        ys = noisy_h
-        xs = noisy_w
-
-        # ------
-
-        self.area = (ys * float(self.image_height)) * (xs * float(self.image_width))
-
-        self.cell_y, self.cell_x = tf.split(cell_yx, 2, axis=-1)
-        self.h, self.w = tf.split(hw, 2, axis=-1)
-
-        self.samples.update(cell_yx=cell_yx_noise, hw=hw_noise)
-
-        box_representation = tf.concat([xs, xt, ys, yt], axis=-1)
-        return box_representation
+        return noisy_box
 
     def _build_obj(self, obj_logits, is_training):
         obj_logits = tf.clip_by_value(obj_logits, -10., 10.)
@@ -562,17 +574,41 @@ class YoloRL_Updater(Updater):
         obj_log_probs = tf.where(tf.is_nan(obj_log_probs), -100.0 * tf.ones_like(obj_log_probs), obj_log_probs)
 
         obj_entropy = obj_dist.entropy()
-        obj_representation = obj_samples
 
         if "obj" in self.fix_values:
-            obj_representation = float(self.fix_values["obj"]) * tf.ones_like(obj_representation, dtype=tf.float32)
+            obj_samples = float(self.fix_values["obj"]) * tf.ones_like(obj_samples, dtype=tf.float32)
 
-        self.obj_logits = obj_logits
         self.samples["obj"] = obj_samples
         self.entropy["obj"] = obj_entropy
         self.log_probs["obj"] = obj_log_probs
+        self.logits["obj"] = obj_logits
 
-        return obj_representation
+        return obj_samples
+
+    def _build_z(self, z_logits, is_training):
+        z_logits = tf.clip_by_value(z_logits, -10., 10.)
+
+        z_params = tf.nn.sigmoid(z_logits)
+        z_std = build_scheduled_value(self.z_std, "z_std") * self.float_is_training
+
+        z_dist = tf.distributions.Normal(loc=z_params, scale=z_std)
+
+        z_samples = tf.stop_gradient(z_dist.sample())
+
+        z_log_probs = z_dist.log_prob(z_samples)
+        z_log_probs = tf.where(tf.is_nan(z_log_probs), -100.0 * tf.ones_like(z_log_probs), z_log_probs)
+
+        z_entropy = z_dist.entropy()
+
+        if "z" in self.fix_values:
+            z_samples = float(self.fix_values["z"]) * tf.ones_like(z_samples, dtype=tf.float32)
+
+        self.samples["z"] = z_samples
+        self.entropy["z"] = z_entropy
+        self.log_probs["z"] = z_log_probs
+        self.logits["z"] = z_logits
+
+        return z_samples
 
     def _build_attr(self, attr_mean, is_training):
         attr_std = build_scheduled_value(self.attr_std, name="attr_std")
@@ -581,7 +617,6 @@ class YoloRL_Updater(Updater):
         noisy_attr = attr_mean + attr_noise * attr_std * self.float_is_training
 
         self.samples["attr"] = attr_noise
-        self.attr = noisy_attr
 
         return noisy_attr
 
@@ -590,10 +625,11 @@ class YoloRL_Updater(Updater):
         H, W, B = self.H, self.W, self.B
         program, features = None, None
 
-        self.program_fields = {}
+        self.program = {}
         self.samples = {}
         self.entropy = {}
         self.log_probs = {}
+        self.logits = {}
 
         for i, kind in enumerate(self.order):
             kind = self.order[i]
@@ -635,7 +671,7 @@ class YoloRL_Updater(Updater):
 
             representation = rep_builder(output, is_training)
 
-            self.program_fields[kind] = representation
+            self.program[kind] = representation
 
             if i:
                 program = tf.concat([program, representation], axis=-1)
@@ -643,106 +679,85 @@ class YoloRL_Updater(Updater):
                 program = representation
 
         # --- finalize ---
-        self.program = program
 
-        self.network_outputs['samples'] = self.samples
-        self.network_outputs['area'] = self.area
-        self.network_outputs['program_fields'] = self.program_fields
+        self.network_outputs.update(
+            program=self.program, samples=self.samples, entropy=self.entropy,
+            log_probs=self.log_probs, logits=self.logits)
 
     def _build_program_interpreter(self):
-        H, W, B, A = self.H, self.W, self.B, self.A
-        object_shape, image_height, image_width, image_depth = (
-            self.object_shape, self.image_height, self.image_width, self.image_depth)
+        # --- Compute sprites from attrs using object decoder ---
 
-        boxes = self.program_fields['box']
-        _boxes = tf.reshape(boxes, (-1, 4))
+        attrs = self.program['attr']
 
-        obj = self.program_fields['obj']
-        attr = self.program_fields['attr']
+        routed_attrs = tf.gather_nd(attrs, self.routing)
+        object_decoder_in = tf.reshape(routed_attrs, (-1, 1, 1, self.A))
 
-        object_decoder_in = tf.reshape(attr, (-1, 1, 1, A))
+        object_logits = self.object_decoder(
+            object_decoder_in, self.object_shape + (self.image_depth+1,), self.is_training)
 
-        transform_constraints = snt.AffineWarpConstraints.no_shear_2d()
+        objects = tf.nn.sigmoid(
+            self.decoder_logit_scale * tf.clip_by_value(object_logits, -10., 10.))
 
-        warper = snt.AffineGridWarper(
-            (image_height, image_width), object_shape, transform_constraints)
-        inverse_warper = warper.inverse()
-
-        if self.use_input_attention:
-            grid_coords = warper(_boxes)
-            grid_coords = tf.reshape(grid_coords, (self.batch_size, H, W, B,) + object_shape + (2,))
-            input_glimpses = tf.contrib.resampler.resampler(self.inp, grid_coords)
-            input_glimpses = tf.reshape(input_glimpses, (-1,) + object_shape + (image_depth,))
-            object_decoder_in = [object_decoder_in, input_glimpses]
-
-        object_decoder_output = self.object_decoder(object_decoder_in, object_shape + (image_depth+1,), self.is_training)
-
-        if isinstance(self.object_decoder, VQ_ObjectDecoder):
-            vq = self.object_decoder._vq
-
-            z_e = tf.reshape(vq.z_e, (self.batch_size, H, W, B) + self.object_decoder.vq_input_shape)
-            z_q = tf.reshape(vq.z_q, (self.batch_size, H, W, B) + self.object_decoder.vq_input_shape)
-
-            nonzero = tf.maximum(tf.to_float(tf.count_nonzero(obj)), 1.0)
-            p = self.object_decoder.vq_input_shape[0] * self.object_decoder.vq_input_shape[1]
-            N = tf.to_float(nonzero) * float(p)
-
-            commitment_error = obj[..., None, None] * (z_e - tf.stop_gradient(z_q))**2
-            self.decoder_commitment_error = tf.reduce_sum(commitment_error) / N
-
-            embedding_error = obj[..., None, None] * (tf.stop_gradient(z_e) - z_q)**2
-            self.decoder_embedding_error = tf.reduce_sum(embedding_error) / N
-
-        object_decoder_output = tf.nn.sigmoid(
-            self.decoder_logit_scale * tf.clip_by_value(object_decoder_output, -10., 10.))
-
-        _object_decoder_output = tf.reshape(
-            object_decoder_output, (-1, H, W, B,) + object_shape + (image_depth+1,))
-        self.object_decoder_images, self.object_decoder_alpha = tf.split(_object_decoder_output, [image_depth, 1], axis=-1)
+        objects = tf.reshape(
+            objects, (self.batch_size, self.max_objects) + self.object_shape + (self.image_depth+1,))
 
         if "alpha" in self.fix_values:
-            images, alpha = tf.split(object_decoder_output, [image_depth, 1], axis=-1)
-            alpha = float(self.fix_values["alpha"]) * tf.ones_like(alpha, dtype=tf.float32)
-            object_decoder_output = tf.concat([images, alpha], axis=-1)
+            obj_img, obj_alpha = tf.split(objects, [3, 1], axis=-1)
+            fixed_obj_alpha = float(self.fix_values["alpha"]) * tf.ones_like(obj_alpha, dtype=tf.float32)
+            objects = tf.concat([obj_img, fixed_obj_alpha], axis=-1)
 
-        grid_coords = inverse_warper(_boxes)
+        self.network_outputs["objects"] = objects
 
-        # --- build predicted images ---
+        # --- Compute sprite locations from box parameters ---
 
-        object_decoder_transformed = tf.contrib.resampler.resampler(object_decoder_output, grid_coords)
-        object_decoder_transformed = tf.reshape(
-            object_decoder_transformed,
-            [-1, H, W, B, image_height, image_width, image_depth+1]
+        # All in cell-local co-ordinates, should be invariant to image size.
+        boxes = self.program['box']
+        cell_y, cell_x, h, w = tf.split(boxes, 4, axis=-1)
+
+        anchor_box_h = self.anchor_boxes[:, 0].reshape(1, 1, 1, self.B, 1)
+        anchor_box_w = self.anchor_boxes[:, 1].reshape(1, 1, 1, self.B, 1)
+
+        # box height and width normalized to image height and width
+        ys = h * anchor_box_h / self.image_height
+        xs = w * anchor_box_w / self.image_width
+
+        # box centre normalized to image height and width
+        yt = (
+            (self.pixels_per_cell[0] / self.image_shape[0]) *
+            (cell_y + tf.range(self.H, dtype=tf.float32)[None, :, None, None, None])
+        )
+        xt = (
+            (self.pixels_per_cell[1] / self.image_shape[1]) *
+            (cell_x + tf.range(self.W, dtype=tf.float32)[None, None, :, None, None])
         )
 
-        transformed_images, transformed_alphas = tf.split(object_decoder_transformed, [image_depth, 1], axis=-1)
+        # `render_sprites` requires box top-left, whereas y and x give box centre
+        yt -= ys / 2
+        xt -= xs / 2
 
-        weighted_images = obj[..., None, None] * transformed_images
-        self.foreground = tf.reduce_max(
-            tf.reshape(weighted_images, [-1, H*W*B, image_height, image_width, image_depth]),
-            axis=1,
-        )
+        self.network_outputs["normalized_box"] = tf.concat([yt, xt, ys, xs], axis=-1)
 
-        weighted_alphas = obj[..., None, None] * transformed_alphas
-        self.alpha = tf.reduce_max(
-            tf.reshape(weighted_alphas, [-1, H*W*B, image_height, image_width, 1]),
-            axis=1,
-        )
+        scales = tf.gather_nd(tf.concat([ys, xs], axis=-1), self.routing)
+        offsets = tf.gather_nd(tf.concat([yt, xt], axis=-1), self.routing)
 
-        self.output = self.alpha * self.foreground + (1 - self.alpha) * self.background
+        # --- Compose images ---
 
-        self.output = tf.clip_by_value(self.output, 1e-6, 1-1e-6)
-        self.output_logits = tf.log(self.output / (1 - self.output))
+        output = render_sprites.render_sprites(objects, self.n_objects, scales, offsets, self.background)
+        output = tf.clip_by_value(output, 1e-6, 1-1e-6)
+        output_logits = tf.log(output / (1 - output))
 
-        self.network_outputs['output'] = self.output
-        self.network_outputs['output_logits'] = self.output_logits
+        # --- Store values ---
+
+        self.network_outputs['area'] = (ys * float(self.image_height)) * (xs * float(self.image_width))
+        self.network_outputs['output'] = output
+        self.network_outputs['output_logits'] = output_logits
 
     def build_area_loss(self, batch=True):
-        selected_area = self.area * self.program_fields['obj']
+        selected_area = self.network_outputs['area'] * self.program['obj']
 
         if batch:
             selected_area = tf_flatten(selected_area)
-            return tf.reduce_sum(selected_area, axis=1, keep_dims=True)
+            return tf.reduce_sum(selected_area, keepdims=True, axis=1)
         else:
             return selected_area
 
@@ -751,7 +766,7 @@ class YoloRL_Updater(Updater):
 
         if batch:
             per_pixel_loss = tf_flatten(per_pixel_loss)
-            return tf.reduce_sum(per_pixel_loss, keep_dims=True, axis=1)
+            return tf.reduce_sum(per_pixel_loss, keepdims=True, axis=1)
         else:
             return per_pixel_loss
 
@@ -761,7 +776,7 @@ class YoloRL_Updater(Updater):
 
         if batch:
             per_pixel_loss = tf_flatten(per_pixel_loss)
-            return tf.reduce_sum(per_pixel_loss, keep_dims=True, axis=1)
+            return tf.reduce_sum(per_pixel_loss, keepdims=True, axis=1)
         else:
             return per_pixel_loss
 
@@ -771,7 +786,7 @@ class YoloRL_Updater(Updater):
 
         if batch:
             per_pixel_loss = tf_flatten(per_pixel_loss)
-            return tf.reduce_sum(per_pixel_loss, keep_dims=True, axis=1)
+            return tf.reduce_sum(per_pixel_loss, keepdims=True, axis=1)
         else:
             return per_pixel_loss
 
@@ -821,15 +836,17 @@ class YoloRL_Updater(Updater):
 
         loss_key = 'xent_loss' if self.xent_loss else 'squared_loss'
 
-        reconstruction_loss = getattr(self, 'build_' + loss_key)(self.output_logits, self.inp)
+        # --- update network outputs ---
+
+        output_logits = self.network_outputs["output_logits"]
+
+        reconstruction_loss = getattr(self, 'build_' + loss_key)(output_logits, self.inp)
         mean_reconstruction_loss = tf.reduce_mean(reconstruction_loss)
 
-        per_pixel_reconstruction_loss = getattr(self, 'build_' + loss_key)(self.output_logits, self.inp, batch=False)
+        per_pixel_reconstruction_loss = getattr(self, 'build_' + loss_key)(output_logits, self.inp, batch=False)
 
         area_loss = self.build_area_loss()
         mean_area_loss = tf.reduce_mean(area_loss)
-
-        # --- network output ---
 
         self.network_outputs.update(
             per_pixel_reconstruction_loss=per_pixel_reconstruction_loss,
@@ -837,49 +854,77 @@ class YoloRL_Updater(Updater):
             area_loss=area_loss
         )
 
-        # --- recorded tensors ---
+        # --- losses and recorded value ---
 
         recorded_tensors = {}
 
         recorded_tensors['obj_entropy'] = tf_mean_sum(self.entropy['obj'])
 
         recorded_tensors.update({
-            name: tf.reduce_mean(getattr(self, 'build_' + name)(self.output_logits, self.inp))
+            name: tf.reduce_mean(getattr(self, 'build_' + name)(output_logits, self.inp))
             for name in ['xent_loss', 'squared_loss', '1norm_loss']
         })
 
-        recorded_tensors['attr'] = tf.reduce_mean(self.attr)
+        recorded_tensors['attr'] = tf.reduce_mean(self.program['attr'])
 
-        recorded_tensors['cell_y'] = tf.reduce_mean(self.cell_y)
-        recorded_tensors['cell_x'] = tf.reduce_mean(self.cell_x)
+        recorded_tensors['cell_y'] = tf.reduce_mean(self.network_outputs["cell_y"])
+        recorded_tensors['cell_x'] = tf.reduce_mean(self.network_outputs["cell_x"])
 
-        recorded_tensors['h'] = tf.reduce_mean(self.h)
-        recorded_tensors['w'] = tf.reduce_mean(self.w)
+        recorded_tensors['h'] = tf.reduce_mean(self.network_outputs["h"])
+        recorded_tensors['w'] = tf.reduce_mean(self.network_outputs["w"])
 
-        recorded_tensors['obj_logits'] = tf.reduce_mean(self.obj_logits)
-        recorded_tensors['obj'] = tf.reduce_mean(self.program_fields['obj'])
+        recorded_tensors['obj_logits'] = tf.reduce_mean(self.logits["obj"])
+        recorded_tensors['obj'] = tf.reduce_mean(self.program['obj'])
 
         recorded_tensors['reconstruction_loss'] = mean_reconstruction_loss
         recorded_tensors['area_loss'] = mean_area_loss
 
-        # --- rl recorded values ---
+        # --- compute rl surrogate loss ---
 
-        for name, _ in self.COST_funcs.items():
-            recorded_tensors["COST_{}".format(name)] = tf.reduce_mean(self.COST_components[name])
+        COST = tf.zeros((self.batch_size, self.H, self.W, self.B, 1))
+        COST_obj = tf.zeros((self.batch_size, self.H, self.W, self.B, 1))
+        COST_z = tf.zeros((self.batch_size, self.H, self.W, self.B, 1))
 
-        recorded_tensors["COST"] = tf.reduce_mean(self.COST)
-        recorded_tensors["TOTAL_COST"] = recorded_tensors["COST"]
+        for name, (weight, _, kind) in self.COST_funcs.items():
+            cost = self.COST_tensors[name]
+            weight = build_scheduled_value(weight, "COST_{}_weight".format(name))
+            weighted_cost = weight * cost
 
-        recorded_tensors["obj_log_probs"] = tf.reduce_mean(self.log_probs['obj'])
+            if kind == "both":
+                COST += weighted_cost
+            elif kind == "obj":
+                COST_obj += weighted_cost
+            elif kind == "z":
+                COST_z += weighted_cost
+            else:
+                raise Exception("NotImplemented")
+
+            recorded_tensors["COST_{}".format(name)] = tf.reduce_mean(cost)
+            recorded_tensors["WEIGHTED_COST_{}".format(name)] = tf.reduce_mean(weighted_cost)
+
+        recorded_tensors["TOTAL_COST"] = (
+            tf.reduce_mean(COST) +
+            tf.reduce_mean(COST_obj) +
+            tf.reduce_mean(COST_z)
+        )
 
         if self.use_baseline:
-            adv = self.COST - tf.reduce_mean(self.COST, axis=0, keep_dims=True)
-        else:
-            adv = self.COST
+            COST -= tf.reduce_mean(COST, axis=0, keepdims=True)
+            COST_obj -= tf.reduce_mean(COST_obj, axis=0, keepdims=True)
+            COST_z -= tf.reduce_mean(COST_z, axis=0, keepdims=True)
 
-        surrogate_loss_map = adv * self.log_probs['obj']
+        recorded_tensors["obj_log_probs"] = tf.reduce_mean(self.log_probs['obj'])
+        recorded_tensors["z_log_probs"] = tf.reduce_mean(self.log_probs['z'])
+
+        surrogate_loss_map = (
+            (COST_obj + COST) * self.log_probs['obj'] +
+            (COST_z + COST) * self.log_probs['z']
+        )
+
         recorded_tensors['surrogate_loss'] = tf.reduce_mean(surrogate_loss_map)
         recorded_tensors['loss'] = recorded_tensors['surrogate_loss'] + mean_reconstruction_loss
+
+        # --- compute other losses ---
 
         if self.area_weight > 0.0:
             recorded_tensors['loss'] += self.area_weight * mean_area_loss
@@ -926,18 +971,21 @@ class YoloRL_RenderHook(object):
 
     def _fetch(self, N, updater):
         feed_dict = updater.make_feed_dict(N, 'val', True)
-        images = feed_dict[updater.inp]
+        images = feed_dict[updater.inp_ph]
 
-        to_fetch = updater.program_fields.copy()
-        to_fetch["output"] = updater.output
-        to_fetch["object_decoder_images"] = updater.object_decoder_images
-        to_fetch["object_decoder_alpha"] = updater.object_decoder_alpha
+        updater._update_feed_dict_with_routing(feed_dict)
+
+        to_fetch = updater.program.copy()
+        to_fetch["output"] = updater.network_outputs["output"]
+        to_fetch["objects"] = updater.network_outputs["objects"]
+        to_fetch["routing"] = updater.routing
+        to_fetch["n_objects"] = updater.n_objects
+        to_fetch["normalized_box"] = updater.network_outputs["normalized_box"]
         to_fetch["background"] = updater.background
 
         sess = tf.get_default_session()
         fetched = sess.run(to_fetch, feed_dict=feed_dict)
         fetched.update(images=images)
-
         fetched["annotations"] = updater.annotations
 
         return fetched
@@ -957,15 +1005,12 @@ class YoloRL_RenderHook(object):
         if annotations is None:
             annotations = [[]] * N
 
-        xs, xt, ys, yt = np.split(fetched['box'].reshape(-1, 4), 4, axis=-1)
+        box = (
+            fetched['normalized_box'] *
+            [image_height, image_width, image_height, image_width]
+        )
 
-        top = image_height * 0.5 * (yt - ys + 1)
-        left = image_width * 0.5 * (xt - xs + 1)
-        height = image_height * ys
-        width = image_width * xs
-
-        box = np.concatenate([top, left, height, width], axis=-1)
-        box = box.reshape(N, -1, 4)
+        box = box.reshape(box.shape[0], -1, 4)
 
         sqrt_N = int(np.ceil(np.sqrt(N)))
 
@@ -999,16 +1044,16 @@ class YoloRL_RenderHook(object):
 
             # Plot true bounding boxes
             for a in annotations[n]:
-                _, top, bottom, left, right = a
-                h = bottom - top
-                w = right - left
+                _, t, b, l, r = a
+                h = b - t
+                w = r - l
 
                 rect = patches.Rectangle(
-                    (left, top), w, h, linewidth=1, edgecolor="xkcd:yellow", facecolor='none')
+                    (l, t), w, h, linewidth=1, edgecolor="xkcd:yellow", facecolor='none')
                 ax1.add_patch(rect)
 
                 rect = patches.Rectangle(
-                    (left, top), w, h, linewidth=1, edgecolor="xkcd:yellow", facecolor='none')
+                    (l, t), w, h, linewidth=1, edgecolor="xkcd:yellow", facecolor='none')
                 ax2.add_patch(rect)
 
             ax3 = axes[3*i+2, j]
@@ -1027,34 +1072,45 @@ class YoloRL_RenderHook(object):
         # Create a plot showing what each object is generating
         import matplotlib.pyplot as plt
 
-        object_decoder_images = fetched['object_decoder_images']
-        object_decoder_alpha = fetched['object_decoder_alpha']
+        objects = fetched['objects']
 
         H, W, B = updater.H, updater.W, updater.B
 
         obj = fetched['obj']
+        n_objects = fetched['n_objects']
+        routing = fetched['routing']
+        z = fetched['z']
 
         for idx in range(N):
             fig, axes = plt.subplots(2*H, W * B, figsize=(20, 20))
             axes = np.array(axes).reshape(2*H, W * B)
 
-            for i in range(H):
-                for j in range(W):
+            for h in range(H):
+                for w in range(W):
                     for b in range(B):
-                        ax = axes[2*i, j * B + b]
+                        _obj = obj[idx, h, w, b, 0]
+                        _z = z[idx, h, w, b, 0]
 
-                        _obj = obj[idx, i, j, b, 0]
+                        ax = axes[2*h, w * B + b]
 
-                        ax.set_title("obj = {}".format(_obj))
-                        ax.set_xlabel("b = {}".format(b))
+                        if h == 0 and b == 0:
+                            ax.set_title("w={}".format(w))
+                        if w == 0 and b == 0:
+                            ax.set_ylabel("h={}".format(h))
 
-                        if b == 0:
-                            ax.set_ylabel("grid_cell: ({}, {})".format(i, j))
+                        ax = axes[2*h+1, w * B + b]
 
-                        ax.imshow(object_decoder_images[idx, i, j, b])
+                        ax.set_title("obj={}, z={}, b={}".format(_obj, _z, b))
 
-                        ax = axes[2*i+1, j * B + b]
-                        ax.imshow(object_decoder_alpha[idx, i, j, b, :, :, 0])
+            for i in range(n_objects[idx]):
+                _, h, w, b = routing[idx, i]
+
+                ax = axes[2*h, w * B + b]
+
+                ax.imshow(objects[idx, i, :, :, :3])
+
+                ax = axes[2*h+1, w * B + b]
+                ax.imshow(objects[idx, i, :, :, 0])
 
             path = updater.exp_dir.path_for('plots', 'stage{}'.format(updater.stage_idx), 'sampled_patches', '{}.pdf'.format(idx))
             fig.savefig(path)
@@ -1145,9 +1201,9 @@ config = Config(
     max_hw=1.0,  # Maximum for the bounding box multiplier.
     min_hw=0.0,  # Minimum for the bounding box multiplier.
 
-    # VAE
     box_std=0.1,
     attr_std=0.0,
+    z_std=0.1,
 
     obj_exploration=0.05,
     obj_default=0.5,
@@ -1164,11 +1220,12 @@ config = Config(
 
     fixed_box=False,
     fixed_obj=False,
+    fixed_z=False,
     fixed_attr=False,
     fixed_object_decoder=False,
 
     fix_values=dict(),
-    order="box obj attr",
+    order="box obj z attr",
 
     # VQ object decoder params
     beta=4.0,
@@ -1191,6 +1248,9 @@ good_config = config.copy(
     colours="white",
     max_overlap=100,
 
+    # backgrounds="red_x blue_x green_x red_circle blue_circle green_circle",
+    # backgrounds_resize=True,
+
     sub_image_size_std=0.4,
     max_chars=3,
     min_chars=1,
@@ -1202,14 +1262,11 @@ good_config = config.copy(
     use_specific_costs=True,
 
     curriculum=[
-        dict(fix_values=dict(obj=1), max_steps=10000, area_weight=0.02),
-        dict(obj_exploration=0.2),
-        dict(obj_exploration=0.1),
-        dict(obj_exploration=0.05),
+        dict(fixed_obj=True, fix_values=dict(obj=1, alpha=1), max_steps=10000, area_weight=0.02),
     ],
 
     nonzero_weight=90.,
-    area_weight=0.1,
+    area_weight=0.2,
 
     box_std=0.1,
     attr_std=0.0,
@@ -1220,22 +1277,30 @@ good_config = config.copy(
 )
 
 
+fragment = [
+    dict(obj_exploration=0.2),
+    dict(obj_exploration=0.1),
+    dict(obj_exploration=0.05),
+]
+
+
 uniform_size_config = good_config.copy(
+    image_shape=(28, 28),
     max_hw=1.5,
     min_hw=0.5,
     sub_image_size_std=0.0,
-)
+    max_overlap=150,
+    patience=2500,
 
-
-uniform_size_reset_config = uniform_size_config.copy(
-    box_std=0.0,
-    curriculum=[
-        dict(obj_exploration=0.2,
-             load_path="/media/data/dps_data/logs/yolo_rl/exp_yolo_rl_seed=347405995_2018_04_05_09_50_56/weights/best_of_stage_1",),
-        dict(obj_exploration=0.1),
-        dict(obj_exploration=0.05),
+    hooks=[
+        PolynomialScheduleHook(
+            attr_name="nonzero_weight",
+            query_name="best_COST_reconstruction",
+            base_configs=fragment, tolerance=2,
+            initial_value=90, scale=5, power=1.0)
     ]
 )
+
 
 small_test_config = uniform_size_config.copy(
     kernel_size=(3, 3),
@@ -1247,35 +1312,6 @@ small_test_config = uniform_size_config.copy(
     max_overlap=100,
 )
 
-
-with_background_config = good_config.copy(
-    backgrounds="red_x blue_x green_x red_circle blue_circle green_circle",
-    backgrounds_resize=True,
-    image_shape=(48, 48),
-
-    curriculum=[
-        dict(
-            fix_values=dict(obj=0), patience=5000,
-            area_weight=0.00,
-            nonzero_weight=0.00,
-            fixed_object_decoder=True,
-            fixed_box=True,
-            fixed_attr=True,
-            fixed_obj=True,),
-        dict(
-            fix_values=dict(obj=1, alpha=1-1e-6),
-            area_weight=0.0,
-            patience=5000,),
-        dict(
-            fix_values=dict(obj=1, alpha=1-1e-6),
-            area_weight=0.02,
-            patience=5000,)
-    ],
-
-    max_hw=1.5,
-    min_hw=0.5,
-    sub_image_size_std=0.0,
-)
 
 vq_config = good_config.copy(
     # VQ object decoder params
