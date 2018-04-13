@@ -3,7 +3,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 from sklearn.cluster import k_means
-from kmodes.kmodes import KModes
 import collections
 
 from dps import cfg
@@ -805,6 +804,7 @@ class YoloRL_Updater(Updater):
 
         if cfg.background_cfg.mode == "static":
             with cfg.background_cfg.static_cfg:
+                from kmodes.kmodes import KModes
                 print("Clustering...")
                 print(cfg.background_cfg.static_cfg)
 

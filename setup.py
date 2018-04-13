@@ -29,7 +29,7 @@ setup(
         "progressbar2",
         "clify",
         "scikit-learn",
-        "kmodes",
+        # "kmodes",
     ],
     entry_points={
         'console_scripts': ['dps-hyper=dps.hyper.command_line:dps_hyper_cl',
