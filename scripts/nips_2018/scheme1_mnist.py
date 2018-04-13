@@ -10,6 +10,7 @@ There are 3 main hyper-parameters:
 
 """
 import clify
+import numpy as np
 from dps.env.advanced import yolo_rl
 from dps.datasets import EMNIST_ObjectDetection
 
@@ -20,9 +21,9 @@ def prepare_func():
 
 
 distributions = dict(
-    nonzero_weight=[10., 20., 30., 40., 50., 60.],
-    area_weight=[.25, .5, 1., 2., 4., 8.],
-    stage0_area_weight=[.01, .02, .04, .08, .16]
+    nonzero_weight=[70., 75., 80., 85., 90],
+    area_weight=list(np.linspace(0.1, 0.8, 5)),
+    stage0_area_weight=[.01, .02, .03, .04],
 )
 
 

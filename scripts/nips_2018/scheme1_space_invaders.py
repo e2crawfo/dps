@@ -22,7 +22,7 @@ def prepare_func():
 
 distributions = dict(
     nonzero_weight=[10., 20., 30., 40., 50., 60.],
-    area_weight=[.25, .5, 1., 2., 4., 8.],
+    area_weight=[.125, .25, .5, 1., 1.5],
     stage0_area_weight=[.01, .02, .04, .08, .16]
 )
 

@@ -1,1 +1,2 @@
-python exploration.py --name=exploration_short --n-repeats=1 --max-hosts=2 --ppn=16 --max-hosts=2 --cpp=1 --kind=slurm --wall-time=6hours --cleanup-time=15mins --slack-time=15mins --pmem=5000 --gpu-set=0,1,2,3 --ignore-gpu=False --error-on-timeout=False
+# python exploration.py --name=exploration_short --n-repeats=1 --max-hosts=2 --ppn=12 --max-hosts=2 --cpp=2 --kind=slurm --wall-time=20mins --cleanup-time=2mins --slack-time=2mins --pmem=5000 --gpu-set=0,1,2,3 --ignore-gpu=False --error-on-timeout=False
+python exploration.py --name=exploration --n-repeats=1 --max-hosts=2 --ppn=12 --max-hosts=2 --cpp=2 --kind=slurm --wall-time=6hours --cleanup-time=30mins --slack-time=30mins --pmem=5000 --gpu-set=0,1,2,3 --ignore-gpu=False --error-on-timeout=False

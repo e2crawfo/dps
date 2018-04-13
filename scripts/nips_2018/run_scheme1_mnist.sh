@@ -1,2 +1,2 @@
-# python scheme1_mnist.py --name=scheme1_mnist --n-repeats=1 --max-hosts=1 --ppn=4 --cpp=1 --kind=slurm --wall-time=10mins --cleanup-time=2mins --slack-time=2mins --pmem=5000 --gpu-set=0 --ignore-gpu=False --error-on-timeout=False --n-param-settings=4
+# python scheme1_mnist.py --name=scheme1_mnist_short --n-repeats=1 --max-hosts=1 --ppn=4 --cpp=1 --kind=slurm --wall-time=10mins --cleanup-time=2mins --slack-time=2mins --pmem=5000 --gpu-set=0 --ignore-gpu=False --error-on-timeout=False --n-param-settings=4
 python scheme1_mnist.py --name=scheme1_mnist --n-repeats=1 --max-hosts=2 --ppn=16 --cpp=1 --kind=slurm --wall-time=6hours --cleanup-time=30mins --slack-time=30mins --pmem=5000 --gpu-set=0,1,2,3 --ignore-gpu=False --error-on-timeout=False --n-param-settings=32
