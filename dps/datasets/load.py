@@ -1,6 +1,6 @@
 import dill
 import gzip
-import scipy
+import imageio
 from skimage.transform import resize
 import numpy as np
 import os
@@ -25,10 +25,10 @@ def load_backgrounds(background_names, shape=None):
     for name in background_names:
         f = os.path.join(backgrounds_dir, '{}.jpg'.format(name))
         try:
-            b = scipy.misc.imread(f)
+            b = imageio.imread(f)
         except FileNotFoundError:
             f = os.path.join(backgrounds_dir, '{}.png'.format(name))
-            b = scipy.misc.imread(f)
+            b = imageio.imread(f)
 
         if shape is not None and b.shape != shape:
             b = resize(b, shape, mode='edge', preserve_range=True)
@@ -53,9 +53,7 @@ def _validate_emnist(path):
     path = str(path)
     if not os.path.isdir(path):
         return False
-
-    with cd(path):
-        return set(os.listdir(path)) == set(emnist_filenames)
+    return set(os.listdir(path)) == set(emnist_filenames)
 
 
 def convert_emnist_and_store(path, new_image_shape):
@@ -283,7 +281,7 @@ def load_omniglot(
 
         for idx in indices:
             f = os.path.join(char_dir, "{}_{:02d}.png".format(class_id, idx + 1))
-            _x = scipy.misc.imread(f)
+            _x = imageio.imread(f)
 
             # Convert to white-on-black
             _x = 255. - _x

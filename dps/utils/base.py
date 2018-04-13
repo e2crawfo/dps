@@ -25,7 +25,6 @@ import hashlib
 import configparser
 import socket
 from zipfile import ZipFile
-from scipy import stats
 
 import clify
 import dps
@@ -105,11 +104,13 @@ def view_readme(path):
 
 
 def confidence_interval(data, coverage):
+    from scipy import stats
     return stats.t.interval(
         coverage, len(data)-1, loc=np.mean(data), scale=stats.sem(data))
 
 
 def standard_error(data):
+    from scipy import stats
     return stats.sem(data)
 
 

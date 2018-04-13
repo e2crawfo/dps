@@ -2,10 +2,8 @@
 
 import numpy as np
 import tensorflow as tf
-from scipy.misc import logsumexp
 from gym.utils import seeding
 
-from dps.utils import one_hot
 from dps.env import Env
 
 
@@ -156,11 +154,13 @@ class ClassificationEnv(SupervisedEnv):
 
     def get_xent_loss(self, logits, targets):
         """ Assumes `targets` is one-hot. """
-        if not self.one_hot:
-            targets = one_hot(np.squeeze(targets, axis=-1), logits.shape[-1])
-        log_numer = np.sum(logits * targets, axis=-1, keepdims=True)
-        log_denom = logsumexp(logits, axis=-1, keepdims=True)
-        return -(log_numer - log_denom)
+        raise Exception("NotImplemented. logsumexp dep no longer satisfied since scipy was removed.")
+
+        # if not self.one_hot:
+        #     targets = one_hot(np.squeeze(targets, axis=-1), logits.shape[-1])
+        # log_numer = np.sum(logits * targets, axis=-1, keepdims=True)
+        # log_denom = logsumexp(logits, axis=-1, keepdims=True)
+        # return -(log_numer - log_denom)
 
     def get_01_loss(self, actions, targets):
         action_argmax = np.argmax(actions, axis=-1)[..., None]

@@ -3,11 +3,12 @@ import os
 import argparse
 import numpy as np
 
-from scipy import stats
-
 import matplotlib.pyplot as plt
 from dps.hyper import extract_data_from_job
-from dps.utils import process_path, Config, sha_cache, set_clear_cache
+from dps.utils import (
+    process_path, Config, sha_cache, set_clear_cache,
+    confidence_interval, standard_error
+)
 
 
 cache_dir = process_path('/home/eric/.cache/dps_plots')
@@ -129,13 +130,8 @@ def std_dev(ys):
     return y_upper, y_lower
 
 
-def ci(data, coverage):
-    return stats.t.interval(
-        coverage, len(data)-1, loc=np.mean(data), scale=stats.sem(data))
-
-
 def ci95(ys):
-    conf_int = [ci(_y.values, 0.95) for _y in ys]
+    conf_int = [confidence_interval(_y.values, 0.95) for _y in ys]
     y = [_y.mean() for _y in ys]
     y_lower = y - np.array([ci[0] for ci in conf_int])
     y_upper = np.array([ci[1] for ci in conf_int]) - y
@@ -143,7 +139,7 @@ def ci95(ys):
 
 
 def std_err(ys):
-    y_upper = y_lower = [stats.sem(_y.values) for _y in ys]
+    y_upper = y_lower = [standard_error(_y.values) for _y in ys]
     return y_upper, y_lower
 
 

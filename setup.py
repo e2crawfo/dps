@@ -16,7 +16,6 @@ setup(
     setup_requires=['numpy>=1.7'],
     install_requires=[
         "numpy>=1.7",
-        "scipy",
         "pandas",
         "pytest",
         "pytest-env",

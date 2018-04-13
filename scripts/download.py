@@ -1,15 +1,16 @@
 import shutil
 import numpy as np
-from scipy.io import loadmat
 import dill
 import gzip
 import argparse
 import os
 import subprocess
 import zipfile
+import struct
+from array import array
 
 from dps.datasets.load import _validate_emnist
-from dps.utils import image_to_string, cd, process_path, remove
+from dps.utils import image_to_string, cd, process_path
 from dps.datasets.load import convert_emnist_and_store
 
 
@@ -35,9 +36,20 @@ def download_backgrounds(data_dir):
 emnist_url = 'http://www.itl.nist.gov/iaui/vip/cs_links/EMNIST/matlab.zip'
 
 
+template = 'emnist-byclass-{}-{}-idx{}-ubyte.gz'
+
+emnist_gz_names = [
+    template.format('test', 'images', 3),
+    template.format('test', 'labels', 1),
+    template.format('train', 'images', 3),
+    template.format('train', 'labels', 1)
+]
+
+
 def download_emnist(data_dir):
     """
-    Download the emnist data. Result is that a file called `emnist-byclass.mat` is stored in `data_dir`.
+    Download the emnist data. Result is that a directory called "emnist_raw"
+    is created inside `data_dir` which contains 4 files.
 
     Parameters
     ----------
@@ -45,19 +57,56 @@ def download_emnist(data_dir):
         Path to directory where files should be stored.
 
     """
-    with cd(data_dir):
-        if not os.path.exists('matlab.zip'):
+    emnist_raw_dir = os.path.join(data_dir, "emnist_raw")
+    os.makedirs(emnist_raw_dir, exist_ok=True)
+
+    with cd(emnist_raw_dir):
+        if not os.path.exists('gzip.zip'):
             print("Downloading...")
             command = "wget {} --no-check-certificate".format(emnist_url).split()
             subprocess.run(command, check=True)
         else:
-            print("Found existing copy of matlab.zip, not downloading.")
+            print("Found existing copy of gzip.zip, not downloading.")
 
         print("Extracting...")
-        subprocess.run('unzip matlab.zip matlab/emnist-byclass.mat', shell=True, check=True)
+        for fname in emnist_gz_names:
+            if not os.path.exists(fname):
+                subprocess.run('unzip gzip.zip gzip/{}'.format(fname), shell=True, check=True)
+                shutil.move('gzip/{}'.format(fname), '.')
+            else:
+                print("{} already exists, skipping extraction.".format(fname))
 
-        shutil.move('matlab/emnist-byclass.mat', '.')
-        shutil.rmtree('matlab')
+        try:
+            shutil.rmtree('gzip')
+        except FileNotFoundError:
+            pass
+
+    return emnist_raw_dir
+
+
+def _emnist_load_helper(path_img, path_lbl):
+    with gzip.open(path_lbl, 'rb') as file:
+        magic, size = struct.unpack(">II", file.read(8))
+        if magic != 2049:
+            raise ValueError('Magic number mismatch, expected 2049,'
+                             'got {}'.format(magic))
+
+        labels = array("B", file.read())
+
+    with gzip.open(path_img, 'rb') as file:
+        magic, size, rows, cols = struct.unpack(">IIII", file.read(16))
+        if magic != 2051:
+            raise ValueError('Magic number mismatch, expected 2051,'
+                             'got {}'.format(magic))
+
+        image_data = array("B", file.read())
+
+    images = np.zeros((size, rows * cols))
+
+    for i in range(size):
+        images[i][:] = image_data[i * rows * cols:(i + 1) * rows * cols]
+
+    return np.array(images), np.array(labels)
 
 
 def process_emnist(data_dir, quiet):
@@ -78,57 +127,55 @@ def process_emnist(data_dir, quiet):
          Directory where files should be stored.
 
     """
-    with remove(os.path.join(data_dir, 'emnist-byclass.mat')):
-        with cd(data_dir):
-            if _validate_emnist('emnist'):
-                print("EMNIST data seems to be present already, exiting.")
-                return
-            else:
-                try:
-                    shutil.rmtree('emnist')
-                except FileNotFoundError:
+    with cd(data_dir):
+        if _validate_emnist('emnist'):
+            print("EMNIST data seems to be present already, exiting.")
+            return
+        else:
+            try:
+                shutil.rmtree('emnist')
+            except FileNotFoundError:
+                pass
+
+    raw_dir = download_emnist(data_dir)
+
+    with cd(raw_dir):
+        images, labels = _emnist_load_helper(emnist_gz_names[0], emnist_gz_names[1])
+        images1, labels1 = _emnist_load_helper(emnist_gz_names[2], emnist_gz_names[3])
+
+    with cd(data_dir):
+        os.makedirs('emnist', exist_ok=False)
+
+        print("Processing...")
+        with cd('emnist'):
+            x = np.concatenate((images, images1), 0)
+            y = np.concatenate((labels, labels1), 0)
+
+            # Give images the right orientation so that plt.imshow(x[0]) just works.
+            x = np.moveaxis(x.reshape(-1, 28, 28), 1, 2)
+            x = x.astype('f') / 255.0
+
+            for i in sorted(set(y.flatten())):
+                keep = y == i
+                x_i = x[keep.flatten(), :]
+                if i >= 36:
+                    char = chr(i-36+ord('a'))
+                elif i >= 10:
+                    char = chr(i-10+ord('A'))
+                else:
+                    char = str(i)
+
+                if quiet >= 2:
                     pass
+                elif quiet == 1:
+                    print(char)
+                elif quiet <= 0:
+                    print(char)
+                    print(image_to_string(x_i[0, ...]))
 
-        download_emnist(data_dir)
-
-        with cd(data_dir):
-            emnist = loadmat('emnist-byclass.mat')
-            os.makedirs('emnist', exist_ok=False)
-
-            print("Processing...")
-            with cd('emnist'):
-                train, test, _ = emnist['dataset'][0, 0]
-                train_x, train_y, _ = train[0, 0]
-                test_x, test_y, _ = test[0, 0]
-
-                y = np.concatenate((train_y, test_y), 0)
-                x = np.concatenate((train_x, test_x), 0)
-
-                # Give images the right orientation so that plt.imshow(x[0]) just works.
-                x = np.moveaxis(x.reshape(-1, 28, 28), 1, 2)
-                x = x.astype('f') / 255.0
-
-                for i in sorted(set(y.flatten())):
-                    keep = y == i
-                    x_i = x[keep.flatten(), :]
-                    if i >= 36:
-                        char = chr(i-36+ord('a'))
-                    elif i >= 10:
-                        char = chr(i-10+ord('A'))
-                    else:
-                        char = str(i)
-
-                    if quiet >= 2:
-                        pass
-                    elif quiet == 1:
-                        print(char)
-                    elif quiet <= 0:
-                        print(char)
-                        print(image_to_string(x_i[0, ...]))
-
-                    file_i = char + '.pklz'
-                    with gzip.open(file_i, 'wb') as f:
-                        dill.dump(x_i, f, protocol=dill.HIGHEST_PROTOCOL)
+                file_i = char + '.pklz'
+                with gzip.open(file_i, 'wb') as f:
+                    dill.dump(x_i, f, protocol=dill.HIGHEST_PROTOCOL)
 
     print("Done setting up EMNIST data.")
     return x, y
