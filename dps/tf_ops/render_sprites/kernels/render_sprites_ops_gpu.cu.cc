@@ -570,7 +570,6 @@ struct RenderSpritesGrad2DFunctor<GPUDevice, T>{
                    const int img_width,
 
                    const int n_channels){
-
     const int grad_sprites_size = batch_size * max_sprites * sprite_height * sprite_width * (n_channels + 1);
     const int grad_n_sprites_size = batch_size;
     const int grad_scales_size = batch_size * max_sprites * 2;

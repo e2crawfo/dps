@@ -37,6 +37,8 @@ class Dataset(Parameterized):
                     with open(filename + ".pkl", 'rb') as f:
                         tracks = dill.load(f)
                     loaded = True
+                except FileNotFoundError:
+                    pass
                 finally:
                     if not loaded:
                         print("File not found, creating dataset and storing...")
