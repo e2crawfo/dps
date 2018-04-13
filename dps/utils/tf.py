@@ -1135,8 +1135,8 @@ def build_optimizer(spec, learning_rate):
     return opt
 
 
-def masked_mean(array, mask, axis=None, keep_dims=False):
-    denom = tf.count_nonzero(mask, axis=axis, keep_dims=keep_dims)
+def masked_mean(array, mask, axis=None, keepdims=False):
+    denom = tf.count_nonzero(mask, axis=axis, keepdims=keepdims)
     denom = tf.maximum(denom, 1)
     denom = tf.to_float(denom)
     return tf.reduce_sum(array * mask, axis=axis) / denom

@@ -243,7 +243,7 @@ class InternalEnv(TensorFlowEnv):
             lambda: tf.zeros(tf.shape(registers)[:-1])[..., None],
             lambda: -tf.reduce_sum(
                 tf.to_float(tf.abs(self.rb.get_output(registers) - self.target) > cfg.reward_window),
-                axis=-1, keep_dims=True
+                axis=-1, keepdims=True
             ),
         )
         rewards /= tf.to_float(self.T)

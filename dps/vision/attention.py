@@ -81,7 +81,7 @@ def apply_gaussian_filter(mu, std, locations, values, normalize=False):
     """ Create and apply a single 1-D gaussian filter. """
     filt = gaussian_filter(mu, std, locations, normalize)
     filt = tf.squeeze(filt, axis=[1])
-    vision = tf.reduce_sum(values * filt, axis=-1, keep_dims=True)
+    vision = tf.reduce_sum(values * filt, axis=-1, keepdims=True)
     return vision
 
 

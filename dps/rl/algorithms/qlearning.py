@@ -23,9 +23,9 @@ class DuelingHead(object):
         advantage = self.adv_fn(inp, n_actions)
 
         if self.kind == "mean":
-            normed_advantage = advantage - tf.reduce_mean(advantage, axis=-1, keep_dims=True)
+            normed_advantage = advantage - tf.reduce_mean(advantage, axis=-1, keepdims=True)
         else:
-            normed_advantage = advantage - tf.reduce_max(advantage, axis=-1, keep_dims=True)
+            normed_advantage = advantage - tf.reduce_max(advantage, axis=-1, keepdims=True)
         return value + normed_advantage
 
 

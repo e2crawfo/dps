@@ -296,11 +296,11 @@ class ConstrainedPolicyEvaluation_State(ObjectiveFunctionTerm):
 
             mask = context.get_signal("mask")
 
-            mean_divergence = masked_mean(tf.reduce_mean(divergence, axis=-1, keep_dims=True), mask)
+            mean_divergence = masked_mean(tf.reduce_mean(divergence, axis=-1, keepdims=True), mask)
             label = "{}-opt-mean_ve_divergence".format(self.value_function.display_name)
             context.add_summary(tf.summary.scalar(label, mean_divergence))
 
-            objective = masked_mean(tf.reduce_mean(objective, axis=-1, keep_dims=True), mask)
+            objective = masked_mean(tf.reduce_mean(objective, axis=-1, keepdims=True), mask)
             label = "{}-opt-ve_direct_objective".format(self.value_function.display_name)
             context.add_summary(tf.summary.scalar(label, objective))
 
@@ -355,20 +355,20 @@ class ConstrainedPolicyEvaluation_State(ObjectiveFunctionTerm):
 
             mask = context.get_signal("mask")
 
-            mean_ratio = masked_mean(tf.reduce_mean(ratio, axis=-1, keep_dims=True), mask)
+            mean_ratio = masked_mean(tf.reduce_mean(ratio, axis=-1, keepdims=True), mask)
             label = "{}-opt-mean_ve_ratio".format(self.value_function.display_name)
             context.add_summary(tf.summary.scalar(label, mean_ratio))
 
             if clipped_ratio is not None:
-                mean_clipped_ratio = masked_mean(tf.reduce_mean(clipped_ratio, axis=-1, keep_dims=True), mask)
+                mean_clipped_ratio = masked_mean(tf.reduce_mean(clipped_ratio, axis=-1, keepdims=True), mask)
                 label = "{}-opt-mean_ve_clipped_ratio".format(self.value_function.display_name)
                 context.add_summary(tf.summary.scalar(label, mean_clipped_ratio))
 
-            mean_advantage = masked_mean(tf.reduce_mean(prev_advantage, axis=-1, keep_dims=True), mask)
+            mean_advantage = masked_mean(tf.reduce_mean(prev_advantage, axis=-1, keepdims=True), mask)
             label = "{}-opt-mean_ve_advantage".format(self.value_function.display_name)
             context.add_summary(tf.summary.scalar(label, mean_advantage))
 
-            objective = masked_mean(tf.reduce_mean(adv_times_ratio, axis=-1, keep_dims=True), mask)
+            objective = masked_mean(tf.reduce_mean(adv_times_ratio, axis=-1, keepdims=True), mask)
             label = "{}-opt-ve_objective".format(self.value_function.display_name)
             context.add_summary(tf.summary.scalar(label, objective))
 

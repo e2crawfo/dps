@@ -106,7 +106,7 @@ class VQVAE_Env(BernoulliSigmoid):
 
         if batch:
             per_pixel_loss = tf_flatten(per_pixel_loss)
-            return tf.reduce_sum(per_pixel_loss, keep_dims=True, axis=1)
+            return tf.reduce_sum(per_pixel_loss, keepdims=True, axis=1)
         else:
             return per_pixel_loss
 
@@ -116,7 +116,7 @@ class VQVAE_Env(BernoulliSigmoid):
 
         if batch:
             per_pixel_loss = tf_flatten(per_pixel_loss)
-            return tf.reduce_sum(per_pixel_loss, keep_dims=True, axis=1)
+            return tf.reduce_sum(per_pixel_loss, keepdims=True, axis=1)
         else:
             return per_pixel_loss
 
@@ -126,7 +126,7 @@ class VQVAE_Env(BernoulliSigmoid):
 
         if batch:
             per_pixel_loss = tf_flatten(per_pixel_loss)
-            return tf.reduce_sum(per_pixel_loss, keep_dims=True, axis=1)
+            return tf.reduce_sum(per_pixel_loss, keepdims=True, axis=1)
         else:
             return per_pixel_loss
 

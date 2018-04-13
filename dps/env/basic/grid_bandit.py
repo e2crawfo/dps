@@ -90,11 +90,11 @@ class GridBandit(TensorFlowEnv):
         idx = tf.cast(y * self.shape[1] + x, tf.int32)
         new_vision = tf.reduce_sum(
             tf.one_hot(tf.reshape(idx, (-1,)), np.product(self.shape)) * self.input[:, 2:],
-            axis=1, keep_dims=True)
+            axis=1, keepdims=True)
         vision = (1 - look) * vision + look * new_vision
         action = tf.cast(tf.reshape(tf.argmax(actions, axis=1), (-1, 1)), tf.float32)
 
-        arm_chosen = tf.reduce_sum(tf.concat(arms, axis=1), axis=1, keep_dims=True) > 0.5
+        arm_chosen = tf.reduce_sum(tf.concat(arms, axis=1), axis=1, keepdims=True) > 0.5
         chosen_arm = tf.reshape(tf.argmax(arms), (-1, 1))
         current_arm = tf.cast(current_arm, tf.int64)
         new_current_arm = tf.where(arm_chosen, chosen_arm, current_arm)

@@ -149,7 +149,7 @@ class ClassificationEnv(SupervisedEnv):
             targets_argmax = tf.reshape(targets, tf.shape(action_argmax))
         return tf.reduce_mean(
             1 - tf.to_float(tf.equal(action_argmax, targets_argmax)),
-            axis=-1, keep_dims=True)
+            axis=-1, keepdims=True)
 
     def get_reward(self, actions, targets):
         return -self.get_xent_loss(actions, targets)
@@ -176,7 +176,7 @@ class RegressionEnv(SupervisedEnv):
     recorded_names = ["2norm_loss"]
 
     def build_2norm_loss(self, actions, targets):
-        return tf.reduce_mean((actions - targets)**2, keep_dims=True)
+        return tf.reduce_mean((actions - targets)**2, keepdims=True)
 
     def get_reward(self, actions, targets):
         return -self.get_2norm_loss(actions, targets)
@@ -193,16 +193,16 @@ class BernoulliSigmoid(SupervisedEnv):
     def build_xent_loss(self, logits, targets):
         return tf.reduce_mean(
             tf.nn.sigmoid_cross_entropy_with_logits(labels=targets, logits=logits),
-            keep_dims=True, axis=-1
+            keepdims=True, axis=-1
         )
 
     def build_2norm_loss(self, logits, targets):
         actions = tf.sigmoid(logits)
-        return tf.reduce_mean((actions - targets)**2, axis=-1, keep_dims=True)
+        return tf.reduce_mean((actions - targets)**2, axis=-1, keepdims=True)
 
     def build_1norm_loss(self, logits, targets):
         actions = tf.sigmoid(logits)
-        return tf.reduce_mean(tf.abs(actions - targets), axis=-1, keep_dims=True)
+        return tf.reduce_mean(tf.abs(actions - targets), axis=-1, keepdims=True)
 
     def get_reward(self, logits, targets):
         return -self.get_xent_loss(logits, targets)
@@ -231,7 +231,7 @@ class IntegerRegressionEnv(RegressionEnv):
     def build_01_loss(self, actions, targets):
         return tf.reduce_mean(
             tf.to_float(tf.abs(actions - targets) >= 0.5),
-            axis=-1, keep_dims=True)
+            axis=-1, keepdims=True)
 
     def get_reward(self, actions, targets):
         return -self.get_01_loss(actions, targets)

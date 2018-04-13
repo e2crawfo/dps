@@ -135,7 +135,7 @@ class Policy(AgentHead):
             return returns
         elif key == 'average_monte_carlo_values':
             values = context.get_signal('monte_carlo_values', self, **kwargs)
-            average = tf.reduce_mean(values, axis=1, keep_dims=True)
+            average = tf.reduce_mean(values, axis=1, keepdims=True)
             average += tf.zeros_like(values)
             return average
         elif key == 'importance_weights':
@@ -296,12 +296,12 @@ class ProductDist(ActionSelection):
         _utils = tf.split(utils, self.param_dim_vector, axis=final_d(utils))
         _actions = tf.split(actions, self.action_dim_vector, axis=final_d(actions))
         _log_probs = [c.log_probs(u, a, exploration) for u, a, c in zip(_utils, _actions, self.components)]
-        return tf.reduce_sum(tf.concat(_log_probs, axis=-1), axis=-1, keep_dims=True)
+        return tf.reduce_sum(tf.concat(_log_probs, axis=-1), axis=-1, keepdims=True)
 
     def _entropy(self, utils, exploration):
         _utils = tf.split(utils, self.param_dim_vector, axis=final_d(utils))
         _entropies = [c.entropy(u, exploration) for u, c in zip(_utils, self.components)]
-        return tf.reduce_sum(tf.concat(_entropies, axis=-1), axis=-1, keep_dims=True)
+        return tf.reduce_sum(tf.concat(_entropies, axis=-1), axis=-1, keepdims=True)
 
     def _kl(self, utils1, utils2, e1, e2=None):
         _utils1 = tf.split(utils1, self.param_dim_vector, axis=final_d(utils1))
@@ -312,7 +312,7 @@ class ProductDist(ActionSelection):
              for u1, u2, c in zip(_utils1, _utils2, self.components)],
             axis=-1)
 
-        return tf.reduce_sum(_splitwise_kl, axis=-1, keep_dims=True)
+        return tf.reduce_sum(_splitwise_kl, axis=-1, keepdims=True)
 
 
 class TensorFlowSelection(ActionSelection):

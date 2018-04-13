@@ -85,7 +85,7 @@ class PathDiscovery(TensorFlowEnv):
         idx = tf.cast(y * self.shape[1] + x, tf.int32)
         new_vision = tf.reduce_sum(
             tf.one_hot(tf.reshape(idx, (-1,)), np.product(self.shape)) * self.input[:, 2:],
-            axis=1, keep_dims=True)
+            axis=1, keepdims=True)
         vision = (1 - look) * vision + look * new_vision
         action = tf.cast(tf.reshape(tf.argmax(actions, axis=1), (-1, 1)), tf.float32)
 

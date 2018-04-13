@@ -83,7 +83,7 @@ class ActionValueFunction(AgentHead):
         elif key == 'action_values':
             action_values = context.get_signal('action_values_all', self, gradient=True)
             actions = context.get_signal('actions')
-            action_values = tf.reduce_sum(actions * action_values, axis=-1, keep_dims=True)
+            action_values = tf.reduce_sum(actions * action_values, axis=-1, keepdims=True)
 
             mask = context.get_signal('mask')
             label = "{}-estimated_action_value".format(self.display_name)
@@ -305,7 +305,7 @@ class Retrace(RLObject):
                 pi_log_probs_all = context.get_signal("log_probs_all", self.policy)
                 pi_probs = tf.exp(pi_log_probs_all)
                 action_values = context.get_signal("action_values", self.value_function)
-                values = tf.reduce_sum(pi_probs * action_values, axis=-1, keep_dims=True)
+                values = tf.reduce_sum(pi_probs * action_values, axis=-1, keepdims=True)
             else:
                 action_values = context.get_signal("action_values", self.value_function)
                 values = action_values * rho

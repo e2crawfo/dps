@@ -533,7 +533,7 @@ class NEMCell(RNNCell):
 
             # init with Gaussian distribution
             gamma = tf.abs(tf.random_normal(shape, dtype=dtype))
-            gamma /= tf.reduce_sum(gamma, 1, keep_dims=True)
+            gamma /= tf.reduce_sum(gamma, 1, keepdims=True)
 
             # init with all 1 if K = 1
             if K == 1:
@@ -601,7 +601,7 @@ class NEMCell(RNNCell):
                     'Unknown distribution_type: "{}"'.format(self.distribution))
 
             # sum loss over channels
-            probs = tf.reduce_sum(probs, 4, keep_dims=True, name='reduce_channels')
+            probs = tf.reduce_sum(probs, 4, keepdims=True, name='reduce_channels')
 
             if epsilon > 0:
                 # add epsilon to probs in order to prevent 0 gamma
@@ -614,7 +614,7 @@ class NEMCell(RNNCell):
             probs = self.compute_em_probabilities(preds, targets)
 
             # compute the new gamma (E-step)
-            gamma = probs / tf.reduce_sum(probs, 1, keep_dims=True)
+            gamma = probs / tf.reduce_sum(probs, 1, keepdims=True)
 
             return gamma
 
@@ -711,7 +711,7 @@ def compute_outer_loss(mu, gamma, target, prior, pixel_distribution, inter_weigh
 
 
 def compute_loss_upper_bound(pred, target, pixel_distribution):
-    max_pred = tf.reduce_max(pred, axis=1, keep_dims=True)
+    max_pred = tf.reduce_max(pred, axis=1, keepdims=True)
     if pixel_distribution == 'bernoulli':
         loss = binomial_cross_entropy_loss(max_pred, target)
     elif pixel_distribution == 'gaussian':

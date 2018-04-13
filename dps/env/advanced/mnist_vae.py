@@ -97,7 +97,7 @@ class VAE_Env(BernoulliSigmoid):
         logits = tf.reshape(logits, (batch_size, -1))
         return tf.reduce_sum(
             tf.nn.sigmoid_cross_entropy_with_logits(labels=targets, logits=logits),
-            keep_dims=True, axis=1
+            keepdims=True, axis=1
         )
 
     def build_2norm_loss(self, logits, targets):
@@ -107,7 +107,7 @@ class VAE_Env(BernoulliSigmoid):
         targets = tf.reshape(targets, (batch_size, -1))
         actions = tf.reshape(actions, (batch_size, -1))
 
-        return tf.reduce_mean((actions - targets)**2, keep_dims=True, axis=1)
+        return tf.reduce_mean((actions - targets)**2, keepdims=True, axis=1)
 
     def build_1norm_loss(self, logits, targets):
         actions = tf.sigmoid(logits)
@@ -116,7 +116,7 @@ class VAE_Env(BernoulliSigmoid):
         targets = tf.reshape(targets, (batch_size, -1))
         actions = tf.reshape(actions, (batch_size, -1))
 
-        return tf.reduce_mean(tf.abs(actions - targets), keep_dims=True, axis=1)
+        return tf.reduce_mean(tf.abs(actions - targets), keepdims=True, axis=1)
 
 
 class VAE(ScopedFunction):

@@ -284,7 +284,7 @@ class RLContext(Parameterized):
         self._signals['discounted_returns'] = discounted_returns
 
         mask = self._signals['mask']
-        mean_returns = masked_mean(discounted_returns, mask, axis=1, keep_dims=True)
+        mean_returns = masked_mean(discounted_returns, mask, axis=1, keepdims=True)
         mean_returns += tf.zeros_like(discounted_returns)
         self._signals['average_discounted_returns'] = mean_returns
 
