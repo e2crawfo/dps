@@ -78,6 +78,11 @@ struct RenderSprites2DFunctor<CPUDevice, T>{
     const T zero = static_cast<T>(0.0);
     const T one = static_cast<T>(1.0);
 
+    if (max_sprites == 0) {
+        memcpy(output, backgrounds, sizeof(T) * batch_size * img_height * img_width * n_channels);
+        return;
+    }
+
     auto resample_batches = [&](const int start, const int limit) {
 
       auto get_sprite_data = [&](const int batch_id,
@@ -383,13 +388,17 @@ struct RenderSpritesGrad2DFunctor<CPUDevice, T>{
 
                    const int n_channels){
 
-    // Set gradients to 0, because the kernel incrementally updates the
-    // tensor entries by adding partial contributions.
+    // Set gradients to 0, because the kernel incrementally updates the tensor entries by adding partial contributions.
+    // (Except for grad_backgrounds, which is only set once)
     memset(grad_sprites, 0, sizeof(T) * batch_size * max_sprites * sprite_height * sprite_width * (n_channels + 1));
     memset(grad_n_sprites, 0, sizeof(T) * batch_size);
     memset(grad_scales, 0, sizeof(T) * batch_size * max_sprites * 2);
     memset(grad_offsets, 0, sizeof(T) * batch_size * max_sprites * 2);
-    memset(grad_backgrounds, 0, sizeof(T) * batch_size * img_height * img_width * n_channels);
+
+    if (max_sprites == 0){
+      memcpy(grad_backgrounds, grad_output, sizeof(T) * batch_size * img_height * img_width * n_channels);
+      return;
+    }
 
     int sprites_batch_stride = max_sprites * sprite_height * sprite_width * (n_channels + 1);
     int sprites_sprite_stride = sprite_height * sprite_width * (n_channels + 1);

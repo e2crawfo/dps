@@ -167,6 +167,17 @@ __global__ void RenderSprites2DKernel(const T* __restrict__ sprites,
 
 namespace functor {
 
+// modelled after SetZero
+template <typename T>
+__global__ void Copy(const int count, T* dst, const T* src) {
+  // Check that the grid is one dimensional and index doesn't overflow.
+  assert(blockDim.y == 1 && blockDim.z == 1);
+  assert(blockDim.x * gridDim.x / blockDim.x == gridDim.x);
+  for (int i : CudaGridRangeX(count)) {
+    dst[i] = src[i];
+  }
+}
+
 template <typename T>
 struct RenderSprites2DFunctor<GPUDevice, T>{
   void operator ()(::tensorflow::OpKernelContext* ctx,
@@ -192,9 +203,13 @@ struct RenderSprites2DFunctor<GPUDevice, T>{
                    const int n_channels){
 
     const int output_size = batch_size * img_height * img_width * n_channels;
+    if(max_sprites == 0){
+      ::tensorflow::CudaLaunchConfig config = ::tensorflow::GetCudaLaunchConfig(output_size, d);
+      Copy<<<config.block_count, config.thread_per_block, 0, d.stream()>>>(output_size, output, backgrounds);
+      return;
+    }
 
     ::tensorflow::CudaLaunchConfig config = ::tensorflow::GetCudaLaunchConfig(output_size, d);
-
     RenderSprites2DKernel<T>
         <<<config.block_count, config.thread_per_block, 0, d.stream()>>>(
             sprites, n_sprites, scales, offsets, backgrounds, output,
@@ -556,29 +571,35 @@ struct RenderSpritesGrad2DFunctor<GPUDevice, T>{
 
                    const int n_channels){
 
-    // Set gradients to 0, because the kernel incrementally updates the
-    // tensor entries by adding partial contributions (except for grad_backgrounds, which is only set one).
     const int grad_sprites_size = batch_size * max_sprites * sprite_height * sprite_width * (n_channels + 1);
     const int grad_n_sprites_size = batch_size;
     const int grad_scales_size = batch_size * max_sprites * 2;
     const int grad_offsets_size = batch_size * max_sprites * 2;
     const int grad_backgrounds_size = batch_size * img_height * img_width * n_channels;
 
-    ::tensorflow::CudaLaunchConfig config = ::tensorflow::GetCudaLaunchConfig(grad_sprites_size, d);
-    ::tensorflow::SetZero
-        <<<config.block_count, config.thread_per_block, 0, d.stream()>>>(grad_sprites_size, grad_sprites);
-
-    config = ::tensorflow::GetCudaLaunchConfig(grad_n_sprites_size, d);
+    ::tensorflow::CudaLaunchConfig config = ::tensorflow::GetCudaLaunchConfig(grad_n_sprites_size, d);
     ::tensorflow::SetZero
         <<<config.block_count, config.thread_per_block, 0, d.stream()>>>(grad_n_sprites_size, grad_n_sprites);
 
-    config = ::tensorflow::GetCudaLaunchConfig(grad_scales_size, d);
-    ::tensorflow::SetZero
-        <<<config.block_count, config.thread_per_block, 0, d.stream()>>>(grad_scales_size, grad_scales);
+    if(max_sprites > 0){
+      // Set gradients to 0, because the kernel incrementally updates the
+      // tensor entries by adding partial contributions (except for grad_backgrounds, which is only set once).
+      config = ::tensorflow::GetCudaLaunchConfig(grad_sprites_size, d);
+      ::tensorflow::SetZero
+          <<<config.block_count, config.thread_per_block, 0, d.stream()>>>(grad_sprites_size, grad_sprites);
 
-    config = ::tensorflow::GetCudaLaunchConfig(grad_offsets_size, d);
-    ::tensorflow::SetZero
-        <<<config.block_count, config.thread_per_block, 0, d.stream()>>>(grad_offsets_size, grad_offsets);
+      config = ::tensorflow::GetCudaLaunchConfig(grad_scales_size, d);
+      ::tensorflow::SetZero
+            <<<config.block_count, config.thread_per_block, 0, d.stream()>>>(grad_scales_size, grad_scales);
+
+      config = ::tensorflow::GetCudaLaunchConfig(grad_offsets_size, d);
+      ::tensorflow::SetZero
+          <<<config.block_count, config.thread_per_block, 0, d.stream()>>>(grad_offsets_size, grad_offsets);
+    }else{
+      config = ::tensorflow::GetCudaLaunchConfig(grad_backgrounds_size, d);
+      Copy<<<config.block_count, config.thread_per_block, 0, d.stream()>>>(grad_backgrounds_size, grad_backgrounds, grad_output);
+      return;
+    }
 
     // shared memoy calculations
     const int max_bytes_per_block = 49152;  // 48 KB * 1024. (48KB is maximum logical shared memory/block)
