@@ -183,8 +183,6 @@ class TrainingLoop(object):
         self.exp_dir = exp_dir
         cfg.path = exp_dir.path
 
-        print("\nDirectory for this training run is {}.".format(exp_dir.path))
-
         if cfg.update_latest:
             make_symlink(exp_dir.path, os.path.join(os.getenv("HOME"), "dps-latest-experiment"))
 
@@ -205,9 +203,6 @@ class TrainingLoop(object):
             stack.enter_context(redirect_stream('stdout', self.data.path_for('stdout'), tee=cfg.tee))
             stack.enter_context(redirect_stream('stderr', self.data.path_for('stderr'), tee=cfg.tee))
 
-            stack.enter_context(NumpySeed(cfg.seed))
-            print("Set numpy random seed to {}.".format(cfg.seed))
-
             if start_time is None:
                 start_time = time.time()
             self.start_time = start_time
@@ -215,6 +210,11 @@ class TrainingLoop(object):
             print("\n\n" + "=" * 80)
             print("Starting training run (name={}) at {}, {} seconds after given "
                   "start time.".format(self.exp_name, datetime.datetime.now(), time.time() - self.start_time))
+
+            print("\nDirectory for this training run is {}.".format(exp_dir.path))
+
+            stack.enter_context(NumpySeed(cfg.seed))
+            print("\nSet numpy random seed to {}.\n".format(cfg.seed))
 
             limiter = time_limit(
                 self.time_remaining, verbose=True,

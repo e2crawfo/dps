@@ -12,7 +12,7 @@ mkdir data
 
 echo "\nDownloading and processing emnist data..."
 time python scripts/download.py emnist data -q
-rm data/matlab.zip
+rm data/gzip.zip
 
 echo "\nDownloading and processing omniglot data..."
 time python scripts/download.py omniglot data -q

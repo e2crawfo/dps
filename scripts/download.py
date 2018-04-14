@@ -33,7 +33,7 @@ def download_backgrounds(data_dir):
             subprocess.run(command, check=True)
 
 
-emnist_url = 'http://www.itl.nist.gov/iaui/vip/cs_links/EMNIST/matlab.zip'
+emnist_url = 'http://www.itl.nist.gov/iaui/vip/cs_links/EMNIST/gzip.zip'
 
 
 template = 'emnist-byclass-{}-{}-idx{}-ubyte.gz'

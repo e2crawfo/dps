@@ -1349,7 +1349,7 @@ small_test_reset_config = small_test_config.copy(
             attr_name="nonzero_weight",
             query_name="best_COST_reconstruction",
             base_configs=fragment, tolerance=2,
-            initial_value=90, scale=5, power=1.0)
+            initial_value=90, scale=20, power=1.0)
     ]
 )
 
