@@ -2,7 +2,8 @@ import shutil
 
 from dps.utils import NumpySeed, remove
 from dps.datasets import (
-    EmnistDataset, VisualArithmeticDataset, GridArithmeticDataset, OmniglotDataset
+    EmnistDataset, VisualArithmeticDataset, GridArithmeticDataset, OmniglotDataset,
+    GridEMNIST_ObjectDetection
 )
 
 
@@ -264,3 +265,39 @@ def test_omniglot_dataset():
         assert ((dataset.y == 0) | (dataset.y == 1)).all()
         assert 0.0 <= dataset.x.min() <= 10.0
         assert 200.0 <= dataset.x.max() <= 255.0
+
+
+def test_tile_wrapper(show_plots):
+    with NumpySeed(100):
+        tile_shape = (28, 35)
+        n_examples = 10
+        dset = GridEMNIST_ObjectDetection(
+            min_chars=25, max_chars=25, n_sub_image_examples=100, n_examples=n_examples,
+            draw_shape_grid=(5, 5), image_shape=(4*14, 5*14), draw_offset=(0, 0), spacing=(-5, -5),
+            characters=list(range(10)), colours="white", postprocessing="tile", tile_shape=tile_shape)
+
+        assert dset.x[0].shape == tile_shape + (3,)
+        assert dset.image_shape == tile_shape
+        assert len(dset.x) == n_examples * 4
+        assert dset.n_examples == n_examples * 4
+
+        if show_plots:
+            dset.visualize()
+
+
+def test_random_wrapper(show_plots):
+    with NumpySeed(100):
+        tile_shape = (28, 35)
+        n_examples = 10
+        dset = GridEMNIST_ObjectDetection(
+            min_chars=25, max_chars=25, n_sub_image_examples=100, n_examples=n_examples,
+            draw_shape_grid=(5, 5), image_shape=(4*14, 5*14), draw_offset=(0, 0), spacing=(-5, -5),
+            characters=list(range(10)), colours="white", postprocessing="random", tile_shape=tile_shape, n_samples_per_image=4)
+
+        assert dset.x[0].shape == tile_shape + (3,)
+        assert dset.image_shape == tile_shape
+        assert len(dset.x) == n_examples * 4
+        assert dset.n_examples == n_examples * 4
+
+    if show_plots:
+        dset.visualize()

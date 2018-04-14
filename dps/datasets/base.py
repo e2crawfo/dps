@@ -51,7 +51,7 @@ class Dataset(Parameterized):
                 print("Done.")
 
             else:
-                tracks = self._make()
+                tracks = self._make_postprocess(self._make())
                 loaded = False
 
             self.loaded = loaded
@@ -71,6 +71,9 @@ class Dataset(Parameterized):
     def _make(self):
         raise Exception("NotImplemented. When insantiating `Dataset` directly, "
                         "`tracks` must be provided as an argument to `__init__`.")
+
+    def _make_postprocess(self, tracks):
+        return tracks
 
     @property
     def x(self):
@@ -167,6 +170,9 @@ class Dataset(Parameterized):
 
 
 class ImageDataset(Dataset):
+    postprocessing = Param("")
+    tile_shape = Param(None)
+    n_samples_per_image = Param(1)
 
     def __init__(self, **kwargs):
         super(ImageDataset, self).__init__(**kwargs)
@@ -185,6 +191,130 @@ class ImageDataset(Dataset):
         assert first.dtype == np.uint8
         first = (first / 255.).astype('f')
         return tuple([first, *rest])
+
+    def _make_postprocess(self, tracks):
+        if self.postprocessing == "tile":
+            tracks = self._tile_postprocess(tracks)
+        elif self.postprocessing == "random":
+            tracks = self._random_postprocess(tracks)
+        self.image_shape = tracks[0].shape[1:3]
+        return tracks
+
+    def _tile_postprocess(self, tracks):
+        assert len(tracks) == 1 or len(tracks) == 2
+
+        x = np.array(tracks[0])
+        image_shape = x.shape[1:3]
+
+        hangover = image_shape[1] % self.tile_shape[1]
+        if hangover != 0:
+            pad_amount = self.tile_shape[1] - hangover
+            pad_shape = list(x.shape)
+            pad_shape[2] = pad_amount
+            padding = np.zeros(pad_shape)
+            x = np.concat([x, padding], axis=2)
+
+        hangover = image_shape[0] % self.tile_shape[0]
+        if hangover != 0:
+            pad_amount = self.tile_shape[0] - hangover
+            pad_shape = list(x.shape)
+            pad_shape[1] = pad_amount
+            padding = np.zeros(pad_shape)
+            x = np.concat([x, padding], axis=1)
+
+        image_shape = x.shape[1:3]
+
+        H = int(image_shape[0] / self.tile_shape[0])
+        W = int(image_shape[1] / self.tile_shape[1])
+
+        slices = np.split(x, W, axis=2)
+        new_shape = (x.shape[0] * H, *self.tile_shape, x.shape[3])
+        slices = [np.reshape(s, new_shape) for s in slices]
+
+        x = np.concatenate(slices, axis=1)
+        x = x.reshape(x.shape[0] * W, *self.tile_shape, x.shape[3])
+
+        annotations = None
+        if len(tracks) == 2:
+            annotations = tracks[1]
+            new_annotations = []
+
+            for a in annotations:
+                for h in range(H):
+                    for w in range(W):
+                        offset = (h * self.tile_shape[0], w * self.tile_shape[1])
+                        _na = []
+                        for l, top, bottom, left, right in a:
+                            # Transform to tile co-ordinates
+                            top = top - offset[0]
+                            bottom = bottom - offset[0]
+                            left = left - offset[1]
+                            right = right - offset[1]
+
+                            top = np.clip(top, 0, self.tile_shape[0])
+                            bottom = np.clip(bottom, 0, self.tile_shape[0])
+                            left = np.clip(left, 0, self.tile_shape[1])
+                            right = np.clip(right, 0, self.tile_shape[1])
+
+                            invalid = (bottom - top < 1e-6) or (right - left < 1e-6)
+
+                            if not invalid:
+                                _na.append((l, top, bottom, left, right))
+                        new_annotations.append(_na)
+
+        if annotations is None:
+            return [x]
+        else:
+            return [x, new_annotations]
+
+    def _random_postprocess(self, tracks):
+        assert len(tracks) == 1 or len(tracks) == 2
+
+        x = tracks[0]
+        image_shape = x.shape[1:3]
+
+        if len(tracks) == 2:
+            annotations = tracks[1]
+        else:
+            annotations = [[]] * len(x)
+
+        new_images = []
+        new_annotations = []
+        for _x, a in zip(x, annotations):
+            for j in range(self.n_samples_per_image):
+                _top = np.random.randint(0, image_shape[0]-self.tile_shape[0]+1)
+                _left = np.random.randint(0, image_shape[1]-self.tile_shape[1]+1)
+
+                image = _x[_top:_top+self.tile_shape[0], _left:_left+self.tile_shape[1], ...]
+
+                new_images.append(image)
+
+                offset = (_top, _left)
+                _na = []
+                for l, top, bottom, left, right in a:
+                    # Transform to tile co-ordinates
+                    top = top - offset[0]
+                    bottom = bottom - offset[0]
+                    left = left - offset[1]
+                    right = right - offset[1]
+
+                    top = np.clip(top, 0, self.tile_shape[0])
+                    bottom = np.clip(bottom, 0, self.tile_shape[0])
+                    left = np.clip(left, 0, self.tile_shape[1])
+                    right = np.clip(right, 0, self.tile_shape[1])
+
+                    invalid = (bottom - top < 1e-6) or (right - left < 1e-6)
+
+                    if not invalid:
+                        _na.append((l, top, bottom, left, right))
+                new_annotations.append(_na)
+
+        new_images = np.array(new_images)
+
+        if len(tracks) == 1:
+            return [new_images]
+        else:
+            return [new_images, new_annotations]
 
 
 # EMNIST ***************************************

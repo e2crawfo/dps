@@ -199,7 +199,6 @@ def count_1norm_cost(network_outputs, updater):
 
 class YoloRL_Updater(Updater):
     pixels_per_cell = Param()
-    image_shape = Param()
     A = Param(help="Dimension of attribute vector.")
     anchor_boxes = Param(help="List of (h, w) pairs.")
     object_shape = Param()
@@ -236,15 +235,18 @@ class YoloRL_Updater(Updater):
     eval_modes = "val".split()
 
     def __init__(self, env, scope=None, **kwargs):
-        self.anchor_boxes = np.array(self.anchor_boxes)
-        self.H = int(np.ceil(self.image_shape[0] / self.pixels_per_cell[0]))
-        self.W = int(np.ceil(self.image_shape[1] / self.pixels_per_cell[1]))
-        self.B = len(self.anchor_boxes)
 
         self.datasets = env.datasets
 
         for dset in self.datasets.values():
             dset.reset()
+
+        self.image_shape = self.datasets['train'].image_shape
+
+        self.anchor_boxes = np.array(self.anchor_boxes)
+        self.H = int(np.ceil(self.image_shape[0] / self.pixels_per_cell[0]))
+        self.W = int(np.ceil(self.image_shape[1] / self.pixels_per_cell[1]))
+        self.B = len(self.anchor_boxes)
 
         self.obs_shape = self.datasets['train'].x.shape[1:]
         self.image_height, self.image_width, self.image_depth = self.obs_shape
