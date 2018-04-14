@@ -9,7 +9,7 @@ def prepare_func():
     from dps import cfg
     stage0 = cfg.curriculum[0]
     if cfg.initial_stage == "normal":
-        stage0.update(fix_values=dict(obj=1))
+        stage0.update(fixed_values=dict(obj=1))
     elif cfg.initial_stage == "explore":
         stage0.update(obj_exploration=1.0, obj_default=0.5)
     else:
@@ -39,10 +39,10 @@ config = yolo_rl.small_test_config.copy(
     n_val=16,
     eval_step=1000,
 
-    fix_values=dict(),
+    fixed_values=dict(),
 
     curriculum=[
-        dict(fixed_obj=True, nonzero_weight=0, patience=10000, max_steps=10000)
+        dict(fixed_weights="obj", nonzero_weight=0, patience=10000, max_steps=10000)
     ],
 
     hooks=[

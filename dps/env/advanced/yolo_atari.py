@@ -36,7 +36,7 @@ config = yolo_rl.good_config.copy(
     nonzero_weight=80.0,
 
     curriculum=[
-        dict(fix_values=dict(obj=1), dynamic_partition=False, max_steps=10000, area_weight=0.01),
+        dict(fixed_values=dict(obj=1), dynamic_partition=False, max_steps=10000, area_weight=0.01),
         dict(obj_exploration=0.2),
         dict(obj_exploration=0.1),
         dict(obj_exploration=0.05),

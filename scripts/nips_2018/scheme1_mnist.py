@@ -38,10 +38,10 @@ config = yolo_rl.good_config.copy(
     eval_step=1000,
     max_steps=100000,
 
-    fix_values=dict(),
+    fixed_values=dict(),
 
     curriculum=[
-        dict(fix_values=dict(obj=1), max_steps=10000),
+        dict(fixed_values=dict(obj=1), max_steps=10000),
         dict(obj_exploration=0.2,),
         dict(obj_exploration=0.1,),
         dict(obj_exploration=0.1, lr_schedule=1e-5),
