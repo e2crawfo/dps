@@ -21,7 +21,6 @@ config = DEFAULT_CONFIG.copy(
     power_through=False,
     preserve_policy=True,
 
-    slim=False,
     save_summaries=True,
     start_tensorboard=True,
     verbose=False,

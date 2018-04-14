@@ -9,6 +9,7 @@ from dps.train import training_loop, Hook
 from dps.env.advanced import translated_mnist
 from dps.env.advanced import simple_addition
 from dps.config import DEFAULT_CONFIG
+from dps.utils import Alarm
 from dps.utils.tf import get_tensors_from_checkpoint_file
 
 
@@ -25,6 +26,38 @@ def test_time_limit(test_config):
         training_loop()
     elapsed = start - time.time()
     assert elapsed < config.max_time + 1
+
+
+class AlarmHook(Hook):
+    def __init__(self, start, stage_idx):
+        self.start = start
+        self.stage_idx = stage_idx
+        super(AlarmHook, self).__init__()
+
+    def start_stage(self, training_loop, stage_idx):
+        if self.start and stage_idx == self.stage_idx:
+            raise Alarm("Raised by AlarmHook")
+
+    def end_stage(self, training_loop, stage_idx):
+        if not self.start and stage_idx == self.stage_idx:
+            raise Alarm("Raised by AlarmHook")
+
+
+@pytest.mark.slow
+def test_time_limit_between_stages(test_config):
+    config = DEFAULT_CONFIG.copy()
+    config.update(simple_addition.config)
+    config.update(reinforce_config)
+    config.update(max_time=120, max_steps=10, seed=100)
+    config.update(hooks=[AlarmHook(False, 0)])
+    config.update(test_config)
+
+    start = time.time()
+    with config:
+        result = training_loop()
+    print(result)
+    elapsed = start - time.time()
+    assert elapsed < 20
 
 
 class DummyHook(Hook):

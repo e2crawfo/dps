@@ -564,7 +564,6 @@ def build_and_submit(
             save_summaries=False,
             update_latest=False,
             show_plots=False,
-            slim=False,
             max_experiments=np.inf,
         )
 

@@ -37,8 +37,6 @@ class Dataset(Parameterized):
                     with open(filename + ".pkl", 'rb') as f:
                         tracks = dill.load(f)
                     loaded = True
-                except FileNotFoundError:
-                    pass
                 finally:
                     if not loaded:
                         print("File not found, creating dataset and storing...")
@@ -47,13 +45,14 @@ class Dataset(Parameterized):
                             dill.dump(tracks, f, protocol=dill.HIGHEST_PROTOCOL)
                         with open(filename + ".cfg", 'w') as f:
                             f.write(str(params))
+
+                print("Done.")
+
             else:
                 tracks = self._make()
                 loaded = False
 
             self.loaded = loaded
-
-            print("Done.")
 
         length = len(tracks[0])
         assert all(len(t) == length for t in tracks[1:])

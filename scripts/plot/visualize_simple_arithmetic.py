@@ -39,7 +39,6 @@ class Config(SystemConfig):
     eval_step = 100
     checkpoint_step = 0
     use_gpu = 1
-    slim = False
     n_val = 500
 
     classifier_str = "LeNet_256"

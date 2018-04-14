@@ -4,6 +4,7 @@ future==0.16.0
 gym==0.9.5
 -e git+https://github.com/e2crawfo/gym-recording.git@master#egg=gym_recording
 iso8601==0.1.12
+imageio==2.2.0
 kmodes==0.8
 matplotlib==2.1.0
 numpy==1.13.3

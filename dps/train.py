@@ -16,8 +16,8 @@ import traceback
 import dps
 from dps import cfg
 from dps.utils import (
-    gen_seed, time_limit, memory_usage, ExperimentStore, ExperimentDirectory, nvidia_smi,
-    memory_limit, du, Config, ClearConfig, redirect_stream, NumpySeed, make_symlink
+    gen_seed, time_limit, Alarm, memory_usage, ExperimentStore, ExperimentDirectory, nvidia_smi,
+    memory_limit, Config, ClearConfig, redirect_stream, NumpySeed, make_symlink
 )
 from dps.utils.tf import (
     restart_tensorboard, uninitialized_variables_initializer, trainable_variables
@@ -140,15 +140,12 @@ class TrainingLoop(object):
         self.start_time = None
 
     @property
-    def elapsed_time(self):
-        return time.time() - self.start_time
-
-    @property
     def time_remaining(self):
         if cfg.max_time is None or cfg.max_time <= 0:
             return np.inf
         else:
-            return cfg.max_time - self.elapsed_time
+            elapsed_time = time.time() - self.start_time
+            return cfg.max_time - elapsed_time
 
     def edit_remaining_stage(self, idx, stage_config):
         if len(self.curriculum_remaining) < idx+1:
@@ -179,22 +176,37 @@ class TrainingLoop(object):
         if cfg.start_tensorboard:
             restart_tensorboard(cfg.log_dir, cfg.tbport, cfg.reload_interval)
 
+        # Create a directory to store the results of the training session.
+        es = ExperimentStore(cfg.log_dir, max_experiments=cfg.max_experiments, delete_old=1)
+        exp_dir = es.new_experiment(
+            self.exp_name, cfg.seed, add_date=1, force_fresh=1, update_latest=cfg.update_latest)
+        self.exp_dir = exp_dir
+        cfg.path = exp_dir.path
+
+        print("\nDirectory for this training run is {}.".format(exp_dir.path))
+
+        if cfg.update_latest:
+            make_symlink(exp_dir.path, os.path.join(os.getenv("HOME"), "dps-latest-experiment"))
+
+        breaker = "-" * 40
+        header = "{}\nREADME.md - {}\n{}\n\n\n".format(breaker, os.path.basename(exp_dir.path), breaker)
+        readme = header + (cfg.readme if cfg.readme else "") + "\n\n"
+
+        with open(exp_dir.path_for('README.md'), 'w') as f:
+            f.write(readme)
+
+        self.data = _TrainingLoopData(exp_dir)
+        self.data.setup()
+
+        frozen_data = None
+
         with ExitStack() as stack:
-            # Create a directory to store the results of the training session.
-            es = ExperimentStore(cfg.log_dir, max_experiments=cfg.max_experiments, delete_old=1)
-            exp_dir = es.new_experiment(
-                self.exp_name, cfg.seed, add_date=1, force_fresh=1, update_latest=cfg.update_latest)
-            self.exp_dir = exp_dir
-
-            if cfg.update_latest:
-                make_symlink(exp_dir.path, os.path.join(os.getenv("HOME"), "dps-latest-experiment"))
-
-            self.data = _TrainingLoopData(exp_dir)
-            self.data.setup()
-
             # Tee stdout and stderr to files
             stack.enter_context(redirect_stream('stdout', self.data.path_for('stdout'), tee=cfg.tee))
             stack.enter_context(redirect_stream('stderr', self.data.path_for('stderr'), tee=cfg.tee))
+
+            stack.enter_context(NumpySeed(cfg.seed))
+            print("Set numpy random seed to {}.".format(cfg.seed))
 
             if start_time is None:
                 start_time = time.time()
@@ -204,28 +216,25 @@ class TrainingLoop(object):
             print("Starting training run (name={}) at {}, {} seconds after given "
                   "start time.".format(self.exp_name, datetime.datetime.now(), time.time() - self.start_time))
 
-            breaker = "-" * 40
-            header = "{}\nREADME.md - {}\n{}\n\n\n".format(breaker, os.path.basename(exp_dir.path), breaker)
-            readme = header + (cfg.readme if cfg.readme else "") + "\n\n"
+            limiter = time_limit(
+                self.time_remaining, verbose=True,
+                timeout_callback=lambda limiter: print("Training run exceeded its time limit."))
 
-            with open(exp_dir.path_for('README.md'), 'w') as f:
-                f.write(readme)
+            try:
+                with limiter:
+                    self._run()
 
-            print("\nScratch directory for this training run is {}.".format(self.data.path))
-            cfg.path = self.data.path
+            finally:
+                print(self.data.summarize())
 
-            stack.enter_context(NumpySeed(cfg.seed))
+                print("Done training run (name={}) at {}, {} seconds after given "
+                      "start time.".format(self.exp_name, datetime.datetime.now(), time.time() - self.start_time))
+                print("=" * 80)
+                print("\n\n")
 
-            print("Set numpy random seed to {}.".format(cfg.seed))
+                frozen_data = self.data.freeze()
 
-            self._run()
-
-            print("Done training run (name={}) at {}, {} seconds after given "
-                  "start time.".format(self.exp_name, datetime.datetime.now(), time.time() - self.start_time))
-            print("=" * 80)
-            print("\n\n")
-
-            return self.data.freeze()
+        return frozen_data
 
     def _run(self):
         print(cfg.to_string())
@@ -245,10 +254,6 @@ class TrainingLoop(object):
 
             stage_config = self.curriculum_remaining.pop(0)
             stage_config = Config(stage_config)
-
-            if self.time_remaining <= 1:
-                print("Time limit exceeded.")
-                break
 
             self.data.start_stage(stage_idx, stage_config)
 
@@ -311,7 +316,7 @@ class TrainingLoop(object):
                 if cpu_ram_limit_mb is not None:
                     stack.enter_context(memory_limit(cfg.cpu_ram_limit_mb))
 
-                # Build env
+                # Optionally build env
                 if stage_idx == 0 or not cfg.preserve_env:
                     if getattr(self, 'env', None):
                         self.env.close()
@@ -339,125 +344,119 @@ class TrainingLoop(object):
 
                 elif stage_idx > 0 and cfg.preserve_policy:
                     # Initialize weights from best hypothesis discovered on the previous stage
-                    updater.restore(sess, self.data.history[-2]['best_path'])
+                    updater.restore(sess, self.data.history[stage_idx-1]['best_path'])
 
                 self.summary_op = tf.summary.merge_all()
                 tf.train.get_or_create_global_step()
                 sess.run(uninitialized_variables_initializer())
                 sess.run(tf.assert_variables_initialized())
 
-                # --------------- Run stage -------------------
+                threshold_reached = False
+                reason = None
 
-                self.run_stage(stage_idx, updater)
+                try:
+                    # --------------- Run stage -------------------
 
-                threshold_reached, reason = self.threshold_reached, self.reason
-                self.data.record_values_for_stage(reason=reason)
+                    start = time.time()
+                    phys_memory_before = memory_usage(physical=True)
 
-                # --------------- Evaluate the best hypothesis -------------------
+                    threshold_reached, reason = self._run_stage(stage_idx, updater)
 
-                print("\n" + "-" * 10 + " Optimization complete " + "-" * 10)
-                print("\nReason: {}.\n".format(reason))
+                except KeyboardInterrupt:
+                    reason = "User interrupt"
 
-                print("Best hypothesis for this stage was found on "
-                      "step (l: {best_local_step}, g: {best_global_step}) "
-                      "with stopping criteria ({sc_name}) of {best_stopping_criteria}.".format(
-                          sc_name=self.stopping_criteria_name, **self.data.current_stage_record))
+                except NotImplementedError as e:
+                    # There is a bug in pdb_postmortem that prevents instances of `NotImplementedError`
+                    # from being handled properly, so replace it with an instance of `Exception`.
+                    if cfg.robust:
+                        traceback.print_exc()
+                        reason = "Exception occurred ({})".format(e)
+                    else:
+                        raise Exception("NotImplemented") from e
 
-                best_path = self.data.current_stage_record['best_path']
-                print("Loading best hypothesis for this stage "
-                      "from file {}...".format(best_path))
-                updater.restore(sess, best_path)
+                except Exception as e:
+                    if cfg.robust:
+                        traceback.print_exc()
+                        reason = "Exception occurred ({})".format(e)
+                    else:
+                        raise
 
-                eval_results = updater.evaluate(cfg.batch_size)
+                except Alarm:
+                    reason = "Time limit exceeded"
+                    raise
 
-                print("\n" + "-" * 10 + " Final evaluation " + "-" * 10)
-                for mode, (record, _) in eval_results.items():
-                    if record:
-                        print("\n-- {} -- \n".format(mode))
-                        for k, v in sorted(record.items()):
-                            print("* {}: {}".format(k, v))
+                finally:
+                    phys_memory_after = memory_usage(physical=True)
+                    self.data.record_values_for_stage(
+                        stage_duration=time.time()-start,
+                        phys_memory_before_mb=phys_memory_before,
+                        phys_memory_delta_mb=phys_memory_after - phys_memory_before
+                    )
 
-                print()
+                    self.data.record_values_for_stage(reason=reason)
 
-                # --------------- Optionally render performance of best hypothesis -------------------
+                    # --------------- Evaluate the best hypothesis -------------------
 
-                if cfg.render_step > 0 and cfg.render_hook is not None:
-                    print("Rendering...")
-                    cfg.render_hook(updater)
-                    print("Done rendering.")
+                    print("\n" + "-" * 10 + " Optimization complete " + "-" * 10)
+                    print("\nReason: {}.\n".format(reason))
 
-                # --------------- Finish up the stage -------------------
+                    print("Best hypothesis for this stage was found on "
+                          "step (l: {best_local_step}, g: {best_global_step}) "
+                          "with stopping criteria ({sc_name}) of {best_stopping_criteria}.".format(
+                              sc_name=self.stopping_criteria_name, **self.data.current_stage_record))
 
-                if cfg.start_tensorboard:
-                    restart_tensorboard(cfg.log_dir, cfg.tbport, cfg.reload_interval)
+                    best_path = self.data.current_stage_record['best_path']
+                    print("Loading best hypothesis for this stage "
+                          "from file {}...".format(best_path))
+                    updater.restore(sess, best_path)
 
-                print("\n" + "-" * 10 + " Running end-of-stage hooks " + "-" * 10 + "\n")
+                    eval_results = updater.evaluate(cfg.batch_size)
 
-                for hook in cfg.hooks:
-                    hook.end_stage(self, stage_idx)
+                    print("\n" + "-" * 10 + " Final evaluation " + "-" * 10)
+                    for mode, (record, _) in eval_results.items():
+                        if record:
+                            print("\n-- {} -- \n".format(mode))
+                            for k, v in sorted(record.items()):
+                                print("* {}: {}".format(k, v))
+                    print()
+
+                    # --------------- Optionally render performance of best hypothesis -------------------
+
+                    if cfg.render_step > 0 and cfg.render_hook is not None:
+                        print("Rendering...")
+                        cfg.render_hook(updater)
+                        print("Done rendering.")
+
+                    # --------------- Finish up the stage -------------------
+
+                    if cfg.start_tensorboard:
+                        restart_tensorboard(cfg.log_dir, cfg.tbport, cfg.reload_interval)
+
+                    self.data.end_stage(updater.n_updates)
+
+                    print("\n" + "-" * 10 + " Running end-of-stage hooks " + "-" * 10 + "\n")
+                    for hook in cfg.hooks:
+                        hook.end_stage(self, stage_idx)
+
+                    stage_idx += 1
+                    self.curriculum_complete.append(stage_config)
+
+                    print("\nDone stage {} at {}, {} seconds after given start time.".format(
+                        stage_idx, datetime.datetime.now(), time.time() - self.start_time))
+                    print("=" * 50)
 
                 if not (threshold_reached or cfg.power_through):
                     print("Failed to reach stopping criteria threshold on stage {} "
                           "of the curriculum, terminating.".format(stage_idx))
                     break
 
-                print("\nDone stage {} at {}, {} seconds after given start time.".format(
-                    stage_idx, datetime.datetime.now(), time.time() - self.start_time))
-                print("=" * 50)
-
-            self.data.end_stage(updater.n_updates)
-            stage_idx += 1
-            self.curriculum_complete.append(stage_config)
-
-        print(self.data.summarize())
-
-        if cfg.slim:
-            print("`slim` is True, so deleting experiment directory {}.".format(self.data.path))
-            print("Size of {} before delete: {}.".format(cfg.log_dir, du(cfg.log_dir)))
-            shutil.rmtree(self.data.path, ignore_errors=True)
-            print("Size of {} after delete: {}.".format(cfg.log_dir, du(cfg.log_dir)))
-
-    def run_stage(self, stage_idx, updater):
-        self.threshold_reached = False
-        self.reason = ""
-
-        phys_memory_before = memory_usage(physical=True)
-
-        with time_limit(self.time_remaining, verbose=True) as limiter:
-            try:
-                self._run_stage(stage_idx, updater)
-            except KeyboardInterrupt:
-                self.threshold_reached = False
-                self.reason = "User interrupt"
-            except NotImplementedError as e:
-                # There is a bug that prevents instances of `NotImplementedError`
-                # from being handled properly, so replace it with an instance of `Exception`.
-                raise Exception("NotImplemented") from e
-            except Exception as e:
-                if cfg.robust:
-                    traceback.print_exc()
-                    self.reason = "Exception occurred ({})".format(e)
-                else:
-                    raise
-
-        phys_memory_after = memory_usage(physical=True)
-
-        self.data.record_values_for_stage(
-            stage_duration=limiter.elapsed_time,
-            phys_memory_before_mb=phys_memory_before,
-            phys_memory_after_mb=phys_memory_after,
-            phys_memory_delta_mb=phys_memory_after - phys_memory_before
-        )
-
-        if limiter.ran_out:
-            self.reason = "Time limit exceeded"
-            if cfg.error_on_timeout:
-                raise Exception("Timed out.")
-
     def _run_stage(self, stage_idx, updater):
         """ Run main training loop for a stage of the curriculum. """
 
-        # Parse stopping criteria
+        threshold_reached = False
+        reason = "NotStarted"
+
+        # Parse stopping criteria, set up early stopping
         stopping_criteria = cfg.get("stopping_criteria", None)
         if not stopping_criteria:
             stopping_criteria = updater.stopping_criteria
@@ -475,13 +474,10 @@ class TrainingLoop(object):
 
         early_stop = EarlyStopHook(patience=cfg.patience, maximize=self.maximize_sc)
 
-        # Run stage with time and memory limits
+        # Start stage
         print("{} seconds left at the beginning of stage {}.".format(self.time_remaining, stage_idx))
-
         print("\n" + "-" * 10 + " Training begins " + "-" * 10 + "\n")
 
-        threshold_reached = False
-        reason = None
         total_train_time = 0.0
         time_per_example = 0.0
         time_per_batch = 0.0
@@ -632,8 +628,7 @@ class TrainingLoop(object):
 
             self.global_step += 1
 
-        self.threshold_reached = threshold_reached
-        self.reason = reason
+        return threshold_reached, reason
 
 
 class FrozenTrainingLoopData(ExperimentDirectory):

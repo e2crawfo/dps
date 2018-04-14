@@ -863,10 +863,11 @@ class time_limit(object):
             print("Time ran out.")
 
     """
-    def __init__(self, seconds, verbose=False):
+    def __init__(self, seconds, verbose=False, timeout_callback=None):
         self.seconds = seconds
         self.verbose = verbose
         self.ran_out = False
+        self.timeout_callback = timeout_callback
 
     def __enter__(self):
         self.old_handler = signal.signal(signal.SIGALRM, raise_alarm)
@@ -884,6 +885,8 @@ class time_limit(object):
             self.ran_out = True
             if self.verbose:
                 print("Block ran for {} seconds (limit was {}).".format(self.elapsed_time, self.seconds))
+            if self.timeout_callback:
+                self.timeout_callback(self)
             return True
         else:
             signal.alarm(0)  # Cancel the alarm.

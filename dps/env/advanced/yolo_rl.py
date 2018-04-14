@@ -280,7 +280,7 @@ class YoloRL_Updater(Updater):
 
         self.COST_funcs = {}
 
-        if self.nonzero_weight is not None:
+        if self.nonzero_weight > 0.0:
             cost_func = specific_nonzero_cost if self.use_specific_costs else nonzero_cost
             self.COST_funcs['nonzero'] = (self.nonzero_weight, cost_func, "obj")
 
@@ -1110,7 +1110,7 @@ class YoloRL_RenderHook(object):
                 ax.imshow(objects[idx, i, :, :, :3])
 
                 ax = axes[2*h+1, w * B + b]
-                ax.imshow(objects[idx, i, :, :, 0])
+                ax.imshow(objects[idx, i, :, :, 3])
 
             path = updater.exp_dir.path_for('plots', 'stage{}'.format(updater.stage_idx), 'sampled_patches', '{}.pdf'.format(idx))
             fig.savefig(path)
@@ -1262,7 +1262,7 @@ good_config = config.copy(
     use_specific_costs=True,
 
     curriculum=[
-        dict(fixed_obj=True, fix_values=dict(obj=1, alpha=1), max_steps=10000, area_weight=0.02),
+        dict(fixed_obj=True, fix_values=dict(obj=1), max_steps=10000, area_weight=0.02),
     ],
 
     nonzero_weight=90.,
@@ -1277,6 +1277,24 @@ good_config = config.copy(
 )
 
 
+uniform_size_config = good_config.copy(
+    max_hw=1.5,
+    min_hw=0.5,
+    sub_image_size_std=0.0,
+)
+
+small_test_config = uniform_size_config.copy(
+    kernel_size=(3, 3),
+    min_chars=1,
+    max_chars=3,
+    object_shape=(14, 14),
+    anchor_boxes=[[7, 7]],
+    image_shape=(28, 28),
+    max_overlap=100,
+    curriculum=[dict(fix_values=dict(obj=1), max_steps=10000, area_weight=0.2)],
+)
+
+
 fragment = [
     dict(obj_exploration=0.2),
     dict(obj_exploration=0.1),
@@ -1284,13 +1302,17 @@ fragment = [
 ]
 
 
-uniform_size_config = good_config.copy(
-    image_shape=(28, 28),
-    max_hw=1.5,
-    min_hw=0.5,
-    sub_image_size_std=0.0,
-    max_overlap=150,
-    patience=2500,
+small_test_reset_config = small_test_config.copy(
+    curriculum=[
+        dict(
+            do_train=False,
+            load_path="/media/data/dps_data/logs/yolo_rl/exp_yolo_rl_seed=347405995_2018_04_13_21_10_40/weights/best_of_stage_0",
+            fix_values=dict(obj=1), max_steps=10000, area_weight=0.2
+        )
+    ],
+
+    patience=5000,
+    area_weight=0.2,
 
     hooks=[
         PolynomialScheduleHook(
@@ -1302,15 +1324,62 @@ uniform_size_config = good_config.copy(
 )
 
 
-small_test_config = uniform_size_config.copy(
-    kernel_size=(3, 3),
-    min_chars=1,
-    max_chars=3,
-    object_shape=(14, 14),
-    anchor_boxes=[[7, 7]],
-    image_shape=(28, 28),
-    max_overlap=100,
-)
+
+# fragment = [
+#     dict(obj_exploration=0.2),
+#     dict(obj_exploration=0.1),
+#     dict(obj_exploration=0.05),
+# ]
+# 
+# 
+# uniform_size_config = good_config.copy(
+#     image_shape=(28, 28),
+#     max_hw=1.5,
+#     min_hw=0.5,
+#     sub_image_size_std=0.0,
+#     max_overlap=150,
+#     patience=2500,
+# 
+#     hooks=[
+#         PolynomialScheduleHook(
+#             attr_name="nonzero_weight",
+#             query_name="best_COST_reconstruction",
+#             base_configs=fragment, tolerance=2,
+#             initial_value=90, scale=5, power=1.0)
+#     ]
+# )
+# 
+# first_stage_config = uniform_size_config.copy(
+#     hooks=[],
+#     patience=10000,
+#     curriculum=[
+#         dict(fixed_obj=True, fix_values=dict(obj=1), max_steps=100000, area_weight=3.),
+#     ],
+# )
+# 
+# 
+# small_test_config = uniform_size_config.copy(
+#     kernel_size=(3, 3),
+#     min_chars=1,
+#     max_chars=3,
+#     object_shape=(14, 14),
+#     anchor_boxes=[[7, 7]],
+#     image_shape=(28, 28),
+#     max_overlap=100,
+# )
+
+
+# simple_config = first_stage_config.copy(
+#     kernel_size=(1, 1),
+#     min_chars=1,
+#     max_chars=1,
+#     pixels_per_cell=(16, 16),
+#     object_shape=(14, 14),
+#     sub_image_shape=(14, 14),
+#     anchor_boxes=[[14, 14]],
+#     image_shape=(16, 16),
+#     max_overlap=100,
+# )
 
 
 vq_config = good_config.copy(
@@ -1319,5 +1388,5 @@ vq_config = good_config.copy(
     beta=4.0,
     vq_input_shape=(2, 2, 25),
     K=5,
-    common_embedding=False,
+    common_embedding=False
 )

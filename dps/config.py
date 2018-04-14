@@ -20,7 +20,6 @@ DEFAULT_CONFIG = Config(
 
     use_dataset_cache=False,
 
-    slim=False,  # If true, tries to use little disk space
     patience=np.inf,
 
     render_step=np.inf,
@@ -54,8 +53,6 @@ DEFAULT_CONFIG = Config(
     render_n_rollouts=10,
     render_hook=rl_render_hook,
 
-    error_on_timeout=False,
-
     stopping_criteria="",
     eval_mode="val",
 
@@ -79,14 +76,11 @@ RL_EXPERIMENT_CONFIG = DEFAULT_CONFIG.copy(
     max_steps=1000000,
     power_through=False,
     preserve_policy=True,
-
-    error_on_timeout=False,
 )
 
 
 SL_EXPERIMENT_CONFIG = RL_EXPERIMENT_CONFIG.copy(
     name="SLExperiment",
-    error_on_timeout=True,
     patience=5000,
 )
 
