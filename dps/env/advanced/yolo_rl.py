@@ -175,7 +175,8 @@ def specific_nonzero_cost(network_outputs, updater):
 
 
 def negative_mAP_cost(network_outputs, updater):
-    if updater.annotations is None:
+    annotations = updater._other["annotations"]
+    if annotations is None:
         return np.zeros((1, 1, 1, 1, 1))
     else:
         gt = []
@@ -192,7 +193,7 @@ def negative_mAP_cost(network_outputs, updater):
         width = updater.image_width * width
         right = left + width
 
-        for idx, a in enumerate(updater.annotations):
+        for idx, a in enumerate(annotations):
             _a = [[0, *rest] for cls, *rest in a]
             gt.append(_a)
 
@@ -213,8 +214,32 @@ def negative_mAP_cost(network_outputs, updater):
             pred_boxes.append(pb)
 
         _map = mAP(pred_boxes, gt, 1)
-        _map = _map.reshape((-1, 1, 1, 1, 1))
+        _map = _map.reshape(-1, 1, 1, 1, 1)
         return -_map
+
+
+def count_error_cost(network_outputs, updater):
+    annotations = updater._other["annotations"]
+    if annotations is None:
+        return np.zeros((1, 1, 1, 1, 1))
+    else:
+        obj = network_outputs["program"]["obj"]
+        n_objects_pred = obj.reshape(obj.shape[0], -1).sum(axis=1)
+        n_objects_true = np.array([len(a) for a in annotations])
+        error = (n_objects_pred != n_objects_true).astype('f')
+        return error.reshape(-1, 1, 1, 1, 1)
+
+
+def count_1norm_cost(network_outputs, updater):
+    annotations = updater._other["annotations"]
+    if annotations is None:
+        return np.zeros((1, 1, 1, 1, 1))
+    else:
+        obj = network_outputs["program"]["obj"]
+        n_objects_pred = obj.reshape(obj.shape[0], -1).sum(axis=1)
+        n_objects_true = np.array([len(a) for a in annotations])
+        dist = np.abs(n_objects_pred - n_objects_true).astype('f')
+        return dist.reshape(-1, 1, 1, 1, 1)
 
 
 class YoloRL_Updater(Updater):
@@ -291,6 +316,8 @@ class YoloRL_Updater(Updater):
         cost_func = specific_reconstruction_cost if self.use_specific_costs else reconstruction_cost
         self.COST_funcs['reconstruction'] = (1, cost_func, "both")
         self.COST_funcs['negative_mAP'] = (0, negative_mAP_cost, "obj")
+        self.COST_funcs['count_error'] = (0, count_error_cost, "obj")
+        self.COST_funcs['count_1norm'] = (0, count_1norm_cost, "obj")
 
         self.scope = scope
         self._n_experiences = 0
@@ -408,7 +435,7 @@ class YoloRL_Updater(Updater):
         feed_dict.update(costs)
 
     def _update(self, batch_size, collect_summaries):
-        feed_dict = self.make_feed_dict(batch_size, 'train', False)
+        feed_dict, self._other = self.make_feed_dict(batch_size, 'train', False)
 
         self._update_feed_dict_with_routing(feed_dict)
         self._update_feed_dict_with_costs(feed_dict)
@@ -434,7 +461,8 @@ class YoloRL_Updater(Updater):
         summary = b''
         n_points = 0
 
-        for _batch_size, feed_dict in feed_dicts:
+        for _batch_size, feed_dict, other in feed_dicts:
+            self._other = other
             self._update_feed_dict_with_routing(feed_dict)
             self._update_feed_dict_with_costs(feed_dict)
 
@@ -453,11 +481,13 @@ class YoloRL_Updater(Updater):
 
     def _make_feed_dict(self, batch, evaluate):
         if len(batch) == 1:
-            inp, self.annotations = batch[0], None
+            inp, annotations = batch[0], None
         elif len(batch) == 2:
-            inp, self.annotations = batch
+            inp, annotations = batch
         else:
             raise Exception()
+
+        other = dict(annotations=annotations)
 
         # Compute the mode colour of each image.
         discrete = np.uint8(np.floor(inp * 255.))
@@ -474,7 +504,7 @@ class YoloRL_Updater(Updater):
             self.inp_mode: modes,
             self.is_training: not evaluate
         }
-        return inp.shape[0], feed_dict
+        return inp.shape[0], feed_dict, other
 
     def make_feed_dict(self, batch_size, mode, evaluate, whole_epoch=False):
         """
@@ -493,15 +523,15 @@ class YoloRL_Updater(Updater):
 
         while True:
             batch = dset.next_batch(batch_size=batch_size, advance=True, rollover=not whole_epoch)
-            actual_batch_size, feed_dict = self._make_feed_dict(batch, evaluate)
+            actual_batch_size, feed_dict, other = self._make_feed_dict(batch, evaluate)
 
             if whole_epoch:
-                dicts.append((actual_batch_size, feed_dict))
+                dicts.append((actual_batch_size, feed_dict, other))
 
                 if dset.epochs_completed != epochs_before:
                     break
             else:
-                return feed_dict
+                return feed_dict, other
 
         return dicts
 
@@ -970,7 +1000,7 @@ class YoloRL_RenderHook(object):
         self._plot_patches(updater, fetched, 4)
 
     def _fetch(self, N, updater):
-        feed_dict = updater.make_feed_dict(N, 'val', True)
+        feed_dict, updater._other = updater.make_feed_dict(N, 'val', True)
         images = feed_dict[updater.inp_ph]
 
         updater._update_feed_dict_with_routing(feed_dict)
@@ -986,7 +1016,7 @@ class YoloRL_RenderHook(object):
         sess = tf.get_default_session()
         fetched = sess.run(to_fetch, feed_dict=feed_dict)
         fetched.update(images=images)
-        fetched["annotations"] = updater.annotations
+        fetched["annotations"] = updater._other["annotations"]
 
         return fetched
 
