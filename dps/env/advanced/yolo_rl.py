@@ -288,6 +288,7 @@ class YoloRL_Updater(Updater):
                 output_size=4,
                 sample_size=4,
                 network=None,
+                sigmoid=True,
             ),
             obj=dict(
                 rep_builder=self._build_obj,
@@ -295,6 +296,7 @@ class YoloRL_Updater(Updater):
                 output_size=1,
                 sample_size=1,
                 network=None,
+                sigmoid=True,
             ),
             z=dict(
                 rep_builder=self._build_z,
@@ -302,6 +304,7 @@ class YoloRL_Updater(Updater):
                 output_size=1,
                 sample_size=1,
                 network=None,
+                sigmoid=True,
             ),
             attr=dict(
                 rep_builder=self._build_attr,
@@ -309,6 +312,7 @@ class YoloRL_Updater(Updater):
                 output_size=self.A,
                 sample_size=self.A,
                 network=None,
+                sigmoid=False,
             ),
         )
 
@@ -325,6 +329,9 @@ class YoloRL_Updater(Updater):
         tvars = []
         for sf in scoped_functions:
             tvars.extend(trainable_variables(sf.scope, for_opt=for_opt))
+
+        if self.sequential_cfg['on']:
+            tvars.append(self.edge_weights)
 
         return tvars
 
@@ -724,7 +731,6 @@ class YoloRL_Updater(Updater):
                         inp.append(edge_element)
                     else:
                         inp.append(program[_i, _j, _k])
-                        inp.append(tf.zeros((self.batch_size, 1)))  # Edge indicator set to 0
 
         return tf.concat(inp, axis=1)
 
@@ -743,9 +749,16 @@ class YoloRL_Updater(Updater):
 
         total_output_size = sum(v["output_size"] for v in self.layer_params.values())
 
-        # What shape are the elements of program going to have? (batch_size, 4 + 1 + 1 + self.A)
-        mask = [0] * total_output_size + [1]  # We have a final element which acts as an edge indicator
-        edge_element = tf.ones((self.batch_size, total_output_size+1)) * mask
+        self.edge_weights = tf.get_variable("edge_weights", shape=(1, total_output_size), dtype=tf.float32)
+        sizes = [self.layer_params[kind]['output_size'] for kind in self.order]
+        edge_weights = tf.split(self.edge_weights, sizes, axis=1)
+        _edge_weights = []
+        for ew, kind in zip(edge_weights, self.order):
+            if self.layer_params[kind]['sigmoid']:
+                ew = tf.nn.sigmoid(ew)
+            _edge_weights.append(ew)
+        edge_element = tf.concat(_edge_weights, axis=1)
+        edge_element = tf.tile(edge_element, (self.batch_size, 1))
 
         _program_info = {
             info_type: collections.defaultdict(self._make_empty)
