@@ -232,6 +232,11 @@ class YoloRL_Updater(Updater):
     fixed_weights = Param()
     order = Param()
 
+    sequential_cfg = Param(dict(
+        on=False,
+        lookback_shape=(2, 2, 2),
+    ))
+
     eval_modes = "val".split()
 
     def __init__(self, env, scope=None, **kwargs):
@@ -275,30 +280,35 @@ class YoloRL_Updater(Updater):
             self.order = self.order.split()
         assert set(self.order) == set("box obj z attr".split())
 
+        self.backbone = None
         self.layer_params = dict(
             box=dict(
                 rep_builder=self._build_box,
                 fixed="box" in self.fixed_weights,
                 output_size=4,
-                network=None
+                sample_size=4,
+                network=None,
             ),
             obj=dict(
                 rep_builder=self._build_obj,
                 fixed="obj" in self.fixed_weights,
                 output_size=1,
-                network=None
+                sample_size=1,
+                network=None,
             ),
             z=dict(
                 rep_builder=self._build_z,
                 fixed="z" in self.fixed_weights,
                 output_size=1,
-                network=None
+                sample_size=1,
+                network=None,
             ),
             attr=dict(
                 rep_builder=self._build_attr,
                 fixed="attr" in self.fixed_weights,
                 output_size=self.A,
-                network=None
+                sample_size=self.A,
+                network=None,
             ),
         )
 
@@ -359,9 +369,13 @@ class YoloRL_Updater(Updater):
     def _update_feed_dict_with_routing(self, feed_dict):
         """ Generate program and compute routing matrix """
 
+        feed_dict[self.fixed_samples] = False
+
         sess = tf.get_default_session()
         program, samples = sess.run([self.program, self.samples], feed_dict=feed_dict)
-        feed_dict.update({self.samples[k]: v for k, v in samples.items()})
+
+        feed_dict.update({self.input_samples[k]: v for k, v in samples.items()})
+        feed_dict[self.fixed_samples] = True
 
         max_objects, n_objects, routing = self._compute_routing(program)
         feed_dict[self.max_objects] = max_objects
@@ -370,6 +384,7 @@ class YoloRL_Updater(Updater):
 
     def _update_feed_dict_with_costs(self, feed_dict):
         """ Compute costs (negative rewards) once program has been generated and routing matrix computed. """
+
         sess = tf.get_default_session()
         network_outputs = sess.run(self.network_outputs, feed_dict=feed_dict)
 
@@ -449,6 +464,11 @@ class YoloRL_Updater(Updater):
             self.inp_mode: modes,
             self.is_training: not evaluate
         }
+
+        # Add dummy values for the input samples
+        for input_sample in self.input_samples.values():
+            feed_dict[input_sample] = np.zeros([inp.shape[0]] + [int(i) for i in input_sample.shape[1:]])
+
         return inp.shape[0], feed_dict, other
 
     def make_feed_dict(self, batch_size, mode, evaluate, whole_epoch=False):
@@ -503,7 +523,17 @@ class YoloRL_Updater(Updater):
                 tf.float32, (None, H, W, B, 1), name="COST_{}_ph".format(name))
             self.COST_tensors[name] = cost
 
-    def _build_box(self, box_logits, is_training):
+        self.fixed_samples = tf.placeholder(tf.bool, ())
+        self.float_fixed_samples = tf.to_float(self.fixed_samples)
+
+        self.input_samples = {}
+
+        for kind, params in self.layer_params.items():
+            self.input_samples[kind] = tf.placeholder(
+                tf.float32, (None, H, W, B, params['sample_size']),
+                name="{}_input_samples".format(kind))
+
+    def _build_box(self, box_logits, input_samples, is_training):
         box = tf.nn.sigmoid(tf.clip_by_value(box_logits, -10., 10.))
         cell_y, cell_x, h, w = tf.split(box, 4, axis=-1)
 
@@ -522,18 +552,26 @@ class YoloRL_Updater(Updater):
         box = tf.concat([cell_y, cell_x, h, w], axis=-1)
 
         box_std = build_scheduled_value(self.box_std, name="box_std")
-        box_noise = tf.random_normal(tf.shape(box), name="box_noise")
+
+        box_noise = (
+            self.float_fixed_samples * input_samples +
+            (1 - self.float_fixed_samples) * tf.random_normal(tf.shape(box), name="box_noise")
+        )
+
         noisy_box = box + box_noise * box_std * self.float_is_training
 
-        self.network_outputs["cell_y"] = cell_y
-        self.network_outputs["cell_x"] = cell_x
-        self.network_outputs["h"] = h
-        self.network_outputs["w"] = w
-        self.samples["box"] = box_noise
+        return dict(
+            network_outputs=dict(
+                cell_y=cell_y,
+                cell_x=cell_x,
+                h=h,
+                w=w
+            ),
+            samples=box_noise,
+            program=noisy_box,
+        )
 
-        return noisy_box
-
-    def _build_obj(self, obj_logits, is_training):
+    def _build_obj(self, obj_logits, input_samples, is_training):
         obj_logits = tf.clip_by_value(obj_logits, -10., 10.)
 
         obj_params = tf.nn.sigmoid(obj_logits)
@@ -545,6 +583,11 @@ class YoloRL_Updater(Updater):
         obj_samples = tf.stop_gradient(obj_dist.sample())
         obj_samples = tf.to_float(obj_samples)
 
+        obj_samples = (
+            self.float_fixed_samples * input_samples +
+            (1 - self.float_fixed_samples) * obj_samples
+        )
+
         obj_log_probs = obj_dist.log_prob(obj_samples)
         obj_log_probs = tf.where(tf.is_nan(obj_log_probs), -100.0 * tf.ones_like(obj_log_probs), obj_log_probs)
 
@@ -553,14 +596,15 @@ class YoloRL_Updater(Updater):
         if "obj" in self.fixed_values:
             obj_samples = float(self.fixed_values["obj"]) * tf.ones_like(obj_samples, dtype=tf.float32)
 
-        self.samples["obj"] = obj_samples
-        self.entropy["obj"] = obj_entropy
-        self.log_probs["obj"] = obj_log_probs
-        self.logits["obj"] = obj_logits
+        return dict(
+            samples=obj_samples,
+            entropy=obj_entropy,
+            log_probs=obj_log_probs,
+            logits=obj_logits,
+            program=obj_samples
+        )
 
-        return obj_samples
-
-    def _build_z(self, z_logits, is_training):
+    def _build_z(self, z_logits, input_samples, is_training):
         z_logits = tf.clip_by_value(z_logits, -10., 10.)
 
         z_params = tf.nn.sigmoid(z_logits)
@@ -570,6 +614,11 @@ class YoloRL_Updater(Updater):
 
         z_samples = tf.stop_gradient(z_dist.sample())
 
+        z_samples = (
+            self.float_fixed_samples * input_samples +
+            (1 - self.float_fixed_samples) * z_samples
+        )
+
         z_log_probs = z_dist.log_prob(z_samples)
         z_log_probs = tf.where(tf.is_nan(z_log_probs), -100.0 * tf.ones_like(z_log_probs), z_log_probs)
 
@@ -578,33 +627,32 @@ class YoloRL_Updater(Updater):
         if "z" in self.fixed_values:
             z_samples = float(self.fixed_values["z"]) * tf.ones_like(z_samples, dtype=tf.float32)
 
-        self.samples["z"] = z_samples
-        self.entropy["z"] = z_entropy
-        self.log_probs["z"] = z_log_probs
-        self.logits["z"] = z_logits
+        return dict(
+            samples=z_samples,
+            entropy=z_entropy,
+            log_probs=z_log_probs,
+            logits=z_logits,
+            program=z_samples
+        )
 
-        return z_samples
-
-    def _build_attr(self, attr_mean, is_training):
+    def _build_attr(self, attr, input_samples, is_training):
         attr_std = build_scheduled_value(self.attr_std, name="attr_std")
-        attr_noise = tf.random_normal(tf.shape(attr_mean), name="attr_noise")
 
-        noisy_attr = attr_mean + attr_noise * attr_std * self.float_is_training
+        attr_noise = (
+            self.float_fixed_samples * input_samples +
+            (1 - self.float_fixed_samples) * tf.random_normal(tf.shape(attr), name="attr_noise")
+        )
 
-        self.samples["attr"] = attr_noise
+        noisy_attr = attr + attr_noise * attr_std * self.float_is_training
 
-        return noisy_attr
+        return dict(
+            samples=attr_noise,
+            program=noisy_attr,
+        )
 
     def _build_program_generator(self):
-        inp, is_training = self.inp, self.is_training
         H, W, B = self.H, self.W, self.B
         program, features = None, None
-
-        self.program = {}
-        self.samples = {}
-        self.entropy = {}
-        self.log_probs = {}
-        self.logits = {}
 
         for i, kind in enumerate(self.order):
             kind = self.order[i]
@@ -635,29 +683,139 @@ class YoloRL_Updater(Updater):
                 _program = tf.reshape(program, (-1, H, W, B * int(program.shape[-1])))
                 layer_inp = tf.concat([features, _program], axis=-1)
             else:
-                layer_inp = inp
+                layer_inp = self.inp
 
-            network_output = network(layer_inp, (H, W, out_channel_dim), is_training)
+            network_output = network(layer_inp, (H, W, out_channel_dim), self.is_training)
 
             features = network_output[..., B*output_size:]
 
             output = network_output[..., :B*output_size]
             output = tf.reshape(output, (-1, H, W, B, output_size))
 
-            representation = rep_builder(output, is_training)
+            input_samples = self.input_samples[kind]
+            built = rep_builder(output, input_samples, self.is_training)
 
-            self.program[kind] = representation
+            assert 'program' in built
+            for k, v in self._program_info.items():
+                if k in built:
+                    v[kind] = built[k]
+            if 'network_outputs' in built:
+                self.network_outputs.update(built['network_outputs'])
 
             if i:
-                program = tf.concat([program, representation], axis=-1)
+                program = tf.concat([program, self.program[kind]], axis=-1)
             else:
-                program = representation
+                program = self.program[kind]
 
-        # --- finalize ---
+    def _get_sequential_input(self, backbone_output, program, h, w, b, edge_element):
+        inp = [backbone_output[:, h, w, b, :]]
+        for i in range(self.sequential_cfg.lookback_shape[0]):
+            for j in range(self.sequential_cfg.lookback_shape[1]):
+                for k in range(self.sequential_cfg.lookback_shape[2]):
 
-        self.network_outputs.update(
-            program=self.program, samples=self.samples, entropy=self.entropy,
-            log_probs=self.log_probs, logits=self.logits)
+                    if i == 0 and j == 0 and k == 0:
+                        continue
+
+                    _i = h - i
+                    _j = w - j
+                    _k = b - k
+
+                    if _i < 0 or _j < 0 or _k < 0:
+                        inp.append(edge_element)
+                    else:
+                        inp.append(program[_i, _j, _k])
+                        inp.append(tf.zeros((self.batch_size, 1)))  # Edge indicator set to 0
+
+        return tf.concat(inp, axis=1)
+
+    def _make_empty(self):
+        return np.array([{} for i in range(self.H * self.W * self.B)]).reshape(self.H, self.W, self.B)
+
+    def _build_program_generator_sequential(self):
+        H, W, B = self.H, self.W, self.B
+
+        if self.backbone is None:
+            self.backbone = cfg.build_backbone(scope="backbone")
+            self.backbone.layout[-1]['filters'] = B * self.n_passthrough_features
+
+        backbone_output = self.backbone(self.inp, (H, W, B*self.n_passthrough_features), self.is_training)
+        backbone_output = tf.reshape(backbone_output, (-1, H, W, B, self.n_passthrough_features))
+
+        total_output_size = sum(v["output_size"] for v in self.layer_params.values())
+
+        # What shape are the elements of program going to have? (batch_size, 4 + 1 + 1 + self.A)
+        mask = [0] * total_output_size + [1]  # We have a final element which acts as an edge indicator
+        edge_element = tf.ones((self.batch_size, total_output_size+1)) * mask
+
+        _program_info = {
+            info_type: collections.defaultdict(self._make_empty)
+            for info_type in self._program_info}
+
+        network_outputs = collections.defaultdict(self._make_empty)
+
+        program = np.empty((H, W, B), dtype=np.object)
+
+        for h in range(self.H):
+            for w in range(self.W):
+                for b in range(self.B):
+                    layer_inp = self._get_sequential_input(backbone_output, program, h, w, b, edge_element)
+                    hwb_program = []
+
+                    for i, kind in enumerate(self.order):
+                        kind = self.order[i]
+                        params = self.layer_params[kind]
+                        rep_builder = params["rep_builder"]
+                        output_size = params["output_size"]
+                        network = params["network"]
+                        fixed = params["fixed"]
+
+                        if network is None:
+                            builder = self.sequential_cfg.build_next_step
+                            network = builder(scope="{}_sequential_network".format(kind))
+                            if fixed:
+                                network.fix_variables()
+                            params["network"] = network
+
+                        output = network(layer_inp, output_size, self.is_training)
+                        input_samples = self.input_samples[kind][:, h, w, b, :]
+                        built = rep_builder(output, input_samples, self.is_training)
+
+                        assert 'program' in built
+                        for info_type, v in _program_info.items():
+                            if info_type in built:
+                                v[kind][h, w, b] = built[info_type]
+
+                        if 'network_outputs' in built:
+                            for k, v in built['network_outputs'].items():
+                                network_outputs[k][h, w, b] = v
+
+                        layer_inp = tf.concat([layer_inp, built['program']], axis=1)
+                        hwb_program.append(built['program'])
+
+                    program[h, w, b] = tf.concat(hwb_program, axis=1)
+                    assert program[h, w, b].shape[1] == total_output_size
+
+        # Now stitch everything together into respectable tensors.
+        for info_type, value in _program_info.items():
+            for kind, v in value.items():
+                t1 = []
+                for h in range(H):
+                    t2 = []
+                    for w in range(W):
+                        t2.append(tf.stack([v[h, w, b] for b in range(B)], axis=1))
+                    t1.append(tf.stack(t2, axis=1))
+
+                self._program_info[info_type][kind] = tf.stack(t1, axis=1)
+
+        for k, v in network_outputs.items():
+            t1 = []
+            for h in range(H):
+                t2 = []
+                for w in range(W):
+                    t2.append(tf.stack([v[h, w, b] for b in range(B)], axis=1))
+                t1.append(tf.stack(t2, axis=1))
+
+            self.network_outputs[k] = tf.stack(t1, axis=1)
 
     def _build_program_interpreter(self):
         # --- Compute sprites from attrs using object decoder ---
@@ -770,7 +928,23 @@ class YoloRL_Updater(Updater):
 
         self._build_placeholders()
 
-        self._build_program_generator()
+        self._program_info = dict(
+            samples=dict(),
+            entropy=dict(),
+            log_probs=dict(),
+            logits=dict(),
+            program=dict(),
+        )
+
+        for k, v in self._program_info.items():
+            setattr(self, k, v)
+
+        if self.sequential_cfg['on']:
+            self._build_program_generator_sequential()
+        else:
+            self._build_program_generator()
+
+        self.network_outputs.update(self._program_info)
 
         if self.object_decoder is None:
             self.object_decoder = cfg.build_object_decoder(scope="object_decoder")
@@ -1112,7 +1286,7 @@ config = Config(
     lr_schedule=1e-4,
     preserve_env=True,
     batch_size=16,
-    eval_step=100,
+    eval_step=1000,
     display_step=1000,
     max_steps=1e7,
     patience=10000,
@@ -1245,7 +1419,7 @@ small_test_config = uniform_size_config.copy(
     anchor_boxes=[[7, 7]],
     image_shape=(28, 28),
     max_overlap=100,
-    curriculum=[dict(fixed_values=dict(obj=1), max_steps=10000, area_weight=0.2)],
+    curriculum=[dict(fixed_values=dict(obj=1), max_steps=10000)],
 )
 
 
@@ -1277,6 +1451,25 @@ small_test_reset_config = small_test_config.copy(
     ]
 )
 
+from dps.utils.tf import MLP
+sequential_config = small_test_config.copy(
+    sequential_cfg=dict(
+        on=True,
+        lookback_shape=(2, 2, 2),
+        build_next_step=lambda scope: MLP([100, 100], scope=scope),
+    ),
+
+    patience=5000,
+    area_weight=1.,
+
+    hooks=[
+        PolynomialScheduleHook(
+            attr_name="nonzero_weight",
+            query_name="best_COST_reconstruction",
+            base_configs=fragment, tolerance=2,
+            initial_value=100, scale=50, power=1.0)
+    ]
+)
 
 
 # fragment = [
