@@ -438,12 +438,12 @@ class TrainingLoop(object):
                     for hook in cfg.hooks:
                         hook.end_stage(self, stage_idx)
 
-                    stage_idx += 1
-                    self.curriculum_complete.append(stage_config)
-
                     print("\nDone stage {} at {}, {} seconds after given start time.".format(
                         stage_idx, datetime.datetime.now(), time.time() - self.start_time))
                     print("=" * 50)
+
+                    stage_idx += 1
+                    self.curriculum_complete.append(stage_config)
 
                 if not (threshold_reached or cfg.power_through):
                     print("Failed to reach stopping criteria threshold on stage {} "

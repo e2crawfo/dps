@@ -51,16 +51,18 @@ class Dataset(Parameterized):
                 print("Done.")
 
             else:
-                tracks = self._make_postprocess(self._make())
+                tracks = self._make()
                 loaded = False
 
             self.loaded = loaded
+
+        tracks = self._make_postprocess(tracks)
 
         length = len(tracks[0])
         assert all(len(t) == length for t in tracks[1:])
 
         self.tracks = list(tracks)
-        self.obs_shape = np.array(self.tracks[0])
+        self.obs_shape = np.array(self.tracks[0][0]).shape
         self.n_examples = len(self.tracks[0])
         self.shuffle = shuffle
 

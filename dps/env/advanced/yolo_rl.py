@@ -221,6 +221,7 @@ class YoloRL_Updater(Updater):
     max_grad_norm = Param()
 
     n_passthrough_features = Param()
+    propogate_program_gradients = Param()
 
     xent_loss = Param()
 
@@ -246,15 +247,13 @@ class YoloRL_Updater(Updater):
         for dset in self.datasets.values():
             dset.reset()
 
-        self.image_shape = self.datasets['train'].image_shape
-
-        self.anchor_boxes = np.array(self.anchor_boxes)
-        self.H = int(np.ceil(self.image_shape[0] / self.pixels_per_cell[0]))
-        self.W = int(np.ceil(self.image_shape[1] / self.pixels_per_cell[1]))
-        self.B = len(self.anchor_boxes)
-
-        self.obs_shape = self.datasets['train'].x.shape[1:]
+        self.obs_shape = self.datasets['train'].obs_shape
         self.image_height, self.image_width, self.image_depth = self.obs_shape
+
+        self.H = int(np.ceil(self.image_height / self.pixels_per_cell[0]))
+        self.W = int(np.ceil(self.image_width / self.pixels_per_cell[1]))
+        self.B = len(self.anchor_boxes)
+        self.anchor_boxes = np.array(self.anchor_boxes)
 
         self.COST_funcs = {}
 
@@ -325,6 +324,9 @@ class YoloRL_Updater(Updater):
             [self.object_decoder] +
             [self.layer_params[kind]["network"] for kind in self.order]
         )
+
+        if self.sequential_cfg['on']:
+            scoped_functions.append(self.backbone)
 
         tvars = []
         for sf in scoped_functions:
@@ -688,6 +690,8 @@ class YoloRL_Updater(Updater):
             if i:
                 layer_inp = features
                 _program = tf.reshape(program, (-1, H, W, B * int(program.shape[-1])))
+                if not self.propogate_program_gradients:
+                    _program = tf.stop_gradient(_program)
                 layer_inp = tf.concat([features, _program], axis=-1)
             else:
                 layer_inp = self.inp
@@ -720,7 +724,7 @@ class YoloRL_Updater(Updater):
             for j in range(self.sequential_cfg.lookback_shape[1]):
                 for k in range(self.sequential_cfg.lookback_shape[2]):
 
-                    if i == 0 and j == 0 and k == 0:
+                    if i == j == k == 0:
                         continue
 
                     _i = h - i
@@ -730,7 +734,10 @@ class YoloRL_Updater(Updater):
                     if _i < 0 or _j < 0 or _k < 0:
                         inp.append(edge_element)
                     else:
-                        inp.append(program[_i, _j, _k])
+                        program_element = program[_i, _j, _k]
+                        if not self.propogate_program_gradients:
+                            program_element = tf.stop_gradient(program_element)
+                        inp.append(program_element)
 
         return tf.concat(inp, axis=1)
 
@@ -772,6 +779,7 @@ class YoloRL_Updater(Updater):
             for w in range(self.W):
                 for b in range(self.B):
                     layer_inp = self._get_sequential_input(backbone_output, program, h, w, b, edge_element)
+
                     hwb_program = []
 
                     for i, kind in enumerate(self.order):
@@ -802,7 +810,11 @@ class YoloRL_Updater(Updater):
                             for k, v in built['network_outputs'].items():
                                 network_outputs[k][h, w, b] = v
 
-                        layer_inp = tf.concat([layer_inp, built['program']], axis=1)
+                        program_for_next_step = built['program']
+                        if not self.propogate_program_gradients:
+                            program_for_next_step = tf.stop_gradient(program_for_next_step)
+                        layer_inp = tf.concat([layer_inp, program_for_next_step], axis=1)
+
                         hwb_program.append(built['program'])
 
                     program[h, w, b] = tf.concat(hwb_program, axis=1)
@@ -869,11 +881,11 @@ class YoloRL_Updater(Updater):
 
         # box centre normalized to image height and width
         yt = (
-            (self.pixels_per_cell[0] / self.image_shape[0]) *
+            (self.pixels_per_cell[0] / self.image_height) *
             (cell_y + tf.range(self.H, dtype=tf.float32)[None, :, None, None, None])
         )
         xt = (
-            (self.pixels_per_cell[1] / self.image_shape[1]) *
+            (self.pixels_per_cell[1] / self.image_width) *
             (cell_x + tf.range(self.W, dtype=tf.float32)[None, None, :, None, None])
         )
 
@@ -1352,6 +1364,7 @@ config = Config(
     background_colours="",
 
     n_passthrough_features=100,
+    propogate_program_gradients=True,
 
     max_hw=1.0,  # Maximum for the bounding box multiplier.
     min_hw=0.0,  # Minimum for the bounding box multiplier.
@@ -1403,7 +1416,7 @@ good_config = config.copy(
     lr_schedule=1e-4,
 
     curriculum=[
-        dict(fixed_weights="obj", fixed_values=dict(obj=1), max_steps=10000, area_weight=0.02),
+        dict(fixed_weights="obj", fixed_values=dict(obj=1), max_steps=10000, area_weight=0.02, patience=100000),
     ],
 
     nonzero_weight=90.,
@@ -1474,6 +1487,7 @@ sequential_config = small_test_config.copy(
 
     patience=5000,
     area_weight=1.,
+    propogate_program_gradients=False,
 
     hooks=[
         PolynomialScheduleHook(
@@ -1481,62 +1495,52 @@ sequential_config = small_test_config.copy(
             query_name="best_COST_reconstruction",
             base_configs=fragment, tolerance=2,
             initial_value=100, scale=50, power=1.0)
-    ]
+    ],
+    curriculum=[
+        dict(do_train=False, fixed_weights="obj", fixed_values=dict(obj=1), max_steps=20000, area_weight=0.02, patience=20000),
+        # dict(fixed_weights="obj", fixed_values=dict(obj=1), max_steps=20000, area_weight=0.02, patience=20000),
+    ],
+
 )
 
+good_sequential_config = small_test_config.copy(
+    sequential_cfg=dict(
+        on=True,
+        lookback_shape=(2, 2, 2),
+        build_next_step=lambda scope: MLP([100, 100], scope=scope),
+    ),
 
-# fragment = [
-#     dict(obj_exploration=0.2),
-#     dict(obj_exploration=0.1),
-#     dict(obj_exploration=0.05),
-# ]
-# 
-# 
-# uniform_size_config = good_config.copy(
-#     image_shape=(28, 28),
-#     max_hw=1.5,
-#     min_hw=0.5,
-#     sub_image_size_std=0.0,
-#     max_overlap=150,
-#     patience=2500,
-# 
-#     hooks=[
-#         PolynomialScheduleHook(
-#             attr_name="nonzero_weight",
-#             query_name="best_COST_reconstruction",
-#             base_configs=fragment, tolerance=2,
-#             initial_value=90, scale=5, power=1.0)
-#     ]
-# )
-# 
-# first_stage_config = uniform_size_config.copy(
-#     hooks=[],
-#     patience=10000,
-#     curriculum=[
-#         dict(fixed_weights="obj", fixed_values=dict(obj=1), max_steps=100000, area_weight=3.),
-#     ],
-# )
-# 
-# 
-# small_test_config = uniform_size_config.copy(
-#     kernel_size=(3, 3),
-#     min_chars=1,
-#     max_chars=3,
-#     object_shape=(14, 14),
-#     anchor_boxes=[[7, 7]],
-#     image_shape=(28, 28),
-#     max_overlap=100,
-# )
+    min_chars=9,
+    max_chars=9,
+    image_shape=(84, 84),
+    max_overlap=150,
+    max_attempts=1000000,
+    n_examples=25000,
+    postprocessing="random",
+    n_samples_per_image=4,
+    tile_shape=(42, 42),
 
+    kernel_size=(3, 3),
+    object_shape=(14, 14),
+    min_hw=0.3,
+    max_hw=3.0,
+    anchor_boxes=[[7, 7]],
 
-# simple_config = first_stage_config.copy(
-#     kernel_size=(1, 1),
-#     min_chars=1,
-#     max_chars=1,
-#     pixels_per_cell=(16, 16),
-#     object_shape=(14, 14),
-#     sub_image_shape=(14, 14),
-#     anchor_boxes=[[14, 14]],
-#     image_shape=(16, 16),
-#     max_overlap=100,
-# )
+    patience=10000,
+    area_weight=1.,
+    nonzero_weight=100.,
+    propogate_program_gradients=False,
+
+    hooks=[],
+    curriculum=[
+        dict(obj_exploration=0.3),
+        # dict(obj_exploration=0.2),
+        # dict(obj_exploration=0.1),
+        # dict(obj_exploration=0.05),
+        # dict(obj_exploration=0.03),
+        # dict(obj_exploration=0.02),
+        # dict(obj_exploration=0.01),
+        dict(do_train=False, n_train=16, postprocessing="", preserve_env=False),  # Test on full size images.
+    ],
+
+)
