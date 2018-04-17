@@ -387,7 +387,7 @@ class FullyConvolutional(ScopedFunction):
 
     @staticmethod
     def _output_shape_1d(inp_dim, f, s, padding, pool):
-        if padding == "SAME":
+        if padding == "SAME" or padding == "RIGHT_ONLY":
             if inp_dim % s == 0:
                 p = f - s
             else:
@@ -424,6 +424,34 @@ class FullyConvolutional(ScopedFunction):
         return shape
 
     @staticmethod
+    def predict_padding(input_shape, layer):
+        """ Predict padding that would be used by the "SAME" tensorflow padding settings. """
+        shape = [int(i) for i in input_shape]
+        kernel_size = layer['kernel_size']
+        if isinstance(kernel_size, tuple):
+            f0, f1 = kernel_size
+        else:
+            f0, f1 = kernel_size, kernel_size
+
+        strides = layer['strides']
+        if isinstance(strides, tuple):
+            strides0, strides1 = strides
+        else:
+            strides0, strides1 = strides, strides
+
+        if shape[0] % strides0 == 0:
+            pad0 = max(f0 - strides0, 0)
+        else:
+            pad0 = max(f0 - (shape[0] % strides0), 0)
+
+        if shape[1] % strides1 == 0:
+            pad1 = max(f1 - strides1, 0)
+        else:
+            pad1 = max(f1 - (shape[1] % strides1), 0)
+
+        return pad0, pad1
+
+    @staticmethod
     def _apply_layer(volume, layer_spec, idx, is_final):
         filters = layer_spec['filters']
         strides = layer_spec['strides']
@@ -436,6 +464,12 @@ class FullyConvolutional(ScopedFunction):
                 volume, filters=filters, kernel_size=kernel_size,
                 strides=strides, padding=padding, name="fcn-conv_transpose{}".format(idx))
         else:
+            if padding == "RIGHT_ONLY":
+                pad0, pad1 = FullyConvolutional.predict_padding(volume.shape[1:3], layer_spec)
+                paddings = [[0, 0], [0, pad0], [0, pad1], [0, 0]]
+                volume = tf.pad(volume, paddings, mode="CONSTANT")
+                padding = "VALID"
+
             volume = tf.layers.conv2d(
                 volume, filters=filters, kernel_size=kernel_size,
                 strides=strides, padding=padding, name="fcn-conv{}".format(idx))

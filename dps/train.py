@@ -16,8 +16,9 @@ import traceback
 import dps
 from dps import cfg
 from dps.utils import (
-    gen_seed, time_limit, Alarm, memory_usage, ExperimentStore, ExperimentDirectory, nvidia_smi,
-    memory_limit, Config, ClearConfig, redirect_stream, NumpySeed, make_symlink
+    gen_seed, time_limit, Alarm, memory_usage, gpu_memory_usage, ExperimentStore,
+    ExperimentDirectory, nvidia_smi, memory_limit, Config, ClearConfig, redirect_stream,
+    NumpySeed, make_symlink
 )
 from dps.utils.tf import (
     restart_tensorboard, uninitialized_variables_initializer, trainable_variables
@@ -359,6 +360,7 @@ class TrainingLoop(object):
 
                     start = time.time()
                     phys_memory_before = memory_usage(physical=True)
+                    gpu_memory_before = gpu_memory_usage()
 
                     threshold_reached, reason = self._run_stage(stage_idx, updater)
 
@@ -387,10 +389,14 @@ class TrainingLoop(object):
 
                 finally:
                     phys_memory_after = memory_usage(physical=True)
+                    gpu_memory_after = gpu_memory_usage()
+
                     self.data.record_values_for_stage(
                         stage_duration=time.time()-start,
                         phys_memory_before_mb=phys_memory_before,
-                        phys_memory_delta_mb=phys_memory_after - phys_memory_before
+                        phys_memory_delta_mb=phys_memory_after - phys_memory_before,
+                        gpu_memory_before_mb=gpu_memory_before,
+                        gpu_memory_delta_mb=gpu_memory_after - gpu_memory_before
                     )
 
                     self.data.record_values_for_stage(reason=reason)

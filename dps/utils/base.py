@@ -52,12 +52,68 @@ def square_subplots(N):
     return fig, axes
 
 
-def nvidia_smi():
+def nvidia_smi(robust=True):
     try:
         p = subprocess.run("nvidia-smi".split(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         return p.stdout.decode()
     except Exception as e:
-        return "Exception while calling nvidia-smi: {}".format(e)
+        if robust:
+            return "Exception while calling nvidia-smi: {}".format(e)
+        else:
+            raise
+
+
+_nvidia_smi_processes_header = "|  GPU       PID   Type   Process name                             Usage      |"
+_nvidia_smi_table_end = "+-----------------------------------------------------------------------------+"
+
+
+def _nvidia_smi_parse_processes(s):
+    lines = s.split('\n')
+    header_idx = None
+    table_end_idx = None
+    for i, line in enumerate(lines):
+        if line == _nvidia_smi_processes_header:
+            header_idx = i
+        elif header_idx is not None and line == _nvidia_smi_table_end:
+            table_end_idx = i
+
+    assert header_idx is not None, "Malformed nvidia-smi string:\n{}".format(s)
+    assert table_end_idx is not None, "Malformed nvidia-smi string:\n{}".format(s)
+
+    processes = []
+
+    for line in lines[header_idx+2:table_end_idx]:
+        tokens = line.split()
+        gpu_idx = int(tokens[1])
+        pid = int(tokens[2])
+        type = tokens[3]
+        process_name = tokens[4]
+        memory_usage = tokens[5]
+        memory_usage_mb = int(memory_usage[:-3])
+
+        processes.append((gpu_idx, pid, type, process_name, memory_usage_mb))
+
+    return processes
+
+
+def gpu_memory_usage():
+    """ return gpu memory usage for current process in MB """
+    try:
+        s = nvidia_smi(robust=False)
+    except Exception:
+        return 0
+
+    gpu_processes = _nvidia_smi_parse_processes(s)
+
+    my_pid = os.getpid()
+
+    my_memory_usage_mb = 0
+
+    for gpu_idx, pid, type, process_name, memory_usage_mb in gpu_processes:
+        if pid == my_pid:
+            my_memory_usage_mb += memory_usage_mb
+
+    return my_memory_usage_mb
 
 
 def view_readme_cl():
@@ -628,7 +684,7 @@ def memory_limit(mb):
 
 
 def memory_usage(physical=False):
-    """ return the memory usage in MB """
+    """ return memory usage for current process in MB """
     process = psutil.Process(os.getpid())
     info = process.memory_info()
     if physical:
