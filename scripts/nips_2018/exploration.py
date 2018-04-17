@@ -1,63 +1,43 @@
 import clify
-import numpy as np
 from dps.env.advanced import yolo_rl
 from dps.datasets import EMNIST_ObjectDetection
-from dps.train import PolynomialScheduleHook
 
 
 def prepare_func():
     from dps import cfg
-    stage0 = cfg.curriculum[0]
-    if cfg.initial_stage == "normal":
-        stage0.update(fixed_values=dict(obj=1))
-    elif cfg.initial_stage == "explore":
-        stage0.update(obj_exploration=1.0, obj_default=0.5)
-    else:
-        raise Exception()
-    stage0["area_weight"] = cfg.stage0_area_weight
+    cfg.kernel_size = (cfg.kernel_size, cfg.kernel_size)
 
 
 distributions = dict(
-    area_weight=list(np.linspace(0.1, 0.4, 3)),
-    stage0_area_weight=[.01, .025],
-    initial_stage=["normal", "explore"],
+    area_weight=list([0.25, 0.5, 1.0, 2.0]),
+    nonzero_weight=list([50, 100, 150, 200]),
     box_std=[0.0, 0.1],
+    kernel_size=[1, 3],
 )
 
-fragment = [
-    dict(obj_exploration=0.2,),
-    dict(obj_exploration=0.1,),
-    dict(obj_exploration=0.05,),
-]
-
-config = yolo_rl.small_test_config.copy(
+config = yolo_rl.good_sequential_config.copy(
     prepare_func=prepare_func,
-    patience=2500,
-    lr_schedule=1e-4,
     render_step=100000,
-    max_overlap=40,
-    n_val=16,
     eval_step=1000,
+    patience=10000,
+    area_weight=None,
+    nonzero_weight=None,
 
-    fixed_values=dict(),
-
-    curriculum=[
-        dict(fixed_weights="obj", nonzero_weight=0, patience=10000, max_steps=10000)
-    ],
-
-    hooks=[
-        PolynomialScheduleHook(
-            attr_name="nonzero_weight",
-            query_name="best_COST_reconstruction",
-            base_configs=fragment, tolerance=2,
-            initial_value=90, scale=5, power=1.0)
-    ]
+    # TODO
+    max_steps=2000,
 )
 
 # Create the datasets if necessary.
+print("Forcing creation of first dataset.")
 with config:
     train = EMNIST_ObjectDetection(n_examples=int(config.n_train), shuffle=True, example_range=(0.0, 0.9))
     val = EMNIST_ObjectDetection(n_examples=int(config.n_val), shuffle=True, example_range=(0.9, 1.))
+
+print("Forcing creation of second dataset.")
+with config.copy(config.curriculum[-1]):
+    train = EMNIST_ObjectDetection(n_examples=int(config.n_train), shuffle=True, example_range=(0.0, 0.9))
+    val = EMNIST_ObjectDetection(n_examples=int(config.n_val), shuffle=True, example_range=(0.9, 1.))
+
 
 from dps.hyper import build_and_submit
 clify.wrap_function(build_and_submit)(config=config, distributions=distributions)
