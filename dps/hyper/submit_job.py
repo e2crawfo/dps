@@ -299,7 +299,7 @@ class ParallelSession(object):
                 if create_local_scratch:
                     print("Creating local scratch directory...")
                     command = "mkdir -p {local_scratch}"
-                    self.ssh_execute(command, host, robust=False)
+                    self.ssh_execute(command, host, robust=False, output='get')
                     self.dirty_hosts.add(host)
 
                 command = "cd {local_scratch} && stat {archive_root}"
@@ -318,17 +318,18 @@ class ParallelSession(object):
                                 "rsync -av -e \"ssh {ssh_options}\" "
                                 "{input_zip_abs} {host}:{local_scratch}".format(host=host, **self.__dict__)
                             )
-                        self.execute_command(command, frmt=False, robust=False)
+                        self.execute_command(command, frmt=False, robust=False, output='get')
 
                     print("Unzipping...")
                     command = "cd {local_scratch} && unzip -ouq {input_zip_base}"
-                    self.ssh_execute(command, host, robust=False)
+                    self.ssh_execute(command, host, robust=False, output='get')
 
                 print("Host successfully prepared.")
                 hosts.append(host)
 
-            except subprocess.CalledProcessError:
+            except subprocess.CalledProcessError as e:
                 print("Preparation of host failed.")
+                print("Command output:\n{}".format(e.output))
 
         if min_hosts is not None and len(hosts) < min_hosts:
             raise Exception(
@@ -348,8 +349,22 @@ class ParallelSession(object):
     def execute_command(
             self, command, frmt=True, shell=True, robust=False, max_seconds=None,
             progress=False, verbose=False, output='quiet'):
-        """ Uses `subprocess` to execute `command`. """
+        """ Uses `subprocess` to execute `command`.
 
+        if command returns non-zero exit status:
+            if robust:
+                returns as normal
+            else:
+                raise CalledProcessError
+
+        Returns
+        -------
+        if output == 'quiet' or output == 'loud':
+            returncode
+        elif output == 'get':
+            returncode, stdout
+
+        """
         p = None
         try:
             assert isinstance(command, str)
@@ -420,7 +435,11 @@ class ParallelSession(object):
                     else:
                         return p.returncode
                 else:
-                    raise subprocess.CalledProcessError(p.returncode, command)
+                    if output == 'get':
+                        stdout = p.stdout.read()
+                        raise subprocess.CalledProcessError(p.returncode, command, stdout)
+                    else:
+                        raise subprocess.CalledProcessError(p.returncode, command)
 
             if output == 'get':
                 stdout = p.stdout.read()

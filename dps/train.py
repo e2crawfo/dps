@@ -401,37 +401,39 @@ class TrainingLoop(object):
 
                     self.data.record_values_for_stage(reason=reason)
 
-                    # --------------- Evaluate the best hypothesis -------------------
-
                     print("\n" + "-" * 10 + " Optimization complete " + "-" * 10)
                     print("\nReason: {}.\n".format(reason))
 
-                    print("Best hypothesis for this stage was found on "
-                          "step (l: {best_local_step}, g: {best_global_step}) "
-                          "with stopping criteria ({sc_name}) of {best_stopping_criteria}.".format(
-                              sc_name=self.stopping_criteria_name, **self.data.current_stage_record))
+                    if 'best_path' in self.data.current_stage_record:
+                        # --------------- Evaluate the best hypothesis -------------------
 
-                    best_path = self.data.current_stage_record['best_path']
-                    print("Loading best hypothesis for this stage "
-                          "from file {}...".format(best_path))
-                    updater.restore(sess, best_path)
+                        print("\n" + "-" * 10 + " Final evaluation " + "-" * 10)
 
-                    eval_results = updater.evaluate(cfg.batch_size)
+                        print("Best hypothesis for this stage was found on "
+                              "step (l: {best_local_step}, g: {best_global_step}) "
+                              "with stopping criteria ({sc_name}) of {best_stopping_criteria}.".format(
+                                  sc_name=self.stopping_criteria_name, **self.data.current_stage_record))
 
-                    print("\n" + "-" * 10 + " Final evaluation " + "-" * 10)
-                    for mode, (record, _) in eval_results.items():
-                        if record:
-                            print("\n-- {} -- \n".format(mode))
-                            for k, v in sorted(record.items()):
-                                print("* {}: {}".format(k, v))
-                    print()
+                        best_path = self.data.current_stage_record['best_path']
+                        print("Loading best hypothesis for this stage "
+                              "from file {}...".format(best_path))
+                        updater.restore(sess, best_path)
 
-                    # --------------- Optionally render performance of best hypothesis -------------------
+                        eval_results = updater.evaluate(cfg.batch_size)
 
-                    if cfg.render_step > 0 and cfg.render_hook is not None:
-                        print("Rendering...")
-                        cfg.render_hook(updater)
-                        print("Done rendering.")
+                        for mode, (record, _) in eval_results.items():
+                            if record:
+                                print("\n-- {} -- \n".format(mode))
+                                for k, v in sorted(record.items()):
+                                    print("* {}: {}".format(k, v))
+                        print()
+
+                        # --------------- Optionally render performance of best hypothesis -------------------
+
+                        if cfg.render_step > 0 and cfg.render_hook is not None:
+                            print("Rendering...")
+                            cfg.render_hook(updater)
+                            print("Done rendering.")
 
                     # --------------- Finish up the stage -------------------
 
