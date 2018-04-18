@@ -10,7 +10,8 @@ from dps.datasets import EMNIST_ObjectDetection
 from dps.updater import Updater
 from dps.utils import Config, Param, Parameterized, square_subplots, prime_factors
 from dps.utils.tf import (
-    FullyConvolutional, build_gradient_train_op, trainable_variables, build_scheduled_value)
+    FullyConvolutional, build_gradient_train_op, trainable_variables,
+    tf_mean_sum, build_scheduled_value)
 from dps.env.advanced.yolo import mAP
 from dps.tf_ops import render_sprites
 from dps.train import PolynomialScheduleHook
@@ -87,7 +88,18 @@ class ObjectDecoder(FullyConvolutional):
         super(ObjectDecoder, self).__init__(layout, check_output_shape=True, **kwargs)
 
 
-def reconstruction_cost(_tensors, network):
+def reconstruction_cost(_tensors, updater):
+    pp_reconstruction_loss = _tensors['per_pixel_reconstruction_loss']
+    batch_size = pp_reconstruction_loss.shape[0]
+    pp_reconstruction_loss = pp_reconstruction_loss.reshape(batch_size, -1)
+    reconstruction_loss = np.sum(pp_reconstruction_loss, axis=1)
+    return reconstruction_loss.reshape(batch_size, 1, 1, 1, 1)
+
+
+reconstruction_cost.keys_accessed = "per_pixel_reconstruction_loss"
+
+
+def local_reconstruction_cost(_tensors, network):
     centers_h = (np.arange(network.H) + 0.5) * network.pixels_per_cell[0]
     centers_w = (np.arange(network.W) + 0.5) * network.pixels_per_cell[1]
 
@@ -121,21 +133,43 @@ def reconstruction_cost(_tensors, network):
     return np.stack(all_filtered, axis=-1)[..., None]
 
 
-reconstruction_cost.keys_accessed = "per_pixel_reconstruction_loss"
+local_reconstruction_cost.keys_accessed = "per_pixel_reconstruction_loss"
 
 
-def area_cost(_tensors, network):
-    return _tensors['program']['obj'] * _tensors['area']
+class AreaCost(object):
+    keys_accessed = "program:obj area"
+
+    def __init__(self, target_area):
+        self.target_area = target_area
+
+    def __call__(self, _tensors, updater):
+        selected_area_cost = _tensors['program']['obj'] * np.abs(_tensors['area'] - self.target_area)
+        batch_size = selected_area_cost.shape[0]
+        selected_area_cost = selected_area_cost.reshape(batch_size, -1)
+        area_cost = np.sum(selected_area_cost, axis=1)
+        return area_cost.reshape(batch_size, 1, 1, 1, 1)
 
 
-area_cost.keys_accessed = "program:obj area"
+class LocalAreaCost(AreaCost):
+    def __call__(self, _tensors, updater):
+        return _tensors['program']['obj'] * np.abs(_tensors['area'] - self.target_area)
 
 
-def nonzero_cost(_tensors, network):
-    return _tensors['program']['obj']
+def nonzero_cost(_tensors, updater):
+    obj_samples = _tensors['program']['obj']
+    batch_size = obj_samples.shape[0]
+    obj_samples = obj_samples.reshape(batch_size, -1)
+    return np.count_nonzero(obj_samples, axis=1).reshape(batch_size, 1, 1, 1, 1).astype('f')
 
 
 nonzero_cost.keys_accessed = "program:obj"
+
+
+def local_nonzero_cost(_tensors, network):
+    return _tensors['program']['obj']
+
+
+local_nonzero_cost.keys_accessed = "program:obj"
 
 
 def negative_mAP_cost(_tensors, network):
@@ -215,46 +249,18 @@ def count_1norm_cost(_tensors, updater):
 count_1norm_cost.keys_accessed = "program:obj"
 
 
-def build_area_loss(area, obj, batch=True):
-    selected_area = area * obj
-
-    if batch:
-        selected_area = tf_flatten(selected_area)
-        return tf.reduce_sum(selected_area, keepdims=True, axis=1)
-    else:
-        return selected_area
+def build_xent_loss(logits, targets):
+    return tf.nn.sigmoid_cross_entropy_with_logits(labels=targets, logits=logits)
 
 
-def build_xent_loss(logits, targets, batch=True):
-    per_pixel_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=targets, logits=logits)
-
-    if batch:
-        per_pixel_loss = tf_flatten(per_pixel_loss)
-        return tf.reduce_sum(per_pixel_loss, keepdims=True, axis=1)
-    else:
-        return per_pixel_loss
-
-
-def build_squared_loss(logits, targets, batch=True):
+def build_squared_loss(logits, targets):
     actions = tf.sigmoid(logits)
-    per_pixel_loss = (actions - targets)**2
-
-    if batch:
-        per_pixel_loss = tf_flatten(per_pixel_loss)
-        return tf.reduce_sum(per_pixel_loss, keepdims=True, axis=1)
-    else:
-        return per_pixel_loss
+    return (actions - targets)**2
 
 
-def build_1norm_loss(logits, targets, batch=True):
+def build_1norm_loss(logits, targets):
     actions = tf.sigmoid(logits)
-    per_pixel_loss = tf.abs(actions - targets)
-
-    if batch:
-        per_pixel_loss = tf_flatten(per_pixel_loss)
-        return tf.reduce_sum(per_pixel_loss, keepdims=True, axis=1)
-    else:
-        return per_pixel_loss
+    return tf.abs(actions - targets)
 
 
 loss_builders = {
@@ -288,6 +294,8 @@ class YoloRL_Network(Parameterized):
     use_baseline = Param()
     nonzero_weight = Param()
     area_weight = Param()
+    use_local_costs = Param()
+    target_area = Param(0.)
 
     fixed_values = Param()
     fixed_weights = Param()
@@ -310,9 +318,14 @@ class YoloRL_Network(Parameterized):
 
         self.COST_funcs = {}
 
-        self.COST_funcs['reconstruction'] = (1, reconstruction_cost, "both")
-        self.COST_funcs['nonzero'] = (self.nonzero_weight, nonzero_cost, "obj")
-        self.COST_funcs['area'] = (self.area_weight, area_cost, "obj")
+        _reconstruction_cost_func = local_reconstruction_cost if self.use_local_costs else reconstruction_cost
+        self.COST_funcs['reconstruction'] = (1, _reconstruction_cost_func, "both")
+
+        _nonzero_cost_func = local_nonzero_cost if self.use_local_costs else nonzero_cost
+        self.COST_funcs['nonzero'] = (self.nonzero_weight, _nonzero_cost_func, "obj")
+
+        _area_cost_func = LocalAreaCost(self.target_area) if self.use_local_costs else AreaCost(self.target_area)
+        self.COST_funcs['area'] = (self.area_weight, _area_cost_func, "obj")
 
         # For evaluation purposes only
         self.COST_funcs['negative_mAP'] = (0, negative_mAP_cost, "obj")
@@ -1022,24 +1035,20 @@ class YoloRL_Network(Parameterized):
 
         # --- required for computing the reconstruction COST ---
 
-        output_logits = self._tensors["output_logits"]
-        inp = self._tensors["inputs"]["inp"]
-        per_pixel_reconstruction_loss = loss_builders[loss_key](output_logits, inp, batch=False)
-        self._tensors.update(
-            per_pixel_reconstruction_loss=per_pixel_reconstruction_loss,
-        )
+        output_logits = self._tensors['output_logits']
+        inp = self._tensors['inputs']['inp']
+        self._tensors['per_pixel_reconstruction_loss'] = loss_builders[loss_key](output_logits, inp)
 
         # --- store losses ---
 
         losses = {}
 
-        recorded_tensors['rl_loss'] = tf.reduce_mean(rl_loss_map)
-        losses['rl'] = recorded_tensors['rl_loss']
+        losses['rl'] = tf.reduce_mean(rl_loss_map)
 
-        area_loss = build_area_loss(self._tensors['area'], self.program['obj'])
-        recorded_tensors['area_loss'] = tf.reduce_mean(area_loss)
-        recorded_tensors['weighted_area_loss'] = self.area_weight * recorded_tensors['area_loss']
-        losses['area'] = recorded_tensors['weighted_area_loss']
+        recorded_tensors['area_loss'] = tf_mean_sum(tf.abs(self._tensors['area'] - self.target_area) * self.program['obj'])
+        losses['weighted_area'] = self.area_weight * recorded_tensors['area_loss']
+
+        losses['reconstruction'] = tf_mean_sum(loss_builders[loss_key](output_logits, inp))
 
         return {
             "tensors": self._tensors,
@@ -1234,19 +1243,18 @@ class YoloRL_Updater(Updater):
         network_recorded_tensors = network_outputs["recorded_tensors"]
         network_losses = network_outputs["losses"]
 
-        output_logits = network_tensors["output_logits"]
-
         recorded_tensors = {}
 
+        output_logits = network_tensors["output_logits"]
         recorded_tensors.update({
-            name + "_loss": tf.reduce_mean(builder(output_logits, self.inp))
+            name + "_loss": tf_mean_sum(builder(output_logits, self.inp))
             for name, builder in loss_builders.items()
         })
-        recorded_tensors['reconstruction_loss'] = recorded_tensors[loss_key + "_loss"]
 
-        recorded_tensors['loss'] = recorded_tensors['reconstruction_loss']
+        recorded_tensors['loss'] = 0
         for name, tensor in network_losses.items():
             recorded_tensors['loss'] += tensor
+            recorded_tensors[name + '_loss'] = tensor
         self.loss = recorded_tensors['loss']
 
         intersection = recorded_tensors.keys() & network_recorded_tensors.keys()
@@ -1535,6 +1543,7 @@ config = Config(
     use_baseline=True,
     nonzero_weight=0.0,
     area_weight=0.0,
+    use_local_costs=True,
 
     curriculum=[
         dict()
@@ -1686,10 +1695,10 @@ good_sequential_config = small_test_config.copy(
     area_weight=1.,
     nonzero_weight=100.,
     propogate_program_gradients=False,
+    use_local_costs=False,
 
     hooks=[],
     curriculum=[
-        dict(obj_exploration=0.3),
         dict(obj_exploration=0.2),
         dict(obj_exploration=0.1),
         dict(obj_exploration=0.05),
