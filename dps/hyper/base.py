@@ -51,8 +51,9 @@ class HyperSearch(object):
         else:
             distributions = Config(distributions)
             keys = list(distributions.keys())
+        keys.append('idx')
 
-        return sorted(keys)
+        return sorted(set(keys))
 
     def dist(self):
         return self.objects.load_object('metadata', 'distributions')
@@ -85,7 +86,7 @@ class HyperSearch(object):
         if isinstance(fields, str):
             fields = fields.split()
 
-        config_keys = list(set(self.dist_keys() + ['idx']))
+        config_keys = self.dist_keys()
 
         KeyTuple = namedtuple(self.__class__.__name__ + "Key", config_keys)
 
@@ -157,7 +158,7 @@ class HyperSearch(object):
         if isinstance(fields, str):
             fields = fields.split()
 
-        config_keys = list(set(self.dist_keys() + ['idx']))
+        config_keys = self.dist_keys()
 
         KeyTuple = namedtuple(self.__class__.__name__ + "Key", config_keys)
 
@@ -194,7 +195,7 @@ class HyperSearch(object):
 
         best = []
 
-        # For each parameter setting, identify the stage where it got the lowest value for `criteria_key`.
+        # For each parameter setting, identify the stage where it got the lowest/highest value for `criteria_key`.
         for i, (key, value) in enumerate(sorted(stage_data.items())):
             _best = []
 
@@ -226,7 +227,7 @@ class HyperSearch(object):
             print("RESULTS GROUPED BY PARAM VALUES, ORDER OF {} VALUE OF <{}>: ".format(direction, criteria_key))
 
             for i, b in enumerate(best):
-                print('\n {} '.format(len(best)-i) + '*' * 40)
+                print('\n {}-th {} '.format(len(best)-i, "lowest" if not maximize else "highest") + '*' * 40)
                 pprint({k: b[k].iloc[0] for k in keys})
                 b = b.drop(keys, axis=1)[column_order]
                 with_stats = pd.merge(

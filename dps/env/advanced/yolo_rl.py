@@ -289,7 +289,6 @@ class YoloRL_Network(Parameterized):
     obj_default = Param()
 
     n_passthrough_features = Param()
-    propogate_program_gradients = Param()
 
     use_baseline = Param()
     nonzero_weight = Param()
@@ -708,8 +707,6 @@ class YoloRL_Network(Parameterized):
             if i:
                 layer_inp = features
                 _program = tf.reshape(program, (-1, H, W, B * int(program.shape[-1])))
-                if not self.propogate_program_gradients:
-                    _program = tf.stop_gradient(_program)
                 layer_inp = tf.concat([features, _program], axis=-1)
             else:
                 layer_inp = self.inp
@@ -754,8 +751,6 @@ class YoloRL_Network(Parameterized):
                         inp.append(edge_element)
                     else:
                         program_element = program[_i, _j, _k]
-                        if not self.propogate_program_gradients:
-                            program_element = tf.stop_gradient(program_element)
                         inp.append(program_element)
 
         return tf.concat(inp, axis=1)
@@ -831,8 +826,6 @@ class YoloRL_Network(Parameterized):
                                 _tensors[k][h, w, b] = v
 
                         program_for_next_step = built['program']
-                        if not self.propogate_program_gradients:
-                            program_for_next_step = tf.stop_gradient(program_for_next_step)
                         layer_inp = tf.concat([layer_inp, program_for_next_step], axis=1)
 
                         hwb_program.append(built['program'])
@@ -1528,12 +1521,11 @@ config = Config(
     background_colours="",
 
     n_passthrough_features=100,
-    propogate_program_gradients=True,
 
     max_hw=1.0,  # Maximum for the bounding box multiplier.
     min_hw=0.0,  # Minimum for the bounding box multiplier.
 
-    box_std=0.1,
+    box_std=0.0,
     attr_std=0.0,
     z_std=0.1,
     obj_exploration=0.05,
@@ -1587,7 +1579,7 @@ good_config = config.copy(
     nonzero_weight=90.,
     area_weight=0.2,
 
-    box_std=0.1,
+    box_std=0.0,
     attr_std=0.0,
 
     render_step=5000,
@@ -1652,7 +1644,6 @@ sequential_config = small_test_config.copy(
 
     patience=5000,
     area_weight=1.,
-    propogate_program_gradients=False,
 
     hooks=[
         PolynomialScheduleHook(
@@ -1694,7 +1685,6 @@ good_sequential_config = small_test_config.copy(
     patience=10000,
     area_weight=1.,
     nonzero_weight=100.,
-    propogate_program_gradients=False,
     use_local_costs=False,
 
     hooks=[],
@@ -1708,6 +1698,21 @@ good_sequential_config = small_test_config.copy(
         dict(do_train=False, n_train=16, postprocessing="", preserve_env=False),  # Test on full size images.
     ],
 
+)
+
+good_sequential_reset_config = good_sequential_config.copy(
+    min_chars=1,
+    max_chars=12,
+    curriculum=[
+        dict(
+            postprocessing="",
+            n_train=16,
+            do_train=False,
+            # load_path="/media/data/dps_data/logs/yolo_rl/exp_yolo_rl_seed=347405995_2018_04_17_20_39_16/weights/best_of_stage_5",
+            load_path="/media/data/Dropbox/experiment_data/active/nips2018/run_search_exploration_seed=0_2018_04_17_20_55_33/experiments/exp_idx=25_repeat=0_seed=1447298731_2018_04_18_01_58_42/weights/best_of_stage_0",
+            kernel_size=(1, 1),
+        )
+    ]
 )
 
 train_big_config = good_sequential_config.copy(
