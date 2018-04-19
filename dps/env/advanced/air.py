@@ -15,23 +15,17 @@
 import tensorflow as tf
 import tensorflow.contrib.rnn as rnn
 import tensorflow.contrib.layers as layers
+import numpy as np
+import os
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 
 from dps import cfg
-from dps.datasets import EMNIST_ObjectDetection
-from dps.updater import Updater
-from dps.utils import Param, Config
-from dps.utils.tf import trainable_variables, build_gradient_train_op
+from dps.utils import Param, Parameterized, Config, square_subplots
+from dps.utils.tf import trainable_variables, build_scheduled_value
+from dps.env.advanced import yolo_rl
 
-
-class Env(object):
-    def __init__(self):
-        train = EMNIST_ObjectDetection(n_examples=int(cfg.n_train), shuffle=True, example_range=(0.0, 0.9))
-        val = EMNIST_ObjectDetection(n_examples=int(cfg.n_val), shuffle=True, example_range=(0.9, 1.))
-
-        self.datasets = dict(train=train, val=val)
-
-    def close(self):
-        pass
+tf_flatten = tf.layers.flatten
 
 
 # ------ transformer.py -------
@@ -39,6 +33,7 @@ class Env(object):
 
 def transformer(U, theta, out_size, name='SpatialTransformer', **kwargs):
     """Spatial Transformer Layer
+
     Implements a spatial transformer layer as described in [1]_.
     Based on [2]_ and edited by David Dao for Tensorflow.
     Parameters
@@ -192,33 +187,13 @@ def transformer(U, theta, out_size, name='SpatialTransformer', **kwargs):
         output = _transform(theta, U, out_size)
         return output
 
-
-def batch_transformer(U, thetas, out_size, name='BatchSpatialTransformer'):
-    """Batch Spatial Transformer Layer
-    Parameters
-    ----------
-    U : float
-        tensor of inputs [num_batch,height,width,num_channels]
-    thetas : float
-        a set of transformations for each input [num_batch,num_transforms,6]
-    out_size : int
-        the size of the output [out_height,out_width]
-    Returns: float
-        Tensor of size [num_batch*num_transforms,out_height,out_width,num_channels]
-    """
-    with tf.variable_scope(name):
-        num_batch, num_transforms = map(int, thetas.get_shape().as_list()[:2])
-        indices = [[i]*num_transforms for i in range(num_batch)]
-        input_repeated = tf.gather(U, tf.reshape(indices, [-1]))
-        return transformer(input_repeated, thetas, out_size)
-
 # ------ vae.py -------
 
 
 def vae(inputs, input_dim, rec_hidden_units, latent_dim,
         gen_hidden_units, likelihood_std=0.0, activation=tf.nn.softplus):
 
-    input_size = tf.shape(inputs)[0]
+    batch_size = tf.shape(inputs)[0]
 
     next_layer = inputs
     for i in range(len(rec_hidden_units)):
@@ -233,7 +208,7 @@ def vae(inputs, input_dim, rec_hidden_units, latent_dim,
         recognition_log_variance = layers.fully_connected(next_layer, latent_dim, activation_fn=None, scope=scope)
 
     with tf.variable_scope("rec_sample"):
-        standard_normal_sample = tf.random_normal([input_size, latent_dim])
+        standard_normal_sample = tf.random_normal([batch_size, latent_dim])
         recognition_sample = recognition_mean + standard_normal_sample * tf.sqrt(tf.exp(recognition_log_variance))
 
     next_layer = recognition_sample
@@ -247,11 +222,9 @@ def vae(inputs, input_dim, rec_hidden_units, latent_dim,
         generative_mean = layers.fully_connected(next_layer, input_dim, activation_fn=None, scope=scope)
 
     with tf.variable_scope("gen_sample"):
-        standard_normal_sample2 = tf.random_normal([input_size, input_dim])
+        standard_normal_sample2 = tf.random_normal([batch_size, input_dim])
         generative_sample = generative_mean + standard_normal_sample2 * likelihood_std
-        reconstruction = tf.nn.sigmoid(
-            generative_sample
-        )
+        reconstruction = tf.nn.sigmoid(generative_sample)
 
     return reconstruction, recognition_mean, recognition_log_variance, recognition_mean
 
@@ -301,74 +274,13 @@ def concrete_binary_kl_mc_sample(y,
     return log_posterior - log_prior
 
 
-def _create_annealed_tensor(param, schedule, global_step, eps=10e-10):
-    value = tf.train.exponential_decay(
-        learning_rate=schedule["init"], global_step=global_step,
-        decay_steps=schedule["iters"], decay_rate=schedule["factor"],
-        staircase=False if "staircase" not in schedule else schedule["staircase"],
-        name=param
-    )
-
-    if "min" in schedule:
-        value = tf.maximum(
-            value, schedule["min"],
-            name=param + "_max"
-        )
-
-    if "max" in schedule:
-        value = tf.minimum(
-            value, schedule["max"],
-            name=param + "_min"
-        )
-
-    if "log" in schedule and schedule["log"]:
-        value = tf.log(
-            value + eps,
-            name=param + "_log"
-        )
-
-    return value
-
-
 def _sample_from_mvn(mean, diag_variance):
-    # sampling from the multivariate normal
-    # with given mean and diagonal covaraince
+    """ sample from multivariate normal with given mean and diagonal covariance """
     standard_normal = tf.random_normal(tf.shape(mean))
     return mean + standard_normal * tf.sqrt(diag_variance)
 
 
-def _draw_colored_bounding_boxes(images, boxes, steps):
-    channels = [images, images, images]
-
-    for s in range(3):
-        # empty canvas with s-th bounding box
-        step_box = tf.expand_dims(boxes[:, s, :, :], 3)
-
-        for c in range(3):
-            if s == c:
-                # adding the box to c-th channel
-                # if the number of attention steps is greater than s
-                channels[c] = tf.where(
-                    tf.greater(steps, s),
-                    tf.minimum(channels[c] + step_box, tf.ones_like(images)),
-                    channels[c]
-                )
-            else:
-                # subtracting the box from channels other than c-th
-                # if the number of attention steps is greater than s
-                channels[c] = tf.where(
-                    tf.greater(steps, s),
-                    tf.maximum(channels[c] - step_box, tf.zeros_like(images)),
-                    channels[c]
-                )
-
-    # concatenating all three channels to obtain
-    # potentially three R, G, and B bounding boxes
-    return tf.concat(channels, axis=3)
-
-
 class AIR_RenderHook(object):
-
     def __init__(self, N=16):
         self.N = N
 
@@ -383,71 +295,111 @@ class AIR_RenderHook(object):
                 fig.savefig(path)
                 plt.close(fig)
 
-    def _visualize_reconstructions(self, original, reconstruction, st_back, steps, zoom):
-        # enlarging the original images
-        large_original = tf.image.resize_images(
-            tf.reshape(original, [-1, self.canvas_size, self.canvas_size, 1]),
-            [zoom * self.canvas_size, zoom * self.canvas_size]
-        )
+        fetched = self._fetch(self.N, updater)
 
-        # enlarging the reconstructions
-        large_reconstruction = tf.image.resize_images(
-            tf.reshape(reconstruction, [-1, self.canvas_size, self.canvas_size, 1]),
-            [zoom * self.canvas_size, zoom * self.canvas_size]
-        )
+        self._plot_reconstruction(updater, fetched)
 
-        # padding (if required) the number of backward ST matrices up to
-        # self.max_steps to avoid possible misalignment errors in case
-        # if there were less than self.max_steps steps globally
-        st_back = tf.pad(st_back, [
-            [0, 0], [0, self.max_steps - tf.shape(st_back)[1]], [0, 0], [0, 0]
-        ])
+    def _fetch(self, N, updater):
+        network = updater.network
 
-        # drawing the attention windows
-        # using backward ST matrices
-        num_images = tf.shape(original)[0]
-        boxes = tf.reshape(
-            tf.clip_by_value(
-                transformer(
-                    tf.expand_dims(
-                        tf.image.draw_bounding_boxes(
-                            tf.zeros(
-                                [num_images * self.max_steps, self.windows_size, self.windows_size, 1],
-                                dtype=reconstruction.dtype
-                            ),
-                            tf.tile(
-                                [[[0.0, 0.0, 1.0, 1.0]]],
-                                [num_images * self.max_steps, 1, 1]
-                            )
-                        ), 3
-                    ), st_back, [zoom * self.canvas_size, zoom * self.canvas_size]
-                ), 0.0, 1.0
-            ), [num_images, self.max_steps, zoom * self.canvas_size, zoom * self.canvas_size]
-        )
+        feed_dict, other = updater.make_feed_dict(N, 'val', True)
+        network.update_feed_dict(feed_dict, other)
 
-        # sharpening the borders
-        # of the attention windows
-        boxes = tf.where(
-            tf.greater(boxes, 0.01),
-            tf.ones_like(boxes),
-            tf.zeros_like(boxes)
-        )
+        images = feed_dict[network.inp_ph]
 
-        # concatenating resulting original and reconstructed images with
-        # bounding boxes drawn on them and a thin white stripe between them
-        return tf.concat([
-            self._draw_colored_bounding_boxes(large_original, boxes, steps),         # original images with boxes
-            tf.ones([tf.shape(large_original)[0], zoom * self.canvas_size, 4, 3]),   # thin white stripe between
-            self._draw_colored_bounding_boxes(large_reconstruction, boxes, steps),   # reconstructed images with boxes
-        ], axis=2)
+        to_fetch = {}
+        to_fetch["output"] = network.reconstruction
+        to_fetch["transform"] = network.rec_st_back
+        to_fetch["steps"] = network.rec_num_digits
+        to_fetch["background"] = network.background
+        to_fetch["windows"] = network.rec_windows
+
+        sess = tf.get_default_session()
+        fetched = sess.run(to_fetch, feed_dict=feed_dict)
+        fetched.update(images=images)
+        fetched["annotations"] = other["annotations"]
+
+        return fetched
+
+    def _plot_reconstruction(self, updater, fetched):
+        images = fetched['images'].reshape(-1, *updater.network.obs_shape)
+        _, image_height, image_width, _ = images.shape
+        output = fetched['output'].reshape(-1, *updater.network.obs_shape)
+        object_shape = updater.network.object_shape
+        windows = fetched['windows'].reshape(
+            -1, updater.network.max_air_steps, object_shape[0], object_shape[1], updater.network.image_depth)
+        background = fetched['background']
+
+        N = images.shape[0]
+        transform = fetched['transform'].reshape(N, -1, 6)
+
+        annotations = fetched["annotations"]
+        if annotations is None:
+            annotations = [[]] * N
+
+        color_order = "red green blue".split()
+
+        fig, axes = plt.subplots(N, updater.network.max_air_steps + 3, figsize=(20, 20))
+        for i in range(N):
+            ax_gt = axes[i, 0]
+            ax_gt.imshow(images[i])
+            ax_gt.set_title('ground truth')
+
+            ax_rec = axes[i, 1]
+            ax_rec.imshow(output[i])
+            ax_rec.set_title('reconstruction')
+
+            # Plot true bounding boxes
+            for a in annotations[i]:
+                _, t, b, l, r = a
+                h = b - t
+                w = r - l
+
+                rect = patches.Rectangle(
+                    (l, t), w, h, linewidth=1, edgecolor="xkcd:yellow", facecolor='none')
+                ax_rec.add_patch(rect)
+
+            ax_bg = axes[i, 2]
+            ax_bg.imshow(background[i])
+            ax_bg.set_title('background')
+
+            for t in range(updater.network.max_air_steps):
+                inv_s, _, neg_x_over_s, _, _, neg_y_over_s = transform[i, t, :]
+
+                s = 1 / inv_s
+                x = -neg_x_over_s * s
+                y = -neg_y_over_s * s
+
+                transformed_x = 0.5 * (x + 1.)
+                transformed_y = 0.5 * (y + 1.)
+
+                h = s * image_height
+                w = s * image_width
+
+                top = image_height * transformed_y - h / 2
+                left = image_width * transformed_x - w / 2
+
+                rect = patches.Rectangle(
+                    (left, top), w, h, linewidth=1, edgecolor=color_order[t], facecolor='none')
+                ax_rec.add_patch(rect)
+
+                ax = axes[i, t+3]
+                ax.imshow(windows[i, t])
+
+        fig.suptitle('Stage={}. After {} experiences ({} updates, {} experiences per batch).'.format(
+            updater.stage_idx, updater.n_experiences, updater.n_updates, cfg.batch_size))
+
+        path = updater.exp_dir.path_for('plots', 'stage{}'.format(updater.stage_idx), 'sampled_reconstruction.pdf')
+        fig.savefig(path)
+
+        plt.close(fig)
 
 
-class AIR_Updater(Updater):
-    max_steps = Param()
-    max_digits = Param()
+class AIR_Network(Parameterized):
+    max_air_steps = Param()
+    max_chars = Param()
     rnn_units = Param()
-    canvas_size = Param()
-    windows_size = Param()
+    object_shape = Param()
 
     vae_latent_dimensions = Param()
     vae_recognition_units = Param()
@@ -478,18 +430,12 @@ class AIR_Updater(Updater):
     max_grad_norm = Param()
 
     def __init__(self, env, scope=None, **kwargs):
-        self.num_summaries = []
-        self.img_summaries = []
-        self.var_summaries = []
-        self.grad_summaries = []
-
         self.rec_num_digits = None
         self.rec_scales = None
         self.rec_shifts = None
         self.reconstruction = None
         self.loss = None
         self.accuracy = None
-        self.training = None
 
         self.datasets = env.datasets
         for dset in self.datasets.values():
@@ -498,97 +444,41 @@ class AIR_Updater(Updater):
         self.obs_shape = self.datasets['train'].x.shape[1:]
         self.image_height, self.image_width, self.image_depth = self.obs_shape
 
-        self.scope = scope
-        self._n_experiences = 0
-        self._n_updates = 0
-
-    @property
-    def completion(self):
-        return self.datasets['train'].completion
-
     def trainable_variables(self, for_opt, rl_only=False):
         tvars = trainable_variables(self.scope, for_opt=for_opt)
         return tvars
 
-    def _update(self, batch_size, collect_summaries):
-        feed_dict = self.make_feed_dict(batch_size, 'train', False)
-        sess = tf.get_default_session()
-
-        summary = b''
-        if collect_summaries:
-            _, record, summary = sess.run(
-                [self.train_op, self.recorded_tensors, self.summary_op], feed_dict=feed_dict)
-        else:
-            _, record = sess.run(
-                [self.train_op, self.recorded_tensors], feed_dict=feed_dict)
-
-        return dict(train=(record, summary))
-
-    def _evaluate(self, batch_size, mode):
-        assert mode in self.eval_modes
-
-        feed_dict = self.make_feed_dict(None, 'val', True)
-
-        sess = tf.get_default_session()
-
-        record, summary = sess.run(
-            [self.recorded_tensors, self.summary_op], feed_dict=feed_dict)
-
-        return record, summary
-
-    def make_feed_dict(self, batch_size, mode, evaluate):
-        data = self.datasets[mode].next_batch(batch_size=batch_size, advance=not evaluate)
-        if len(data) == 1:
-            inp, self.annotations = data[0], None
-        elif len(data) == 2:
-            inp, self.annotations = data
-        else:
-            raise Exception()
-
-        return {self.inp_ph: inp, self.is_training: not evaluate}
-
-    def _build_placeholders(self):
-        self.inp_ph = tf.placeholder(tf.float32, (None,) + self.obs_shape, name="inp_ph")
-        inp = self.inp_ph[None, :, None, ...]
-        inp = tf.clip_by_value(inp, 1e-6, 1-1e-6)
-        self.inp = tf.tile(inp, [self.n_steps+1, 1, 1, 1, 1, 1], name="inp")
-
-        self.is_training = tf.placeholder(tf.bool, ())
-        self.float_is_training = tf.to_float(self.is_training)
-
-        self.batch_size = tf.shape(self.inp)[1]
+    def update_feed_dict(self, feed_dict, other):
+        batch_size = feed_dict[self.inp_ph].shape[0]
+        annotations = other.get("annotations", [[]] * batch_size)
+        feed_dict[self.target_n_digits] = [len(a) for a in annotations]
 
     def _summarize_by_digit_count(self, tensor, digits, name):
-        # converting to float in case of int tensors
-        float_tensor = tf.cast(tensor, tf.float32)
+        float_tensor = tf.to_float(tensor)
 
-        for i in range(self.max_digits+1):
-            # summarizing the scalar for only those
-            # images that have exactly i digits
-            self.num_summaries.append(
-                tf.summary.scalar(
-                    "{}_{}_dig".format(name, i),
-                    tf.reduce_mean(tf.boolean_mask(float_tensor, tf.equal(digits, i)))
-                )
-            )
+        recorded_tensors = {}
+        for i in range(self.max_chars+1):
+            recorded_tensors["{}_{}_dig".format(name, i)] = \
+                tf.reduce_mean(tf.boolean_mask(float_tensor, tf.equal(digits, i)))
 
-        # summarizing the scalar for all images
-        self.num_summaries.append(
-            tf.summary.scalar(name + "_all_dig", tf.reduce_mean(float_tensor))
-        )
+        recorded_tensors[name + "_all_dig"] = tf.reduce_mean(float_tensor)
+
+        return recorded_tensors
 
     def _summarize_by_step(self, tensor, steps, name, one_more_step=False, all_steps=False):
         # padding (if required) the number of rows in the tensor
-        # up to self.max_steps to avoid possible "out of range" errors
-        # in case if there were less than self.max_steps steps globally
-        tensor = tf.pad(tensor, [[0, 0], [0, self.max_steps - tf.shape(tensor)[1]]])
+        # up to self.max_air_steps to avoid possible "out of range" errors
+        # in case if there were less than self.max_air_steps steps globally
+        tensor = tf.pad(tensor, [[0, 0], [0, self.max_air_steps - tf.shape(tensor)[1]]])
 
-        for i in range(self.max_steps):
+        recorded_tensors = {}
+
+        for i in range(self.max_air_steps):
             if all_steps:
                 # summarizing the entire (i+1)-st step without
                 # differentiating between actual step counts
-                self._summarize_by_digit_count(
-                    tensor[:, i], self.target_num_digits,
+                _recorded_tensors = self._summarize_by_digit_count(
+                    tensor[:, i], self.target_n_digits,
                     name + "_" + str(i+1) + "_step"
                 )
             else:
@@ -598,31 +488,55 @@ class AIR_Updater(Updater):
 
                 # summarizing (i+1)-st step only for those
                 # batch items that actually had (i+1)-st step
-                self._summarize_by_digit_count(
+                _recorded_tensors = self._summarize_by_digit_count(
                     tf.boolean_mask(tensor[:, i], mask),
-                    tf.boolean_mask(self.target_num_digits, mask),
+                    tf.boolean_mask(self.target_n_digits, mask),
                     name + "_" + str(i+1) + "_step"
                 )
+            recorded_tensors.update(_recorded_tensors)
+        return recorded_tensors
 
-    def _build_graph(self):
-        self._build_placeholders()
+    def build_graph(self, **kwargs):
+        with tf.variable_scope('AIR'):
+            self.scope = tf.get_variable_scope()
+            return self._build_graph(**kwargs)
+
+    def _build_graph(self, loss_key, inp, inp_ph, is_training, float_is_training, background):
+
+        # --- process input ---
+
+        self.inp_ph = inp_ph
+
+        # This is the form expected by the AIR code. It reshapes it to a volume when necessary.
+        self.input_images = tf_flatten(inp)
+
+        self.batch_size = tf.shape(self.input_images)[0]
+
+        self.is_training = is_training
+        self.float_is_training = float_is_training
+        self.background = background
+        self.loss_key = loss_key
+
+        self.target_n_digits = tf.placeholder(tf.int32, (None,), name="target_n_digits")
+
+        # --- build graph ---
 
         self.scale_prior_log_variance = tf.log(self.scale_prior_variance, name="scale_prior_log_variance")
         self.shift_prior_log_variance = tf.log(self.shift_prior_variance, name="shift_prior_log_variance")
         self.vae_prior_log_variance = tf.log(self.vae_prior_variance, name="vae_prior_log_variance")
 
-        if self.annealing_schedules is not None:
-            for param, schedule in self.annealing_schedules.items():
-                setattr(self, param, _create_annealed_tensor(param, schedule, self.global_step))
+        self.z_pres_prior_log_odds = build_scheduled_value(self.z_pres_prior_log_odds, "z_pres_prior_log_odds")
 
-        # condition of tf.while_loop
+        # --- condition of while-loop ---
+
         def cond(step, stopping_sum, *_):
             return tf.logical_and(
-                tf.less(step, self.max_steps),
+                tf.less(step, self.max_air_steps),
                 tf.reduce_any(tf.less(stopping_sum, self.stopping_threshold))
             )
 
-        # body of tf.while_loop
+        # --- body of while-loop ---
+
         def body(step, stopping_sum, prev_state,
                  running_recon, running_loss, running_digits,
                  scales_ta, shifts_ta, z_pres_probs_ta,
@@ -646,7 +560,7 @@ class AIR_Updater(Updater):
                     with tf.variable_scope("output") as scope:
                         scale_log_variance = layers.fully_connected(hidden, 1, activation_fn=None, scope=scope)
                 scale_variance = tf.exp(scale_log_variance)
-                scale = tf.nn.sigmoid(self._sample_from_mvn(scale_mean, scale_variance))
+                scale = tf.nn.sigmoid(_sample_from_mvn(scale_mean, scale_variance))
                 scales_ta = scales_ta.write(scales_ta.size(), scale)
                 s = scale[:, 0]
 
@@ -663,9 +577,13 @@ class AIR_Updater(Updater):
                     with tf.variable_scope("output") as scope:
                         shift_log_variance = layers.fully_connected(hidden, 2, activation_fn=None, scope=scope)
                 shift_variance = tf.exp(shift_log_variance)
-                shift = tf.nn.tanh(self._sample_from_mvn(shift_mean, shift_variance))
+                shift = tf.nn.tanh(_sample_from_mvn(shift_mean, shift_variance))
                 shifts_ta = shifts_ta.write(shifts_ta.size(), shift)
                 x, y = shift[:, 0], shift[:, 1]
+
+            # Everything is treated as vector (ie has shape (batch_size, vector_dim)) except when applying
+            # the function `transformation`, at which point we shape the vectors into a volume of appropriate size.
+            # We reshape back to flat vector immediately afterwards.
 
             with tf.variable_scope("st_forward"):
                 # ST: theta of forward transformation
@@ -676,15 +594,22 @@ class AIR_Updater(Updater):
 
                 # ST forward transformation: canvas -> window
                 window = transformer(
-                    tf.expand_dims(tf.reshape(self.input_images, [-1, self.canvas_size, self.canvas_size]), 3),
-                    theta, [self.windows_size, self.windows_size]
-                )[:, :, :, 0]
+                    tf.reshape(self.input_images, (-1,) + self.obs_shape),
+                    theta,
+                    self.object_shape
+                )
+
+                window = tf.reshape(window, [-1, self.object_shape[0] * self.object_shape[1] * self.image_depth])
 
             with tf.variable_scope("vae"):
                 # reconstructing the window in VAE
+
                 vae_recon, vae_mean, vae_log_variance, vae_latent = vae(
-                    tf.reshape(window, [-1, self.windows_size * self.windows_size]), self.windows_size ** 2,
-                    self.vae_recognition_units, self.vae_latent_dimensions, self.vae_generative_units,
+                    window,
+                    self.object_shape[0] * self.object_shape[1] * self.image_depth,
+                    self.vae_recognition_units,
+                    self.vae_latent_dimensions,
+                    self.vae_generative_units,
                     self.vae_likelihood_std
                 )
 
@@ -709,9 +634,12 @@ class AIR_Updater(Updater):
 
                 # ST backward transformation: window -> canvas
                 window_recon = transformer(
-                    tf.expand_dims(tf.reshape(vae_recon, [-1, self.windows_size, self.windows_size]), 3),
-                    theta_recon, [self.canvas_size, self.canvas_size]
-                )[:, :, :, 0]
+                    tf.reshape(vae_recon, (-1,) + self.object_shape + (self.image_depth,)),
+                    theta_recon,
+                    self.obs_shape
+                )
+
+                window_recon = tf.reshape(window_recon, [-1, self.image_height * self.image_width * self.image_depth])
 
             with tf.variable_scope("z_pres"):
                 # sampling relaxed (continuous) value of z_pres flag
@@ -734,8 +662,10 @@ class AIR_Updater(Updater):
 
                     # during test time, rounding the Concrete sample
                     # to obtain the corresponding Bernoulli sample
-                    if not self.train:
-                        z_pres = tf.round(z_pres)
+                    z_pres = (
+                        self.float_is_training * z_pres +
+                        (1 - self.float_is_training) * tf.round(z_pres)
+                    )
 
                     # computing and collecting underlying Bernoulli
                     # probability from inferred log-odds solely for
@@ -780,9 +710,7 @@ class AIR_Updater(Updater):
                 # by z_pres to the running canvas
                 running_recon += tf.where(
                     tf.less(stopping_sum, self.stopping_threshold),
-                    tf.expand_dims(z_pres, 1) * tf.reshape(
-                        window_recon, [-1, self.canvas_size * self.canvas_size]
-                    ),
+                    tf.expand_dims(z_pres, 1) * window_recon,
                     tf.zeros_like(running_recon)
                 )
 
@@ -855,9 +783,13 @@ class AIR_Updater(Updater):
                 z_pres_kls_ta, scale_kls_ta, shift_kls_ta, vae_kls_ta, \
                 st_backward_ta, windows_ta, latents_ta
 
+        # --- end of while-loop body ---
+
         if self.cnn:
             with tf.variable_scope("cnn") as cnn_scope:
-                cnn_input = tf.reshape(self.input_images, [-1, 50, 50, 1], name="cnn_input")
+                # The cnn is hard-coded here...
+
+                cnn_input = tf.reshape(self.input_images, [-1, 50, 50, 3], name="cnn_input")
 
                 conv1 = tf.layers.conv2d(
                     inputs=cnn_input, filters=self.cnn_filters, kernel_size=[5, 5], strides=(1, 1),
@@ -890,7 +822,7 @@ class AIR_Updater(Updater):
             )
 
             # RNN while_loop with variable number of steps for each batch item
-            _, _, _, reconstruction, loss, self.rec_num_digits, scales, shifts, \
+            _, _, _, reconstruction, running_loss, self.rec_num_digits, scales, shifts, \
                 z_pres_probs, z_pres_kls, scale_kls, shift_kls, vae_kls, \
                 st_backward, windows, latents = tf.while_loop(
                     cond, body, [
@@ -918,98 +850,142 @@ class AIR_Updater(Updater):
         self.rec_shifts = tf.transpose(shifts.stack(), (1, 0, 2), name="rec_shifts")
         self.rec_st_back = tf.transpose(st_backward.stack(), (1, 0, 2, 3), name="rec_st_back")
         self.rec_windows = tf.transpose(windows.stack(), (1, 0, 2), name="rec_windows")
-        self.rec_latents = tf.transpose(latents.stack(), (1, 0, 2), name="rec_windows")
+        self.rec_latents = tf.transpose(latents.stack(), (1, 0, 2), name="rec_latents")
         self.z_pres_probs = tf.transpose(z_pres_probs.stack(), name="z_pres_probs")
         self.z_pres_kls = tf.transpose(z_pres_kls.stack(), name="z_pres_kls")
         self.scale_kls = tf.transpose(scale_kls.stack(), name="scale_kls")
         self.shift_kls = tf.transpose(shift_kls.stack(), name="shift_kls")
         self.vae_kls = tf.transpose(vae_kls.stack(), name="vae_kls")
 
-        with tf.variable_scope("loss/reconstruction"):
-            # clipping the reconstructed canvas by [0.0, 1.0]
-            self.reconstruction = tf.maximum(tf.minimum(reconstruction, 1.0), 0.0, name="clipped_rec")
+        reconstruction = tf.clip_by_value(reconstruction, 1e-6, 1-1e-6)
+        reconstruction = tf.reshape(reconstruction, (-1,) + self.obs_shape)
 
-            # reconstruction loss: cross-entropy between
-            # original images and their reconstructions
-            self.reconstruction_loss = -tf.reduce_sum(
-                self.input_images * tf.log(self.reconstruction + 10e-10) +
-                (1.0 - self.input_images) * tf.log(1.0 - self.reconstruction + 10e-10),
-                1, name="reconstruction_loss"
-            )
+        self.reconstruction = reconstruction
 
-        # adding reconstruction loss
-        loss += self.reconstruction_loss
+        output_logits = tf.log(reconstruction / (1 - reconstruction))
 
-        with tf.variable_scope("count_accuracy"):
-            # accuracy of inferred number of digits
-            count_accuracy = tf.cast(
-                tf.equal(self.target_num_digits, self.rec_num_digits),
-                tf.float32
-            )
+        tensors = {"output_logits": output_logits}
 
-        var_scope = tf.get_variable_scope().name
-        model_vars = [v for v in tf.trainable_variables() if v.name.startswith(var_scope)]
+        losses = {}
+        reconstruction_loss = tf.reduce_sum(tf_flatten(yolo_rl.loss_builders[loss_key](output_logits, inp)), axis=1)
+        losses['reconstruction'] = tf.reduce_mean(reconstruction_loss)
+        losses['running'] = tf.reduce_mean(running_loss)  # the shape of running_loss is (batch_size,)
 
-        with tf.variable_scope("summaries"):
-            # averaging between batch items
-            self.loss = tf.reduce_mean(loss, name="loss")
-            self.count_accuracy = tf.reduce_mean(count_accuracy, name="count_accuracy")
+        recorded_tensors = {}
 
-            self.recorded_tensors = dict(loss=self.loss, count_accuracy=self.count_accuracy)
+        # accuracy of inferred number of digits
+        count_accuracy = 1 - tf.to_float(tf.equal(self.target_n_digits, self.rec_num_digits))
 
-            # post while-loop numeric summaries grouped by digit count
-            self._summarize_by_digit_count(self.rec_num_digits, self.target_num_digits, "steps")
-            self._summarize_by_digit_count(self.reconstruction_loss, self.target_num_digits, "rec_loss")
-            self._summarize_by_digit_count(count_accuracy, self.target_num_digits, "digit_acc")
-            self._summarize_by_digit_count(loss, self.target_num_digits, "total_loss")
+        # post while-loop numeric summaries grouped by digit count
 
-            # step-level numeric summaries (from within while-loop) grouped by step and digit count
-            self._summarize_by_step(self.rec_scales[:, :, 0], self.rec_num_digits, "scale")
-            self._summarize_by_step(self.z_pres_probs, self.rec_num_digits, "z_pres_prob", all_steps=True)
-            self._summarize_by_step(self.z_pres_kls, self.rec_num_digits, "z_pres_kl", one_more_step=True)
-            self._summarize_by_step(self.scale_kls, self.rec_num_digits, "scale_kl")
-            self._summarize_by_step(self.shift_kls, self.rec_num_digits, "shift_kl")
-            self._summarize_by_step(self.vae_kls, self.rec_num_digits, "vae_kl")
+        rt = self._summarize_by_digit_count(self.rec_num_digits, self.target_n_digits, "steps")
+        recorded_tensors.update(rt)
 
-            # image summary of the reconstructions
-            self.img_summaries.append(
-                tf.summary.image(
-                    "reconstruction",
-                    self._visualize_reconstructions(
-                        self.input_images[:self.num_summary_images],
-                        self.reconstruction[:self.num_summary_images],
-                        self.rec_st_back[:self.num_summary_images],
-                        self.rec_num_digits[:self.num_summary_images],
-                        zoom=2
-                    ),
-                    max_outputs=self.num_summary_images
-                )
-            )
+        rt = self._summarize_by_digit_count(reconstruction_loss, self.target_n_digits, "rec_loss")
+        recorded_tensors.update(rt)
 
-            # variable summaries
-            for v in model_vars:
-                self.var_summaries.append(tf.summary.histogram(v.name, v.value()))
+        rt = self._summarize_by_digit_count(count_accuracy, self.target_n_digits, "digit_acc")
+        recorded_tensors.update(rt)
 
-        tvars = self.trainable_variables(for_opt=True)
-        self.train_op, train_summary = build_gradient_train_op(
-            self.loss, tvars, self.optimizer_spec, self.lr_schedule,
-            self.max_grad_norm, self.noise_schedule)
+        rt = self._summarize_by_digit_count(running_loss, self.target_n_digits, "running_loss")
+        recorded_tensors.update(rt)
 
-        _summary = [tf.summary.scalar(name, t) for name, t in self.recorded_tensors.items()]
-        self.summary_op = tf.summary.merge(
-            self.num_summaries + self.img_summaries + self.var_summaries + self.grad_summaries + _summary)
+        # --- grouped by digit count of ground-truth image and step ---
+
+        rt = self._summarize_by_step(self.rec_scales[:, :, 0], self.rec_num_digits, "scale")
+        recorded_tensors.update(rt)
+
+        rt = self._summarize_by_step(self.z_pres_probs, self.rec_num_digits, "z_pres_prob", all_steps=True)
+        recorded_tensors.update(rt)
+
+        rt = self._summarize_by_step(self.z_pres_kls, self.rec_num_digits, "z_pres_kl", one_more_step=True)
+        recorded_tensors.update(rt)
+
+        rt = self._summarize_by_step(self.scale_kls, self.rec_num_digits, "scale_kl")
+        recorded_tensors.update(rt)
+
+        rt = self._summarize_by_step(self.shift_kls, self.rec_num_digits, "shift_kl")
+        recorded_tensors.update(rt)
+
+        rt = self._summarize_by_step(self.vae_kls, self.rec_num_digits, "vae_kl")
+        recorded_tensors.update(rt)
+
+        return {
+            "tensors": tensors,
+            "recorded_tensors": recorded_tensors,
+            "losses": losses
+        }
+
+
+def get_updater(env):
+    network = AIR_Network(env)
+    return yolo_rl.YoloRL_Updater(env, network)
 
 
 config = Config(
-    optimizer_spec="adam",
-    lr_schedule=0.001,
-    max_grad_norm=100.,
+    log_name="attend_infer_repeat",
+    get_updater=get_updater,
+    build_env=yolo_rl.Env,
 
-    max_steps=3,
-    max_digits=2,
+    curriculum=[
+        dict()
+    ],
+
+    # dataset params
+
+    min_chars=1,
+    max_chars=1,
+    characters=[0, 1, 2],
+    n_sub_image_examples=0,
+    xent_loss=True,
+    sub_image_shape=(28, 28),
+    use_dataset_cache=True,
+    image_shape=(50, 50),
+
+    n_train=1e5,
+    n_val=1e2,
+    n_test=1e2,
+
+    background_cfg=dict(
+        mode="none",
+
+        static_cfg=dict(
+            n_clusters=4,
+            use_k_modes=True,  # If False, use k_means.
+            n_clustering_examples=True,
+            n_clustering_bins=None,
+            min_cluster_distance=None,
+        ),
+
+        mode_threshold=0.99,
+    ),
+
+    # training loop params
+
+    optimizer_spec="adam",
+    lr_schedule=1e-4,
+    max_grad_norm=1.0,
+    batch_size=64,
+
+    preserve_env=True,
+    max_steps=1e7,
+    patience=10000,
+    use_gpu=True,
+    gpu_allow_growth=True,
+    seed=93434014,
+    stopping_criteria="loss,min",
+    threshold=-np.inf,
+    max_experiments=None,
+    render_hook=AIR_RenderHook(),
+
+    render_step=100,
+    eval_step=100,
+    display_step=100,
+
+    # Based on the values in tf-attend-infer-repeat/training.py
+    max_air_steps=3,
     rnn_units=256,
-    canvas_size=50,
-    windows_size=28,
+    object_shape=(28, 28),
     vae_latent_dimensions=50,
     vae_recognition_units=(512, 256),
     vae_generative_units=(256, 512),
@@ -1023,11 +999,11 @@ config = Config(
     scale_hidden_units=64,
     shift_hidden_units=64,
     z_pres_hidden_units=64,
-    z_pres_prior_log_odds=-2.0,
+    z_pres_prior_log_odds="Exponential(start=10000.0, end=0.000000001, decay_rate=0.1, decay_steps=3000, log=True)",
+    # z_pres_prior_log_odds=-0.01,
     z_pres_temperature=1.0,
     stopping_threshold=0.99,
     cnn=True,
     cnn_filters=8,
-    num_summary_images=60,
     annealing_schedules=None
 )

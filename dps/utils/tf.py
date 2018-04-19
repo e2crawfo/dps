@@ -933,7 +933,7 @@ def build_scheduled_value(schedule, name=None, global_step=None, dtype=None):
     Parameters
     ----------
     schedule: str
-        String of the form "kind arg1 arg2 ...". One exception is that
+        String which returns a schedule object when eval-ed. One exception is that
         constants can be specified by simply supplying the constant value,
         with no kind string.
     name: str
@@ -988,12 +988,13 @@ class RepeatSchedule(Schedule):
 
 
 class Exponential(Schedule):
-    def __init__(self, start, end, decay_steps, decay_rate, staircase=False):
+    def __init__(self, start, end, decay_steps, decay_rate, staircase=False, log=False):
         self.start = start
         self.end = end
         self.decay_steps = decay_steps
         self.decay_rate = decay_rate
         self.staircase = staircase
+        self.log = log
 
         assert isinstance(self.decay_steps, int)
         assert self.decay_steps > 1
@@ -1004,7 +1005,12 @@ class Exponential(Schedule):
             t //= self.decay_steps
         else:
             t /= self.decay_steps
-        return (self.start - self.end) * (self.decay_rate ** t) + self.end
+        value = (self.start - self.end) * (self.decay_rate ** t) + self.end
+
+        if self.log:
+            value = tf.log(value + 1e-6)
+
+        return value
 
 
 class Exp(Exponential):
