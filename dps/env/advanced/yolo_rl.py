@@ -1,6 +1,7 @@
 import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 import os
 from sklearn.cluster import k_means
 import collections
@@ -14,7 +15,7 @@ from dps.utils.tf import (
     tf_mean_sum, build_scheduled_value)
 from dps.env.advanced.yolo import mAP
 from dps.tf_ops import render_sprites
-from dps.train import PolynomialScheduleHook
+from dps.utils.tf import MLP
 
 tf_flatten = tf.layers.flatten
 
@@ -136,40 +137,52 @@ def local_reconstruction_cost(_tensors, network):
 local_reconstruction_cost.keys_accessed = "per_pixel_reconstruction_loss"
 
 
+def _local_filter(signal, neighbourhood_size):
+    if neighbourhood_size == 0:
+        return signal
+
+    _, H, W, B, _ = signal.shape
+
+    if neighbourhood_size is None:
+        neighbourhood_size = max(H, W)
+
+    dist_h = np.abs(np.arange(H) - np.arange(H)[..., None])
+    dist_w = np.abs(np.arange(W) - np.arange(W)[..., None])
+
+    # Rectangle filtering
+    filt_h = (dist_h <= neighbourhood_size).astype('f')
+    filt_w = (dist_w <= neighbourhood_size).astype('f')
+
+    # Sum over box and channel dimensions
+    signal = signal.sum(axis=(3, 4))
+
+    signal = np.dot(signal, filt_w)
+    signal = np.tensordot(signal, filt_h, [1, 0])
+    signal = np.transpose(signal, (0, 2, 1))
+
+    return signal[..., None, None]
+
+
 class AreaCost(object):
     keys_accessed = "program:obj area"
 
-    def __init__(self, target_area):
+    def __init__(self, target_area, neighbourhood_size):
         self.target_area = target_area
+        self.neighbourhood_size = neighbourhood_size
 
     def __call__(self, _tensors, updater):
         selected_area_cost = _tensors['program']['obj'] * np.abs(_tensors['area'] - self.target_area)
-        batch_size = selected_area_cost.shape[0]
-        selected_area_cost = selected_area_cost.reshape(batch_size, -1)
-        area_cost = np.sum(selected_area_cost, axis=1)
-        return area_cost.reshape(batch_size, 1, 1, 1, 1)
+        return _local_filter(selected_area_cost, self.neighbourhood_size)
 
 
-class LocalAreaCost(AreaCost):
-    def __call__(self, _tensors, updater):
-        return _tensors['program']['obj'] * np.abs(_tensors['area'] - self.target_area)
+class NonzeroCost(object):
+    keys_accessed = "program:obj"
 
+    def __init__(self, neighbourhood_size=0):
+        self.neighbourhood_size = neighbourhood_size
 
-def nonzero_cost(_tensors, updater):
-    obj_samples = _tensors['program']['obj']
-    batch_size = obj_samples.shape[0]
-    obj_samples = obj_samples.reshape(batch_size, -1)
-    return np.count_nonzero(obj_samples, axis=1).reshape(batch_size, 1, 1, 1, 1).astype('f')
-
-
-nonzero_cost.keys_accessed = "program:obj"
-
-
-def local_nonzero_cost(_tensors, network):
-    return _tensors['program']['obj']
-
-
-local_nonzero_cost.keys_accessed = "program:obj"
+    def __call__(self, _tensors, network):
+        return _local_filter(_tensors['program']['obj'], self.neighbourhood_size)
 
 
 def negative_mAP_cost(_tensors, network):
@@ -293,7 +306,11 @@ class YoloRL_Network(Parameterized):
     use_baseline = Param()
     nonzero_weight = Param()
     area_weight = Param()
-    use_local_costs = Param()
+
+    local_reconstruction_cost = Param()
+    area_neighbourhood_size = Param()
+    nonzero_neighbourhood_size = Param()
+
     target_area = Param(0.)
 
     fixed_values = Param()
@@ -317,13 +334,13 @@ class YoloRL_Network(Parameterized):
 
         self.COST_funcs = {}
 
-        _reconstruction_cost_func = local_reconstruction_cost if self.use_local_costs else reconstruction_cost
+        _reconstruction_cost_func = local_reconstruction_cost if self.local_reconstruction_cost else reconstruction_cost
         self.COST_funcs['reconstruction'] = (1, _reconstruction_cost_func, "both")
 
-        _nonzero_cost_func = local_nonzero_cost if self.use_local_costs else nonzero_cost
+        _nonzero_cost_func = NonzeroCost(self.nonzero_neighbourhood_size)
         self.COST_funcs['nonzero'] = (self.nonzero_weight, _nonzero_cost_func, "obj")
 
-        _area_cost_func = LocalAreaCost(self.target_area) if self.use_local_costs else AreaCost(self.target_area)
+        _area_cost_func = AreaCost(self.target_area, self.area_neighbourhood_size)
         self.COST_funcs['area'] = (self.area_weight, _area_cost_func, "obj")
 
         # For evaluation purposes only
@@ -1168,7 +1185,7 @@ class YoloRL_Updater(Updater):
         epochs_before = dset.epochs_completed
 
         while True:
-            batch = dset.next_batch(batch_size=batch_size, advance=True, rollover=not whole_epoch)
+            batch = dset.next_batch(batch_size=batch_size, advance=not evaluate or whole_epoch, rollover=not whole_epoch)
             actual_batch_size, feed_dict, other = self._make_feed_dict(batch, evaluate)
 
             if whole_epoch:
@@ -1336,9 +1353,6 @@ class YoloRL_RenderHook(object):
 
         sqrt_N = int(np.ceil(np.sqrt(N)))
 
-        import matplotlib.pyplot as plt
-        import matplotlib.patches as patches
-
         fig, axes = plt.subplots(3*sqrt_N, sqrt_N, figsize=(20, 20))
         axes = np.array(axes).reshape(3*sqrt_N, sqrt_N)
         for n, (pred, gt, bg) in enumerate(zip(output, images, background)):
@@ -1444,86 +1458,103 @@ class YoloRL_RenderHook(object):
 xkcd_colors = 'viridian,cerulean,vermillion,lavender,celadon,fuchsia,saffron,cinnamon,greyish,vivid blue'.split(',')
 
 
+# env config
+
 config = Config(
     log_name="yolo_rl",
-    get_updater=get_updater,
     build_env=Env,
-
-    # dataset params
-
-    min_chars=1,
-    max_chars=1,
-    characters=[0, 1, 2],
-    n_sub_image_examples=0,
-    xent_loss=True,
-    sub_image_shape=(14, 14),
-    use_dataset_cache=True,
-
-    n_train=1e5,
-    n_val=1e2,
-    n_test=1e2,
-
-    # training loop params
-
-    lr_schedule=1e-4,
-    preserve_env=True,
-    batch_size=16,
-    eval_step=1000,
-    display_step=1000,
-    max_steps=1e7,
-    patience=10000,
-    optimizer_spec="adam",
-    use_gpu=True,
-    gpu_allow_growth=True,
     seed=347405995,
-    stopping_criteria="TOTAL_COST,min",
-    eval_mode="val",
-    threshold=-np.inf,
-    max_grad_norm=1.0,
-    max_experiments=None,
-    render_hook=YoloRL_RenderHook(),
-    render_step=5000,
 
-    # model params
+    use_dataset_cache=True,
+    min_chars=6,
+    max_chars=6,
+    n_sub_image_examples=0,
 
-    build_backbone=Backbone,
-    build_next_step=NextStep,
-    build_object_decoder=ObjectDecoder,
+    image_shape=(84, 84),
+    max_overlap=400,
+    sub_image_shape=(21, 21),
 
-    background_cfg=dict(
-        mode="none",
+    characters=list(range(10)),
+    sub_image_size_std=0.0,
+    colours="white",
 
-        static_cfg=dict(
-            n_clusters=4,
-            use_k_modes=True,  # If False, use k_means.
-            n_clustering_examples=True,
-            n_clustering_bins=None,
-            min_cluster_distance=None,
-        ),
-
-        mode_threshold=0.99,
-    ),
-
-    use_input_attention=False,
-    decoder_logit_scale=10.0,
-
-    image_shape=(28, 28),
-    object_shape=(14, 14),
-    anchor_boxes=[[28, 28]],
-    pixels_per_cell=(28, 28),
-    kernel_size=(1, 1),
-    n_channels=128,
-    n_decoder_channels=128,
-    A=100,
+    n_distractors_per_image=0,
 
     backgrounds="",
     backgrounds_sample_every=False,
     background_colours="",
 
+    background_cfg=dict(mode="none"),
+
+    object_shape=(14, 14),
+
+    xent_loss=True,
+
+    postprocessing="random",
+    n_samples_per_image=4,
+    tile_shape=(42, 42),
+    max_attempts=1000000,
+
+    preserve_env=True,
+
+    n_train=25000,
+    n_val=1e2,
+    n_test=1e2,
+)
+
+# model config
+
+
+config.update(
+    get_updater=get_updater,
+
+    lr_schedule=1e-4,
+    batch_size=32,
+
+    optimizer_spec="adam",
+    use_gpu=True,
+    gpu_allow_growth=True,
+    preserve_env=True,
+    stopping_criteria="TOTAL_COST,min",
+    eval_mode="val",
+    threshold=-np.inf,
+    max_grad_norm=1.0,
+    max_experiments=None,
+
+    eval_step=1000,
+    display_step=1000,
+    max_steps=1e7,
+    patience=10000,
+    render_step=5000,
+
+    render_hook=YoloRL_RenderHook(),
+
+    # network params
+
+    build_backbone=Backbone,
+    build_next_step=NextStep,
+    build_object_decoder=ObjectDecoder,
+
+    use_input_attention=False,
+    decoder_logit_scale=10.0,
+
+    pixels_per_cell=(12, 12),
+
+    anchor_boxes=[
+        [7, 7],
+        [7, 7]
+    ],
+
+    kernel_size=(1, 1),
+
+    n_channels=128,
+    n_decoder_channels=128,
+    A=100,
+
     n_passthrough_features=100,
 
-    max_hw=1.0,  # Maximum for the bounding box multiplier.
-    min_hw=0.0,  # Minimum for the bounding box multiplier.
+    max_hw=0.3,  # Maximum for the bounding box multiplier.
+    min_hw=3.0,  # Minimum for the bounding box multiplier.
 
     box_std=0.0,
     attr_std=0.0,
@@ -1533,162 +1564,25 @@ config = Config(
 
     # Costs
     use_baseline=True,
-    nonzero_weight=0.0,
-    area_weight=0.0,
-    use_local_costs=True,
+    area_weight=2.,
+    nonzero_weight=150.,
 
-    curriculum=[
-        dict()
-    ],
+    local_reconstruction_cost=True,
+    area_neighbourhood_size=1,
+    nonzero_neighbourhood_size=1,
 
     fixed_values=dict(),
     fixed_weights="",
     order="box obj z attr",
-)
 
-
-good_config = config.copy(
-    image_shape=(50, 50),
-    object_shape=(14, 14),
-    anchor_boxes=[[14, 14]],
-    pixels_per_cell=(12, 12),
-    kernel_size=(3, 3),
-
-    max_hw=3.0,
-    min_hw=0.25,
-
-    colours="white",
-    max_overlap=100,
-
-    # backgrounds="red_x blue_x green_x red_circle blue_circle green_circle",
-    # backgrounds_resize=True,
-
-    sub_image_size_std=0.4,
-    max_chars=3,
-    min_chars=1,
-    characters=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-
-    fixed_values=dict(),
-    obj_exploration=0.0,
-    lr_schedule=1e-4,
-
-    curriculum=[
-        dict(fixed_weights="obj", fixed_values=dict(obj=1), max_steps=10000, area_weight=0.02, patience=100000),
-    ],
-
-    nonzero_weight=90.,
-    area_weight=0.2,
-
-    box_std=0.0,
-    attr_std=0.0,
-
-    render_step=5000,
-
-    n_distractors_per_image=0,
-)
-
-
-uniform_size_config = good_config.copy(
-    max_hw=1.5,
-    min_hw=0.5,
-    sub_image_size_std=0.0,
-)
-
-small_test_config = uniform_size_config.copy(
-    kernel_size=(3, 3),
-    min_chars=1,
-    max_chars=3,
-    object_shape=(14, 14),
-    anchor_boxes=[[7, 7]],
-    image_shape=(28, 28),
-    max_overlap=100,
-    curriculum=[dict(fixed_values=dict(obj=1), max_steps=10000)],
-)
-
-
-fragment = [
-    dict(obj_exploration=0.2),
-    dict(obj_exploration=0.1),
-    dict(obj_exploration=0.05),
-]
-
-
-small_test_reset_config = small_test_config.copy(
-    curriculum=[
-        dict(
-            do_train=False,
-            load_path="/media/data/dps_data/logs/yolo_rl/exp_yolo_rl_seed=347405995_2018_04_13_21_10_40/weights/best_of_stage_0",
-            fixed_values=dict(obj=1), max_steps=10000, area_weight=0.2
-        )
-    ],
-
-    patience=5000,
-    area_weight=0.2,
-
-    hooks=[
-        PolynomialScheduleHook(
-            attr_name="nonzero_weight",
-            query_name="best_COST_reconstruction",
-            base_configs=fragment, tolerance=2,
-            initial_value=90, scale=20, power=1.0)
-    ]
-)
-
-from dps.utils.tf import MLP
-sequential_config = small_test_config.copy(
     sequential_cfg=dict(
         on=True,
         lookback_shape=(2, 2, 2),
         build_next_step=lambda scope: MLP([100, 100], scope=scope),
     ),
 
-    patience=5000,
-    area_weight=1.,
-
-    hooks=[
-        PolynomialScheduleHook(
-            attr_name="nonzero_weight",
-            query_name="best_COST_reconstruction",
-            base_configs=fragment, tolerance=2,
-            initial_value=100, scale=50, power=1.0)
-    ],
     curriculum=[
-        dict(do_train=False, fixed_weights="obj", fixed_values=dict(obj=1), max_steps=20000, area_weight=0.02, patience=20000),
-        # dict(fixed_weights="obj", fixed_values=dict(obj=1), max_steps=20000, area_weight=0.02, patience=20000),
-    ],
-
-)
-
-good_sequential_config = small_test_config.copy(
-    sequential_cfg=dict(
-        on=True,
-        lookback_shape=(2, 2, 2),
-        build_next_step=lambda scope: MLP([100, 100], scope=scope),
-    ),
-
-    min_chars=12,
-    max_chars=12,
-    image_shape=(84, 84),
-    max_overlap=150,
-    max_attempts=1000000,
-    n_train=25000,
-    postprocessing="random",
-    n_samples_per_image=4,
-    tile_shape=(42, 42),
-
-    kernel_size=(3, 3),
-    object_shape=(14, 14),
-    min_hw=0.3,
-    max_hw=3.0,
-    anchor_boxes=[[7, 7]],
-
-    patience=10000,
-    area_weight=1.,
-    nonzero_weight=100.,
-    use_local_costs=False,
-
-    hooks=[],
-    curriculum=[
+        dict(fixed_weights="obj", fixed_values=dict(obj=1), max_steps=10000, patience=10000),
         dict(obj_exploration=0.2),
         dict(obj_exploration=0.1),
         dict(obj_exploration=0.05),
@@ -1696,34 +1590,5 @@ good_sequential_config = small_test_config.copy(
         dict(obj_exploration=0.02),
         dict(obj_exploration=0.01),
         dict(do_train=False, n_train=16, postprocessing="", preserve_env=False),  # Test on full size images.
-    ],
-
-)
-
-good_sequential_reset_config = good_sequential_config.copy(
-    min_chars=1,
-    max_chars=12,
-    curriculum=[
-        dict(
-            postprocessing="",
-            n_train=16,
-            do_train=False,
-            # load_path="/media/data/dps_data/logs/yolo_rl/exp_yolo_rl_seed=347405995_2018_04_17_20_39_16/weights/best_of_stage_5",
-            load_path="/media/data/Dropbox/experiment_data/active/nips2018/run_search_exploration_seed=0_2018_04_17_20_55_33/experiments/exp_idx=25_repeat=0_seed=1447298731_2018_04_18_01_58_42/weights/best_of_stage_0",
-            kernel_size=(1, 1),
-        )
-    ]
-)
-
-train_big_config = good_sequential_config.copy(
-    postprocessing="",
-    curriculum=[
-        dict(obj_exploration=0.3),
-        dict(obj_exploration=0.2),
-        dict(obj_exploration=0.1),
-        dict(obj_exploration=0.05),
-        dict(obj_exploration=0.03),
-        dict(obj_exploration=0.02),
-        dict(obj_exploration=0.01),
     ],
 )

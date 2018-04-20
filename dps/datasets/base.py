@@ -466,7 +466,7 @@ class PatchesDataset(ImageDataset):
 
             if self.draw_offset == "random":
                 shape = sub_image_shapes[0]
-                draw_offset = (-np.random.randint(shape[0]), -np.random.randint(shape[1]))
+                draw_offset = (np.random.randint(shape[0]), np.random.randint(shape[1]))
             else:
                 draw_offset = self.draw_offset
 
@@ -1123,6 +1123,10 @@ class EMNIST_ObjectDetection(PatchesDataset):
 
     def _sample_patches(self):
         n = np.random.randint(self.min_chars, self.max_chars+1)
+
+        if not n:
+            return [], []
+
         chars = [self.char_reps.get_random() for i in range(n)]
         char_x, char_y = zip(*chars)
         char_x = [self.colourize(cx) for cx in char_x]
@@ -1162,6 +1166,8 @@ class GridEMNIST_ObjectDetection(EMNIST_ObjectDetection):
     def _sample_patch_locations(self, sub_image_shapes, **kwargs):
         """ Sample random locations within draw_shape. """
         n_images = len(sub_image_shapes)
+        if not n_images:
+            return []
         indices = np.random.choice(self.grid_size, n_images, replace=False)
 
         grid_locs = np.array(list(zip(*np.unravel_index(indices, self.draw_shape_grid))))

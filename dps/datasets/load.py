@@ -8,7 +8,7 @@ import shutil
 import warnings
 
 from dps import cfg
-from dps.utils import image_to_string, cd
+from dps.utils import image_to_string
 
 
 def background_names():
