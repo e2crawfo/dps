@@ -1466,13 +1466,13 @@ config = Config(
     seed=347405995,
 
     use_dataset_cache=True,
-    min_chars=6,
-    max_chars=6,
+    min_chars=12,
+    max_chars=12,
     n_sub_image_examples=0,
 
     image_shape=(84, 84),
     max_overlap=400,
-    sub_image_shape=(21, 21),
+    sub_image_shape=(14, 14),
 
     characters=list(range(10)),
     sub_image_size_std=0.0,
@@ -1521,11 +1521,11 @@ config.update(
     max_grad_norm=1.0,
     max_experiments=None,
 
-    eval_step=1000,
+    eval_step=100,
+    render_step=100,
     display_step=1000,
     max_steps=1e7,
     patience=10000,
-    render_step=5000,
 
     render_hook=YoloRL_RenderHook(),
 
@@ -1589,6 +1589,6 @@ config.update(
         dict(obj_exploration=0.03),
         dict(obj_exploration=0.02),
         dict(obj_exploration=0.01),
-        dict(do_train=False, n_train=16, postprocessing="", preserve_env=False),  # Test on full size images.
+        dict(do_train=False, n_train=16, min_chars=1, postprocessing="", preserve_env=False),  # Test on full size images.
     ],
 )

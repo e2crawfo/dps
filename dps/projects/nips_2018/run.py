@@ -5,8 +5,8 @@ from dps import cfg
 from dps.config import DEFAULT_CONFIG
 from dps.train import training_loop
 from dps.utils import pdb_postmortem
-import dps.env.nips_2018 as env_pkg_nips_2018
-import dps.env.nips_2018.config as alg_module
+import dps.projects.nips_2018 as env_pkg_nips_2018
+import dps.projects.nips_2018.config as alg_module
 
 
 def get_module_specs(*packages):
@@ -68,7 +68,7 @@ def _run(env_str, alg_str, _config=None, **kwargs):
     config.update(alg_config)
     config.update(env_config)
 
-    config.log_name = "{}_VS_{}".format(alg_config.log_name, env_config.log_name)
+    config.log_name = "{}_VERSUS_{}".format(alg_config.log_name, env_config.log_name)
 
     if _config is not None:
         config.update(_config)
