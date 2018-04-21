@@ -24,6 +24,7 @@ from dps import cfg
 from dps.utils import Param, Parameterized, Config, square_subplots
 from dps.utils.tf import trainable_variables, build_scheduled_value
 from dps.env.advanced import yolo_rl
+from dps.datasets import GridEMNIST_ObjectDetection
 
 tf_flatten = tf.layers.flatten
 
@@ -312,7 +313,8 @@ class AIR_RenderHook(object):
         to_fetch["transform"] = network.rec_st_back
         to_fetch["steps"] = network.rec_num_digits
         to_fetch["background"] = network.background
-        to_fetch["windows"] = network.rec_windows
+        to_fetch["windows"] = network.windows
+        to_fetch["rec_windows"] = network.rec_windows
 
         sess = tf.get_default_session()
         fetched = sess.run(to_fetch, feed_dict=feed_dict)
@@ -328,6 +330,8 @@ class AIR_RenderHook(object):
         object_shape = updater.network.object_shape
         windows = fetched['windows'].reshape(
             -1, updater.network.max_air_steps, object_shape[0], object_shape[1], updater.network.image_depth)
+        rec_windows = fetched['rec_windows'].reshape(
+            -1, updater.network.max_air_steps, object_shape[0], object_shape[1], updater.network.image_depth)
         background = fetched['background']
 
         N = images.shape[0]
@@ -339,7 +343,7 @@ class AIR_RenderHook(object):
 
         color_order = "red green blue".split()
 
-        fig, axes = plt.subplots(N, updater.network.max_air_steps + 3, figsize=(20, 20))
+        fig, axes = plt.subplots(N, 2*updater.network.max_air_steps + 3, figsize=(20, 20))
         for i in range(N):
             ax_gt = axes[i, 0]
             ax_gt.imshow(images[i])
@@ -383,8 +387,17 @@ class AIR_RenderHook(object):
                     (left, top), w, h, linewidth=1, edgecolor=color_order[t], facecolor='none')
                 ax_rec.add_patch(rect)
 
-                ax = axes[i, t+3]
-                ax.imshow(windows[i, t])
+                rect = patches.Rectangle(
+                    (left, top), w, h, linewidth=1, edgecolor=color_order[t], facecolor='none')
+                ax_gt.add_patch(rect)
+
+                ax = axes[i, 2*t+3]
+                ax.imshow(np.clip(windows[i, t], 0, 1))
+                ax.set_title("VAE input (t={})".format(t))
+
+                ax = axes[i, 2*t+1+3]
+                ax.imshow(np.clip(rec_windows[i, t], 0, 1))
+                ax.set_title("VAE output (t={})".format(t))
 
         fig.suptitle('Stage={}. After {} experiences ({} updates, {} experiences per batch).'.format(
             updater.stage_idx, updater.n_experiences, updater.n_updates, cfg.batch_size))
@@ -541,7 +554,7 @@ class AIR_Network(Parameterized):
                  running_recon, running_loss, running_digits,
                  scales_ta, shifts_ta, z_pres_probs_ta,
                  z_pres_kls_ta, scale_kls_ta, shift_kls_ta, vae_kls_ta,
-                 st_backward_ta, windows_ta, latents_ta):
+                 st_backward_ta, windows_ta, windows_recon_ta, latents_ta):
 
             with tf.variable_scope("rnn") as scope:
                 # RNN time step
@@ -594,12 +607,16 @@ class AIR_Network(Parameterized):
 
                 # ST forward transformation: canvas -> window
                 window = transformer(
-                    tf.reshape(self.input_images, (-1,) + self.obs_shape),
+                    tf.reshape(self.input_images, (self.batch_size,) + self.obs_shape),
                     theta,
                     self.object_shape
                 )
 
-                window = tf.reshape(window, [-1, self.object_shape[0] * self.object_shape[1] * self.image_depth])
+                window = tf.reshape(
+                    window,
+                    [self.batch_size, self.object_shape[0] * self.object_shape[1] * self.image_depth])
+
+                windows_ta = windows_ta.write(windows_ta.size(), window)
 
             with tf.variable_scope("vae"):
                 # reconstructing the window in VAE
@@ -615,7 +632,7 @@ class AIR_Network(Parameterized):
 
                 # collecting individual reconstruction windows
                 # for each of the inferred digits on the canvas
-                windows_ta = windows_ta.write(windows_ta.size(), vae_recon)
+                windows_recon_ta = windows_recon_ta.write(windows_recon_ta.size(), vae_recon)
 
                 # collecting individual latent variable values
                 # for each of the inferred digits on the canvas
@@ -634,12 +651,12 @@ class AIR_Network(Parameterized):
 
                 # ST backward transformation: window -> canvas
                 window_recon = transformer(
-                    tf.reshape(vae_recon, (-1,) + self.object_shape + (self.image_depth,)),
+                    tf.reshape(vae_recon, (self.batch_size,) + self.object_shape + (self.image_depth,)),
                     theta_recon,
-                    self.obs_shape
+                    self.obs_shape[:2]
                 )
 
-                window_recon = tf.reshape(window_recon, [-1, self.image_height * self.image_width * self.image_depth])
+                window_recon = tf.reshape(window_recon, [self.batch_size, self.image_height * self.image_width * self.image_depth])
 
             with tf.variable_scope("z_pres"):
                 # sampling relaxed (continuous) value of z_pres flag
@@ -781,7 +798,7 @@ class AIR_Network(Parameterized):
                 running_recon, running_loss, running_digits, \
                 scales_ta, shifts_ta, z_pres_probs_ta, \
                 z_pres_kls_ta, scale_kls_ta, shift_kls_ta, vae_kls_ta, \
-                st_backward_ta, windows_ta, latents_ta
+                st_backward_ta, windows_ta, windows_recon_ta, latents_ta
 
         # --- end of while-loop body ---
 
@@ -824,7 +841,7 @@ class AIR_Network(Parameterized):
             # RNN while_loop with variable number of steps for each batch item
             _, _, _, reconstruction, running_loss, self.rec_num_digits, scales, shifts, \
                 z_pres_probs, z_pres_kls, scale_kls, shift_kls, vae_kls, \
-                st_backward, windows, latents = tf.while_loop(
+                st_backward, windows, windows_recon, latents = tf.while_loop(
                     cond, body, [
                         tf.constant(0),                                 # RNN time step, initially zero
                         tf.zeros([self.batch_size]),                    # running sum of z_pres samples
@@ -840,22 +857,31 @@ class AIR_Network(Parameterized):
                         tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True),   # shift KL-divergence
                         tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True),   # VAE KL-divergence
                         tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True),   # backward ST matrices
+                        tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True),   # input to vae
                         tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True),   # individual recon. windows
                         tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True)    # latents of individual digits
                     ]
                 )
 
+        def pad(tensor):
+            extra_dim = len(tensor.shape)-2
+            return tf.pad(tensor, [[0, 0], [0, self.max_air_steps - tf.shape(tensor)[1]]] + [[0, 0]] * extra_dim)
+
         # transposing contents of TensorArray's fetched from while_loop iterations
-        self.rec_scales = tf.transpose(scales.stack(), (1, 0, 2), name="rec_scales")
-        self.rec_shifts = tf.transpose(shifts.stack(), (1, 0, 2), name="rec_shifts")
-        self.rec_st_back = tf.transpose(st_backward.stack(), (1, 0, 2, 3), name="rec_st_back")
-        self.rec_windows = tf.transpose(windows.stack(), (1, 0, 2), name="rec_windows")
-        self.rec_latents = tf.transpose(latents.stack(), (1, 0, 2), name="rec_latents")
-        self.z_pres_probs = tf.transpose(z_pres_probs.stack(), name="z_pres_probs")
-        self.z_pres_kls = tf.transpose(z_pres_kls.stack(), name="z_pres_kls")
-        self.scale_kls = tf.transpose(scale_kls.stack(), name="scale_kls")
-        self.shift_kls = tf.transpose(shift_kls.stack(), name="shift_kls")
-        self.vae_kls = tf.transpose(vae_kls.stack(), name="vae_kls")
+        self.rec_scales = pad(tf.transpose(scales.stack(), (1, 0, 2), name="rec_scales"))
+        self.rec_shifts = pad(tf.transpose(shifts.stack(), (1, 0, 2), name="rec_shifts"))
+        self.rec_st_back = pad(tf.transpose(st_backward.stack(), (1, 0, 2, 3), name="rec_st_back"))
+
+        self.windows = pad(tf.transpose(windows.stack(), (1, 0, 2), name="windows"))
+        self.rec_windows = pad(tf.transpose(windows_recon.stack(), (1, 0, 2), name="rec_windows"))
+        self.rec_latents = pad(tf.transpose(latents.stack(), (1, 0, 2), name="rec_latents"))
+
+        self.z_pres_probs = pad(tf.transpose(z_pres_probs.stack(), name="z_pres_probs"))
+        self.z_pres_kls = pad(tf.transpose(z_pres_kls.stack(), name="z_pres_kls"))
+
+        self.vae_kls = pad(tf.transpose(vae_kls.stack(), name="vae_kls"))
+        self.scale_kls = pad(tf.transpose(scale_kls.stack(), name="scale_kls"))
+        self.shift_kls = pad(tf.transpose(shift_kls.stack(), name="shift_kls"))
 
         reconstruction = tf.clip_by_value(reconstruction, 1e-6, 1-1e-6)
         reconstruction = tf.reshape(reconstruction, (-1,) + self.obs_shape)
@@ -922,9 +948,23 @@ def get_updater(env):
     return yolo_rl.YoloRL_Updater(env, network)
 
 
+class Env(object):
+    def __init__(self):
+        train = GridEMNIST_ObjectDetection(n_examples=int(cfg.n_train), shuffle=True, example_range=(0.0, 0.9))
+        # train = EMNIST_ObjectDetection(n_examples=int(cfg.n_train), shuffle=True, example_range=(0.0, 0.9))
+        val = GridEMNIST_ObjectDetection(n_examples=int(cfg.n_val), shuffle=True, example_range=(0.9, 1.))
+        # val = EMNIST_ObjectDetection(n_examples=int(cfg.n_val), shuffle=True, example_range=(0.9, 1.))
+
+        self.datasets = dict(train=train, val=val)
+
+    def close(self):
+        pass
+
+
 config = Config(
     log_name="attend_infer_repeat",
     get_updater=get_updater,
+    # build_env=Env,
     build_env=yolo_rl.Env,
 
     curriculum=[
@@ -939,8 +979,12 @@ config = Config(
     n_sub_image_examples=0,
     xent_loss=True,
     sub_image_shape=(28, 28),
+    spacing=(-3, -3),
     use_dataset_cache=True,
-    image_shape=(50, 50),
+    image_shape=(29, 29),
+    draw_shape_grid=(1, 1),
+    max_overlap=10000,
+    colours="white",
 
     n_train=1e5,
     n_val=1e2,
@@ -968,8 +1012,8 @@ config = Config(
     batch_size=64,
 
     preserve_env=True,
-    max_steps=1e7,
-    patience=10000,
+    max_steps=25000,
+    patience=100000,
     use_gpu=True,
     gpu_allow_growth=True,
     seed=93434014,
@@ -978,9 +1022,9 @@ config = Config(
     max_experiments=None,
     render_hook=AIR_RenderHook(),
 
-    render_step=100,
-    eval_step=100,
-    display_step=100,
+    render_step=1000,
+    eval_step=1000,
+    display_step=1000,
 
     # Based on the values in tf-attend-infer-repeat/training.py
     max_air_steps=3,
@@ -989,13 +1033,15 @@ config = Config(
     vae_latent_dimensions=50,
     vae_recognition_units=(512, 256),
     vae_generative_units=(256, 512),
-    scale_prior_mean=-1.0,
+    # scale_prior_mean=1.0,
+    scale_prior_mean=-1.0,  # <- odd value
     scale_prior_variance=0.1,
     shift_prior_mean=0.0,
     shift_prior_variance=1.0,
     vae_prior_mean=0.0,
     vae_prior_variance=1.0,
-    vae_likelihood_std=0.3,
+    # vae_likelihood_std=0.0,
+    vae_likelihood_std=0.3,  # <- an odd value...maybe comes from the output gaussian with std 0.3 used in original paper?
     scale_hidden_units=64,
     shift_hidden_units=64,
     z_pres_hidden_units=64,
@@ -1003,7 +1049,6 @@ config = Config(
     # z_pres_prior_log_odds=-0.01,
     z_pres_temperature=1.0,
     stopping_threshold=0.99,
-    cnn=True,
+    cnn=False,
     cnn_filters=8,
-    annealing_schedules=None
 )
