@@ -8,7 +8,6 @@ from dps.utils import pdb_postmortem
 from dps.rl import algorithms as alg_pkg
 import dps.env.advanced as env_pkg_advanced
 import dps.env.basic as env_pkg_basic
-import dps.env.nips_2018 as env_pkg_nips_2018
 
 
 def get_module_specs(*packages):
