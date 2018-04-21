@@ -885,8 +885,7 @@ class AIR_Network(Parameterized):
         self.reconstruction = tf.clip_by_value(reconstruction, 1e-6, 1-1e-6)
         self.reconstruction = tf.reshape(self.reconstruction, (-1,) + self.obs_shape)
 
-        output_logits = tf.log(self.reconstruction / (1 - self.reconstruction))
-        tensors = {"output_logits": output_logits}
+        tensors = {"output": self.reconstruction}
 
         reconstruction = tf.maximum(tf.minimum(reconstruction, 1.0), 0.0, name="clipped_rec")
         reconstruction_loss = -tf.reduce_sum(
@@ -895,12 +894,10 @@ class AIR_Network(Parameterized):
             1, name="reconstruction_loss"
         )
 
-        losses = {}
-
-        # This loss function is actually wrong! Or something...
-        # reconstruction_loss = tf.reduce_sum(tf_flatten(yolo_rl.loss_builders[loss_key](output_logits, inp)), axis=1)
-        losses['reconstruction'] = tf.reduce_mean(reconstruction_loss)
-        losses['running'] = tf.reduce_mean(running_loss)  # the shape of running_loss is (batch_size,)
+        losses = dict(
+            reconstruction=tf.reduce_mean(reconstruction_loss),
+            running=tf.reduce_mean(running_loss),
+        )
 
         recorded_tensors = {}
 

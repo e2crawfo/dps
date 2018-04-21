@@ -262,18 +262,16 @@ def count_1norm_cost(_tensors, updater):
 count_1norm_cost.keys_accessed = "program:obj"
 
 
-def build_xent_loss(logits, targets):
-    return tf.nn.sigmoid_cross_entropy_with_logits(labels=targets, logits=logits)
+def build_xent_loss(predictions, targets):
+    return -(targets * tf.log(predictions) + (1. - targets) * tf.log(1. - predictions))
 
 
-def build_squared_loss(logits, targets):
-    actions = tf.sigmoid(logits)
-    return (actions - targets)**2
+def build_squared_loss(predictions, targets):
+    return (predictions - targets)**2
 
 
-def build_1norm_loss(logits, targets):
-    actions = tf.sigmoid(logits)
-    return tf.abs(actions - targets)
+def build_1norm_loss(predictions, targets):
+    return tf.abs(predictions - targets)
 
 
 loss_builders = {
@@ -939,13 +937,11 @@ class YoloRL_Network(Parameterized):
         )
 
         output = tf.clip_by_value(output, 1e-6, 1-1e-6)
-        output_logits = tf.log(output / (1 - output))
 
         # --- Store values ---
 
         self._tensors['area'] = (ys * float(self.image_height)) * (xs * float(self.image_width))
         self._tensors['output'] = output
-        self._tensors['output_logits'] = output_logits
 
     def build_graph(self, loss_key, **network_inputs):
 
@@ -1045,20 +1041,19 @@ class YoloRL_Network(Parameterized):
 
         # --- required for computing the reconstruction COST ---
 
-        output_logits = self._tensors['output_logits']
+        output = self._tensors['output']
         inp = self._tensors['inputs']['inp']
-        self._tensors['per_pixel_reconstruction_loss'] = loss_builders[loss_key](output_logits, inp)
+        self._tensors['per_pixel_reconstruction_loss'] = loss_builders[loss_key](output, inp)
 
         # --- store losses ---
 
-        losses = {}
-
-        losses['rl'] = tf.reduce_mean(rl_loss_map)
-
         recorded_tensors['area_loss'] = tf_mean_sum(tf.abs(self._tensors['area'] - self.target_area) * self.program['obj'])
-        losses['weighted_area'] = self.area_weight * recorded_tensors['area_loss']
 
-        losses['reconstruction'] = tf_mean_sum(loss_builders[loss_key](output_logits, inp))
+        losses = dict(
+            rl=tf.reduce_mean(rl_loss_map),
+            reconstruction=tf_mean_sum(self._tensors['per_pixel_reconstruction_loss']),
+            weighted_area=self.area_weight * recorded_tensors['area_loss']
+        )
 
         return {
             "tensors": self._tensors,
@@ -1255,9 +1250,9 @@ class YoloRL_Updater(Updater):
 
         recorded_tensors = {}
 
-        output_logits = network_tensors["output_logits"]
+        output = network_tensors["output"]
         recorded_tensors.update({
-            name + "_loss": tf_mean_sum(builder(output_logits, self.inp))
+            name + "_loss": tf_mean_sum(builder(output, self.inp))
             for name, builder in loss_builders.items()
         })
 
@@ -1564,7 +1559,7 @@ config.update(
 
     # Costs
     use_baseline=True,
-    area_weight=2.,
+    area_weight=1.,
     nonzero_weight=150.,
 
     local_reconstruction_cost=True,
