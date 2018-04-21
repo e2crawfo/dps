@@ -24,7 +24,7 @@ from dps import cfg
 from dps.utils import Param, Parameterized, Config, square_subplots
 from dps.utils.tf import trainable_variables, build_scheduled_value
 from dps.env.advanced import yolo_rl
-from dps.datasets import GridEMNIST_ObjectDetection
+from dps.datasets import GridEMNIST_ObjectDetection, EMNIST_ObjectDetection
 
 tf_flatten = tf.layers.flatten
 
@@ -281,6 +281,12 @@ def _sample_from_mvn(mean, diag_variance):
     return mean + standard_normal * tf.sqrt(diag_variance)
 
 
+def imshow(ax, frame):
+    if frame.ndim == 3 and frame.shape[2] == 1:
+        frame = frame[:, :, 0]
+    ax.imshow(frame, vmin=0.0, vmax=1.0)
+
+
 class AIR_RenderHook(object):
     def __init__(self, N=16):
         self.N = N
@@ -291,7 +297,7 @@ class AIR_RenderHook(object):
             if not os.path.exists(path):
                 fig, axes = square_subplots(16)
                 for ax, frame in zip(axes.flatten(), updater.datasets['train'].x):
-                    ax.imshow(frame)
+                    imshow(ax, frame)
 
                 fig.savefig(path)
                 plt.close(fig)
@@ -346,11 +352,11 @@ class AIR_RenderHook(object):
         fig, axes = plt.subplots(N, 2*updater.network.max_air_steps + 3, figsize=(20, 20))
         for i in range(N):
             ax_gt = axes[i, 0]
-            ax_gt.imshow(images[i])
+            imshow(ax_gt, images[i])
             ax_gt.set_title('ground truth')
 
             ax_rec = axes[i, 1]
-            ax_rec.imshow(output[i])
+            imshow(ax_rec, output[i])
             ax_rec.set_title('reconstruction')
 
             # Plot true bounding boxes
@@ -364,7 +370,7 @@ class AIR_RenderHook(object):
                 ax_rec.add_patch(rect)
 
             ax_bg = axes[i, 2]
-            ax_bg.imshow(background[i])
+            imshow(ax_bg, background[i])
             ax_bg.set_title('background')
 
             for t in range(updater.network.max_air_steps):
@@ -392,11 +398,11 @@ class AIR_RenderHook(object):
                 ax_gt.add_patch(rect)
 
                 ax = axes[i, 2*t+3]
-                ax.imshow(np.clip(windows[i, t], 0, 1))
+                imshow(ax, np.clip(windows[i, t], 0, 1))
                 ax.set_title("VAE input (t={})".format(t))
 
                 ax = axes[i, 2*t+1+3]
-                ax.imshow(np.clip(rec_windows[i, t], 0, 1))
+                imshow(ax, np.clip(rec_windows[i, t], 0, 1))
                 ax.set_title("VAE output (t={})".format(t))
 
         fig.suptitle('Stage={}. After {} experiences ({} updates, {} experiences per batch).'.format(
@@ -443,13 +449,6 @@ class AIR_Network(Parameterized):
     max_grad_norm = Param()
 
     def __init__(self, env, scope=None, **kwargs):
-        self.rec_num_digits = None
-        self.rec_scales = None
-        self.rec_shifts = None
-        self.reconstruction = None
-        self.loss = None
-        self.accuracy = None
-
         self.datasets = env.datasets
         for dset in self.datasets.values():
             dset.reset()
@@ -883,17 +882,23 @@ class AIR_Network(Parameterized):
         self.scale_kls = pad(tf.transpose(scale_kls.stack(), name="scale_kls"))
         self.shift_kls = pad(tf.transpose(shift_kls.stack(), name="shift_kls"))
 
-        reconstruction = tf.clip_by_value(reconstruction, 1e-6, 1-1e-6)
-        reconstruction = tf.reshape(reconstruction, (-1,) + self.obs_shape)
+        self.reconstruction = tf.clip_by_value(reconstruction, 1e-6, 1-1e-6)
+        self.reconstruction = tf.reshape(self.reconstruction, (-1,) + self.obs_shape)
 
-        self.reconstruction = reconstruction
-
-        output_logits = tf.log(reconstruction / (1 - reconstruction))
-
+        output_logits = tf.log(self.reconstruction / (1 - self.reconstruction))
         tensors = {"output_logits": output_logits}
 
+        reconstruction = tf.maximum(tf.minimum(reconstruction, 1.0), 0.0, name="clipped_rec")
+        reconstruction_loss = -tf.reduce_sum(
+            self.input_images * tf.log(reconstruction + 10e-10) +
+            (1.0 - self.input_images) * tf.log(1.0 - reconstruction + 10e-10),
+            1, name="reconstruction_loss"
+        )
+
         losses = {}
-        reconstruction_loss = tf.reduce_sum(tf_flatten(yolo_rl.loss_builders[loss_key](output_logits, inp)), axis=1)
+
+        # This loss function is actually wrong! Or something...
+        # reconstruction_loss = tf.reduce_sum(tf_flatten(yolo_rl.loss_builders[loss_key](output_logits, inp)), axis=1)
         losses['reconstruction'] = tf.reduce_mean(reconstruction_loss)
         losses['running'] = tf.reduce_mean(running_loss)  # the shape of running_loss is (batch_size,)
 
@@ -967,24 +972,22 @@ config = Config(
     # build_env=Env,
     build_env=yolo_rl.Env,
 
-    curriculum=[
-        dict()
-    ],
+    curriculum=[dict()] * 12,
 
     # dataset params
 
-    min_chars=1,
-    max_chars=1,
-    characters=[0, 1, 2],
+    min_chars=0,
+    max_chars=2,
+    characters=list(range(10)),
     n_sub_image_examples=0,
     xent_loss=True,
     sub_image_shape=(28, 28),
-    spacing=(-3, -3),
+    spacing=(-6, -6),
     use_dataset_cache=True,
-    image_shape=(29, 29),
+    image_shape=(50, 50),
     draw_shape_grid=(1, 1),
-    max_overlap=10000,
-    colours="white",
+    max_overlap=200,
+    colours="",
 
     n_train=1e5,
     n_val=1e2,
@@ -1012,7 +1015,7 @@ config = Config(
     batch_size=64,
 
     preserve_env=True,
-    max_steps=25000,
+    max_steps=5000,
     patience=100000,
     use_gpu=True,
     gpu_allow_growth=True,
@@ -1035,7 +1038,7 @@ config = Config(
     vae_generative_units=(256, 512),
     # scale_prior_mean=1.0,
     scale_prior_mean=-1.0,  # <- odd value
-    scale_prior_variance=0.1,
+    scale_prior_variance=0.05,
     shift_prior_mean=0.0,
     shift_prior_variance=1.0,
     vae_prior_mean=0.0,

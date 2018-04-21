@@ -192,6 +192,7 @@ class ImageDataset(Dataset):
         first, *rest = x
         assert first.dtype == np.uint8
         first = (first / 255.).astype('f')
+
         return tuple([first, *rest])
 
     def _make_postprocess(self, tracks):
@@ -1054,11 +1055,14 @@ class EMNIST_ObjectDetection(PatchesDataset):
     colours = Param('red green blue')
 
     def _make(self):
-        self.depth = 3
+        if self.colours:
+            self.depth = 3
+        else:
+            self.depth = 1
 
         colours = self.colours
         if isinstance(colours, str):
-            colours = colours.split(' ')
+            colours = colours.split()
 
         import matplotlib as mpl
         colour_map = mpl.colors.get_named_colors_mapping()
@@ -1115,8 +1119,12 @@ class EMNIST_ObjectDetection(PatchesDataset):
         return new_X, new_Y
 
     def colourize(self, img, colour_idx=None):
+        if not self._colours:
+            return img[..., None]
+
         if colour_idx is None:
             colour_idx = np.random.randint(len(self._colours))
+
         colour = self._colours[colour_idx]
         colourized = np.array(img[..., None] * colour, np.uint8)
         return colourized
