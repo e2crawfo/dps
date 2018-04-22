@@ -32,29 +32,25 @@ class Dataset(Parameterized):
 
                 filename = os.path.join(directory, str(param_hash))
 
-                loaded = False
-                try:
-                    with open(filename + ".pkl", 'rb') as f:
-                        tracks = dill.load(f)
-                    loaded = True
-                except FileNotFoundError:
-                    pass
-                finally:
-                    if not loaded:
-                        print("File not found, creating dataset and storing...")
-                        tracks = self._make()
-                        with open(filename + ".pkl", 'wb') as f:
-                            dill.dump(tracks, f, protocol=dill.HIGHEST_PROTOCOL)
-                        with open(filename + ".cfg", 'w') as f:
-                            f.write(str(params))
+                if os.path.exists(filename + ".pkl"):
+                    if cfg.mock_load:
+                        print("Dataset {} exists on disk, but `mock_load` is True so this is as far as we go.".format(filename))
+                        return
+                    else:
+                        with open(filename + ".pkl", 'rb') as f:
+                            tracks = dill.load(f)
+                else:
+                    print("File not found, creating dataset and storing...")
+                    tracks = self._make()
+                    with open(filename + ".pkl", 'wb') as f:
+                        dill.dump(tracks, f, protocol=dill.HIGHEST_PROTOCOL)
+                    with open(filename + ".cfg", 'w') as f:
+                        f.write(str(params))
 
                 print("Done.")
 
             else:
                 tracks = self._make()
-                loaded = False
-
-            self.loaded = loaded
 
         tracks = self._make_postprocess(tracks)
 
@@ -178,6 +174,9 @@ class ImageDataset(Dataset):
 
     def __init__(self, **kwargs):
         super(ImageDataset, self).__init__(**kwargs)
+
+        if getattr(self, 'tracks', None) is None:
+            return
 
         for j in range(len(self.tracks[0])):
             if j % 10000 == 0:
