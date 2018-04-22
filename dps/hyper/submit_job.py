@@ -637,7 +637,7 @@ class ParallelSession(object):
 
 def submit_job(
         archive_path, name, wall_time="1year", ppn=1, cpp=1, pmem=0,
-        queue="", kind="local", gpu_set="", **run_kwargs):
+        queue="", kind="local", gpu_set="", project="rpp-bengioy", **run_kwargs):
 
     assert kind in "pbs slurm slurm-local parallel".split()
 
@@ -677,7 +677,6 @@ session.run()
         if pmem:
             resources = "{},pmem={}mb".format(resources, pmem)
 
-        project = "jim-594-aa"
         email = "eric.crawford@mail.mcgill.ca"
         if queue:
             queue = "-q " + queue
@@ -702,8 +701,6 @@ session.run()
             n_gpus = len([int(i) for i in gpu_set.split(',')])
             resources = "{} --gres=gpu:{}".format(resources, n_gpus)
 
-        # project = "def-jpineau"
-        project = "rpp-bengioy"
         email = "eric.crawford@mail.mcgill.ca"
         if queue:
             queue = "-p " + queue
