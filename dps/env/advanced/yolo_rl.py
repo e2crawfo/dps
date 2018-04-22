@@ -1208,16 +1208,17 @@ class YoloRL_Updater(Updater):
 
         return dicts
 
-    def _build_placeholders(self):
-        self.inp_ph = tf.placeholder(tf.float32, (None,) + self.obs_shape, name="inp_ph")
-        self.inp = tf.clip_by_value(self.inp_ph, 1e-6, 1-1e-6, name="inp")
-        self.inp_mode = tf.placeholder(tf.float32, (None, self.image_depth), name="inp_mode_ph")
-
-        self.is_training = tf.placeholder(tf.bool, ())
-        self.float_is_training = tf.to_float(self.is_training)
-
     def _build_graph(self):
-        self._build_placeholders()
+        self.data_manager = DataManager(self.datasets['train'],
+                                        self.datasets['val'],
+                                        cfg.batch_size)
+        self.data_manager.build_graph()
+
+        self.inp = tf.clip_by_value(
+            self.data_manager.next_batch, 1e-6, 1-1e-6, name="clipped_input")
+
+        self.is_training = self.data_manager.is_training
+        self.float_is_training = tf.to_float(self.is_training)
 
         if cfg.background_cfg.mode == "static":
             with cfg.background_cfg.static_cfg:
@@ -1252,7 +1253,6 @@ class YoloRL_Updater(Updater):
         loss_key = 'xent' if self.xent_loss else 'squared'
         network_outputs = self.network.build_graph(
             inp=self.inp,
-            inp_ph=self.inp_ph,
             is_training=self.is_training,
             float_is_training=self.float_is_training,
             background=self.background,

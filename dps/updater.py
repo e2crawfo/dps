@@ -1,5 +1,6 @@
 import abc
 from future.utils import with_metaclass
+from collections import OrderedDict
 
 import tensorflow as tf
 
@@ -183,3 +184,63 @@ class DifferentiableUpdater(Updater):
         result = sess.run([self.recorded_tensors, self.summary_op], feed_dict=feed_dict)
 
         return result
+
+
+class ParseExample(object):
+    def __init__(self, features):
+        assert isinstance(features, OrderedDict)
+        self.features = features
+
+    def __call__(self, example_proto):
+        parsed_features = tf.parse_single_example(example_proto)
+        return tuple(parsed_features[k] for k in self.features)
+
+
+class DataManager(object):
+    def __init__(self, train_dataset, val_dataset, batch_size):
+        self.train_dataset = train_dataset
+        self.val_dataset = val_dataset
+        self.batch_size = batch_size
+
+    def build_graph(self):
+        # Does no shuffling. Make sure dataset is pre-shuffled.
+
+        assert self.val_dataset.structure == self.train_dataset.structure
+        parser = ParseExample(self.train_dataset.structure)
+
+        # --- train ---
+
+        train_dataset = tf.data.TFRecordDataset(self.train_dataset.filename)
+
+        train_dataset = (train_dataset.map(parser)
+                                      .repeat()
+                                      .batch(self.batch_size))
+
+        self.train_iterator = train_dataset.make_one_shot_iterator()
+
+        sess = tf.get_default_session()
+        self.train_handle = sess.run(self.train_iterator.string_handle())
+
+        # --- val --
+
+        val_dataset = tf.data.TFRecordDataset(self.val_dataset.filename)
+
+        val_dataset = (val_dataset.map(ParseExample(parser))
+                                  .batch(self.batch_size))
+
+        self.val_iterator = val_dataset.make_initializable_iterator()
+
+        self.val_handle = sess.run(self.val_iterator.string_handle())
+
+        # --- outputs ---
+
+        self.handle = tf.placeholder(tf.string, shape=())
+        self.iterator = tf.data.Iterator.from_string_handle(
+            self.handle, train_dataset.output_types, train_dataset.output_shapes)
+
+        self.is_training = self.handle == self.train_handle
+        self.next_batch = self.iterator.get_next()
+
+    def make_feed_dict(self, mode):
+        handle = self.train_handle if mode == "train" else self.val_handle
+        return {self.handle: handle}

@@ -116,10 +116,10 @@ def load_emnist(
         Path to data directory, assumed to contain a sub-directory called `emnist`.
     classes: list of character from the set (0-9, A-Z, a-z)
         Each character is the name of a class to load.
-    balance: boolean
+    balance: bool
         If True, will ensure that all classes are balanced by removing elements
         from classes that are larger than the minimu-size class.
-    include_blank: boolean
+    include_blank: bool
         If True, includes an additional class that consists of blank images.
     shape: (int, int)
         Shape of the images.
@@ -150,9 +150,9 @@ def load_emnist(
     if example_range is not None:
         assert 0.0 <= example_range[0] < example_range[1] <= 1.0
 
-    y = []
-    x = []
-    class_map = {}
+    x, y = []
+    class_map, class_count = {}, {}
+
     for i, cls in enumerate(sorted(classes)):
         with gzip.open(os.path.join(emnist_dir, str(cls) + '.pklz'), 'rb') as f:
             _x = dill.load(f)
@@ -162,41 +162,50 @@ def load_emnist(
             high = int(example_range[1] * len(_x))
             _x = _x[low:high, ...]
 
-        x.append(np.uint8(255*np.minimum(_x, 1)))
-        y.extend([i] * x[-1].shape[0])
+        x.append(np.uint8(255 * np.minimum(_x, 1)))
+        y.extend([i] * _x.shape[0])
 
         if show:
             print(cls)
             print(image_to_string(x[-1]))
+
         class_map[cls] = i
+        class_count[cls] = _x.shape[0]
+
     x = np.concatenate(x, axis=0)
-    y = np.array(y).reshape(-1, 1)
 
     if include_blank:
-        class_count = min([(y == class_map[c]).sum() for c in classes])
-        blanks = np.zeros((class_count,) + x.shape[1:], dtype=np.uint8)
+        min_class_count = min(class_count.values())
+
+        blanks = np.zeros((min_class_count,) + x.shape[1:], dtype=np.uint8)
         x = np.concatenate((x, blanks), axis=0)
+
         blank_idx = len(class_map)
-        y = np.concatenate((y, blank_idx * np.ones((class_count, 1), dtype=y.dtype)), axis=0)
+
+        y.extend([blank_idx] * min_class_count)
+
         blank_symbol = ' '
         class_map[blank_symbol] = blank_idx
         classes.append(blank_symbol)
 
+    y = np.array(y)
+
     if balance:
-        class_count = min([(y == class_map[c]).sum() for c in classes])
+        min_class_count = min(class_count.values())
+
         keep_x, keep_y = [], []
         for i, cls in enumerate(classes):
             keep_indices, _ = np.nonzero(y == class_map[cls])
-            keep_indices = keep_indices[:class_count]
+            keep_indices = keep_indices[:min_class_count]
             keep_x.append(x[keep_indices, :])
             keep_y.append(y[keep_indices, :])
+
         x = np.concatenate(keep_x, 0)
         y = np.concatenate(keep_y, 0)
 
     order = np.random.permutation(x.shape[0])
-
-    x = x[order, :]
-    y = y[order, :]
+    x = x[order]
+    y = y[order]
 
     if n_examples:
         x = x[:n_examples]
@@ -204,7 +213,7 @@ def load_emnist(
 
     if one_hot:
         _y = np.zeros((y.shape[0], len(classes))).astype('f')
-        _y[np.arange(y.shape[0]), y.flatten()] = 1.0
+        _y[np.arange(y.shape[0]), y] = 1.0
         y = _y
 
     if needs_reshape:
@@ -249,10 +258,10 @@ def load_omniglot(
         Path to data directory, assumed to contain a sub-directory called `omniglot`.
     classes: list of strings, each giving a class label
         Each character is the name of a class to load.
-    balance: boolean
+    balance: bool
         If True, will ensure that all classes are balanced by removing elements
         from classes that are larger than the minimu-size class.
-    include_blank: boolean
+    include_blank: bool
         If True, includes an additional class that consists of blank images.
     shape: (int, int)
         Shape of returned images.
@@ -266,13 +275,16 @@ def load_omniglot(
     """
     omniglot_dir = os.path.join(path, 'omniglot')
     classes = list(classes)[:]
+
     if not indices:
         indices = list(range(20))
+
     for idx in indices:
         assert 0 <= idx < 20
-    y = []
-    x = []
-    class_map = {}
+
+    x, y = [], []
+    class_map, class_count = {}, {}
+
     for i, cls in enumerate(sorted(list(classes))):
         alphabet, character = cls.split(',')
         char_dir = os.path.join(omniglot_dir, alphabet, "character{:02d}".format(int(character)))
@@ -291,32 +303,38 @@ def load_omniglot(
 
             x.append(_x)
             y.append(i)
+
         if show:
             print(cls)
             print(image_to_string(x[-1]))
+
         class_map[cls] = i
+        class_count[cls] = len(indices)
 
     x = np.array(x, dtype=np.uint8)
-    y = np.array(y).reshape(-1, 1)
 
     if include_blank:
-        class_count = min([(y == class_map[c]).sum() for c in classes])
-        blanks = np.zeros((class_count,) + shape, dtype=np.uint8)
+        min_class_count = min(class_count.values())
+        blanks = np.zeros((min_class_count,) + shape, dtype=np.uint8)
         x = np.concatenate((x, blanks), axis=0)
+
         blank_idx = len(class_map)
-        y = np.concatenate((y, blank_idx * np.ones((class_count, 1), dtype=y.dtype)), axis=0)
+
+        y.extend([blank_idx] * min_class_count)
+
         blank_symbol = ' '
         class_map[blank_symbol] = blank_idx
         classes.append(blank_symbol)
 
-    order = np.random.permutation(x.shape[0])
+    y = np.array(y)
 
-    x = x[order, :]
-    y = y[order, :]
+    order = np.random.permutation(x.shape[0])
+    x = x[order]
+    y = y[order]
 
     if one_hot:
         _y = np.zeros((y.shape[0], len(classes))).astype('f')
-        _y[np.arange(y.shape[0]), y.flatten()] = 1.0
+        _y[np.arange(y.shape[0]), y] = 1.0
         y = _y
 
     return x, y, class_map
