@@ -496,7 +496,7 @@ class AIR_Network(Parameterized):
     noise_schedule = Param()
     max_grad_norm = Param()
 
-    eval_funcs = []
+    verbose_summaries = Param()
 
     def __init__(self, env, scope=None, **kwargs):
         self.datasets = env.datasets
@@ -980,48 +980,63 @@ class AIR_Network(Parameterized):
         count_error = 1 - tf.to_float(tf.equal(self.target_n_digits, self.predicted_n_digits))
         count_1norm = tf.to_float(tf.abs(self.target_n_digits - self.predicted_n_digits))
 
-        # post while-loop numeric summaries grouped by digit count
+        if self.verbose_summaries:
+            # post while-loop numeric summaries grouped by digit count
 
-        rt = self._summarize_by_digit_count(self.predicted_n_digits, self.target_n_digits, "steps")
-        recorded_tensors.update(rt)
+            rt = self._summarize_by_digit_count(self.predicted_n_digits, self.target_n_digits, "steps")
+            recorded_tensors.update(rt)
 
-        rt = self._summarize_by_digit_count(reconstruction_loss, self.target_n_digits, "reconstruction_loss")
-        recorded_tensors.update(rt)
+            rt = self._summarize_by_digit_count(count_error, self.target_n_digits, "count_error")
+            recorded_tensors.update(rt)
 
-        rt = self._summarize_by_digit_count(count_error, self.target_n_digits, "count_error")
-        recorded_tensors.update(rt)
+            rt = self._summarize_by_digit_count(count_1norm, self.target_n_digits, "count_1norm")
+            recorded_tensors.update(rt)
 
-        rt = self._summarize_by_digit_count(count_1norm, self.target_n_digits, "count_1norm")
-        recorded_tensors.update(rt)
+            rt = self._summarize_by_digit_count(running_loss, self.target_n_digits, "running_loss")
+            recorded_tensors.update(rt)
 
-        rt = self._summarize_by_digit_count(running_loss, self.target_n_digits, "running_loss")
-        recorded_tensors.update(rt)
+            rt = self._summarize_by_digit_count(reconstruction_loss, self.target_n_digits, "reconstruction_loss")
+            recorded_tensors.update(rt)
 
-        # --- grouped by digit count of ground-truth image and step ---
+            # --- grouped by digit count of ground-truth image and step ---
 
-        rt = self._summarize_by_step(_tensors["scales"][:, :, 0], self.predicted_n_digits, "s")
-        recorded_tensors.update(rt)
+            rt = self._summarize_by_step(_tensors["scales"][:, :, 0], self.predicted_n_digits, "s")
+            recorded_tensors.update(rt)
 
-        rt = self._summarize_by_step(_tensors["shifts"][:, :, 0], self.predicted_n_digits, "x")
-        recorded_tensors.update(rt)
+            rt = self._summarize_by_step(_tensors["shifts"][:, :, 0], self.predicted_n_digits, "x")
+            recorded_tensors.update(rt)
 
-        rt = self._summarize_by_step(_tensors["shifts"][:, :, 1], self.predicted_n_digits, "y")
-        recorded_tensors.update(rt)
+            rt = self._summarize_by_step(_tensors["shifts"][:, :, 1], self.predicted_n_digits, "y")
+            recorded_tensors.update(rt)
 
-        rt = self._summarize_by_step(_tensors["z_pres_probs"], self.predicted_n_digits, "z_pres_prob", all_steps=True)
-        recorded_tensors.update(rt)
+            rt = self._summarize_by_step(_tensors["z_pres_probs"], self.predicted_n_digits, "z_pres_prob", all_steps=True)
+            recorded_tensors.update(rt)
 
-        rt = self._summarize_by_step(_tensors["z_pres_kls"], self.predicted_n_digits, "z_pres_kl", one_more_step=True)
-        recorded_tensors.update(rt)
+            rt = self._summarize_by_step(_tensors["z_pres_kls"], self.predicted_n_digits, "z_pres_kl", one_more_step=True)
+            recorded_tensors.update(rt)
 
-        rt = self._summarize_by_step(_tensors["scale_kls"], self.predicted_n_digits, "scale_kl")
-        recorded_tensors.update(rt)
+            rt = self._summarize_by_step(_tensors["scale_kls"], self.predicted_n_digits, "scale_kl")
+            recorded_tensors.update(rt)
 
-        rt = self._summarize_by_step(_tensors["shift_kls"], self.predicted_n_digits, "shift_kl")
-        recorded_tensors.update(rt)
+            rt = self._summarize_by_step(_tensors["shift_kls"], self.predicted_n_digits, "shift_kl")
+            recorded_tensors.update(rt)
 
-        rt = self._summarize_by_step(_tensors["vae_kls"], self.predicted_n_digits, "vae_kl")
-        recorded_tensors.update(rt)
+            rt = self._summarize_by_step(_tensors["vae_kls"], self.predicted_n_digits, "vae_kl")
+            recorded_tensors.update(rt)
+        else:
+            recorded_tensors["predicted_n_digits"] = tf.reduce_mean(self.predicted_n_digits)
+            recorded_tensors["count_error"] = tf.reduce_mean(count_error)
+            recorded_tensors["count_1norm"] = tf.reduce_mean(count_1norm)
+            recorded_tensors["predicted_n_digits"] = tf.reduce_mean(self.predicted_n_digits)
+
+            recorded_tensors["scales"] = tf.reduce_mean(_tensors["scales"])
+            recorded_tensors["x"] = tf.reduce_mean(_tensors["shifts"][:, :, 0])
+            recorded_tensors["y"] = tf.reduce_mean(_tensors["shifts"][:, :, 1])
+            recorded_tensors["z_pres_prob"] = tf.reduce_mean(_tensors["z_pres_probs"])
+            recorded_tensors["z_pres_kl"] = tf.reduce_mean(_tensors["z_pres_kls"])
+            recorded_tensors["scale_kl"] = tf.reduce_mean(_tensors["scale_kls"])
+            recorded_tensors["shift_kl"] = tf.reduce_mean(_tensors["shift_kls"])
+            recorded_tensors["vae_kl"] = tf.reduce_mean(_tensors["vae_kls"])
 
         self.COST_tensors = {}
         for name, _ in self.COST_funcs.items():
@@ -1088,6 +1103,8 @@ config = Config(
     lr_schedule=1e-4,
     max_grad_norm=1.0,
     batch_size=64,
+
+    verbose_summaries=True,
 
     preserve_env=True,
     max_steps=5000,
