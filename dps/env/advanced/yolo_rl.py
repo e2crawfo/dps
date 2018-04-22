@@ -190,8 +190,8 @@ def negative_mAP_cost(_tensors, network):
     if annotations is None:
         return np.zeros((1, 1, 1, 1, 1))
     else:
-        gt = []
-        pred_boxes = []
+        ground_truth_boxes = []
+        predicted_boxes = []
 
         obj = _tensors['program']['obj']
         top, left, height, width = np.split(_tensors['normalized_box'], 4, axis=-1)
@@ -206,25 +206,26 @@ def negative_mAP_cost(_tensors, network):
 
         for idx, a in enumerate(annotations):
             _a = [[0, *rest] for cls, *rest in a]
-            gt.append(_a)
+            ground_truth_boxes.append(_a)
 
-            pb = []
+            _predicted_boxes = []
 
             for i in range(network.H):
                 for j in range(network.W):
                     for b in range(network.B):
                         o = obj[idx, i, j, b, 0]
+
                         if o > 0.0:
-                            pb.append(
+                            _predicted_boxes.append(
                                 [0, o,
                                  top[idx, i, j, b, 0],
                                  bottom[idx, i, j, b, 0],
                                  left[idx, i, j, b, 0],
                                  right[idx, i, j, b, 0]])
 
-            pred_boxes.append(pb)
+            predicted_boxes.append(_predicted_boxes)
 
-        _map = mAP(pred_boxes, gt, 1)
+        _map = mAP(predicted_boxes, ground_truth_boxes, 1)
         _map = _map.reshape(-1, 1, 1, 1, 1)
         return -_map
 
@@ -525,7 +526,7 @@ class YoloRL_Network(Parameterized):
                     dst = dst[_key]
                     src = src[_key]
 
-        _tensors = sess.run(self._tensors, feed_dict=feed_dict)
+        _tensors = sess.run(fetches, feed_dict=feed_dict)
 
         costs = {
             self.COST_tensors[name]: self._process_cost(f(_tensors, self))
