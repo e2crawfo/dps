@@ -5,7 +5,7 @@ import os
 from dps import cfg
 from dps.updater import DifferentiableUpdater
 from dps.env.supervised import BernoulliSigmoid
-from dps.datasets import EMNIST_ObjectDetection
+from dps.datasets import EmnistObjectDetection
 from dps.utils import Config, Param
 from dps.utils.tf import ScopedFunction
 
@@ -29,9 +29,9 @@ class SimpleDecoder(ScopedFunction):
 
 
 def build_env():
-    train = EMNIST_ObjectDetection(n_examples=int(cfg.n_train), example_range=(0., 0.9))
-    val = EMNIST_ObjectDetection(n_examples=int(cfg.n_val), example_range=(0.9, 0.95))
-    test = EMNIST_ObjectDetection(n_examples=int(cfg.n_val), example_range=(0.95, 1.))
+    train = EmnistObjectDetection(n_examples=int(cfg.n_train), example_range=(0., 0.9))
+    val = EmnistObjectDetection(n_examples=int(cfg.n_val), example_range=(0.9, 0.95))
+    test = EmnistObjectDetection(n_examples=int(cfg.n_val), example_range=(0.95, 1.))
     return LearnMean(train, val, test)
 
 

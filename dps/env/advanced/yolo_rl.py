@@ -7,7 +7,7 @@ from sklearn.cluster import k_means
 import collections
 
 from dps import cfg
-from dps.datasets import EMNIST_ObjectDetection
+from dps.datasets import EmnistObjectDetection
 from dps.updater import Updater
 from dps.utils import Config, Param, Parameterized, square_subplots, prime_factors
 from dps.utils.tf import (
@@ -16,14 +16,13 @@ from dps.utils.tf import (
 from dps.env.advanced.yolo import mAP
 from dps.tf_ops import render_sprites
 from dps.utils.tf import MLP
-
-tf_flatten = tf.layers.flatten
+from dps.updater import DataManager
 
 
 class Env(object):
     def __init__(self):
-        train = EMNIST_ObjectDetection(n_examples=int(cfg.n_train), shuffle=True, example_range=(0.0, 0.9))
-        val = EMNIST_ObjectDetection(n_examples=int(cfg.n_val), shuffle=True, example_range=(0.9, 1.))
+        train = EmnistObjectDetection(n_examples=int(cfg.n_train), shuffle=True, example_range=(0.0, 0.9))
+        val = EmnistObjectDetection(n_examples=int(cfg.n_val), shuffle=True, example_range=(0.9, 1.))
 
         self.datasets = dict(train=train, val=val)
 
@@ -91,24 +90,21 @@ class ObjectDecoder(FullyConvolutional):
 
 def reconstruction_cost(_tensors, updater):
     pp_reconstruction_loss = _tensors['per_pixel_reconstruction_loss']
-    batch_size = pp_reconstruction_loss.shape[0]
-    pp_reconstruction_loss = pp_reconstruction_loss.reshape(batch_size, -1)
-    reconstruction_loss = np.sum(pp_reconstruction_loss, axis=1)
-    return reconstruction_loss.reshape(batch_size, 1, 1, 1, 1)
-
-
-reconstruction_cost.keys_accessed = "per_pixel_reconstruction_loss"
+    batch_size = tf.shape(pp_reconstruction_loss)[0]
+    pp_reconstruction_loss = tf.reshape(pp_reconstruction_loss, (batch_size, -1))
+    reconstruction_loss = tf.reduce_sum(pp_reconstruction_loss, axis=1)
+    return tf.reshape(reconstruction_loss, (batch_size, 1, 1, 1, 1))
 
 
 def local_reconstruction_cost(_tensors, network):
-    centers_h = (np.arange(network.H) + 0.5) * network.pixels_per_cell[0]
-    centers_w = (np.arange(network.W) + 0.5) * network.pixels_per_cell[1]
+    centers_h = (tf.range(network.H, dtype=tf.float32) + 0.5) * network.pixels_per_cell[0]
+    centers_w = (tf.range(network.W, dtype=tf.float32) + 0.5) * network.pixels_per_cell[1]
 
-    loc_h = (np.arange(network.image_height) + 0.5)[..., None]
-    loc_w = (np.arange(network.image_width) + 0.5)[..., None]
+    loc_h = (tf.range(network.image_height, dtype=tf.float32) + 0.5)[..., None]
+    loc_w = (tf.range(network.image_width, dtype=tf.float32) + 0.5)[..., None]
 
-    dist_h = np.abs(loc_h - centers_h)
-    dist_w = np.abs(loc_w - centers_w)
+    dist_h = tf.abs(loc_h - centers_h)
+    dist_w = tf.abs(loc_w - centers_w)
 
     all_filtered = []
 
@@ -119,70 +115,63 @@ def local_reconstruction_cost(_tensors, network):
         max_distance_w = network.pixels_per_cell[1] / 2 + network.max_hw * network.anchor_boxes[b, 1] / 2
 
         # Rectangle filtering
-        filt_h = (dist_h < max_distance_h).astype('f')
-        filt_w = (dist_w < max_distance_w).astype('f')
+        filt_h = tf.to_float(dist_h < max_distance_h)
+        filt_w = tf.to_float(dist_w < max_distance_w)
 
-        # Sum over channel dimension
-        signal = loss.sum(axis=-1)
+        signal = tf.reduce_sum(loss, axis=3)
 
-        signal = np.dot(signal, filt_w)
-        signal = np.tensordot(signal, filt_h, [1, 0])
-        signal = np.transpose(signal, (0, 2, 1))
+        signal = tf.tensordot(signal, filt_w, [[2], [0]])
+        signal = tf.tensordot(signal, filt_h, [[1], [0]])
+        signal = tf.transpose(signal, (0, 2, 1))
 
         all_filtered.append(signal)
 
-    return np.stack(all_filtered, axis=-1)[..., None]
+    return tf.stack(all_filtered, axis=3)[..., None]
 
 
-local_reconstruction_cost.keys_accessed = "per_pixel_reconstruction_loss"
-
-
-def _local_filter(signal, neighbourhood_size):
+def tf_local_filter(signal, neighbourhood_size):
     if neighbourhood_size == 0:
         return signal
 
     _, H, W, B, _ = signal.shape
+    H, W, B = int(H), int(W), int(B)
 
     if neighbourhood_size is None:
         neighbourhood_size = max(H, W)
 
-    dist_h = np.abs(np.arange(H) - np.arange(H)[..., None])
-    dist_w = np.abs(np.arange(W) - np.arange(W)[..., None])
+    dist_h = tf.abs(tf.range(H, dtype=tf.float32) - tf.range(H, dtype=tf.float32)[..., None])
+    dist_w = tf.abs(tf.range(W, dtype=tf.float32) - tf.range(W, dtype=tf.float32)[..., None])
 
     # Rectangle filtering
-    filt_h = (dist_h <= neighbourhood_size).astype('f')
-    filt_w = (dist_w <= neighbourhood_size).astype('f')
+    filt_h = tf.to_float(dist_h <= neighbourhood_size)
+    filt_w = tf.to_float(dist_w <= neighbourhood_size)
 
     # Sum over box and channel dimensions
-    signal = signal.sum(axis=(3, 4))
+    signal = tf.reduce_sum(signal, axis=(3, 4))
 
-    signal = np.dot(signal, filt_w)
-    signal = np.tensordot(signal, filt_h, [1, 0])
-    signal = np.transpose(signal, (0, 2, 1))
+    signal = tf.tensordot(signal, filt_w, [[2], [0]])
+    signal = tf.tensordot(signal, filt_h, [[1], [0]])
+    signal = tf.transpose(signal, (0, 2, 1))
 
     return signal[..., None, None]
 
 
 class AreaCost(object):
-    keys_accessed = "program:obj area"
-
     def __init__(self, target_area, neighbourhood_size):
         self.target_area = target_area
         self.neighbourhood_size = neighbourhood_size
 
     def __call__(self, _tensors, updater):
-        selected_area_cost = _tensors['program']['obj'] * np.abs(_tensors['area'] - self.target_area)
-        return _local_filter(selected_area_cost, self.neighbourhood_size)
+        selected_area_cost = _tensors['program']['obj'] * tf.abs(_tensors['area'] - self.target_area)
+        return tf_local_filter(selected_area_cost, self.neighbourhood_size)
 
 
 class NonzeroCost(object):
-    keys_accessed = "program:obj"
-
     def __init__(self, neighbourhood_size=0):
         self.neighbourhood_size = neighbourhood_size
 
     def __call__(self, _tensors, network):
-        return _local_filter(_tensors['program']['obj'], self.neighbourhood_size)
+        return tf_local_filter(_tensors['program']['obj'], self.neighbourhood_size)
 
 
 def negative_mAP_cost(_tensors, network):
@@ -345,12 +334,9 @@ class YoloRL_Network(Parameterized):
         self.COST_funcs['area'] = (self.area_weight, _area_cost_func, "obj")
 
         # For evaluation purposes only
-        self.COST_funcs['negative_mAP'] = (0, negative_mAP_cost, "obj")
-        self.COST_funcs['count_error'] = (0, count_error_cost, "obj")
-        self.COST_funcs['count_1norm'] = (0, count_1norm_cost, "obj")
-
-        for name, (_, func, _) in self.COST_funcs.items():
-            assert isinstance(getattr(func, "keys_accessed"), str), name
+        # self.COST_funcs['negative_mAP'] = (0, negative_mAP_cost, "obj")
+        # self.COST_funcs['count_error'] = (0, count_error_cost, "obj")
+        # self.COST_funcs['count_1norm'] = (0, count_1norm_cost, "obj")
 
         self.object_decoder = None
 
@@ -402,10 +388,6 @@ class YoloRL_Network(Parameterized):
         return self._tensors["inputs"]["inp"]
 
     @property
-    def inp_ph(self):
-        return self._tensors["inputs"]["inp_ph"]
-
-    @property
     def batch_size(self):
         return self._tensors["batch_size"]
 
@@ -447,10 +429,10 @@ class YoloRL_Network(Parameterized):
         return tvars
 
     def _process_cost(self, cost):
-        assert cost.ndim == 5
-        return cost * np.ones((1, self.H, self.W, self.B, 1))
+        assert len(cost.shape) == 5
+        return tf.stop_gradient(cost) * tf.ones((1, self.H, self.W, self.B, 1))
 
-    def _compute_routing(self, program):
+    def _build_routing(self):
         """ Compute a routing matrix based on sampled program, for use in program interpretation step.
 
         Returns
@@ -463,86 +445,78 @@ class YoloRL_Network(Parameterized):
             Routing array used as input to tf.gather_nd when interpreting program to form an image.
 
         """
-        batch_size = program['obj'].shape[0]
-        flat_obj = program['obj'].reshape(batch_size, -1)
-        n_objects = np.sum(flat_obj, axis=1).astype('i')
-        max_objects = n_objects.max()
-        flat_z = program['z'].reshape(batch_size, -1)
-        target_shape = program['attr'].shape[1:4]
-        assert len(target_shape) == 3  # (batch_size, H, W, B)
+        flat_obj = tf.reshape(self.program['obj'], (self.batch_size, -1))
+        n_objects = tf.to_int32(tf.reduce_sum(flat_obj, axis=1))
+        max_objects = tf.reduce_max(n_objects)
+        flat_z = tf.reshape(self.program['z'], (self.batch_size, -1))
 
-        routing = np.zeros((batch_size, max_objects, 4))
+        _flat_z = tf.where(flat_obj > 0, flat_z, -1. * tf.ones_like(flat_z))
+        _, indices = tf.nn.top_k(_flat_z, k=max_objects, sorted=True)
+        indices += (tf.range(self.batch_size)[:, None] * tf.shape(flat_obj)[1])
 
-        for b, fz in enumerate(flat_z):
-            indexed = [(_fz, i) for (i, _fz) in enumerate(fz) if flat_obj[b, i] > 0]
+        indices = tf.reshape(indices, (-1,))  # tf.unravel_index requires a vector, can't handle anything higher-d
 
-            # Sort turned-on objects by increasing z value
-            _sorted = sorted(indexed)
+        routing = tf.unravel_index(indices, (self.batch_size, self.H, self.W, self.B))
+        routing = tf.reshape(routing, (4, self.batch_size, max_objects))
+        routing = tf.transpose(routing, [1, 2, 0])
 
-            for j, (_, i) in enumerate(_sorted):
-                routing[b, j, :] = (b,) + np.unravel_index(i, target_shape)
+        self._tensors["routing"] = routing
+        self._tensors["max_objects"] = max_objects
+        self._tensors["n_objects"] = n_objects
 
-        return max_objects, n_objects, routing
+    # def _update_feed_dict_with_routing(self, feed_dict):
+    #     """ Generate program and compute routing matrix """
 
-    def _update_feed_dict_with_routing(self, feed_dict):
-        """ Generate program and compute routing matrix """
+    #     feed_dict[self.fixed_samples] = False
 
-        feed_dict[self.fixed_samples] = False
+    #     batch_size = feed_dict[self._tensors["inputs"]["inp_ph"]].shape[0]
 
-        batch_size = feed_dict[self._tensors["inputs"]["inp_ph"]].shape[0]
+    #     # Add dummy values for the input samples
+    #     for input_sample in self.input_samples.values():
+    #         feed_dict[input_sample] = np.zeros([batch_size] + [int(i) for i in input_sample.shape[1:]])
 
-        # Add dummy values for the input samples
-        for input_sample in self.input_samples.values():
-            feed_dict[input_sample] = np.zeros([batch_size] + [int(i) for i in input_sample.shape[1:]])
+    #     sess = tf.get_default_session()
+    #     program, samples = sess.run([self.program, self.samples], feed_dict=feed_dict)
 
-        sess = tf.get_default_session()
-        program, samples = sess.run([self.program, self.samples], feed_dict=feed_dict)
+    #     feed_dict.update({self.input_samples[k]: v for k, v in samples.items()})
+    #     feed_dict[self.fixed_samples] = True
 
-        feed_dict.update({self.input_samples[k]: v for k, v in samples.items()})
-        feed_dict[self.fixed_samples] = True
+    #     max_objects, n_objects, routing = self._compute_routing(program)
+    #     feed_dict[self._tensors["max_objects"]] = max_objects
+    #     feed_dict[self._tensors["n_objects"]] = n_objects
+    #     feed_dict[self._tensors["routing"]] = routing
 
-        max_objects, n_objects, routing = self._compute_routing(program)
-        feed_dict[self._tensors["max_objects"]] = max_objects
-        feed_dict[self._tensors["n_objects"]] = n_objects
-        feed_dict[self._tensors["routing"]] = routing
+    # def _update_feed_dict_with_costs(self, feed_dict):
+    #     """ Compute costs (negative rewards) once program has been generated and routing matrix computed. """
 
-    def _update_feed_dict_with_costs(self, feed_dict):
-        """ Compute costs (negative rewards) once program has been generated and routing matrix computed. """
+    #     sess = tf.get_default_session()
 
-        sess = tf.get_default_session()
+    #     fetch_keys = set()
+    #     for _, f, _ in self.COST_funcs.values():
+    #         for key in f.keys_accessed.split():
+    #             fetch_keys.add(key)
 
-        fetch_keys = set()
-        for _, f, _ in self.COST_funcs.values():
-            for key in f.keys_accessed.split():
-                fetch_keys.add(key)
+    #     fetches = {}
+    #     for key in list(fetch_keys):
+    #         dst = fetches
+    #         src = self._tensors
+    #         subkeys = key.split(":")
 
-        fetches = {}
-        for key in list(fetch_keys):
-            dst = fetches
-            src = self._tensors
-            subkeys = key.split(":")
+    #         for i, _key in enumerate(subkeys):
+    #             if i == len(subkeys)-1:
+    #                 dst[_key] = src[_key]
+    #             else:
+    #                 if _key not in dst:
+    #                     dst[_key] = dict()
+    #                 dst = dst[_key]
+    #                 src = src[_key]
 
-            for i, _key in enumerate(subkeys):
-                if i == len(subkeys)-1:
-                    dst[_key] = src[_key]
-                else:
-                    if _key not in dst:
-                        dst[_key] = dict()
-                    dst = dst[_key]
-                    src = src[_key]
+    #     _tensors = sess.run(self._tensors, feed_dict=feed_dict)
 
-        _tensors = sess.run(fetches, feed_dict=feed_dict)
-
-        costs = {
-            self.COST_tensors[name]: self._process_cost(f(_tensors, self))
-            for name, (_, f, _) in self.COST_funcs.items()
-        }
-        feed_dict.update(costs)
-
-    def update_feed_dict(self, feed_dict, other):
-        self._other = other
-        self._update_feed_dict_with_routing(feed_dict)
-        self._update_feed_dict_with_costs(feed_dict)
+    # def update_feed_dict(self, feed_dict, other):
+    #     self._other = other
+    #     self._update_feed_dict_with_routing(feed_dict)
+    #     self._update_feed_dict_with_costs(feed_dict)
 
     def _get_scheduled_value(self, name):
         scalar = self._tensors.get(name, None)
@@ -561,23 +535,7 @@ class YoloRL_Network(Parameterized):
         )
         self._tensors["float_fixed_samples"] = tf.to_float(self._tensors["fixed_samples"])
 
-        H, W, B = self.H, self.W, self.B
-
-        self.COST_tensors = {}
-
-        for name, _ in self.COST_funcs.items():
-            cost = tf.placeholder(
-                tf.float32, (None, H, W, B, 1), name="COST_{}_ph".format(name))
-            self.COST_tensors[name] = cost
-
-        self.input_samples = {}
-
-        for kind, params in self.layer_params.items():
-            self.input_samples[kind] = tf.placeholder(
-                tf.float32, (None, H, W, B, params['sample_size']),
-                name="{}_input_samples".format(kind))
-
-    def _build_box(self, box_logits, input_samples, is_training):
+    def _build_box(self, box_logits, is_training):
         box = tf.nn.sigmoid(tf.clip_by_value(box_logits, -10., 10.))
         cell_y, cell_x, h, w = tf.split(box, 4, axis=-1)
 
@@ -599,10 +557,7 @@ class YoloRL_Network(Parameterized):
 
         box_std = self._get_scheduled_value("box_std")
 
-        box_noise = (
-            self.float_fixed_samples * input_samples +
-            (1 - self.float_fixed_samples) * tf.random_normal(tf.shape(box), name="box_noise")
-        )
+        box_noise = tf.random_normal(tf.shape(box), name="box_noise")
 
         noisy_box = box + box_noise * box_std * self.float_do_explore
 
@@ -615,7 +570,7 @@ class YoloRL_Network(Parameterized):
             program=noisy_box,
         )
 
-    def _build_obj(self, obj_logits, input_samples, is_training, **kwargs):
+    def _build_obj(self, obj_logits, is_training, **kwargs):
         obj_logits = tf.clip_by_value(obj_logits, -10., 10.)
 
         obj_params = tf.nn.sigmoid(obj_logits)
@@ -629,11 +584,6 @@ class YoloRL_Network(Parameterized):
 
         obj_samples = tf.stop_gradient(obj_dist.sample())
         obj_samples = tf.to_float(obj_samples)
-
-        obj_samples = (
-            self.float_fixed_samples * input_samples +
-            (1 - self.float_fixed_samples) * obj_samples
-        )
 
         obj_log_probs = obj_dist.log_prob(obj_samples)
         obj_log_probs = tf.where(tf.is_nan(obj_log_probs), -100.0 * tf.ones_like(obj_log_probs), obj_log_probs)
@@ -651,7 +601,7 @@ class YoloRL_Network(Parameterized):
             program=obj_samples
         )
 
-    def _build_z(self, z_logits, input_samples, is_training):
+    def _build_z(self, z_logits, is_training):
         z_logits = tf.clip_by_value(z_logits, -10., 10.)
 
         z_params = tf.nn.sigmoid(z_logits)
@@ -660,11 +610,6 @@ class YoloRL_Network(Parameterized):
         z_dist = tf.distributions.Normal(loc=z_params, scale=z_std)
 
         z_samples = tf.stop_gradient(z_dist.sample())
-
-        z_samples = (
-            self.float_fixed_samples * input_samples +
-            (1 - self.float_fixed_samples) * z_samples
-        )
 
         z_log_probs = z_dist.log_prob(z_samples)
         z_log_probs = tf.where(tf.is_nan(z_log_probs), -100.0 * tf.ones_like(z_log_probs), z_log_probs)
@@ -682,13 +627,10 @@ class YoloRL_Network(Parameterized):
             program=z_samples
         )
 
-    def _build_attr(self, attr, input_samples, is_training):
+    def _build_attr(self, attr, is_training):
         attr_std = self._get_scheduled_value("attr_std")
 
-        attr_noise = (
-            self.float_fixed_samples * input_samples +
-            (1 - self.float_fixed_samples) * tf.random_normal(tf.shape(attr), name="attr_noise")
-        )
+        attr_noise = tf.random_normal(tf.shape(attr), name="attr_noise")
 
         noisy_attr = attr + attr_noise * attr_std * self.float_do_explore
 
@@ -740,8 +682,7 @@ class YoloRL_Network(Parameterized):
 
             rep_input = tf.reshape(rep_input, (-1, H, W, B, output_size))
 
-            input_samples = self.input_samples[kind]
-            built = rep_builder(rep_input, input_samples, self.is_training)
+            built = rep_builder(output, self.is_training)
 
             assert 'program' in built
             for key, value in built.items():
@@ -850,8 +791,7 @@ class YoloRL_Network(Parameterized):
 
                         rep_input, features = tf.split(network_output, (output_size, n_features), axis=1)
 
-                        input_samples = self.input_samples[kind][:, h, w, b, :]
-                        built = rep_builder(rep_input, input_samples, self.is_training)
+                        built = rep_builder(rep_input, self.is_training)
 
                         assert 'program' in built
                         for key, value in built.items():
@@ -986,6 +926,8 @@ class YoloRL_Network(Parameterized):
         else:
             self._build_program_generator()
 
+        self._build_routing()
+
         if self.object_decoder is None:
             self.object_decoder = cfg.build_object_decoder(scope="object_decoder")
 
@@ -997,6 +939,8 @@ class YoloRL_Network(Parameterized):
         # --- specify values to record/summarize ---
 
         recorded_tensors = {}
+
+        recorded_tensors['batch_size'] = tf.to_float(self.batch_size)
 
         recorded_tensors['cell_y'] = tf.reduce_mean(self._tensors["cell_y"])
         recorded_tensors['cell_x'] = tf.reduce_mean(self._tensors["cell_x"])
@@ -1015,14 +959,20 @@ class YoloRL_Network(Parameterized):
 
         recorded_tensors['attr'] = tf.reduce_mean(self._tensors["program"]["attr"])
 
+        # --- required for computing the reconstruction COST ---
+
+        output = self._tensors['output']
+        inp = self._tensors['inputs']['inp']
+        self._tensors['per_pixel_reconstruction_loss'] = loss_builders[loss_key](output, inp)
+
         # --- compute rl loss ---
 
         COST = tf.zeros((self.batch_size, self.H, self.W, self.B, 1))
         COST_obj = tf.zeros((self.batch_size, self.H, self.W, self.B, 1))
         COST_z = tf.zeros((self.batch_size, self.H, self.W, self.B, 1))
 
-        for name, (weight, _, kind) in self.COST_funcs.items():
-            cost = self.COST_tensors[name]
+        for name, (weight, func, kind) in self.COST_funcs.items():
+            cost = self._process_cost(func(self._tensors, self))
             weight = build_scheduled_value(weight, "COST_{}_weight".format(name))
             weighted_cost = weight * cost
 
@@ -1053,12 +1003,6 @@ class YoloRL_Network(Parameterized):
             (COST_obj + COST) * self.log_probs['obj'] +
             (COST_z + COST) * self.log_probs['z']
         )
-
-        # --- required for computing the reconstruction COST ---
-
-        output = self._tensors['output']
-        inp = self._tensors['inputs']['inp']
-        self._tensors['per_pixel_reconstruction_loss'] = loss_builders[loss_key](output, inp)
 
         # --- store losses ---
 
@@ -1094,9 +1038,6 @@ class YoloRL_Updater(Updater):
 
         self.datasets = env.datasets
 
-        for dset in self.datasets.values():
-            dset.reset()
-
         self.scope = scope
         self._n_experiences = 0
         self._n_updates = 0
@@ -1109,9 +1050,7 @@ class YoloRL_Updater(Updater):
         return self.network.trainable_variables(for_opt)
 
     def _update(self, batch_size, collect_summaries):
-        feed_dict, _other = self.make_feed_dict(batch_size, 'train', False)
-
-        self.network.update_feed_dict(feed_dict, _other)
+        feed_dict = self.data_manager.do_train()
 
         sess = tf.get_default_session()
         summary = b''
@@ -1127,86 +1066,32 @@ class YoloRL_Updater(Updater):
     def _evaluate(self, batch_size, mode):
         assert mode in self.eval_modes
 
-        sess = tf.get_default_session()
-        feed_dicts = self.make_feed_dict(batch_size, 'val', True, whole_epoch=True)
+        feed_dict = self.data_manager.do_val()
 
         record = collections.defaultdict(float)
         summary = b''
         n_points = 0
 
-        for _batch_size, feed_dict, other in feed_dicts:
-            self.network.update_feed_dict(feed_dict, other)
+        sess = tf.get_default_session()
 
-            _record, summary = sess.run(
-                [self.recorded_tensors, self.summary_op], feed_dict=feed_dict)
+        while True:
+            try:
+                _record, summary = sess.run(
+                    [self.recorded_tensors, self.summary_op], feed_dict=feed_dict)
+            except tf.errors.OutOfRangeError:
+                break
+
+            batch_size = _record['batch_size']
 
             for k, v in _record.items():
-                record[k] += _batch_size * v
+                record[k] += batch_size * v
 
-            n_points += _batch_size
+            n_points += batch_size
 
         for k, v in record.items():
             record[k] /= n_points
 
         return record, summary
-
-    def _make_feed_dict(self, batch, evaluate):
-        if len(batch) == 1:
-            inp, annotations = batch[0], None
-        elif len(batch) == 2:
-            inp, annotations = batch
-        else:
-            raise Exception()
-
-        other = dict(annotations=annotations)
-
-        # Compute the mode colour of each image.
-        discrete = np.uint8(np.floor(inp * 255.))
-        discrete = discrete.reshape(discrete.shape[0], -1, discrete.shape[-1])
-        modes = []
-        for row in discrete:
-            counts = collections.Counter(tuple(t) for t in row)
-            mode, mode_count = counts.most_common(1)[0]
-            modes.append(mode)
-        modes = np.array(modes) / 255
-
-        feed_dict = {
-            self.inp_ph: inp,
-            self.inp_mode: modes,
-            self.is_training: not evaluate
-        }
-
-        return inp.shape[0], feed_dict, other
-
-    def make_feed_dict(self, batch_size, mode, evaluate, whole_epoch=False):
-        """
-        If `whole_epoch` is True, create multiple feed dicts, each containing at most
-        `batch_size` data points, until the epoch is completed. In this case return a list
-        whose elements are of the form `(batch_size, feed_dict, other)`, where `other`
-        is a dictionary containing metadata about each sub-batch.
-
-        """
-        dicts = []
-        dset = self.datasets[mode]
-
-        if whole_epoch:
-            dset.reset_epoch()
-
-        epochs_before = dset.epochs_completed
-
-        while True:
-            batch = dset.next_batch(batch_size=batch_size, advance=not evaluate or whole_epoch, rollover=not whole_epoch)
-            actual_batch_size, feed_dict, other = self._make_feed_dict(batch, evaluate)
-
-            if whole_epoch:
-                dicts.append((actual_batch_size, feed_dict, other))
-
-                if dset.epochs_completed != epochs_before:
-                    break
-            else:
-                return feed_dict, other
-
-        return dicts
 
     def _build_graph(self):
         self.data_manager = DataManager(self.datasets['train'],
@@ -1214,9 +1099,10 @@ class YoloRL_Updater(Updater):
                                         cfg.batch_size)
         self.data_manager.build_graph()
 
-        self.inp = tf.clip_by_value(
-            self.data_manager.next_batch, 1e-6, 1-1e-6, name="clipped_input")
+        images, annotations = self.data_manager.iterator.get_next()
 
+        self.inp = images
+        self.annotations = annotations
         self.is_training = self.data_manager.is_training
         self.float_is_training = tf.to_float(self.is_training)
 
@@ -1301,30 +1187,20 @@ class YoloRL_RenderHook(object):
         self.N = N
 
     def __call__(self, updater):
-        if updater.stage_idx == 0:
-            path = updater.exp_dir.path_for('plots', 'frames.pdf')
-            if not os.path.exists(path):
-                fig, axes = square_subplots(16)
-                for ax, frame in zip(axes.flatten(), updater.datasets['train'].x):
-                    ax.imshow(frame)
-
-                fig.savefig(path)
-                plt.close(fig)
-
         fetched = self._fetch(self.N, updater)
 
         self._plot_reconstruction(updater, fetched)
         self._plot_patches(updater, fetched, 4)
 
     def _fetch(self, N, updater):
+        feed_dict = updater.data_manager.do_val()
+
         network = updater.network
 
-        feed_dict, network._other = updater.make_feed_dict(N, 'val', True)
-        images = feed_dict[network.inp_ph]
-
-        network._update_feed_dict_with_routing(feed_dict)
-
         to_fetch = network.program.copy()
+
+        to_fetch["images"] = network._tensors["inputs"]["inp"]
+        to_fetch["annotations"] = updater.annotations
         to_fetch["output"] = network._tensors["output"]
         to_fetch["objects"] = network._tensors["objects"]
         to_fetch["routing"] = network._tensors["routing"]
@@ -1334,8 +1210,6 @@ class YoloRL_RenderHook(object):
 
         sess = tf.get_default_session()
         fetched = sess.run(to_fetch, feed_dict=feed_dict)
-        fetched.update(images=images)
-        fetched["annotations"] = network._other["annotations"]
 
         return fetched
 
@@ -1351,8 +1225,6 @@ class YoloRL_RenderHook(object):
         obj = fetched['obj'].reshape(N, -1)
 
         annotations = fetched["annotations"]
-        if annotations is None:
-            annotations = [[]] * N
 
         box = (
             fetched['normalized_box'] *
@@ -1390,6 +1262,9 @@ class YoloRL_RenderHook(object):
 
             # Plot true bounding boxes
             for a in annotations[n]:
+                if (a == 0).all():
+                    continue
+
                 _, t, b, l, r = a
                 h = b - t
                 w = r - l

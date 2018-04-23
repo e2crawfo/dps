@@ -3,15 +3,16 @@ import tensorflow as tf
 
 from dps import cfg
 from dps.utils import Param
-from dps.datasets import load_emnist
-from dps.dataset import DatasetBuilder, PatchesBuilder, GridPatchesBuilder, tf_image_representation
+from dps.datasets import load_emnist, DatasetBuilder, PatchesBuilder, GridPatchesBuilder, tf_image_representation
 
 
 def tf_annotation_representation(annotation, prefix=""):
     """ Get a representation of an annotation list suitable for passing to tf.train.Features """
+    flat_annotation = [v for a in annotation for v in a]  # each has 5 values
+
     features = dict(
-        length=tf.train.Feature(float_list=tf.train.FloatList(value=[len(annotation)])),
-        annotation=tf.train.Feature(float_list=tf.train.FloatList(value=annotation))
+        n_annotations=tf.train.Feature(int64_list=tf.train.Int64List(value=[len(annotation)])),
+        annotations=tf.train.Feature(float_list=tf.train.FloatList(value=flat_annotation))
     )
 
     if prefix:
@@ -24,6 +25,34 @@ class ObjectDetectionBuilder(DatasetBuilder):
     postprocessing = Param("")
     tile_shape = Param(None)
     n_samples_per_image = Param(1)
+
+    features = {
+        "annotations": tf.VarLenFeature(dtype=tf.float32),
+        "n_annotations": tf.FixedLenFeature((), dtype=tf.int64),
+        "height": tf.FixedLenFeature((), dtype=tf.int64),
+        "width": tf.FixedLenFeature((), dtype=tf.int64),
+        "n_channels": tf.FixedLenFeature((), dtype=tf.int64),
+        "image_raw": tf.FixedLenFeature((), dtype=tf.string),
+    }
+
+    @property
+    def obs_shape(self):
+        return self.tile_shape + (self.depth,)
+
+    def parse_example_batch(self, example_proto):
+        features = tf.parse_example(example_proto, features=ObjectDetectionBuilder.features)
+
+        images = tf.decode_raw(features['image_raw'], tf.uint8)
+        images = tf.reshape(images, (-1,) + self.obs_shape)
+        images = tf.image.convert_image_dtype(images, tf.float32)
+        images = tf.clip_by_value(images, 1e-6, 1-1e-6)
+
+        max_n_annotations = tf.cast(tf.reduce_max(features['n_annotations']), tf.int32)
+
+        annotations = tf.sparse_tensor_to_dense(features['annotations'], default_value=0)
+        annotations = tf.reshape(annotations, (-1, max_n_annotations, 5))
+
+        return images, annotations
 
     def _write_example(self, image, image_label, annotation):
         if self.postprocessing == "tile":
@@ -155,7 +184,7 @@ class EmnistObjectDetection(ObjectDetectionBuilder, PatchesBuilder):
                                                         n_examples=self.n_patch_examples,
                                                         example_range=self.example_range)
 
-        self.char_reps = zip(emnist_x, emnist_y)
+        self.char_reps = list(zip(emnist_x, emnist_y))
         result = super(EmnistObjectDetection, self)._make()
         del self.char_reps
 
@@ -169,7 +198,7 @@ class EmnistObjectDetection(ObjectDetectionBuilder, PatchesBuilder):
 
         indices = [np.random.randint(len(self.char_reps)) for i in range(n_chars)]
         chars = [self.char_reps[i] for i in indices]
-        char_x, char_y = zip(*chars)
+        char_x, char_y = list(zip(*chars))
         char_x = [self._colourize(cx) for cx in char_x]
 
         return char_x, char_y, None

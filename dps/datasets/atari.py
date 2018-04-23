@@ -4,7 +4,7 @@ import numpy as np
 import os
 
 from dps import cfg
-from dps.datasets import ImageDataset
+from dps.datasets import ImageClassificationBuilder
 from dps.utils import Param, square_subplots
 
 
@@ -118,7 +118,7 @@ def gather_atari_human_frames(game, n_frames, density=1.0):
     return np.array(frames[:n_frames])
 
 
-class AtariAutoencodeDataset(ImageDataset):
+class AtariAutoencodeBuilder(ImageClassificationBuilder):
     game = Param(aliases="atari_game")
     policy = Param()
     image_shape = Param(None)
@@ -188,7 +188,7 @@ class AtariCallback(object):
         self.episodes.append((o, a, r))
 
 
-class StaticAtariDataset(ImageDataset):
+class StaticAtariDataset(ImageClassificationBuilder):
     game = Param(aliases="atari_game")
     image_shape = Param(None)
     samples_per_frame = Param(
@@ -236,5 +236,3 @@ if __name__ == "__main__":
     #     game=game, policy=None, n_examples=100, samples_per_frame=0, image_shape=(30, 40))
     game = "IcyHockeyNoFrameskip-v4"
     dset = StaticAtariDataset(game)
-
-

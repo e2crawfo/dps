@@ -3,13 +3,13 @@ import numpy as np
 
 import sonnet as snt
 
-from dps.datasets import EMNIST_ObjectDetection
+from dps.datasets import EmnistObjectDetection
 
 n_examples = 10
 image_shape = (28, 28, 3)
 crop_shape = (14, 14, 3)
 
-_train = EMNIST_ObjectDetection(
+_train = EmnistObjectDetection(
     n_examples=n_examples,
     min_chars=2,
     max_chars=2,

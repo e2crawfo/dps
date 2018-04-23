@@ -1,7 +1,7 @@
 import clify
 
 from dps.env.advanced import yolo_rl
-from dps.datasets import EMNIST_ObjectDetection
+from dps.datasets import EmnistObjectDetection
 
 
 def prepare_func():
@@ -38,8 +38,8 @@ config = yolo_rl.small_test_config.copy(
 
 # Create the datasets if necessary.
 with config:
-    train = EMNIST_ObjectDetection(n_examples=int(config.n_train), shuffle=True, example_range=(0.0, 0.9))
-    val = EMNIST_ObjectDetection(n_examples=int(config.n_val), shuffle=True, example_range=(0.9, 1.))
+    train = EmnistObjectDetection(n_examples=int(config.n_train), shuffle=True, example_range=(0.0, 0.9))
+    val = EmnistObjectDetection(n_examples=int(config.n_val), shuffle=True, example_range=(0.9, 1.))
 
 from dps.hyper import build_and_submit
 clify.wrap_function(build_and_submit)(config=config, distributions=distributions)

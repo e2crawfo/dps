@@ -587,7 +587,6 @@ class TrainingLoop(object):
                     time_per_batch=time_per_batch,
                     n_steps=local_step,
                     n_experiences=n_local_experiences,
-                    epoch=updater.completion
                 )
 
                 if display:

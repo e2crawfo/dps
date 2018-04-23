@@ -1,6 +1,5 @@
 import abc
 from future.utils import with_metaclass
-from collections import OrderedDict
 
 import tensorflow as tf
 
@@ -186,16 +185,6 @@ class DifferentiableUpdater(Updater):
         return result
 
 
-class ParseExample(object):
-    def __init__(self, features):
-        assert isinstance(features, OrderedDict)
-        self.features = features
-
-    def __call__(self, example_proto):
-        parsed_features = tf.parse_single_example(example_proto)
-        return tuple(parsed_features[k] for k in self.features)
-
-
 class DataManager(object):
     def __init__(self, train_dataset, val_dataset, batch_size):
         self.train_dataset = train_dataset
@@ -205,16 +194,13 @@ class DataManager(object):
     def build_graph(self):
         # Does no shuffling. Make sure dataset is pre-shuffled.
 
-        assert self.val_dataset.structure == self.train_dataset.structure
-        parser = ParseExample(self.train_dataset.structure)
-
         # --- train ---
 
         train_dataset = tf.data.TFRecordDataset(self.train_dataset.filename)
 
-        train_dataset = (train_dataset.map(parser)
-                                      .repeat()
-                                      .batch(self.batch_size))
+        train_dataset = (train_dataset.repeat()
+                                      .batch(self.batch_size)
+                                      .map(self.train_dataset.parse_example_batch))
 
         self.train_iterator = train_dataset.make_one_shot_iterator()
 
@@ -225,8 +211,8 @@ class DataManager(object):
 
         val_dataset = tf.data.TFRecordDataset(self.val_dataset.filename)
 
-        val_dataset = (val_dataset.map(ParseExample(parser))
-                                  .batch(self.batch_size))
+        val_dataset = (val_dataset.batch(self.batch_size)
+                                  .map(self.val_dataset.parse_example_batch))
 
         self.val_iterator = val_dataset.make_initializable_iterator()
 
@@ -237,10 +223,12 @@ class DataManager(object):
         self.handle = tf.placeholder(tf.string, shape=())
         self.iterator = tf.data.Iterator.from_string_handle(
             self.handle, train_dataset.output_types, train_dataset.output_shapes)
-
         self.is_training = self.handle == self.train_handle
-        self.next_batch = self.iterator.get_next()
 
-    def make_feed_dict(self, mode):
-        handle = self.train_handle if mode == "train" else self.val_handle
-        return {self.handle: handle}
+    def do_train(self):
+        return {self.handle: self.train_handle}
+
+    def do_val(self):
+        sess = tf.get_default_session()
+        sess.run(self.val_iterator.initializer)
+        return {self.handle: self.val_handle}

@@ -150,7 +150,7 @@ def load_emnist(
     if example_range is not None:
         assert 0.0 <= example_range[0] < example_range[1] <= 1.0
 
-    x, y = []
+    x, y = [], []
     class_map, class_count = {}, {}
 
     for i, cls in enumerate(sorted(classes)):
@@ -195,10 +195,10 @@ def load_emnist(
 
         keep_x, keep_y = [], []
         for i, cls in enumerate(classes):
-            keep_indices, _ = np.nonzero(y == class_map[cls])
+            keep_indices = np.nonzero(y == class_map[cls])[0]
             keep_indices = keep_indices[:min_class_count]
-            keep_x.append(x[keep_indices, :])
-            keep_y.append(y[keep_indices, :])
+            keep_x.append(x[keep_indices, ...])
+            keep_y.append(y[keep_indices])
 
         x = np.concatenate(keep_x, 0)
         y = np.concatenate(keep_y, 0)

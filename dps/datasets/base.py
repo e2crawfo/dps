@@ -17,10 +17,7 @@ class DatasetBuilder(Parameterized):
     def __init__(self, shuffle=True, **kwargs):
         print("Trying to find dataset in cache...")
 
-        if isinstance(self.use_dataset_cache, str):
-            directory = os.path.join(self.use_dataset_cache, self.__class__.__name__)
-        else:
-            directory = os.path.join(cfg.data_dir, "cached_datasets", self.__class__.__name__)
+        directory = os.path.join(cfg.data_dir, "cached_datasets", self.__class__.__name__)
         os.makedirs(directory, exist_ok=True)
 
         params = self.param_values()
@@ -34,11 +31,21 @@ class DatasetBuilder(Parameterized):
             print("File for dataset not found, creating...")
 
             self._writer = tf.python_io.TFRecordWriter(self.filename)
-            self._make()
-            self._writer.close()
+            try:
+                self._make()
+                self._writer.close()
+            except Exception:
+                self._writer.close()
+                try:
+                    os.remove(self.filename)
+                except FileNotFoundError:
+                    pass
+                raise
 
             with open(self.filename + ".cfg", 'w') as f:
                 f.write(str(params))
+        else:
+            print("Found.")
 
     def _make(self):
         raise Exception("AbstractMethod. When insantiating `Dataset` directly, "
@@ -184,6 +191,14 @@ class PatchesBuilder(DatasetBuilder):
     max_attempts = Param(10000)
     colours = Param('red green blue')
 
+    @property
+    def depth(self):
+        return 3 if self.colours else 1
+
+    @property
+    def obs_shape(self):
+        return self.image_shape + (self.depth,)
+
     def _make(self):
         if self.n_examples == 0:
             return np.zeros((0,) + self.image_shape).astype('uint8'), np.zeros((0, 1)).astype('i')
@@ -199,8 +214,6 @@ class PatchesBuilder(DatasetBuilder):
         self._colours = [np.array(mpl.colors.to_rgb(colour_map[cn]))[None, None, :] for cn in colours]
 
         # --- prepare shapes ---
-
-        self.depth = 3 if self.colours else 1
 
         self.draw_shape = self.draw_shape or self.image_shape
         self.draw_offset = self.draw_offset or (0, 0)
@@ -559,7 +572,7 @@ class VisualArithmeticBuilder(PatchesBuilder):
 
             self._remapped_reductions = {character_map[k]: v for k, v in reductions.items()}
 
-            self.op_reps = zip(emnist_x, emnist_y)
+            self.op_reps = list(zip(emnist_x, emnist_y))
         else:
             assert callable(reductions)
             self.op_reps = None
@@ -574,7 +587,7 @@ class VisualArithmeticBuilder(PatchesBuilder):
         inverted_classmap = {v: k for k, v in classmap.items()}
         mnist_y = np.array([inverted_classmap[y] for y in mnist_y])
 
-        self.digit_reps = zip(mnist_x, mnist_y)
+        self.digit_reps = list(zip(mnist_x, mnist_y))
 
         result = super(VisualArithmeticBuilder, self)._make()
 
@@ -589,7 +602,7 @@ class VisualArithmeticBuilder(PatchesBuilder):
         indices = [np.random.randint(len(self.digit_reps)) for i in range(n_digits)]
         digits = [self.digit_reps[i] for i in indices]
 
-        digit_x, digit_y = zip(*digits)
+        digit_x, digit_y = list(zip(*digits))
 
         digit_x = [self._colourize(dx) for dx in digit_x]
 
