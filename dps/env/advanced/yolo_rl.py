@@ -300,6 +300,7 @@ class YoloRL_Network(Parameterized):
     obj_exploration = Param()
     obj_default = Param()
 
+    n_backbone_features = Param()
     n_passthrough_features = Param()
 
     use_baseline = Param()
@@ -429,8 +430,7 @@ class YoloRL_Network(Parameterized):
             [self.layer_params[kind]["network"] for kind in self.order]
         )
 
-        if self.sequential_cfg['on']:
-            scoped_functions.append(self.backbone)
+        scoped_functions.append(self.backbone)
 
         tvars = []
         for sf in scoped_functions:
@@ -576,6 +576,8 @@ class YoloRL_Network(Parameterized):
         box = tf.nn.sigmoid(tf.clip_by_value(box_logits, -10., 10.))
         cell_y, cell_x, h, w = tf.split(box, 4, axis=-1)
 
+        assert self.max_hw > self.min_hw
+
         h = float(self.max_hw - self.min_hw) * h + self.min_hw
         w = float(self.max_hw - self.min_hw) * w + self.min_hw
 
@@ -600,12 +602,10 @@ class YoloRL_Network(Parameterized):
         noisy_box = box + box_noise * box_std * self.float_is_training
 
         return dict(
-            _tensors=dict(
-                cell_y=cell_y,
-                cell_x=cell_x,
-                h=h,
-                w=w
-            ),
+            cell_y=cell_y,
+            cell_x=cell_x,
+            h=h,
+            w=w,
             samples=box_noise,
             program=noisy_box,
         )
@@ -696,6 +696,14 @@ class YoloRL_Network(Parameterized):
         H, W, B = self.H, self.W, self.B
         program, features = None, None
 
+        if self.backbone is None:
+            self.backbone = cfg.build_backbone(scope="backbone")
+            self.backbone.layout[-1]['filters'] = B * self.n_backbone_features
+
+        inp = self._tensors["inputs"]["inp"]
+        backbone_output = self.backbone(inp, (H, W, B * self.n_backbone_features), self.is_training)
+        backbone_output = tf.reshape(backbone_output, (-1, H, W, B, self.n_backbone_features))
+
         for i, kind in enumerate(self.order):
             kind = self.order[i]
             params = self.layer_params[kind]
@@ -704,54 +712,49 @@ class YoloRL_Network(Parameterized):
             network = params["network"]
             fixed = params["fixed"]
 
-            final = kind == self.order[-1]
-
-            out_channel_dim = B * output_size
-            if not final:
-                out_channel_dim += self.n_passthrough_features
+            first = i == 0
+            final = i == len(self.order) - 1
 
             if network is None:
-                builder = cfg.build_next_step if i else cfg.build_backbone
-
-                network = builder(scope="{}_network".format(kind))
-                network.layout[-1]['filters'] = out_channel_dim
+                network = cfg.build_next_step(scope="{}_network".format(kind))
+                network.layout[-1]['filters'] = B * output_size + self.n_passthrough_features
 
                 if fixed:
                     network.fix_variables()
                 self.layer_params[kind]["network"] = network
 
-            if i:
-                layer_inp = features
-                _program = tf.reshape(program, (-1, H, W, B * int(program.shape[-1])))
-                layer_inp = tf.concat([features, _program], axis=-1)
+            if first:
+                layer_inp = self.backbone_output
             else:
-                layer_inp = self.inp
+                _program = tf.reshape(program, (-1, H, W, B * int(program.shape[-1])))
+                layer_inp = tf.concat([features, _program], axis=3)
 
-            network_output = network(layer_inp, (H, W, out_channel_dim), self.is_training)
+            n_features = 0 if final else self.n_passthrough_features
 
-            features = network_output[..., B*output_size:]
+            network_output = network(layer_inp, (H, W, B * output_size + n_features), self.is_training)
 
-            output = network_output[..., :B*output_size]
-            output = tf.reshape(output, (-1, H, W, B, output_size))
+            rep_input, features = tf.split(network_output, (B * output_size, n_features), axis=3)
+
+            rep_input = tf.reshape(rep_input, (-1, H, W, B, output_size))
 
             input_samples = self.input_samples[kind]
-            built = rep_builder(output, input_samples, self.is_training)
+            built = rep_builder(rep_input, input_samples, self.is_training)
 
             assert 'program' in built
-            for info_type in self.info_types:
-                if info_type in built:
-                    self._tensors[info_type][kind] = built[info_type]
+            for key, value in built.keys():
+                if key in self.info_types:
+                    self._tensors[key][kind] = value
+                else:
+                    assert key not in self._tensors, "Overwriting with key `{}`".format(key)
+                    self._tensors[key] = value
 
-            if '_tensors' in built:
-                self._tensors.update(built['_tensors'])
-
-            if i:
-                program = tf.concat([program, self.program[kind]], axis=-1)
-            else:
+            if first:
                 program = self.program[kind]
+            else:
+                program = tf.concat([program, self.program[kind]], axis=4)
 
     def _get_sequential_input(self, backbone_output, program, h, w, b, edge_element):
-        inp = [backbone_output[:, h, w, b, :]]
+        inp = []
         for i in range(self.sequential_cfg.lookback_shape[0]):
             for j in range(self.sequential_cfg.lookback_shape[1]):
                 for k in range(self.sequential_cfg.lookback_shape[2]):
@@ -766,10 +769,9 @@ class YoloRL_Network(Parameterized):
                     if _i < 0 or _j < 0 or _k < 0:
                         inp.append(edge_element)
                     else:
-                        program_element = program[_i, _j, _k]
-                        inp.append(program_element)
+                        inp.append(program[_i, _j, _k])
 
-        return tf.concat(inp, axis=1)
+        return backbone_output[:, h, w, b, :], tf.concat(inp, axis=1)
 
     def _make_empty(self):
         return np.array([{} for i in range(self.H * self.W * self.B)]).reshape(self.H, self.W, self.B)
@@ -779,11 +781,13 @@ class YoloRL_Network(Parameterized):
 
         if self.backbone is None:
             self.backbone = cfg.build_backbone(scope="backbone")
-            self.backbone.layout[-1]['filters'] = B * self.n_passthrough_features
+            self.backbone.layout[-1]['filters'] = B * self.n_backbone_features
 
         inp = self._tensors["inputs"]["inp"]
-        backbone_output = self.backbone(inp, (H, W, B*self.n_passthrough_features), self.is_training)
-        backbone_output = tf.reshape(backbone_output, (-1, H, W, B, self.n_passthrough_features))
+        backbone_output = self.backbone(inp, (H, W, B*self.n_backbone_features), self.is_training)
+        backbone_output = tf.reshape(backbone_output, (-1, H, W, B, self.n_backbone_features))
+
+        # --- set-up the edge element ---
 
         total_output_size = sum(v["output_size"] for v in self.layer_params.values())
 
@@ -798,20 +802,22 @@ class YoloRL_Network(Parameterized):
         edge_element = tf.concat(_edge_weights, axis=1)
         edge_element = tf.tile(edge_element, (self.batch_size, 1))
 
-        program_info = {
-            info_type: collections.defaultdict(self._make_empty)
-            for info_type in self.info_types}
+        # --- initialize containers for storing built program ---
 
         _tensors = collections.defaultdict(self._make_empty)
+        _tensors.update({
+            info_type: collections.defaultdict(self._make_empty)
+            for info_type in self.info_types})
 
         program = np.empty((H, W, B), dtype=np.object)
+
+        # --- build the program ---
 
         for h in range(self.H):
             for w in range(self.W):
                 for b in range(self.B):
-                    layer_inp = self._get_sequential_input(backbone_output, program, h, w, b, edge_element)
-
-                    hwb_program = []
+                    partial_program = None
+                    features, context = self._get_sequential_input(backbone_output, program, h, w, b, edge_element)
 
                     for i, kind in enumerate(self.order):
                         kind = self.order[i]
@@ -821,55 +827,59 @@ class YoloRL_Network(Parameterized):
                         network = params["network"]
                         fixed = params["fixed"]
 
+                        first = i == 0
+                        final = i == len(self.order) - 1
+
                         if network is None:
-                            builder = self.sequential_cfg.build_next_step
-                            network = builder(scope="{}_sequential_network".format(kind))
+                            network = self.sequential_cfg.build_next_step(scope="{}_sequential_network".format(kind))
                             if fixed:
                                 network.fix_variables()
                             params["network"] = network
 
-                        output = network(layer_inp, output_size, self.is_training)
+                        if first:
+                            layer_inp = tf.concat([features, context], axis=1)
+                        else:
+                            layer_inp = tf.concat([features, context, partial_program], axis=1)
+
+                        n_features = 0 if final else self.n_passthrough_features
+
+                        network_output = network(layer_inp, output_size + n_features, self.is_training)
+
+                        rep_input, features = tf.split(network_output, (output_size, n_features), axis=1)
+
                         input_samples = self.input_samples[kind][:, h, w, b, :]
-                        built = rep_builder(output, input_samples, self.is_training)
+                        built = rep_builder(rep_input, input_samples, self.is_training)
 
                         assert 'program' in built
-                        for info_type, v in program_info.items():
-                            if info_type in built:
-                                v[kind][h, w, b] = built[info_type]
+                        for key, value in built.items():
+                            if key in self.info_types:
+                                _tensors[key][kind][h, w, b] = value
+                            else:
+                                _tensors[key][h, w, b] = value
 
-                        if '_tensors' in built:
-                            for k, v in built['_tensors'].items():
-                                _tensors[k][h, w, b] = v
+                        if first:
+                            partial_program = built['program']
+                        else:
+                            partial_program = tf.concat([partial_program, built['program']], axis=1)
 
-                        program_for_next_step = built['program']
-                        layer_inp = tf.concat([layer_inp, program_for_next_step], axis=1)
-
-                        hwb_program.append(built['program'])
-
-                    program[h, w, b] = tf.concat(hwb_program, axis=1)
+                    program[h, w, b] = partial_program
                     assert program[h, w, b].shape[1] == total_output_size
 
-        # Now stitch everything together into respectable tensors.
-        for info_type, value in program_info.items():
-            for kind, v in value.items():
-                t1 = []
-                for h in range(H):
-                    t2 = []
-                    for w in range(W):
-                        t2.append(tf.stack([v[h, w, b] for b in range(B)], axis=1))
-                    t1.append(tf.stack(t2, axis=1))
-
-                self._tensors[info_type][kind] = tf.stack(t1, axis=1)
-
-        for k, v in _tensors.items():
+        def form_tensor(pieces):
             t1 = []
             for h in range(H):
                 t2 = []
                 for w in range(W):
-                    t2.append(tf.stack([v[h, w, b] for b in range(B)], axis=1))
+                    t2.append(tf.stack([pieces[h, w, b] for b in range(B)], axis=1))
                 t1.append(tf.stack(t2, axis=1))
+            return tf.stack(t1, axis=1)
 
-            self._tensors[k] = tf.stack(t1, axis=1)
+        for key, value in list(_tensors.items()):
+            if isinstance(value, dict):
+                for kind, v in list(value.items()):
+                    self._tensors[key][kind] = form_tensor(v)
+            else:
+                self._tensors[key] = form_tensor(value)
 
     def _build_program_interpreter(self):
         # --- Compute sprites from attrs using object decoder ---
@@ -1547,10 +1557,11 @@ config.update(
     n_decoder_channels=128,
     A=100,
 
+    n_backbone_features=100,
     n_passthrough_features=100,
 
-    max_hw=0.3,  # Maximum for the bounding box multiplier.
-    min_hw=3.0,  # Minimum for the bounding box multiplier.
+    max_hw=3.0,
+    min_hw=0.3,
 
     box_std=0.0,
     attr_std=0.0,
