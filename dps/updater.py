@@ -200,7 +200,8 @@ class DataManager(object):
 
         train_dataset = (train_dataset.repeat()
                                       .batch(self.batch_size)
-                                      .map(self.train_dataset.parse_example_batch))
+                                      .map(self.train_dataset.parse_example_batch)
+                                      .prefetch(self.batch_size))
 
         self.train_iterator = train_dataset.make_one_shot_iterator()
 
@@ -212,7 +213,8 @@ class DataManager(object):
         val_dataset = tf.data.TFRecordDataset(self.val_dataset.filename)
 
         val_dataset = (val_dataset.batch(self.batch_size)
-                                  .map(self.val_dataset.parse_example_batch))
+                                  .map(self.val_dataset.parse_example_batch)
+                                  .prefetch(self.batch_size))
 
         self.val_iterator = val_dataset.make_initializable_iterator()
 
@@ -223,12 +225,12 @@ class DataManager(object):
         self.handle = tf.placeholder(tf.string, shape=())
         self.iterator = tf.data.Iterator.from_string_handle(
             self.handle, train_dataset.output_types, train_dataset.output_shapes)
-        self.is_training = self.handle == self.train_handle
+        self.is_training = tf.placeholder(tf.bool, shape=())
 
     def do_train(self):
-        return {self.handle: self.train_handle}
+        return {self.handle: self.train_handle, self.is_training: True}
 
     def do_val(self):
         sess = tf.get_default_session()
         sess.run(self.val_iterator.initializer)
-        return {self.handle: self.val_handle}
+        return {self.handle: self.val_handle, self.is_training: False}

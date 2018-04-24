@@ -512,37 +512,26 @@ class TrainingLoop(object):
                       (local_step % cfg.render_step) == 0 and
                       local_step > 0)
 
-            # --------------- Perform an update -------------------
+            if display:
+                print(self.data.summarize(local_step, global_step, updater.n_experiences, self.n_global_experiences))
+                print("\nMy PID: {}".format(os.getpid()))
+                print("\nPhysical memory use: "
+                      "{}mb".format(memory_usage(physical=True)))
+                print("Virtual memory use: "
+                      "{}mb".format(memory_usage(physical=False)))
+                print("Avg time per batch: {}s".format(time_per_batch))
 
-            update_start_time = time.time()
-
-            if cfg.do_train:
-                _old_n_experiences = updater.n_experiences
-
-                update_output = updater.update(
-                    cfg.batch_size, collect_summaries=evaluate)
-
-                n_experiences_delta = updater.n_experiences - _old_n_experiences
-                self.n_global_experiences += n_experiences_delta
-
-                self.data.store_step_data_and_summaries(
-                    stage_idx, local_step, global_step,
-                    updater.n_experiences, self.n_global_experiences,
-                    **update_output)
-
-            n_local_experiences = updater.n_experiences
-            n_global_experiences = self.n_global_experiences
-
-            update_duration = time.time() - update_start_time
+                if cfg.use_gpu:
+                    print(nvidia_smi())
 
             # --------------- Possibly evaluate -------------------
 
-            if evaluate or display:
+            if evaluate:
                 eval_results = updater.evaluate(cfg.batch_size)
 
                 self.data.store_step_data_and_summaries(
                     stage_idx, local_step, global_step,
-                    n_local_experiences, n_global_experiences,
+                    updater.n_experiences, self.n_global_experiences,
                     **eval_results)
 
                 record = eval_results[cfg.eval_mode][0]
@@ -555,7 +544,7 @@ class TrainingLoop(object):
                           "constituting (l={}, g={}) experiences, "
                           "with stopping criteria ({}) of {}.".format(
                               local_step, global_step,
-                              n_local_experiences, n_global_experiences,
+                              updater.n_experiences, self.n_global_experiences,
                               self.stopping_criteria_name, stopping_criteria))
 
                     best_path = self.data.path_for(
@@ -586,21 +575,8 @@ class TrainingLoop(object):
                     time_per_example=time_per_example,
                     time_per_batch=time_per_batch,
                     n_steps=local_step,
-                    n_experiences=n_local_experiences,
+                    n_experiences=updater.n_experiences,
                 )
-
-                if display:
-                    print(self.data.summarize(local_step, global_step, n_local_experiences, n_global_experiences))
-                    print("\nMy PID: {}".format(os.getpid()))
-                    print("\nPhysical memory use: "
-                          "{}mb".format(memory_usage(physical=True)))
-                    print("Virtual memory use: "
-                          "{}mb".format(memory_usage(physical=False)))
-                    print("Avg time per batch: {}s".format(time_per_batch))
-                    print("Most recent time per batch: {}s".format(update_duration))
-
-                    if cfg.use_gpu:
-                        print(nvidia_smi())
 
             for hook in cfg.hooks:
                 if hook.call_per_timestep:
@@ -613,13 +589,35 @@ class TrainingLoop(object):
                         if result:
                             # TODO: currently nothing is done with the record
                             record, summary = result
-                            self.data.add_summary(n_global_experiences, hook.mode, summary)
+                            self.data.add_summary(self.n_global_experiences, hook.mode, summary)
 
             # Possibly render
             if render and cfg.render_hook is not None:
                 print("Rendering...")
                 cfg.render_hook(updater)
                 print("Done rendering.")
+
+            # --------------- Perform an update -------------------
+
+            update_start_time = time.time()
+
+            if cfg.do_train:
+                collect_summaries = evaluate and cfg.save_summaries
+
+                _old_n_experiences = updater.n_experiences
+
+                update_output = updater.update(
+                    cfg.batch_size, collect_summaries=collect_summaries)
+
+                self.data.store_step_data_and_summaries(
+                    stage_idx, local_step, global_step,
+                    updater.n_experiences, self.n_global_experiences,
+                    **update_output)
+
+                n_experiences_delta = updater.n_experiences - _old_n_experiences
+                self.n_global_experiences += n_experiences_delta
+
+            update_duration = time.time() - update_start_time
 
             # If `do_train` is False, we do no training and evaluate
             # exactly once, so only one iteration is required.

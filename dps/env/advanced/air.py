@@ -291,41 +291,31 @@ class AIR_RenderHook(object):
         self.N = N
 
     def __call__(self, updater):
-        if updater.stage_idx == 0:
-            path = updater.exp_dir.path_for('plots', 'frames.pdf')
-            if not os.path.exists(path):
-                fig, axes = square_subplots(16)
-                for ax, frame in zip(axes.flatten(), updater.datasets['train'].x):
-                    imshow(ax, frame)
-
-                fig.savefig(path)
-                plt.close(fig)
-
         fetched = self._fetch(self.N, updater)
 
         self._plot_reconstruction(updater, fetched)
 
     def _fetch(self, N, updater):
+        feed_dict = updater.data_manager.do_val()
+
         network = updater.network
 
-        feed_dict, other = updater.make_feed_dict(N, 'val', True)
-        network.update_feed_dict(feed_dict, other)
-
-        images = feed_dict[network.inp_ph]
-
         to_fetch = {}
-        to_fetch["output"] = network._tensors["output"]
-        to_fetch["scales"] = network._tensors["scales"]
-        to_fetch["shifts"] = network._tensors["shifts"]
-        to_fetch["predicted_n_digits"] = network._tensors["predicted_n_digits"]
-        to_fetch["vae_input"] = network._tensors["vae_input"]
-        to_fetch["vae_output"] = network._tensors["vae_output"]
+
+        to_fetch["images"] = network.input_images[:N]
+        to_fetch["annotations"] = updater.annotations[:N]
+        to_fetch["n_annotations"] = updater.n_annotations[:N]
+
+        to_fetch["output"] = network._tensors["output"][:N]
+        to_fetch["scales"] = network._tensors["scales"][:N]
+        to_fetch["shifts"] = network._tensors["shifts"][:N]
+        to_fetch["predicted_n_digits"] = network._tensors["predicted_n_digits"][:N]
+        to_fetch["vae_input"] = network._tensors["vae_input"][:N]
+        to_fetch["vae_output"] = network._tensors["vae_output"][:N]
         to_fetch["background"] = network.background
 
         sess = tf.get_default_session()
         fetched = sess.run(to_fetch, feed_dict=feed_dict)
-        fetched.update(images=images)
-        fetched["annotations"] = other["annotations"]
 
         return fetched
 
@@ -349,8 +339,7 @@ class AIR_RenderHook(object):
         predicted_n_digits = fetched['predicted_n_digits']
 
         annotations = fetched["annotations"]
-        if annotations is None:
-            annotations = [[]] * N
+        n_annotations = fetched["n_annotations"]
 
         color_order = "red green blue".split()
 
@@ -365,8 +354,8 @@ class AIR_RenderHook(object):
             ax_rec.set_title('reconstruction')
 
             # Plot true bounding boxes
-            for a in annotations[i]:
-                _, t, b, l, r = a
+            for j in range(n_annotations[i]):
+                _, t, b, l, r = annotations[i][j]
                 h = b - t
                 w = r - l
 
@@ -499,11 +488,7 @@ class AIR_Network(Parameterized):
     verbose_summaries = Param()
 
     def __init__(self, env, scope=None, **kwargs):
-        self.datasets = env.datasets
-        for dset in self.datasets.values():
-            dset.reset()
-
-        self.obs_shape = self.datasets['train'].x.shape[1:]
+        self.obs_shape = env.datasets['train'].obs_shape
         self.image_height, self.image_width, self.image_depth = self.obs_shape
 
         self.COST_funcs = {}
@@ -514,45 +499,6 @@ class AIR_Network(Parameterized):
     def trainable_variables(self, for_opt, rl_only=False):
         tvars = trainable_variables(self.scope, for_opt=for_opt)
         return tvars
-
-    def update_feed_dict(self, feed_dict, other):
-        self._other = other
-
-        batch_size = feed_dict[self.inp_ph].shape[0]
-        annotations = other.get("annotations", [[]] * batch_size)
-        feed_dict[self.target_n_digits] = [len(a) for a in annotations]
-
-        # Computation for which we pop out of tensorflow
-
-        sess = tf.get_default_session()
-
-        fetch_keys = set()
-        for _, f, _ in self.COST_funcs.values():
-            for key in f.keys_accessed.split():
-                fetch_keys.add(key)
-
-        fetches = {}
-        for key in list(fetch_keys):
-            dst = fetches
-            src = self._tensors
-            subkeys = key.split(":")
-
-            for i, _key in enumerate(subkeys):
-                if i == len(subkeys)-1:
-                    dst[_key] = src[_key]
-                else:
-                    if _key not in dst:
-                        dst[_key] = dict()
-                    dst = dst[_key]
-                    src = src[_key]
-
-        _tensors = sess.run(fetches, feed_dict=feed_dict)
-
-        costs = {
-            self.COST_tensors[name]: f(_tensors, self)
-            for name, (_, f, _) in self.COST_funcs.items()
-        }
-        feed_dict.update(costs)
 
     def _summarize_by_digit_count(self, tensor, digits, name):
         float_tensor = tf.to_float(tensor)
@@ -602,10 +548,10 @@ class AIR_Network(Parameterized):
             self.scope = tf.get_variable_scope()
             return self._build_graph(**kwargs)
 
-    def _build_graph(self, loss_key, inp, inp_ph, is_training, float_is_training, background):
+    def _build_graph(self, loss_key, inp, is_training, float_is_training, background, annotations, n_annotations):
         # --- process input ---
 
-        self.inp_ph = inp_ph
+        self.inp = inp
 
         # This is the form expected by the AIR code. It reshapes it to a volume when necessary.
         self.input_images = tf.layers.flatten(inp)
@@ -617,7 +563,7 @@ class AIR_Network(Parameterized):
         self.background = background
         self.loss_key = loss_key
 
-        self.target_n_digits = tf.placeholder(tf.int32, (None,), name="target_n_digits")
+        self.target_n_digits = n_annotations
 
         # --- build graph ---
 
@@ -975,6 +921,9 @@ class AIR_Network(Parameterized):
         )
 
         recorded_tensors = {}
+
+        recorded_tensors['batch_size'] = tf.to_float(self.batch_size)
+        recorded_tensors['float_is_training'] = self.float_is_training
 
         # accuracy of inferred number of digits
         count_error = 1 - tf.to_float(tf.equal(self.target_n_digits, self.predicted_n_digits))

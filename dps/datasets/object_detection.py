@@ -37,7 +37,10 @@ class ObjectDetectionBuilder(DatasetBuilder):
 
     @property
     def obs_shape(self):
-        return self.tile_shape + (self.depth,)
+        if self.postprocessing:
+            return self.tile_shape + (self.depth,)
+        else:
+            return self.image_shape + (self.depth,)
 
     def parse_example_batch(self, example_proto):
         features = tf.parse_example(example_proto, features=ObjectDetectionBuilder.features)
@@ -47,12 +50,13 @@ class ObjectDetectionBuilder(DatasetBuilder):
         images = tf.image.convert_image_dtype(images, tf.float32)
         images = tf.clip_by_value(images, 1e-6, 1-1e-6)
 
-        max_n_annotations = tf.cast(tf.reduce_max(features['n_annotations']), tf.int32)
+        n_annotations = tf.cast(features['n_annotations'], tf.int32)
+        max_n_annotations = tf.reduce_max(n_annotations)
 
         annotations = tf.sparse_tensor_to_dense(features['annotations'], default_value=0)
         annotations = tf.reshape(annotations, (-1, max_n_annotations, 5))
 
-        return images, annotations
+        return images, annotations, n_annotations
 
     def _write_example(self, image, image_label, annotation):
         if self.postprocessing == "tile":
@@ -194,7 +198,7 @@ class EmnistObjectDetection(ObjectDetectionBuilder, PatchesBuilder):
         n_chars = np.random.randint(self.min_chars, self.max_chars+1)
 
         if not n_chars:
-            return [], []
+            return [], [], None
 
         indices = [np.random.randint(len(self.char_reps)) for i in range(n_chars)]
         chars = [self.char_reps[i] for i in indices]

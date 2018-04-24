@@ -2,14 +2,13 @@ import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-import os
 from sklearn.cluster import k_means
 import collections
 
 from dps import cfg
 from dps.datasets import EmnistObjectDetection
 from dps.updater import Updater
-from dps.utils import Config, Param, Parameterized, square_subplots, prime_factors
+from dps.utils import Config, Param, Parameterized, prime_factors
 from dps.utils.tf import (
     FullyConvolutional, build_gradient_train_op, trainable_variables,
     tf_mean_sum, build_scheduled_value)
@@ -100,8 +99,8 @@ def local_reconstruction_cost(_tensors, network):
     centers_h = (tf.range(network.H, dtype=tf.float32) + 0.5) * network.pixels_per_cell[0]
     centers_w = (tf.range(network.W, dtype=tf.float32) + 0.5) * network.pixels_per_cell[1]
 
-    loc_h = (tf.range(network.image_height, dtype=tf.float32) + 0.5)[..., None]
-    loc_w = (tf.range(network.image_width, dtype=tf.float32) + 0.5)[..., None]
+    loc_h = tf.range(network.image_height, dtype=tf.float32)[..., None] + 0.5
+    loc_w = tf.range(network.image_width, dtype=tf.float32)[..., None] + 0.5
 
     dist_h = tf.abs(loc_h - centers_h)
     dist_w = tf.abs(loc_w - centers_w)
@@ -253,7 +252,9 @@ count_1norm_cost.keys_accessed = "program:obj"
 
 
 def build_xent_loss(predictions, targets):
-    return -(targets * tf.log(predictions) + (1. - targets) * tf.log(1. - predictions))
+    return -(
+        targets * tf.log(predictions) +
+        (1. - targets) * tf.log(1. - predictions))
 
 
 def build_squared_loss(predictions, targets):
@@ -403,14 +404,6 @@ class YoloRL_Network(Parameterized):
     def float_do_explore(self):
         return self._tensors["float_do_explore"]
 
-    @property
-    def fixed_samples(self):
-        return self._tensors["fixed_samples"]
-
-    @property
-    def float_fixed_samples(self):
-        return self._tensors["float_fixed_samples"]
-
     def trainable_variables(self, for_opt):
         scoped_functions = (
             [self.object_decoder] +
@@ -445,14 +438,14 @@ class YoloRL_Network(Parameterized):
             Routing array used as input to tf.gather_nd when interpreting program to form an image.
 
         """
-        flat_obj = tf.reshape(self.program['obj'], (self.batch_size, -1))
+        flat_obj = tf.stop_gradient(tf.reshape(self.program['obj'], (self.batch_size, -1)))
         n_objects = tf.to_int32(tf.reduce_sum(flat_obj, axis=1))
         max_objects = tf.reduce_max(n_objects)
-        flat_z = tf.reshape(self.program['z'], (self.batch_size, -1))
+        flat_z = tf.stop_gradient(tf.reshape(self.program['z'], (self.batch_size, -1)))
 
-        _flat_z = tf.where(flat_obj > 0, flat_z, -1. * tf.ones_like(flat_z))
+        _flat_z = tf.where(flat_obj > 1e-6, flat_z, -100. * tf.ones_like(flat_z))
         _, indices = tf.nn.top_k(_flat_z, k=max_objects, sorted=True)
-        indices += (tf.range(self.batch_size)[:, None] * tf.shape(flat_obj)[1])
+        indices += tf.range(self.batch_size)[:, None] * tf.shape(flat_obj)[1]
 
         indices = tf.reshape(indices, (-1,))  # tf.unravel_index requires a vector, can't handle anything higher-d
 
@@ -464,76 +457,12 @@ class YoloRL_Network(Parameterized):
         self._tensors["max_objects"] = max_objects
         self._tensors["n_objects"] = n_objects
 
-    # def _update_feed_dict_with_routing(self, feed_dict):
-    #     """ Generate program and compute routing matrix """
-
-    #     feed_dict[self.fixed_samples] = False
-
-    #     batch_size = feed_dict[self._tensors["inputs"]["inp_ph"]].shape[0]
-
-    #     # Add dummy values for the input samples
-    #     for input_sample in self.input_samples.values():
-    #         feed_dict[input_sample] = np.zeros([batch_size] + [int(i) for i in input_sample.shape[1:]])
-
-    #     sess = tf.get_default_session()
-    #     program, samples = sess.run([self.program, self.samples], feed_dict=feed_dict)
-
-    #     feed_dict.update({self.input_samples[k]: v for k, v in samples.items()})
-    #     feed_dict[self.fixed_samples] = True
-
-    #     max_objects, n_objects, routing = self._compute_routing(program)
-    #     feed_dict[self._tensors["max_objects"]] = max_objects
-    #     feed_dict[self._tensors["n_objects"]] = n_objects
-    #     feed_dict[self._tensors["routing"]] = routing
-
-    # def _update_feed_dict_with_costs(self, feed_dict):
-    #     """ Compute costs (negative rewards) once program has been generated and routing matrix computed. """
-
-    #     sess = tf.get_default_session()
-
-    #     fetch_keys = set()
-    #     for _, f, _ in self.COST_funcs.values():
-    #         for key in f.keys_accessed.split():
-    #             fetch_keys.add(key)
-
-    #     fetches = {}
-    #     for key in list(fetch_keys):
-    #         dst = fetches
-    #         src = self._tensors
-    #         subkeys = key.split(":")
-
-    #         for i, _key in enumerate(subkeys):
-    #             if i == len(subkeys)-1:
-    #                 dst[_key] = src[_key]
-    #             else:
-    #                 if _key not in dst:
-    #                     dst[_key] = dict()
-    #                 dst = dst[_key]
-    #                 src = src[_key]
-
-    #     _tensors = sess.run(self._tensors, feed_dict=feed_dict)
-
-    # def update_feed_dict(self, feed_dict, other):
-    #     self._other = other
-    #     self._update_feed_dict_with_routing(feed_dict)
-    #     self._update_feed_dict_with_costs(feed_dict)
-
     def _get_scheduled_value(self, name):
         scalar = self._tensors.get(name, None)
         if scalar is None:
             schedule = getattr(self, name)
             scalar = self._tensors[name] = build_scheduled_value(schedule, name)
         return scalar
-
-    def _build_placeholders(self):
-        self._tensors.update(
-            max_objects=tf.placeholder(tf.int32, (), name="max_objects"),
-            n_objects=tf.placeholder(tf.int32, (None,), name="n_objects"),
-            routing=tf.placeholder(tf.int32, (None, None, 4), name="routing"),
-            fixed_samples=tf.placeholder(tf.bool, ()),
-            batch_size=tf.shape(self.inp)[0]
-        )
-        self._tensors["float_fixed_samples"] = tf.to_float(self._tensors["fixed_samples"])
 
     def _build_box(self, box_logits, is_training):
         box = tf.nn.sigmoid(tf.clip_by_value(box_logits, -10., 10.))
@@ -912,14 +841,13 @@ class YoloRL_Network(Parameterized):
 
         self._tensors["inputs"] = network_inputs
         self._tensors["float_do_explore"] = tf.to_float(True if self.explore_during_val else self.is_training)
+        self._tensors["batch_size"] = tf.shape(network_inputs["inp"])[0]
 
         self.program = self._tensors["program"]
         self.samples = self._tensors["samples"]
         self.log_probs = self._tensors["log_probs"]
 
         # --- build graph ---
-
-        self._build_placeholders()
 
         if self.sequential_cfg['on']:
             self._build_program_generator_sequential()
@@ -941,6 +869,7 @@ class YoloRL_Network(Parameterized):
         recorded_tensors = {}
 
         recorded_tensors['batch_size'] = tf.to_float(self.batch_size)
+        recorded_tensors['float_is_training'] = self.float_is_training
 
         recorded_tensors['cell_y'] = tf.reduce_mean(self._tensors["cell_y"])
         recorded_tensors['cell_x'] = tf.reduce_mean(self._tensors["cell_x"])
@@ -1009,7 +938,7 @@ class YoloRL_Network(Parameterized):
         recorded_tensors['area_loss'] = tf_mean_sum(tf.abs(self._tensors['area'] - self.target_area) * self.program['obj'])
 
         losses = dict(
-            rl=tf.reduce_mean(rl_loss_map),
+            rl=tf_mean_sum(rl_loss_map),
             reconstruction=tf_mean_sum(self._tensors['per_pixel_reconstruction_loss']),
             weighted_area=self.area_weight * recorded_tensors['area_loss']
         )
@@ -1099,10 +1028,11 @@ class YoloRL_Updater(Updater):
                                         cfg.batch_size)
         self.data_manager.build_graph()
 
-        images, annotations = self.data_manager.iterator.get_next()
+        images, annotations, n_annotations = self.data_manager.iterator.get_next()
 
         self.inp = images
         self.annotations = annotations
+        self.n_annotations = n_annotations
         self.is_training = self.data_manager.is_training
         self.float_is_training = tf.to_float(self.is_training)
 
@@ -1139,6 +1069,8 @@ class YoloRL_Updater(Updater):
         loss_key = 'xent' if self.xent_loss else 'squared'
         network_outputs = self.network.build_graph(
             inp=self.inp,
+            annotations=self.annotations,
+            n_annotations=self.n_annotations,
             is_training=self.is_training,
             float_is_training=self.float_is_training,
             background=self.background,
@@ -1199,14 +1131,15 @@ class YoloRL_RenderHook(object):
 
         to_fetch = network.program.copy()
 
-        to_fetch["images"] = network._tensors["inputs"]["inp"]
-        to_fetch["annotations"] = updater.annotations
-        to_fetch["output"] = network._tensors["output"]
-        to_fetch["objects"] = network._tensors["objects"]
-        to_fetch["routing"] = network._tensors["routing"]
-        to_fetch["n_objects"] = network._tensors["n_objects"]
-        to_fetch["normalized_box"] = network._tensors["normalized_box"]
-        to_fetch["background"] = network._tensors["inputs"]["background"]
+        to_fetch["images"] = network._tensors["inputs"]["inp"][:N]
+        to_fetch["annotations"] = updater.annotations[:N]
+        to_fetch["n_annotations"] = updater.n_annotations[:N]
+        to_fetch["output"] = network._tensors["output"][:N]
+        to_fetch["objects"] = network._tensors["objects"][:N]
+        to_fetch["routing"] = network._tensors["routing"][:N]
+        to_fetch["n_objects"] = network._tensors["n_objects"][:N]
+        to_fetch["normalized_box"] = network._tensors["normalized_box"][:N]
+        to_fetch["background"] = network._tensors["inputs"]["background"][:N]
 
         sess = tf.get_default_session()
         fetched = sess.run(to_fetch, feed_dict=feed_dict)
@@ -1225,6 +1158,7 @@ class YoloRL_RenderHook(object):
         obj = fetched['obj'].reshape(N, -1)
 
         annotations = fetched["annotations"]
+        n_annotations = fetched["n_annotations"]
 
         box = (
             fetched['normalized_box'] *
@@ -1261,11 +1195,10 @@ class YoloRL_RenderHook(object):
                 ax2.add_patch(rect)
 
             # Plot true bounding boxes
-            for a in annotations[n]:
-                if (a == 0).all():
-                    continue
+            for i in range(n_annotations[n]):
 
-                _, t, b, l, r = a
+                _, t, b, l, r = annotations[n][i]
+
                 h = b - t
                 w = r - l
 
@@ -1377,7 +1310,7 @@ config = Config(
 
     postprocessing="random",
     n_samples_per_image=4,
-    tile_shape=(42, 42),
+    tile_shape=(24, 24),
     max_attempts=1000000,
 
     preserve_env=True,
@@ -1386,6 +1319,7 @@ config = Config(
     n_val=1e2,
     n_test=1e2,
 )
+
 
 # model config
 
@@ -1407,7 +1341,7 @@ config.update(
     max_experiments=None,
 
     eval_step=100,
-    render_step=100,
+    render_step=5000,
     display_step=1000,
     max_steps=1e7,
     patience=10000,
@@ -1470,7 +1404,7 @@ config.update(
     ),
 
     curriculum=[
-        dict(fixed_weights="obj", fixed_values=dict(obj=1), max_steps=10000, patience=10000),
+        dict(fixed_values=dict(obj=1, h=1, w=1), max_steps=10000, patience=10000),
         dict(obj_exploration=0.2),
         dict(obj_exploration=0.1),
         dict(obj_exploration=0.05),
