@@ -517,12 +517,10 @@ class TrainingLoop(object):
             update_start_time = time.time()
 
             if cfg.do_train:
-                collect_summaries = evaluate and cfg.save_summaries
-
                 _old_n_experiences = updater.n_experiences
 
                 update_output = updater.update(
-                    cfg.batch_size, collect_summaries=collect_summaries)
+                    cfg.batch_size, collect_summaries=evaluate)
 
                 n_experiences_delta = updater.n_experiences - _old_n_experiences
                 self.n_global_experiences += n_experiences_delta

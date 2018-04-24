@@ -299,6 +299,7 @@ class YoloRL_Network(Parameterized):
     z_std = Param()
     obj_exploration = Param()
     obj_default = Param()
+    explore_during_val = Param()
 
     n_backbone_features = Param()
     n_passthrough_features = Param()
@@ -415,6 +416,10 @@ class YoloRL_Network(Parameterized):
     @property
     def float_is_training(self):
         return self._tensors["inputs"]["float_is_training"]
+
+    @property
+    def float_do_explore(self):
+        return self._tensors["float_do_explore"]
 
     @property
     def fixed_samples(self):
@@ -599,7 +604,7 @@ class YoloRL_Network(Parameterized):
             (1 - self.float_fixed_samples) * tf.random_normal(tf.shape(box), name="box_noise")
         )
 
-        noisy_box = box + box_noise * box_std * self.float_is_training
+        noisy_box = box + box_noise * box_std * self.float_do_explore
 
         return dict(
             cell_y=cell_y,
@@ -615,7 +620,7 @@ class YoloRL_Network(Parameterized):
 
         obj_params = tf.nn.sigmoid(obj_logits)
 
-        obj_exploration = self.float_is_training * self._get_scheduled_value("obj_exploration")
+        obj_exploration = self.float_do_explore * self._get_scheduled_value("obj_exploration")
         obj_default = self._get_scheduled_value("obj_default")
 
         obj_params = (1 - obj_exploration) * obj_params + obj_default * obj_exploration
@@ -650,7 +655,7 @@ class YoloRL_Network(Parameterized):
         z_logits = tf.clip_by_value(z_logits, -10., 10.)
 
         z_params = tf.nn.sigmoid(z_logits)
-        z_std = self.float_is_training * self._get_scheduled_value("z_std")
+        z_std = self.float_do_explore * self._get_scheduled_value("z_std")
 
         z_dist = tf.distributions.Normal(loc=z_params, scale=z_std)
 
@@ -685,7 +690,7 @@ class YoloRL_Network(Parameterized):
             (1 - self.float_fixed_samples) * tf.random_normal(tf.shape(attr), name="attr_noise")
         )
 
-        noisy_attr = attr + attr_noise * attr_std * self.float_is_training
+        noisy_attr = attr + attr_noise * attr_std * self.float_do_explore
 
         return dict(
             samples=attr_noise,
@@ -702,10 +707,8 @@ class YoloRL_Network(Parameterized):
 
         inp = self._tensors["inputs"]["inp"]
         backbone_output = self.backbone(inp, (H, W, B * self.n_backbone_features), self.is_training)
-        backbone_output = tf.reshape(backbone_output, (-1, H, W, B, self.n_backbone_features))
 
         for i, kind in enumerate(self.order):
-            kind = self.order[i]
             params = self.layer_params[kind]
             rep_builder = params["rep_builder"]
             output_size = params["output_size"]
@@ -715,21 +718,21 @@ class YoloRL_Network(Parameterized):
             first = i == 0
             final = i == len(self.order) - 1
 
+            n_features = 0 if final else self.n_passthrough_features
+
             if network is None:
                 network = cfg.build_next_step(scope="{}_network".format(kind))
-                network.layout[-1]['filters'] = B * output_size + self.n_passthrough_features
+                network.layout[-1]['filters'] = B * output_size + n_features
 
                 if fixed:
                     network.fix_variables()
                 self.layer_params[kind]["network"] = network
 
             if first:
-                layer_inp = self.backbone_output
+                layer_inp = backbone_output
             else:
                 _program = tf.reshape(program, (-1, H, W, B * int(program.shape[-1])))
-                layer_inp = tf.concat([features, _program], axis=3)
-
-            n_features = 0 if final else self.n_passthrough_features
+                layer_inp = tf.concat([backbone_output, features, _program], axis=3)
 
             network_output = network(layer_inp, (H, W, B * output_size + n_features), self.is_training)
 
@@ -741,7 +744,7 @@ class YoloRL_Network(Parameterized):
             built = rep_builder(rep_input, input_samples, self.is_training)
 
             assert 'program' in built
-            for key, value in built.keys():
+            for key, value in built.items():
                 if key in self.info_types:
                     self._tensors[key][kind] = value
                 else:
@@ -753,7 +756,7 @@ class YoloRL_Network(Parameterized):
             else:
                 program = tf.concat([program, self.program[kind]], axis=4)
 
-    def _get_sequential_input(self, backbone_output, program, h, w, b, edge_element):
+    def _get_sequential_input(self, program, h, w, b, edge_element):
         inp = []
         for i in range(self.sequential_cfg.lookback_shape[0]):
             for j in range(self.sequential_cfg.lookback_shape[1]):
@@ -771,7 +774,7 @@ class YoloRL_Network(Parameterized):
                     else:
                         inp.append(program[_i, _j, _k])
 
-        return backbone_output[:, h, w, b, :], tf.concat(inp, axis=1)
+        return tf.concat(inp, axis=1)
 
     def _make_empty(self):
         return np.array([{} for i in range(self.H * self.W * self.B)]).reshape(self.H, self.W, self.B)
@@ -816,11 +819,11 @@ class YoloRL_Network(Parameterized):
         for h in range(self.H):
             for w in range(self.W):
                 for b in range(self.B):
-                    partial_program = None
-                    features, context = self._get_sequential_input(backbone_output, program, h, w, b, edge_element)
+                    partial_program, features = None, None
+                    _backbone_output = backbone_output[:, h, w, b, :]
+                    context = self._get_sequential_input(program, h, w, b, edge_element)
 
                     for i, kind in enumerate(self.order):
-                        kind = self.order[i]
                         params = self.layer_params[kind]
                         rep_builder = params["rep_builder"]
                         output_size = params["output_size"]
@@ -837,9 +840,9 @@ class YoloRL_Network(Parameterized):
                             params["network"] = network
 
                         if first:
-                            layer_inp = tf.concat([features, context], axis=1)
+                            layer_inp = tf.concat([_backbone_output, context], axis=1)
                         else:
-                            layer_inp = tf.concat([features, context, partial_program], axis=1)
+                            layer_inp = tf.concat([_backbone_output, context, features, partial_program], axis=1)
 
                         n_features = 0 if final else self.n_passthrough_features
 
@@ -968,6 +971,7 @@ class YoloRL_Network(Parameterized):
         self.info_types = list(self._tensors.keys())
 
         self._tensors["inputs"] = network_inputs
+        self._tensors["float_do_explore"] = tf.to_float(True if self.explore_during_val else self.is_training)
 
         self.program = self._tensors["program"]
         self.samples = self._tensors["samples"]
@@ -1568,6 +1572,7 @@ config.update(
     z_std=0.1,
     obj_exploration=0.05,
     obj_default=0.5,
+    explore_during_val=False,
 
     # Costs
     use_baseline=True,
@@ -1577,6 +1582,7 @@ config.update(
     local_reconstruction_cost=True,
     area_neighbourhood_size=1,
     nonzero_neighbourhood_size=1,
+    target_area=0.0,
 
     fixed_values=dict(),
     fixed_weights="",

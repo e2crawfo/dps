@@ -71,7 +71,6 @@ def tf_log_level(request):
 def test_config(request):
     return dict(
         start_tensorboard=False,
-        save_summaries=False,
         intra_op_parallelism_threads=1,
         inter_op_parallelism_threads=1,
         use_gpu=False,

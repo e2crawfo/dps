@@ -562,7 +562,6 @@ def build_and_submit(
 
         config = config.copy(
             start_tensorboard=False,
-            save_summaries=False,
             update_latest=False,
             show_plots=False,
             max_experiments=np.inf,

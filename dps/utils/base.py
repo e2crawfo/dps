@@ -1265,7 +1265,6 @@ def _load_system_config(key=None):
         start_tensorboard=_config.getboolean(key, 'start_tensorboard'),
         reload_interval=_config.getint(key, 'reload_interval'),
         update_latest=_config.getboolean(key, 'update_latest'),
-        save_summaries=_config.getboolean(key, 'save_summaries'),
         data_dir=process_path(_config.get(key, 'data_dir')),
         model_dir=process_path(_config.get(key, 'model_dir')),
         build_experiments_dir=process_path(_config.get(key, 'build_experiments_dir')),
