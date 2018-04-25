@@ -486,7 +486,7 @@ class GridPatchesBuilder(PatchesBuilder):
     random_offset_range = Param(None)
 
     def _make(self):
-        self.grid_size = np.product(self.draw_shape_grid)
+        self.grid_size = np.product(self.grid_shape)
         self.cell_shape = (
             self.patch_shape[0] + self.spacing[0],
             self.patch_shape[1] + self.spacing[1])
@@ -508,7 +508,7 @@ class GridPatchesBuilder(PatchesBuilder):
             )
             top_left += grid_offset
 
-        return [Rectangle(t, l, m, n) for (t, l), (m, n) in zip(top_left, patch_shapes)]
+        return [Rectangle(t, l, m, n) for (t, l), (m, n, _) in zip(top_left, patch_shapes)]
 
 
 class VisualArithmeticBuilder(PatchesBuilder):

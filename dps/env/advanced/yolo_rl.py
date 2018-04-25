@@ -1412,8 +1412,6 @@ config.update(
     use_baseline=True,
     area_weight=0.02,
     nonzero_weight=1.0,
-    # area_weight=0.01,
-    # nonzero_weight=1.,
     use_rl=True,
 
     local_reconstruction_cost=True,
@@ -1433,13 +1431,12 @@ config.update(
 
     curriculum=[
         dict(use_rl=False, fixed_values=dict(obj=1), max_steps=10000, patience=10000),
-        # dict(fixed_values=dict(obj=1, h=1, w=1), max_steps=10000, patience=10000),
         dict(obj_exploration=0.2),
         dict(obj_exploration=0.1),
         dict(obj_exploration=0.05),
         dict(obj_exploration=0.03),
         dict(obj_exploration=0.02),
         dict(obj_exploration=0.01),
-        dict(do_train=False, n_train=16, min_chars=1, postprocessing="", preserve_env=False),  # Test on full size images.
+        dict(do_train=False, n_train=16, min_chars=1, postprocessing="", preserve_env=False),
     ],
 )
