@@ -16,12 +16,11 @@ import tensorflow as tf
 import tensorflow.contrib.rnn as rnn
 import tensorflow.contrib.layers as layers
 import numpy as np
-import os
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 from dps import cfg
-from dps.utils import Param, Parameterized, Config, square_subplots
+from dps.utils import Param, Parameterized, Config
 from dps.utils.tf import trainable_variables, build_scheduled_value
 from dps.env.advanced import yolo_rl
 from dps.env.advanced.yolo import mAP
@@ -280,175 +279,51 @@ def _sample_from_mvn(mean, diag_variance):
     return mean + standard_normal * tf.sqrt(diag_variance)
 
 
-def imshow(ax, frame):
-    if frame.ndim == 3 and frame.shape[2] == 1:
-        frame = frame[:, :, 0]
-    ax.imshow(frame, vmin=0.0, vmax=1.0)
+def air_mAP(_tensors, updater):
+    network = updater.network
+    s = _tensors['scales']
+    x, y = np.split(_tensors['shifts'], 2, axis=2)
+    predicted_n_digits = _tensors['predicted_n_digits']
+    annotations = _tensors["annotations"]
+    n_annotations = _tensors["n_annotations"]
+
+    batch_size = s.shape[0]
+
+    transformed_x = 0.5 * (x + 1.)
+    transformed_y = 0.5 * (y + 1.)
+
+    height = s * network.image_height
+    width = s * network.image_width
+
+    top = network.image_height * transformed_y - height / 2
+    left = network.image_width * transformed_x - width / 2
+
+    bottom = top + height
+    right = left + width
+
+    ground_truth_boxes = []
+    predicted_boxes = []
+
+    for idx in range(batch_size):
+        _a = [[0, *rest] for (cls, *rest), _ in zip(annotations[idx], range(n_annotations[idx]))]
+        ground_truth_boxes.append(_a)
+
+        _predicted_boxes = []
+
+        for t in range(predicted_n_digits[idx]):
+            _predicted_boxes.append(
+                [0, 1,
+                 top[idx, t, 0],
+                 bottom[idx, t, 0],
+                 left[idx, t, 0],
+                 right[idx, t, 0]])
+
+        predicted_boxes.append(_predicted_boxes)
+
+    return mAP(predicted_boxes, ground_truth_boxes, 1)
 
 
-class AIR_RenderHook(object):
-    def __init__(self, N=16):
-        self.N = N
-
-    def __call__(self, updater):
-        fetched = self._fetch(self.N, updater)
-
-        self._plot_reconstruction(updater, fetched)
-
-    def _fetch(self, N, updater):
-        feed_dict = updater.data_manager.do_val()
-
-        network = updater.network
-
-        to_fetch = {}
-
-        to_fetch["images"] = network.input_images[:N]
-        to_fetch["annotations"] = updater.annotations[:N]
-        to_fetch["n_annotations"] = updater.n_annotations[:N]
-
-        to_fetch["output"] = network._tensors["output"][:N]
-        to_fetch["scales"] = network._tensors["scales"][:N]
-        to_fetch["shifts"] = network._tensors["shifts"][:N]
-        to_fetch["predicted_n_digits"] = network._tensors["predicted_n_digits"][:N]
-        to_fetch["vae_input"] = network._tensors["vae_input"][:N]
-        to_fetch["vae_output"] = network._tensors["vae_output"][:N]
-        to_fetch["background"] = network.background
-
-        sess = tf.get_default_session()
-        fetched = sess.run(to_fetch, feed_dict=feed_dict)
-
-        return fetched
-
-    def _plot_reconstruction(self, updater, fetched):
-        network = updater.network
-
-        images = fetched['images'].reshape(-1, *network.obs_shape)
-        output = fetched['output'].reshape(-1, *network.obs_shape)
-        object_shape = network.object_shape
-
-        vae_input = fetched['vae_input'].reshape(
-            -1, network.max_time_steps, *object_shape, network.image_depth)
-        vae_output = fetched['vae_output'].reshape(
-            -1, network.max_time_steps, *object_shape, network.image_depth)
-
-        background = fetched['background']
-
-        N = images.shape[0]
-        scales = fetched['scales'].reshape(N, network.max_time_steps, 1)
-        shifts = fetched['shifts'].reshape(N, network.max_time_steps, 2)
-        predicted_n_digits = fetched['predicted_n_digits']
-
-        annotations = fetched["annotations"]
-        n_annotations = fetched["n_annotations"]
-
-        color_order = "red green blue".split()
-
-        fig, axes = plt.subplots(N, 2*network.max_time_steps + 3, figsize=(20, 20))
-        for i in range(N):
-            ax_gt = axes[i, 0]
-            imshow(ax_gt, images[i])
-            ax_gt.set_title('ground truth')
-
-            ax_rec = axes[i, 1]
-            imshow(ax_rec, output[i])
-            ax_rec.set_title('reconstruction')
-
-            # Plot true bounding boxes
-            for j in range(n_annotations[i]):
-                _, t, b, l, r = annotations[i][j]
-                h = b - t
-                w = r - l
-
-                rect = patches.Rectangle(
-                    (l, t), w, h, linewidth=1, edgecolor="xkcd:yellow", facecolor='none')
-                ax_rec.add_patch(rect)
-
-            ax_bg = axes[i, 2]
-            imshow(ax_bg, background[i])
-            ax_bg.set_title('background')
-
-            for t in range(predicted_n_digits[i]):
-                s = scales[i, t, 0]
-                x, y = shifts[i, t, :]
-
-                transformed_x = 0.5 * (x + 1.)
-                transformed_y = 0.5 * (y + 1.)
-
-                h = s * network.image_height
-                w = s * network.image_width
-
-                top = network.image_height * transformed_y - h / 2
-                left = network.image_width * transformed_x - w / 2
-
-                rect = patches.Rectangle(
-                    (left, top), w, h, linewidth=1, edgecolor=color_order[t], facecolor='none')
-                ax_rec.add_patch(rect)
-
-                rect = patches.Rectangle(
-                    (left, top), w, h, linewidth=1, edgecolor=color_order[t], facecolor='none')
-                ax_gt.add_patch(rect)
-
-                ax = axes[i, 2*t+3]
-                imshow(ax, np.clip(vae_input[i, t], 0, 1))
-                ax.set_title("VAE input (t={})".format(t))
-
-                ax = axes[i, 2*t+1+3]
-                imshow(ax, np.clip(vae_output[i, t], 0, 1))
-                ax.set_title("VAE output (t={})".format(t))
-
-        fig.suptitle('Stage={}. After {} experiences ({} updates, {} experiences per batch).'.format(
-            updater.stage_idx, updater.n_experiences, updater.n_updates, cfg.batch_size))
-
-        path = updater.exp_dir.path_for('plots', 'stage{}'.format(updater.stage_idx), 'sampled_reconstruction.pdf')
-        fig.savefig(path)
-
-        plt.close(fig)
-
-
-def negative_mAP_cost(_tensors, network):
-    annotations = network._other["annotations"]
-    if annotations is None:
-        return 0
-    else:
-        ground_truth_boxes = []
-        predicted_boxes = []
-
-        s = _tensors['scales']
-        x, y = np.split(_tensors['shifts'], 2, axis=2)
-        predicted_n_digits = _tensors['predicted_n_digits']
-
-        transformed_x = 0.5 * (x + 1.)
-        transformed_y = 0.5 * (y + 1.)
-
-        height = s * network.image_height
-        width = s * network.image_width
-
-        top = network.image_height * transformed_y - height / 2
-        left = network.image_width * transformed_x - width / 2
-
-        bottom = top + height
-        right = left + width
-
-        for idx, a in enumerate(annotations):
-            _a = [[0, *rest] for cls, *rest in a]  # get rid of the class
-            ground_truth_boxes.append(_a)
-
-            _predicted_boxes = []
-
-            for t in range(predicted_n_digits[idx]):
-                _predicted_boxes.append(
-                    [0, 1,
-                     top[idx, t, 0],
-                     bottom[idx, t, 0],
-                     left[idx, t, 0],
-                     right[idx, t, 0]])
-
-            predicted_boxes.append(_predicted_boxes)
-
-        return -mAP(predicted_boxes, ground_truth_boxes, 1) * np.ones(len(annotations))
-
-
-negative_mAP_cost.keys_accessed = "scales shifts predicted_n_digits"
+air_mAP.keys_accessed = "scales shifts predicted_n_digits annotations n_annotations"
 
 
 class AIR_Network(Parameterized):
@@ -490,11 +365,27 @@ class AIR_Network(Parameterized):
     def __init__(self, env, scope=None, **kwargs):
         self.obs_shape = env.datasets['train'].obs_shape
         self.image_height, self.image_width, self.image_depth = self.obs_shape
+        self.eval_funcs = dict(mAP=air_mAP)
 
-        self.COST_funcs = {}
-        self.COST_funcs['negative_mAP'] = (0, negative_mAP_cost, "")
-        for name, (_, func, _) in self.COST_funcs.items():
-            assert isinstance(getattr(func, "keys_accessed"), str), name
+    @property
+    def inp(self):
+        return self._tensors["inp"]
+
+    @property
+    def batch_size(self):
+        return self._tensors["batch_size"]
+
+    @property
+    def is_training(self):
+        return self._tensors["is_training"]
+
+    @property
+    def float_is_training(self):
+        return self._tensors["float_is_training"]
+
+    @property
+    def float_do_explore(self):
+        return self._tensors["float_do_explore"]
 
     def trainable_variables(self, for_opt, rl_only=False):
         tvars = trainable_variables(self.scope, for_opt=for_opt)
@@ -548,22 +439,16 @@ class AIR_Network(Parameterized):
             self.scope = tf.get_variable_scope()
             return self._build_graph(**kwargs)
 
-    def _build_graph(self, loss_key, inp, is_training, float_is_training, background, annotations, n_annotations):
+    def _build_graph(self, loss_key, **network_inputs):
         # --- process input ---
 
-        self.inp = inp
+        self._tensors = network_inputs.copy()
 
         # This is the form expected by the AIR code. It reshapes it to a volume when necessary.
-        self.input_images = tf.layers.flatten(inp)
+        self.input_images = tf.layers.flatten(self._tensors["inp"])
+        self._tensors["batch_size"] = tf.shape(network_inputs["inp"])[0]
 
-        self.batch_size = tf.shape(self.input_images)[0]
-
-        self.is_training = is_training
-        self.float_is_training = float_is_training
-        self.background = background
-        self.loss_key = loss_key
-
-        self.target_n_digits = n_annotations
+        self.target_n_digits = self._tensors["n_annotations"]
 
         # --- build graph ---
 
@@ -888,22 +773,20 @@ class AIR_Network(Parameterized):
             extra_dim = len(tensor.shape)-2
             return tf.pad(tensor, [[0, 0], [0, self.max_time_steps - tf.shape(tensor)[1]]] + [[0, 0]] * extra_dim)
 
-        _tensors = self._tensors = {}
+        self._tensors["predicted_n_digits"] = self.predicted_n_digits
 
-        _tensors["predicted_n_digits"] = self.predicted_n_digits
+        self._tensors['scales'] = pad(tf.transpose(scales.stack(), (1, 0, 2), name="scales"))
+        self._tensors['shifts'] = pad(tf.transpose(shifts.stack(), (1, 0, 2), name="shifts"))
 
-        _tensors['scales'] = pad(tf.transpose(scales.stack(), (1, 0, 2), name="scales"))
-        _tensors['shifts'] = pad(tf.transpose(shifts.stack(), (1, 0, 2), name="shifts"))
+        self._tensors['vae_input'] = pad(tf.transpose(vae_input.stack(), (1, 0, 2), name="vae_input"))
+        self._tensors['vae_output'] = pad(tf.transpose(vae_output.stack(), (1, 0, 2), name="vae_output"))
 
-        _tensors['vae_input'] = pad(tf.transpose(vae_input.stack(), (1, 0, 2), name="vae_input"))
-        _tensors['vae_output'] = pad(tf.transpose(vae_output.stack(), (1, 0, 2), name="vae_output"))
+        self._tensors['z_pres_probs'] = pad(tf.transpose(z_pres_probs.stack(), name="z_pres_probs"))
+        self._tensors['z_pres_kls'] = pad(tf.transpose(z_pres_kls.stack(), name="z_pres_kls"))
 
-        _tensors['z_pres_probs'] = pad(tf.transpose(z_pres_probs.stack(), name="z_pres_probs"))
-        _tensors['z_pres_kls'] = pad(tf.transpose(z_pres_kls.stack(), name="z_pres_kls"))
-
-        _tensors['vae_kls'] = pad(tf.transpose(vae_kls.stack(), name="vae_kls"))
-        _tensors['scale_kls'] = pad(tf.transpose(scale_kls.stack(), name="scale_kls"))
-        _tensors['shift_kls'] = pad(tf.transpose(shift_kls.stack(), name="shift_kls"))
+        self._tensors['vae_kls'] = pad(tf.transpose(vae_kls.stack(), name="vae_kls"))
+        self._tensors['scale_kls'] = pad(tf.transpose(scale_kls.stack(), name="scale_kls"))
+        self._tensors['shift_kls'] = pad(tf.transpose(shift_kls.stack(), name="shift_kls"))
 
         reconstruction = tf.clip_by_value(reconstruction, 1e-6, 1-1e-6)
 
@@ -913,7 +796,7 @@ class AIR_Network(Parameterized):
             1, name="reconstruction_loss"
         )
 
-        _tensors['output'] = tf.reshape(reconstruction, (self.batch_size,) + self.obs_shape)
+        self._tensors['output'] = tf.reshape(reconstruction, (self.batch_size,) + self.obs_shape)
 
         losses = dict(
             reconstruction=tf.reduce_mean(reconstruction_loss),
@@ -949,28 +832,28 @@ class AIR_Network(Parameterized):
 
             # --- grouped by digit count of ground-truth image and step ---
 
-            rt = self._summarize_by_step(_tensors["scales"][:, :, 0], self.predicted_n_digits, "s")
+            rt = self._summarize_by_step(self._tensors["scales"][:, :, 0], self.predicted_n_digits, "s")
             recorded_tensors.update(rt)
 
-            rt = self._summarize_by_step(_tensors["shifts"][:, :, 0], self.predicted_n_digits, "x")
+            rt = self._summarize_by_step(self._tensors["shifts"][:, :, 0], self.predicted_n_digits, "x")
             recorded_tensors.update(rt)
 
-            rt = self._summarize_by_step(_tensors["shifts"][:, :, 1], self.predicted_n_digits, "y")
+            rt = self._summarize_by_step(self._tensors["shifts"][:, :, 1], self.predicted_n_digits, "y")
             recorded_tensors.update(rt)
 
-            rt = self._summarize_by_step(_tensors["z_pres_probs"], self.predicted_n_digits, "z_pres_prob", all_steps=True)
+            rt = self._summarize_by_step(self._tensors["z_pres_probs"], self.predicted_n_digits, "z_pres_prob", all_steps=True)
             recorded_tensors.update(rt)
 
-            rt = self._summarize_by_step(_tensors["z_pres_kls"], self.predicted_n_digits, "z_pres_kl", one_more_step=True)
+            rt = self._summarize_by_step(self._tensors["z_pres_kls"], self.predicted_n_digits, "z_pres_kl", one_more_step=True)
             recorded_tensors.update(rt)
 
-            rt = self._summarize_by_step(_tensors["scale_kls"], self.predicted_n_digits, "scale_kl")
+            rt = self._summarize_by_step(self._tensors["scale_kls"], self.predicted_n_digits, "scale_kl")
             recorded_tensors.update(rt)
 
-            rt = self._summarize_by_step(_tensors["shift_kls"], self.predicted_n_digits, "shift_kl")
+            rt = self._summarize_by_step(self._tensors["shift_kls"], self.predicted_n_digits, "shift_kl")
             recorded_tensors.update(rt)
 
-            rt = self._summarize_by_step(_tensors["vae_kls"], self.predicted_n_digits, "vae_kl")
+            rt = self._summarize_by_step(self._tensors["vae_kls"], self.predicted_n_digits, "vae_kl")
             recorded_tensors.update(rt)
         else:
             recorded_tensors["predicted_n_digits"] = tf.reduce_mean(self.predicted_n_digits)
@@ -978,27 +861,147 @@ class AIR_Network(Parameterized):
             recorded_tensors["count_1norm"] = tf.reduce_mean(count_1norm)
             recorded_tensors["predicted_n_digits"] = tf.reduce_mean(self.predicted_n_digits)
 
-            recorded_tensors["scales"] = tf.reduce_mean(_tensors["scales"])
-            recorded_tensors["x"] = tf.reduce_mean(_tensors["shifts"][:, :, 0])
-            recorded_tensors["y"] = tf.reduce_mean(_tensors["shifts"][:, :, 1])
-            recorded_tensors["z_pres_prob"] = tf.reduce_mean(_tensors["z_pres_probs"])
-            recorded_tensors["z_pres_kl"] = tf.reduce_mean(_tensors["z_pres_kls"])
-            recorded_tensors["scale_kl"] = tf.reduce_mean(_tensors["scale_kls"])
-            recorded_tensors["shift_kl"] = tf.reduce_mean(_tensors["shift_kls"])
-            recorded_tensors["vae_kl"] = tf.reduce_mean(_tensors["vae_kls"])
-
-        self.COST_tensors = {}
-        for name, _ in self.COST_funcs.items():
-            cost = tf.placeholder(
-                tf.float32, (None,), name="COST_{}_ph".format(name))
-            recorded_tensors["COST_{}".format(name)] = tf.reduce_mean(cost)
-            self.COST_tensors[name] = cost
+            recorded_tensors["scales"] = tf.reduce_mean(self._tensors["scales"])
+            recorded_tensors["x"] = tf.reduce_mean(self._tensors["shifts"][:, :, 0])
+            recorded_tensors["y"] = tf.reduce_mean(self._tensors["shifts"][:, :, 1])
+            recorded_tensors["z_pres_prob"] = tf.reduce_mean(self._tensors["z_pres_probs"])
+            recorded_tensors["z_pres_kl"] = tf.reduce_mean(self._tensors["z_pres_kls"])
+            recorded_tensors["scale_kl"] = tf.reduce_mean(self._tensors["scale_kls"])
+            recorded_tensors["shift_kl"] = tf.reduce_mean(self._tensors["shift_kls"])
+            recorded_tensors["vae_kl"] = tf.reduce_mean(self._tensors["vae_kls"])
 
         return {
-            "tensors": _tensors,
+            "tensors": self._tensors,
             "recorded_tensors": recorded_tensors,
-            "losses": losses
+            "losses": losses,
         }
+
+
+def imshow(ax, frame):
+    if frame.ndim == 3 and frame.shape[2] == 1:
+        frame = frame[:, :, 0]
+    ax.imshow(frame, vmin=0.0, vmax=1.0)
+
+
+class AIR_RenderHook(object):
+    def __init__(self, N=16):
+        self.N = N
+
+    def __call__(self, updater):
+        fetched = self._fetch(self.N, updater)
+
+        self._plot_reconstruction(updater, fetched)
+
+    def _fetch(self, N, updater):
+        feed_dict = updater.data_manager.do_val()
+
+        network = updater.network
+
+        to_fetch = {}
+
+        to_fetch["images"] = network.input_images[:N]
+        to_fetch["annotations"] = updater.annotations[:N]
+        to_fetch["n_annotations"] = updater.n_annotations[:N]
+
+        to_fetch["output"] = network._tensors["output"][:N]
+        to_fetch["scales"] = network._tensors["scales"][:N]
+        to_fetch["shifts"] = network._tensors["shifts"][:N]
+        to_fetch["predicted_n_digits"] = network._tensors["predicted_n_digits"][:N]
+        to_fetch["vae_input"] = network._tensors["vae_input"][:N]
+        to_fetch["vae_output"] = network._tensors["vae_output"][:N]
+        to_fetch["background"] = network._tensors["background"][:N]
+
+        sess = tf.get_default_session()
+        fetched = sess.run(to_fetch, feed_dict=feed_dict)
+
+        return fetched
+
+    def _plot_reconstruction(self, updater, fetched):
+        network = updater.network
+
+        images = fetched['images'].reshape(-1, *network.obs_shape)
+        output = fetched['output'].reshape(-1, *network.obs_shape)
+        object_shape = network.object_shape
+
+        vae_input = fetched['vae_input'].reshape(
+            -1, network.max_time_steps, *object_shape, network.image_depth)
+        vae_output = fetched['vae_output'].reshape(
+            -1, network.max_time_steps, *object_shape, network.image_depth)
+
+        background = fetched['background']
+
+        N = images.shape[0]
+        scales = fetched['scales'].reshape(N, network.max_time_steps, 1)
+        shifts = fetched['shifts'].reshape(N, network.max_time_steps, 2)
+        predicted_n_digits = fetched['predicted_n_digits']
+
+        annotations = fetched["annotations"]
+        n_annotations = fetched["n_annotations"]
+
+        color_order = "red green blue".split()
+
+        fig, axes = plt.subplots(N, 2*network.max_time_steps + 3, figsize=(20, 20))
+        for i in range(N):
+            ax_gt = axes[i, 0]
+            imshow(ax_gt, images[i])
+            ax_gt.set_title('ground truth')
+
+            ax_rec = axes[i, 1]
+            imshow(ax_rec, output[i])
+            ax_rec.set_title('reconstruction')
+
+            # Plot true bounding boxes
+            for j in range(n_annotations[i]):
+                _, t, b, l, r = annotations[i][j]
+                h = b - t
+                w = r - l
+
+                rect = patches.Rectangle(
+                    (l, t), w, h, linewidth=1, edgecolor="xkcd:yellow", facecolor='none')
+                ax_rec.add_patch(rect)
+
+            ax_bg = axes[i, 2]
+            imshow(ax_bg, background[i])
+            ax_bg.set_title('background')
+
+            for t in range(predicted_n_digits[i]):
+                s = scales[i, t, 0]
+                x, y = shifts[i, t, :]
+
+                transformed_x = 0.5 * (x + 1.)
+                transformed_y = 0.5 * (y + 1.)
+
+                h = s * network.image_height
+                w = s * network.image_width
+
+                top = network.image_height * transformed_y - h / 2
+                left = network.image_width * transformed_x - w / 2
+
+                rect = patches.Rectangle(
+                    (left, top), w, h, linewidth=1, edgecolor=color_order[t], facecolor='none')
+                ax_rec.add_patch(rect)
+
+                rect = patches.Rectangle(
+                    (left, top), w, h, linewidth=1, edgecolor=color_order[t], facecolor='none')
+                ax_gt.add_patch(rect)
+
+                ax = axes[i, 2*t+3]
+                imshow(ax, np.clip(vae_input[i, t], 0, 1))
+                ax.set_title("VAE input (t={})".format(t))
+
+                ax = axes[i, 2*t+1+3]
+                imshow(ax, np.clip(vae_output[i, t], 0, 1))
+                ax.set_title("VAE output (t={})".format(t))
+
+        fig.suptitle('Stage={}. After {} experiences ({} updates, {} experiences per batch).'.format(
+            updater.stage_idx, updater.n_experiences, updater.n_updates, cfg.batch_size))
+
+        path = updater.exp_dir.path_for('plots', 'stage{}'.format(updater.stage_idx), 'sampled_reconstruction.pdf')
+        fig.savefig(path)
+
+        plt.close(fig)
+
+
 
 
 def get_updater(env):
@@ -1066,9 +1069,9 @@ config = Config(
     max_experiments=None,
     render_hook=AIR_RenderHook(),
 
-    render_step=1000,
     eval_step=1000,
     display_step=1000,
+    render_step=1000,
 
     # Based on the values in tf-attend-infer-repeat/training.py
     max_time_steps=3,

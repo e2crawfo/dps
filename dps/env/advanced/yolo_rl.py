@@ -173,82 +173,52 @@ class NonzeroCost(object):
         return tf_local_filter(_tensors['program']['obj'], self.neighbourhood_size)
 
 
-def negative_mAP_cost(_tensors, network):
-    annotations = network._other["annotations"]
-    if annotations is None:
-        return np.zeros((1, 1, 1, 1, 1))
-    else:
-        ground_truth_boxes = []
-        predicted_boxes = []
+def yolo_rl_mAP(_tensors, updater):
+    network = updater.network
 
-        obj = _tensors['program']['obj']
-        top, left, height, width = np.split(_tensors['normalized_box'], 4, axis=-1)
+    obj = _tensors['program']['obj']
+    top, left, height, width = np.split(_tensors['normalized_box'], 4, axis=-1)
+    annotations = _tensors["annotations"]
+    n_annotations = _tensors["n_annotations"]
 
-        top = network.image_height * top
-        height = network.image_height * height
-        bottom = top + height
+    batch_size = obj.shape[0]
 
-        left = network.image_width * left
-        width = network.image_width * width
-        right = left + width
+    top = network.image_height * top
+    height = network.image_height * height
+    bottom = top + height
 
-        for idx, a in enumerate(annotations):
-            _a = [[0, *rest] for cls, *rest in a]
-            ground_truth_boxes.append(_a)
+    left = network.image_width * left
+    width = network.image_width * width
+    right = left + width
 
-            _predicted_boxes = []
+    ground_truth_boxes = []
+    predicted_boxes = []
 
-            for i in range(network.H):
-                for j in range(network.W):
-                    for b in range(network.B):
-                        o = obj[idx, i, j, b, 0]
+    for idx in range(batch_size):
+        _a = [[0, *rest] for (cls, *rest), _ in zip(annotations[idx], range(n_annotations[idx]))]
+        ground_truth_boxes.append(_a)
 
-                        if o > 0.0:
-                            _predicted_boxes.append(
-                                [0, o,
-                                 top[idx, i, j, b, 0],
-                                 bottom[idx, i, j, b, 0],
-                                 left[idx, i, j, b, 0],
-                                 right[idx, i, j, b, 0]])
+        _predicted_boxes = []
 
-            predicted_boxes.append(_predicted_boxes)
+        for i in range(network.H):
+            for j in range(network.W):
+                for b in range(network.B):
+                    o = obj[idx, i, j, b, 0]
 
-        _map = mAP(predicted_boxes, ground_truth_boxes, 1)
-        _map = _map.reshape(-1, 1, 1, 1, 1)
-        return -_map
+                    if o > 0.0:
+                        _predicted_boxes.append(
+                            [0, o,
+                             top[idx, i, j, b, 0],
+                             bottom[idx, i, j, b, 0],
+                             left[idx, i, j, b, 0],
+                             right[idx, i, j, b, 0]])
 
+        predicted_boxes.append(_predicted_boxes)
 
-negative_mAP_cost.keys_accessed = "normalized_box program:obj"
+    return mAP(predicted_boxes, ground_truth_boxes, 1)
 
 
-def count_error_cost(_tensors, updater):
-    annotations = updater._other["annotations"]
-    if annotations is None:
-        return np.zeros((1, 1, 1, 1, 1))
-    else:
-        obj = _tensors["program"]["obj"]
-        n_objects_pred = obj.reshape(obj.shape[0], -1).sum(axis=1)
-        n_objects_true = np.array([len(a) for a in annotations])
-        error = (n_objects_pred != n_objects_true).astype('f')
-        return error.reshape(-1, 1, 1, 1, 1)
-
-
-count_error_cost.keys_accessed = "program:obj"
-
-
-def count_1norm_cost(_tensors, updater):
-    annotations = updater._other["annotations"]
-    if annotations is None:
-        return np.zeros((1, 1, 1, 1, 1))
-    else:
-        obj = _tensors["program"]["obj"]
-        n_objects_pred = obj.reshape(obj.shape[0], -1).sum(axis=1)
-        n_objects_true = np.array([len(a) for a in annotations])
-        dist = np.abs(n_objects_pred - n_objects_true).astype('f')
-        return dist.reshape(-1, 1, 1, 1, 1)
-
-
-count_1norm_cost.keys_accessed = "program:obj"
+yolo_rl_mAP.keys_accessed = "normalized_box program:obj annotations n_annotations"
 
 
 def build_xent_loss(predictions, targets):
@@ -297,6 +267,7 @@ class YoloRL_Network(Parameterized):
     use_baseline = Param()
     nonzero_weight = Param()
     area_weight = Param()
+    use_rl = Param()
 
     local_reconstruction_cost = Param()
     area_neighbourhood_size = Param()
@@ -334,10 +305,7 @@ class YoloRL_Network(Parameterized):
         _area_cost_func = AreaCost(self.target_area, self.area_neighbourhood_size)
         self.COST_funcs['area'] = (self.area_weight, _area_cost_func, "obj")
 
-        # For evaluation purposes only
-        # self.COST_funcs['negative_mAP'] = (0, negative_mAP_cost, "obj")
-        # self.COST_funcs['count_error'] = (0, count_error_cost, "obj")
-        # self.COST_funcs['count_1norm'] = (0, count_1norm_cost, "obj")
+        self.eval_funcs = dict(mAP=yolo_rl_mAP)
 
         self.object_decoder = None
 
@@ -386,7 +354,7 @@ class YoloRL_Network(Parameterized):
 
     @property
     def inp(self):
-        return self._tensors["inputs"]["inp"]
+        return self._tensors["inp"]
 
     @property
     def batch_size(self):
@@ -394,11 +362,11 @@ class YoloRL_Network(Parameterized):
 
     @property
     def is_training(self):
-        return self._tensors["inputs"]["is_training"]
+        return self._tensors["is_training"]
 
     @property
     def float_is_training(self):
-        return self._tensors["inputs"]["float_is_training"]
+        return self._tensors["float_is_training"]
 
     @property
     def float_do_explore(self):
@@ -473,14 +441,14 @@ class YoloRL_Network(Parameterized):
         h = float(self.max_hw - self.min_hw) * h + self.min_hw
         w = float(self.max_hw - self.min_hw) * w + self.min_hw
 
-        if "h" in self.fixed_values:
-            h = float(self.fixed_values["h"]) * tf.ones_like(h, dtype=tf.float32)
-        if "w" in self.fixed_values:
-            w = float(self.fixed_values["w"]) * tf.ones_like(w, dtype=tf.float32)
         if "cell_y" in self.fixed_values:
             cell_y = float(self.fixed_values["cell_y"]) * tf.ones_like(cell_y, dtype=tf.float32)
         if "cell_x" in self.fixed_values:
             cell_x = float(self.fixed_values["cell_x"]) * tf.ones_like(cell_x, dtype=tf.float32)
+        if "h" in self.fixed_values:
+            h = float(self.fixed_values["h"]) * tf.ones_like(h, dtype=tf.float32)
+        if "w" in self.fixed_values:
+            w = float(self.fixed_values["w"]) * tf.ones_like(w, dtype=tf.float32)
 
         box = tf.concat([cell_y, cell_x, h, w], axis=-1)
 
@@ -514,13 +482,13 @@ class YoloRL_Network(Parameterized):
         obj_samples = tf.stop_gradient(obj_dist.sample())
         obj_samples = tf.to_float(obj_samples)
 
+        if "obj" in self.fixed_values:
+            obj_samples = float(self.fixed_values["obj"]) * tf.ones_like(obj_samples, dtype=tf.float32)
+
         obj_log_probs = obj_dist.log_prob(obj_samples)
         obj_log_probs = tf.where(tf.is_nan(obj_log_probs), -100.0 * tf.ones_like(obj_log_probs), obj_log_probs)
 
         obj_entropy = obj_dist.entropy()
-
-        if "obj" in self.fixed_values:
-            obj_samples = float(self.fixed_values["obj"]) * tf.ones_like(obj_samples, dtype=tf.float32)
 
         return dict(
             samples=obj_samples,
@@ -540,13 +508,13 @@ class YoloRL_Network(Parameterized):
 
         z_samples = tf.stop_gradient(z_dist.sample())
 
+        if "z" in self.fixed_values:
+            z_samples = float(self.fixed_values["z"]) * tf.ones_like(z_samples, dtype=tf.float32)
+
         z_log_probs = z_dist.log_prob(z_samples)
         z_log_probs = tf.where(tf.is_nan(z_log_probs), -100.0 * tf.ones_like(z_log_probs), z_log_probs)
 
         z_entropy = z_dist.entropy()
-
-        if "z" in self.fixed_values:
-            z_samples = float(self.fixed_values["z"]) * tf.ones_like(z_samples, dtype=tf.float32)
 
         return dict(
             samples=z_samples,
@@ -576,7 +544,7 @@ class YoloRL_Network(Parameterized):
             self.backbone = cfg.build_backbone(scope="backbone")
             self.backbone.layout[-1]['filters'] = B * self.n_backbone_features
 
-        inp = self._tensors["inputs"]["inp"]
+        inp = self._tensors["inp"]
         backbone_output = self.backbone(inp, (H, W, B * self.n_backbone_features), self.is_training)
 
         for i, kind in enumerate(self.order):
@@ -611,7 +579,7 @@ class YoloRL_Network(Parameterized):
 
             rep_input = tf.reshape(rep_input, (-1, H, W, B, output_size))
 
-            built = rep_builder(output, self.is_training)
+            built = rep_builder(rep_input, self.is_training)
 
             assert 'program' in built
             for key, value in built.items():
@@ -656,7 +624,7 @@ class YoloRL_Network(Parameterized):
             self.backbone = cfg.build_backbone(scope="backbone")
             self.backbone.layout[-1]['filters'] = B * self.n_backbone_features
 
-        inp = self._tensors["inputs"]["inp"]
+        inp = self._tensors["inp"]
         backbone_output = self.backbone(inp, (H, W, B*self.n_backbone_features), self.is_training)
         backbone_output = tf.reshape(backbone_output, (-1, H, W, B, self.n_backbone_features))
 
@@ -816,7 +784,7 @@ class YoloRL_Network(Parameterized):
             self._tensors["n_objects"],
             scales,
             offsets,
-            self._tensors["inputs"]["background"]
+            self._tensors["background"]
         )
 
         output = tf.clip_by_value(output, 1e-6, 1-1e-6)
@@ -839,7 +807,7 @@ class YoloRL_Network(Parameterized):
         )
         self.info_types = list(self._tensors.keys())
 
-        self._tensors["inputs"] = network_inputs
+        self._tensors.update(network_inputs)
         self._tensors["float_do_explore"] = tf.to_float(True if self.explore_during_val else self.is_training)
         self._tensors["batch_size"] = tf.shape(network_inputs["inp"])[0]
 
@@ -870,6 +838,7 @@ class YoloRL_Network(Parameterized):
 
         recorded_tensors['batch_size'] = tf.to_float(self.batch_size)
         recorded_tensors['float_is_training'] = self.float_is_training
+        recorded_tensors['float_do_explore'] = self.float_do_explore
 
         recorded_tensors['cell_y'] = tf.reduce_mean(self._tensors["cell_y"])
         recorded_tensors['cell_x'] = tf.reduce_mean(self._tensors["cell_x"])
@@ -891,7 +860,7 @@ class YoloRL_Network(Parameterized):
         # --- required for computing the reconstruction COST ---
 
         output = self._tensors['output']
-        inp = self._tensors['inputs']['inp']
+        inp = self._tensors['inp']
         self._tensors['per_pixel_reconstruction_loss'] = loss_builders[loss_key](output, inp)
 
         # --- compute rl loss ---
@@ -933,21 +902,73 @@ class YoloRL_Network(Parameterized):
             (COST_z + COST) * self.log_probs['z']
         )
 
-        # --- store losses ---
+        # --- losses ---
 
         recorded_tensors['area_loss'] = tf_mean_sum(tf.abs(self._tensors['area'] - self.target_area) * self.program['obj'])
 
         losses = dict(
-            rl=tf_mean_sum(rl_loss_map),
             reconstruction=tf_mean_sum(self._tensors['per_pixel_reconstruction_loss']),
             weighted_area=self.area_weight * recorded_tensors['area_loss']
         )
+
+        if self.use_rl:
+            losses['rl'] = tf_mean_sum(rl_loss_map)
+
+        # --- other evaluation metrics
+
+        recorded_tensors["count_error"] = tf.reduce_mean(
+            tf.to_float(self._tensors["n_objects"] != self._tensors["n_annotations"]))
+
+        recorded_tensors["count_1norm"] = tf.reduce_mean(
+            tf.to_float(tf.abs(self._tensors["n_objects"] - self._tensors["n_annotations"])))
 
         return {
             "tensors": self._tensors,
             "recorded_tensors": recorded_tensors,
             "losses": losses
         }
+
+
+class Evaluator(object):
+    def __init__(self, functions, tensors, updater):
+        self.placeholders = {name: tf.placeholder(tf.float32, ()) for name in functions.keys()}
+        self.summary_op = tf.summary.merge([tf.summary.scalar(k, v) for k, v in self.placeholders.items()])
+        self.functions = functions
+        self.updater = updater
+
+        fetch_keys = set()
+        for f in functions.values():
+            for key in f.keys_accessed.split():
+                fetch_keys.add(key)
+
+        fetches = {}
+        for key in list(fetch_keys):
+            dst = fetches
+            src = tensors
+            subkeys = key.split(":")
+
+            for i, _key in enumerate(subkeys):
+                if i == len(subkeys)-1:
+                    dst[_key] = src[_key]
+                else:
+                    if _key not in dst:
+                        dst[_key] = dict()
+                    dst = dst[_key]
+                    src = src[_key]
+
+        self.fetches = fetches
+
+    def eval(self, fetched):
+        record = {}
+        feed_dict = {}
+        for name, func in self.functions.items():
+            record[name] = np.mean(func(fetched, self.updater))
+            feed_dict[self.placeholders[name]] = record[name]
+
+        sess = tf.get_default_session()
+        summary = sess.run(self.summary_op, feed_dict=feed_dict)
+
+        return record, summary
 
 
 class YoloRL_Updater(Updater):
@@ -982,13 +1003,13 @@ class YoloRL_Updater(Updater):
         feed_dict = self.data_manager.do_train()
 
         sess = tf.get_default_session()
+        record = {}
         summary = b''
         if collect_summaries:
             _, record, summary = sess.run(
                 [self.train_op, self.recorded_tensors, self.summary_op], feed_dict=feed_dict)
         else:
-            _, record = sess.run(
-                [self.train_op, self.recorded_tensors], feed_dict=feed_dict)
+            sess.run([self.train_op], feed_dict=feed_dict)
 
         return dict(train=(record, summary))
 
@@ -1005,10 +1026,14 @@ class YoloRL_Updater(Updater):
 
         while True:
             try:
-                _record, summary = sess.run(
-                    [self.recorded_tensors, self.summary_op], feed_dict=feed_dict)
+                _record, summary, eval_fetched = sess.run(
+                    [self.recorded_tensors, self.summary_op, self.evaluator.fetches], feed_dict=feed_dict)
             except tf.errors.OutOfRangeError:
                 break
+
+            eval_record, eval_summary = self.evaluator.eval(eval_fetched)
+            _record.update(eval_record)
+            summary = summary + eval_summary
 
             batch_size = _record['batch_size']
 
@@ -1081,6 +1106,9 @@ class YoloRL_Updater(Updater):
         network_recorded_tensors = network_outputs["recorded_tensors"]
         network_losses = network_outputs["losses"]
 
+        # For running functions, durring evaluation, that are not implemented in tensorflow
+        self.evaluator = Evaluator(self.network.eval_funcs, network_tensors, self)
+
         recorded_tensors = {}
 
         output = network_tensors["output"]
@@ -1131,7 +1159,7 @@ class YoloRL_RenderHook(object):
 
         to_fetch = network.program.copy()
 
-        to_fetch["images"] = network._tensors["inputs"]["inp"][:N]
+        to_fetch["images"] = network._tensors["inp"][:N]
         to_fetch["annotations"] = updater.annotations[:N]
         to_fetch["n_annotations"] = updater.n_annotations[:N]
         to_fetch["output"] = network._tensors["output"][:N]
@@ -1139,7 +1167,7 @@ class YoloRL_RenderHook(object):
         to_fetch["routing"] = network._tensors["routing"][:N]
         to_fetch["n_objects"] = network._tensors["n_objects"][:N]
         to_fetch["normalized_box"] = network._tensors["normalized_box"][:N]
-        to_fetch["background"] = network._tensors["inputs"]["background"][:N]
+        to_fetch["background"] = network._tensors["background"][:N]
 
         sess = tf.get_default_session()
         fetched = sess.run(to_fetch, feed_dict=feed_dict)
@@ -1195,9 +1223,8 @@ class YoloRL_RenderHook(object):
                 ax2.add_patch(rect)
 
             # Plot true bounding boxes
-            for i in range(n_annotations[n]):
-
-                _, t, b, l, r = annotations[n][i]
+            for k in range(n_annotations[n]):
+                _, t, b, l, r = annotations[n][k]
 
                 h = b - t
                 w = r - l
@@ -1310,7 +1337,7 @@ config = Config(
 
     postprocessing="random",
     n_samples_per_image=4,
-    tile_shape=(24, 24),
+    tile_shape=(42, 42),
     max_attempts=1000000,
 
     preserve_env=True,
@@ -1341,8 +1368,9 @@ config.update(
     max_experiments=None,
 
     eval_step=100,
-    render_step=5000,
     display_step=1000,
+    render_step=5000,
+
     max_steps=1e7,
     patience=10000,
 
@@ -1359,10 +1387,7 @@ config.update(
 
     pixels_per_cell=(12, 12),
 
-    anchor_boxes=[
-        [7, 7],
-        [7, 7]
-    ],
+    anchor_boxes=[[14, 14]],
 
     kernel_size=(1, 1),
 
@@ -1371,10 +1396,10 @@ config.update(
     A=100,
 
     n_backbone_features=100,
-    n_passthrough_features=100,
+    n_passthrough_features=0,
 
-    max_hw=3.0,
     min_hw=0.3,
+    max_hw=3.0,
 
     box_std=0.0,
     attr_std=0.0,
@@ -1385,13 +1410,16 @@ config.update(
 
     # Costs
     use_baseline=True,
-    area_weight=1.,
-    nonzero_weight=150.,
+    area_weight=0.02,
+    nonzero_weight=1.0,
+    # area_weight=0.01,
+    # nonzero_weight=1.,
+    use_rl=True,
 
     local_reconstruction_cost=True,
     area_neighbourhood_size=1,
     nonzero_neighbourhood_size=1,
-    target_area=0.0,
+    target_area=0,
 
     fixed_values=dict(),
     fixed_weights="",
@@ -1404,7 +1432,8 @@ config.update(
     ),
 
     curriculum=[
-        dict(fixed_values=dict(obj=1, h=1, w=1), max_steps=10000, patience=10000),
+        dict(use_rl=False, fixed_values=dict(obj=1), max_steps=10000, patience=10000),
+        # dict(fixed_values=dict(obj=1, h=1, w=1), max_steps=10000, patience=10000),
         dict(obj_exploration=0.2),
         dict(obj_exploration=0.1),
         dict(obj_exploration=0.05),

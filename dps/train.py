@@ -512,18 +512,6 @@ class TrainingLoop(object):
                       (local_step % cfg.render_step) == 0 and
                       local_step > 0)
 
-            if display:
-                print(self.data.summarize(local_step, global_step, updater.n_experiences, self.n_global_experiences))
-                print("\nMy PID: {}".format(os.getpid()))
-                print("\nPhysical memory use: "
-                      "{}mb".format(memory_usage(physical=True)))
-                print("Virtual memory use: "
-                      "{}mb".format(memory_usage(physical=False)))
-                print("Avg time per batch: {}s".format(time_per_batch))
-
-                if cfg.use_gpu:
-                    print(nvidia_smi())
-
             # --------------- Possibly evaluate -------------------
 
             if evaluate:
@@ -602,22 +590,32 @@ class TrainingLoop(object):
             update_start_time = time.time()
 
             if cfg.do_train:
-                collect_summaries = evaluate and cfg.save_summaries
-
                 _old_n_experiences = updater.n_experiences
 
-                update_output = updater.update(
-                    cfg.batch_size, collect_summaries=collect_summaries)
+                update_output = updater.update(cfg.batch_size, collect_summaries=evaluate)
 
-                self.data.store_step_data_and_summaries(
-                    stage_idx, local_step, global_step,
-                    updater.n_experiences, self.n_global_experiences,
-                    **update_output)
+                if evaluate:
+                    self.data.store_step_data_and_summaries(
+                        stage_idx, local_step, global_step,
+                        updater.n_experiences, self.n_global_experiences,
+                        **update_output)
 
                 n_experiences_delta = updater.n_experiences - _old_n_experiences
                 self.n_global_experiences += n_experiences_delta
 
             update_duration = time.time() - update_start_time
+
+            if display:
+                print(self.data.summarize(local_step, global_step, updater.n_experiences, self.n_global_experiences))
+                print("\nMy PID: {}".format(os.getpid()))
+                print("\nPhysical memory use: "
+                      "{}mb".format(memory_usage(physical=True)))
+                print("Virtual memory use: "
+                      "{}mb".format(memory_usage(physical=False)))
+                print("Avg time per batch: {}s".format(time_per_batch))
+
+                if cfg.use_gpu:
+                    print(nvidia_smi())
 
             # If `do_train` is False, we do no training and evaluate
             # exactly once, so only one iteration is required.
