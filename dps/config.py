@@ -64,7 +64,6 @@ DEFAULT_CONFIG = Config(
 
     readme="",
     hooks=[],
-    mock_load=False,
 )
 
 

@@ -411,12 +411,15 @@ class YoloRL_Network(Parameterized):
         max_objects = tf.reduce_max(n_objects)
         flat_z = tf.stop_gradient(tf.reshape(self.program['z'], (self.batch_size, -1)))
 
-        _flat_z = tf.where(flat_obj > 1e-6, flat_z, -100. * tf.ones_like(flat_z))
+        # We want all the "on" z's to be at the front of the array, but with lower z
+        # nearer to the start of the array. So we give "off" values a very high z number,
+        # and then negate the whole array before running top_k.
+        _flat_z = tf.where(flat_obj > 1e-6, flat_z, 100. * tf.ones_like(flat_z))
+        _flat_z = -_flat_z
         _, indices = tf.nn.top_k(_flat_z, k=max_objects, sorted=True)
+
         indices += tf.range(self.batch_size)[:, None] * tf.shape(flat_obj)[1]
-
         indices = tf.reshape(indices, (-1,))  # tf.unravel_index requires a vector, can't handle anything higher-d
-
         routing = tf.unravel_index(indices, (self.batch_size, self.H, self.W, self.B))
         routing = tf.reshape(routing, (4, self.batch_size, max_objects))
         routing = tf.transpose(routing, [1, 2, 0])
