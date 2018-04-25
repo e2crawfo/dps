@@ -414,8 +414,7 @@ class YoloRL_Network(Parameterized):
         # We want all the "on" z's to be at the front of the array, but with lower z
         # nearer to the start of the array. So we give "off" values a very high z number,
         # and then negate the whole array before running top_k.
-        _flat_z = tf.where(flat_obj > 1e-6, flat_z, 100. * tf.ones_like(flat_z))
-        _flat_z = -_flat_z
+        _flat_z = -tf.where(flat_obj > 0.5, flat_z, 1000. * tf.ones_like(flat_z))
         _, indices = tf.nn.top_k(_flat_z, k=max_objects, sorted=True)
 
         indices += tf.range(self.batch_size)[:, None] * tf.shape(flat_obj)[1]
@@ -424,7 +423,19 @@ class YoloRL_Network(Parameterized):
         routing = tf.reshape(routing, (4, self.batch_size, max_objects))
         routing = tf.transpose(routing, [1, 2, 0])
 
-        self._tensors["routing"] = routing
+        # sanity check
+
+        routed_obj = tf.gather_nd(self.program['obj'], routing)[..., 0]
+        mask = tf.sequence_mask(n_objects)
+        masked_routed_obj = tf.boolean_mask(routed_obj, mask)
+
+        assert_valid_routing = tf.Assert(
+            tf.reduce_all(masked_routed_obj > 0.5), [routing], name="assert_valid_routing")
+
+        with tf.control_dependencies([assert_valid_routing]):
+            _routing = tf.identity(routing)
+
+        self._tensors["routing"] = _routing
         self._tensors["max_objects"] = max_objects
         self._tensors["n_objects"] = n_objects
 
@@ -1188,15 +1199,14 @@ class YoloRL_RenderHook(object):
 
         obj = fetched['obj'].reshape(N, -1)
 
-        annotations = fetched["annotations"]
-        n_annotations = fetched["n_annotations"]
-
         box = (
             fetched['normalized_box'] *
             [image_height, image_width, image_height, image_width]
         )
+        box = box.reshape(N, -1, 4)
 
-        box = box.reshape(box.shape[0], -1, 4)
+        annotations = fetched["annotations"]
+        n_annotations = fetched["n_annotations"]
 
         sqrt_N = int(np.ceil(np.sqrt(N)))
 
@@ -1215,29 +1225,31 @@ class YoloRL_RenderHook(object):
             ax2.set_title('actual')
 
             # Plot proposed bounding boxes
-            for o, b in zip(obj[n], box[n]):
-                t, l, h, w = b
+            for o, (top, left, height, width) in zip(obj[n], box[n]):
+
+                color = "xkcd:azure" if o > 1e-6 else "xkcd:red"
 
                 rect = patches.Rectangle(
-                    (l, t), w, h, linewidth=1, edgecolor="xkcd:azure", facecolor='none', alpha=o)
+                    (left, top), width, height, linewidth=1, edgecolor=color, facecolor='none')
                 ax1.add_patch(rect)
+
                 rect = patches.Rectangle(
-                    (l, t), w, h, linewidth=1, edgecolor="xkcd:azure", facecolor='none', alpha=o)
+                    (left, top), width, height, linewidth=1, edgecolor=color, facecolor='none')
                 ax2.add_patch(rect)
 
             # Plot true bounding boxes
             for k in range(n_annotations[n]):
-                _, t, b, l, r = annotations[n][k]
+                _, top, bottom, left, right = annotations[n][k]
 
-                h = b - t
-                w = r - l
+                height = bottom - top
+                width = right - left
 
                 rect = patches.Rectangle(
-                    (l, t), w, h, linewidth=1, edgecolor="xkcd:yellow", facecolor='none')
+                    (left, top), width, height, linewidth=1, edgecolor="xkcd:yellow", facecolor='none')
                 ax1.add_patch(rect)
 
                 rect = patches.Rectangle(
-                    (l, t), w, h, linewidth=1, edgecolor="xkcd:yellow", facecolor='none')
+                    (left, top), width, height, linewidth=1, edgecolor="xkcd:yellow", facecolor='none')
                 ax2.add_patch(rect)
 
             ax3 = axes[3*i+2, j]
