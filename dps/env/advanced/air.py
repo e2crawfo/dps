@@ -18,8 +18,8 @@ import tensorflow.contrib.layers as layers
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+import matplotlib.colors as colors
 
-from dps import cfg
 from dps.utils import Param, Parameterized, Config
 from dps.utils.tf import trainable_variables, build_scheduled_value
 from dps.env.advanced import yolo_rl
@@ -938,17 +938,28 @@ class AIR_RenderHook(object):
         annotations = fetched["annotations"]
         n_annotations = fetched["n_annotations"]
 
-        color_order = "red green blue".split()
+        color_order = sorted(colors.XKCD_COLORS)
 
-        fig, axes = plt.subplots(N, 2*network.max_time_steps + 3, figsize=(20, 20))
         for i in range(N):
-            ax_gt = axes[i, 0]
+            n_plots = 2 * predicted_n_digits[i] + 3
+            n = int(np.ceil(np.sqrt(n_plots)))
+            m = int(np.ceil(n_plots / n))
+
+            fig, axes = plt.subplots(m, n, figsize=(20, 20))
+
+            axes = axes.flatten()
+
+            ax_gt = axes[0]
             imshow(ax_gt, images[i])
             ax_gt.set_title('ground truth')
 
-            ax_rec = axes[i, 1]
+            ax_rec = axes[1]
             imshow(ax_rec, output[i])
             ax_rec.set_title('reconstruction')
+
+            ax_bg = axes[2]
+            imshow(ax_bg, background[i])
+            ax_bg.set_title('background')
 
             # Plot true bounding boxes
             for j in range(n_annotations[i]):
@@ -959,10 +970,6 @@ class AIR_RenderHook(object):
                 rect = patches.Rectangle(
                     (l, t), w, h, linewidth=1, edgecolor="xkcd:yellow", facecolor='none')
                 ax_rec.add_patch(rect)
-
-            ax_bg = axes[i, 2]
-            imshow(ax_bg, background[i])
-            ax_bg.set_title('background')
 
             for t in range(predicted_n_digits[i]):
                 s = scales[i, t, 0]
@@ -985,23 +992,17 @@ class AIR_RenderHook(object):
                     (left, top), w, h, linewidth=1, edgecolor=color_order[t], facecolor='none')
                 ax_gt.add_patch(rect)
 
-                ax = axes[i, 2*t+3]
+                ax = axes[2*t + 3]
                 imshow(ax, np.clip(vae_input[i, t], 0, 1))
                 ax.set_title("VAE input (t={})".format(t))
 
-                ax = axes[i, 2*t+1+3]
+                ax = axes[2*t + 4]
                 imshow(ax, np.clip(vae_output[i, t], 0, 1))
                 ax.set_title("VAE output (t={})".format(t))
 
-        fig.suptitle('Stage={}. After {} experiences ({} updates, {} experiences per batch).'.format(
-            updater.stage_idx, updater.n_experiences, updater.n_updates, cfg.batch_size))
-
-        path = updater.exp_dir.path_for('plots', 'stage{}'.format(updater.stage_idx), 'sampled_reconstruction.pdf')
-        fig.savefig(path)
-
-        plt.close(fig)
-
-
+            path = updater.exp_dir.path_for('plots', 'stage{}'.format(updater.stage_idx), 'sampled_reconstruction_{}.pdf'.format(i))
+            fig.savefig(path)
+            plt.close(fig)
 
 
 def get_updater(env):
