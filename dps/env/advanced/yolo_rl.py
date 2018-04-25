@@ -1161,27 +1161,29 @@ class YoloRL_RenderHook(object):
         self.N = N
 
     def __call__(self, updater):
-        fetched = self._fetch(self.N, updater)
+        fetched = self._fetch(updater)
 
         self._plot_reconstruction(updater, fetched)
-        self._plot_patches(updater, fetched, 4)
+        self._plot_patches(updater, fetched, self.N)
 
-    def _fetch(self, N, updater):
+    def _fetch(self, updater):
         feed_dict = updater.data_manager.do_val()
 
         network = updater.network
 
         to_fetch = network.program.copy()
 
-        to_fetch["images"] = network._tensors["inp"][:N]
-        to_fetch["annotations"] = updater.annotations[:N]
-        to_fetch["n_annotations"] = updater.n_annotations[:N]
-        to_fetch["output"] = network._tensors["output"][:N]
-        to_fetch["objects"] = network._tensors["objects"][:N]
-        to_fetch["routing"] = network._tensors["routing"][:N]
-        to_fetch["n_objects"] = network._tensors["n_objects"][:N]
-        to_fetch["normalized_box"] = network._tensors["normalized_box"][:N]
-        to_fetch["background"] = network._tensors["background"][:N]
+        to_fetch["images"] = network._tensors["inp"]
+        to_fetch["annotations"] = updater.annotations
+        to_fetch["n_annotations"] = updater.n_annotations
+        to_fetch["output"] = network._tensors["output"]
+        to_fetch["objects"] = network._tensors["objects"]
+        to_fetch["routing"] = network._tensors["routing"]
+        to_fetch["n_objects"] = network._tensors["n_objects"]
+        to_fetch["normalized_box"] = network._tensors["normalized_box"]
+        to_fetch["background"] = network._tensors["background"]
+
+        to_fetch = {k: v[:self.N] for k, v in to_fetch.items()}
 
         sess = tf.get_default_session()
         fetched = sess.run(to_fetch, feed_dict=feed_dict)
@@ -1191,24 +1193,24 @@ class YoloRL_RenderHook(object):
     def _plot_reconstruction(self, updater, fetched):
         images = fetched['images']
         background = fetched['background']
-        N = images.shape[0]
 
         output = fetched['output']
 
         _, image_height, image_width, _ = images.shape
+        H, W, B = updater.network.H, updater.network.W, updater.network.B
 
-        obj = fetched['obj'].reshape(N, -1)
+        obj = fetched['obj'].reshape(self.N, H*W*B)
 
         box = (
             fetched['normalized_box'] *
             [image_height, image_width, image_height, image_width]
         )
-        box = box.reshape(N, -1, 4)
+        box = box.reshape(self.N, H*W*B, 4)
 
         annotations = fetched["annotations"]
         n_annotations = fetched["n_annotations"]
 
-        sqrt_N = int(np.ceil(np.sqrt(N)))
+        sqrt_N = int(np.ceil(np.sqrt(self.N)))
 
         fig, axes = plt.subplots(3*sqrt_N, sqrt_N, figsize=(20, 20))
         axes = np.array(axes).reshape(3*sqrt_N, sqrt_N)

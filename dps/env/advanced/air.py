@@ -888,28 +888,30 @@ class AIR_RenderHook(object):
         self.N = N
 
     def __call__(self, updater):
-        fetched = self._fetch(self.N, updater)
+        fetched = self._fetch(updater)
 
         self._plot_reconstruction(updater, fetched)
 
-    def _fetch(self, N, updater):
+    def _fetch(self, updater):
         feed_dict = updater.data_manager.do_val()
 
         network = updater.network
 
         to_fetch = {}
 
-        to_fetch["images"] = network.input_images[:N]
-        to_fetch["annotations"] = updater.annotations[:N]
-        to_fetch["n_annotations"] = updater.n_annotations[:N]
+        to_fetch["images"] = network.input_images
+        to_fetch["annotations"] = updater.annotations
+        to_fetch["n_annotations"] = updater.n_annotations
 
-        to_fetch["output"] = network._tensors["output"][:N]
-        to_fetch["scales"] = network._tensors["scales"][:N]
-        to_fetch["shifts"] = network._tensors["shifts"][:N]
-        to_fetch["predicted_n_digits"] = network._tensors["predicted_n_digits"][:N]
-        to_fetch["vae_input"] = network._tensors["vae_input"][:N]
-        to_fetch["vae_output"] = network._tensors["vae_output"][:N]
-        to_fetch["background"] = network._tensors["background"][:N]
+        to_fetch["output"] = network._tensors["output"]
+        to_fetch["scales"] = network._tensors["scales"]
+        to_fetch["shifts"] = network._tensors["shifts"]
+        to_fetch["predicted_n_digits"] = network._tensors["predicted_n_digits"]
+        to_fetch["vae_input"] = network._tensors["vae_input"]
+        to_fetch["vae_output"] = network._tensors["vae_output"]
+        to_fetch["background"] = network._tensors["background"]
+
+        to_fetch = {k: v[:self.N] for k, v in to_fetch.items()}
 
         sess = tf.get_default_session()
         fetched = sess.run(to_fetch, feed_dict=feed_dict)
@@ -919,20 +921,19 @@ class AIR_RenderHook(object):
     def _plot_reconstruction(self, updater, fetched):
         network = updater.network
 
-        images = fetched['images'].reshape(-1, *network.obs_shape)
-        output = fetched['output'].reshape(-1, *network.obs_shape)
+        images = fetched['images'].reshape(self.N, *network.obs_shape)
+        output = fetched['output'].reshape(self.N, *network.obs_shape)
         object_shape = network.object_shape
 
         vae_input = fetched['vae_input'].reshape(
-            -1, network.max_time_steps, *object_shape, network.image_depth)
+            self.N, network.max_time_steps, *object_shape, network.image_depth)
         vae_output = fetched['vae_output'].reshape(
-            -1, network.max_time_steps, *object_shape, network.image_depth)
+            self.N, network.max_time_steps, *object_shape, network.image_depth)
 
         background = fetched['background']
 
-        N = images.shape[0]
-        scales = fetched['scales'].reshape(N, network.max_time_steps, 1)
-        shifts = fetched['shifts'].reshape(N, network.max_time_steps, 2)
+        scales = fetched['scales'].reshape(self.N, network.max_time_steps, 1)
+        shifts = fetched['shifts'].reshape(self.N, network.max_time_steps, 2)
         predicted_n_digits = fetched['predicted_n_digits']
 
         annotations = fetched["annotations"]
@@ -940,7 +941,7 @@ class AIR_RenderHook(object):
 
         color_order = sorted(colors.XKCD_COLORS)
 
-        for i in range(N):
+        for i in range(self.N):
             n_plots = 2 * predicted_n_digits[i] + 3
             n = int(np.ceil(np.sqrt(n_plots)))
             m = int(np.ceil(n_plots / n))
