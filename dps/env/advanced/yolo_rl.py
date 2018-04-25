@@ -1479,3 +1479,17 @@ single_digit_config = config.copy(
         dict(obj_exploration=0.0),
     ]
 )
+
+reset_config = single_digit_config.copy(
+    curriculum=[
+        dict(
+            load_path="/scratch/e2crawfo/dps_data/logs/yolo_rl_single_digit/exp_yolo_rl_single_digit_seed=347405995_2018_04_25_14_52_42/weights/best_of_stage_0",
+            obj_exploration=0.2),
+        dict(obj_exploration=0.1),
+        dict(obj_exploration=0.05),
+        dict(obj_exploration=0.025),
+        dict(obj_exploration=0.0125),
+        dict(obj_exploration=0.0),
+    ]
+)
+

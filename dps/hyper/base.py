@@ -401,6 +401,12 @@ class _RunTrainingLoop(object):
         config = DEFAULT_CONFIG.copy()
         config.update(self.base_config)
         config.update(new)
+        config.update(
+            start_tensorboard=False,
+            update_latest=False,
+            show_plots=False,
+            max_experiments=np.inf,
+        )
 
         with config:
             cfg.update_from_command_line()
