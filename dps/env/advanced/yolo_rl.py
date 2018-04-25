@@ -1313,7 +1313,6 @@ config = Config(
     build_env=Env,
     seed=347405995,
 
-    use_dataset_cache=True,
     min_chars=12,
     max_chars=12,
     n_sub_image_examples=0,
@@ -1442,4 +1441,27 @@ config.update(
         dict(obj_exploration=0.01),
         dict(do_train=False, n_train=16, min_chars=1, postprocessing="", preserve_env=False),
     ],
+)
+
+single_digit_config = config.copy(
+    log_name="yolo_rl_single_digit",
+
+    min_chars=1,
+    max_chars=1,
+    image_shape=(24, 24),
+    pixels_per_cell=(12, 12),
+    area_weight=0.1,
+
+    postprocessing="",
+
+    render_step=500,
+
+    curriculum=[
+        dict(obj_exploration=0.2),
+        dict(obj_exploration=0.1),
+        dict(obj_exploration=0.05),
+        dict(obj_exploration=0.025),
+        dict(obj_exploration=0.0125),
+        dict(obj_exploration=0.0),
+    ]
 )

@@ -345,7 +345,9 @@ class TrainingLoop(object):
 
                 elif stage_idx > 0 and cfg.preserve_policy:
                     # Initialize weights from best hypothesis discovered on the previous stage
-                    updater.restore(sess, self.data.history[stage_idx-1]['best_path'])
+                    load_path = self.data.history[stage_idx-1]['best_path']
+                    print("Loading best hypothesis from previous stage at located {}.".format(load_path))
+                    updater.restore(sess, load_path)
 
                 self.summary_op = tf.summary.merge_all()
                 tf.train.get_or_create_global_step()
