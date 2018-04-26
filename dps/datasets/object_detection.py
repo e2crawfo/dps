@@ -3,7 +3,7 @@ import tensorflow as tf
 
 from dps import cfg
 from dps.utils import Param
-from dps.datasets import load_emnist, DatasetBuilder, PatchesBuilder, GridPatchesBuilder, tf_image_representation
+from dps.datasets import load_emnist, Dataset, Patches, GridPatches, tf_image_representation
 
 
 def tf_annotation_representation(annotation, prefix=""):
@@ -21,7 +21,7 @@ def tf_annotation_representation(annotation, prefix=""):
     return features
 
 
-class ObjectDetectionBuilder(DatasetBuilder):
+class ObjectDetection(Dataset):
     postprocessing = Param("")
     tile_shape = Param(None)
     n_samples_per_image = Param(1)
@@ -43,7 +43,7 @@ class ObjectDetectionBuilder(DatasetBuilder):
             return self.image_shape + (self.depth,)
 
     def parse_example_batch(self, example_proto):
-        features = tf.parse_example(example_proto, features=ObjectDetectionBuilder.features)
+        features = tf.parse_example(example_proto, features=ObjectDetection.features)
 
         images = tf.decode_raw(features['image_raw'], tf.uint8)
         images = tf.reshape(images, (-1,) + self.obs_shape)
@@ -167,7 +167,7 @@ class ObjectDetectionBuilder(DatasetBuilder):
         return new_images, new_annotations
 
 
-class EmnistObjectDetection(ObjectDetectionBuilder, PatchesBuilder):
+class EmnistObjectDetection(ObjectDetection, Patches):
     min_chars = Param(2)
     max_chars = Param(3)
     characters = Param(
@@ -183,10 +183,10 @@ class EmnistObjectDetection(ObjectDetectionBuilder, PatchesBuilder):
     def _make(self):
         assert self.min_chars <= self.max_chars
 
-        emnist_x, emnist_y, self.classmap = load_emnist(cfg.data_dir, self.characters, balance=True,
-                                                        shape=self.patch_shape, one_hot=False,
-                                                        n_examples=self.n_patch_examples,
-                                                        example_range=self.example_range)
+        emnist_x, emnist_y, self.classmap = load_emnist(
+            cfg.data_dir, self.characters, balance=True, shape=self.patch_shape,
+            one_hot=False, n_examples=self.n_patch_examples,
+            example_range=self.example_range)
 
         self.char_reps = list(zip(emnist_x, emnist_y))
         result = super(EmnistObjectDetection, self)._make()
@@ -220,11 +220,14 @@ class EmnistObjectDetection(ObjectDetectionBuilder, PatchesBuilder):
             for cls, top, bottom, left, right in self.y[i]:
                 width = right - left
                 height = bottom - top
+
                 rect = patches.Rectangle(
-                    (left, top), width, height, linewidth=1, edgecolor='white', facecolor='none')
+                    (left, top), width, height, linewidth=1,
+                    edgecolor='white', facecolor='none')
+
                 ax.add_patch(rect)
         plt.show()
 
 
-class GridEmnistObjectDetection(EmnistObjectDetection, GridPatchesBuilder):
+class GridEmnistObjectDetection(EmnistObjectDetection, GridPatches):
     pass

@@ -11,7 +11,7 @@ from dps.datasets import (
 )
 
 
-class DatasetBuilder(Parameterized):
+class Dataset(Parameterized):
     n_examples = Param(None)
 
     def __init__(self, shuffle=True, **kwargs):
@@ -79,7 +79,7 @@ def tf_image_representation(image, prefix=""):
     return features
 
 
-class ImageClassificationBuilder(DatasetBuilder):
+class ImageClassification(Dataset):
     one_hot = Param()
     shape = Param()
     include_blank = Param()
@@ -93,7 +93,7 @@ class ImageClassificationBuilder(DatasetBuilder):
         self._writer.write(example.SerializeToString())
 
 
-class EmnistBuilder(ImageClassificationBuilder):
+class Emnist(ImageClassification):
     """
     Download and pre-process EMNIST dataset:
     python scripts/download.py emnist <desired location>
@@ -122,7 +122,7 @@ class EmnistBuilder(ImageClassificationBuilder):
             self._write_example(_x, class_map[_y])
 
 
-class OmniglotBuilder(ImageClassificationBuilder):
+class Omniglot(ImageClassification):
     indices = Param()
 
     @staticmethod
@@ -171,7 +171,7 @@ class Rectangle(object):
         return "Rectangleangle({}:{}, {}:{})".format(self.top, self.bottom, self.left, self.right)
 
 
-class PatchesBuilder(DatasetBuilder):
+class Patches(Dataset):
     max_overlap = Param(10)
     image_shape = Param((100, 100))
     draw_shape = Param(None)
@@ -480,7 +480,7 @@ class PatchesBuilder(DatasetBuilder):
             s.set_title(str(self.y[i, 0]))
 
 
-class GridPatchesBuilder(PatchesBuilder):
+class GridPatches(Patches):
     grid_shape = Param((2, 2))
     spacing = Param((0, 0))
     random_offset_range = Param(None)
@@ -490,7 +490,7 @@ class GridPatchesBuilder(PatchesBuilder):
         self.cell_shape = (
             self.patch_shape[0] + self.spacing[0],
             self.patch_shape[1] + self.spacing[1])
-        return super(GridPatchesBuilder, self)._make()
+        return super(GridPatches, self)._make()
 
     def _sample_patch_locations(self, patch_shapes, **kwargs):
         n_patches = len(patch_shapes)
@@ -511,7 +511,7 @@ class GridPatchesBuilder(PatchesBuilder):
         return [Rectangle(t, l, m, n) for (t, l), (m, n, _) in zip(top_left, patch_shapes)]
 
 
-class VisualArithmeticBuilder(PatchesBuilder):
+class VisualArithmetic(Patches):
     """ A dataset for the VisualArithmetic task.
 
     An image dataset that requires performing different arithmetical
@@ -589,7 +589,7 @@ class VisualArithmeticBuilder(PatchesBuilder):
 
         self.digit_reps = list(zip(mnist_x, mnist_y))
 
-        result = super(VisualArithmeticBuilder, self)._make()
+        result = super(VisualArithmetic, self)._make()
 
         del self.digit_reps
         del self.op_reps
@@ -628,5 +628,5 @@ class VisualArithmeticBuilder(PatchesBuilder):
         return patches, digit_y, y
 
 
-class GridArithmeticBuilder(VisualArithmeticBuilder, GridPatchesBuilder):
+class GridArithmetic(VisualArithmetic, GridPatches):
     pass

@@ -264,10 +264,14 @@ class YoloRL_Network(Parameterized):
     n_backbone_features = Param()
     n_passthrough_features = Param()
 
-    use_baseline = Param()
+    xent_loss = Param()
+
+    reconstruction_weight = Param(1)
+    rl_weight = Param()
     nonzero_weight = Param()
     area_weight = Param()
-    use_rl = Param()
+
+    use_baseline = Param()
 
     local_reconstruction_cost = Param()
     area_neighbourhood_size = Param()
@@ -297,7 +301,7 @@ class YoloRL_Network(Parameterized):
         self.COST_funcs = {}
 
         _reconstruction_cost_func = local_reconstruction_cost if self.local_reconstruction_cost else reconstruction_cost
-        self.COST_funcs['reconstruction'] = (1, _reconstruction_cost_func, "both")
+        self.COST_funcs['reconstruction'] = (self.reconstruction_weight, _reconstruction_cost_func, "both")
 
         _nonzero_cost_func = NonzeroCost(self.nonzero_neighbourhood_size)
         self.COST_funcs['nonzero'] = (self.nonzero_weight, _nonzero_cost_func, "obj")
@@ -805,10 +809,17 @@ class YoloRL_Network(Parameterized):
 
         # --- Store values ---
 
-        self._tensors['area'] = (ys * float(self.image_height)) * (xs * float(self.image_width))
+        self._tensors['area'] = (
+            (ys * float(self.image_height)) * (xs * float(self.image_width)))
         self._tensors['output'] = output
 
-    def build_graph(self, loss_key, **network_inputs):
+    def process_labels(self, labels):
+        self._tensors.update(
+            annotations=labels[0],
+            n_annotations=labels[1],
+        )
+
+    def build_graph(self, inp, labels, is_training, background):
 
         # --- initialize containers for storing outputs ---
 
@@ -819,15 +830,22 @@ class YoloRL_Network(Parameterized):
             logits=dict(),
             program=dict(),
         )
-        self.info_types = list(self._tensors.keys())
 
-        self._tensors.update(network_inputs)
-        self._tensors["float_do_explore"] = tf.to_float(True if self.explore_during_val else self.is_training)
-        self._tensors["batch_size"] = tf.shape(network_inputs["inp"])[0]
+        self.info_types = list(self._tensors.keys())
 
         self.program = self._tensors["program"]
         self.samples = self._tensors["samples"]
         self.log_probs = self._tensors["log_probs"]
+
+        self._tensors.update(
+            is_training=self.is_training,
+            float_is_training=tf.to_float(is_training),
+            background=background,
+            float_do_explore=tf.to_float(True if self.explore_during_val else is_training),
+            batch_size=tf.shape(inp)[0],
+        )
+
+        self.process_labels(labels)
 
         # --- build graph ---
 
@@ -873,9 +891,12 @@ class YoloRL_Network(Parameterized):
 
         # --- required for computing the reconstruction COST ---
 
-        output = self._tensors['output']
-        inp = self._tensors['inp']
-        self._tensors['per_pixel_reconstruction_loss'] = loss_builders[loss_key](output, inp)
+        loss_key = 'xent' if self.xent_loss else 'squared'
+
+        if self.reconstruction_weight is not None:
+            output = self._tensors['output']
+            inp = self._tensors['inp']
+            self._tensors['per_pixel_reconstruction_loss'] = loss_builders[loss_key](output, inp)
 
         # --- compute rl loss ---
 
@@ -884,8 +905,11 @@ class YoloRL_Network(Parameterized):
         COST_z = tf.zeros((self.batch_size, self.H, self.W, self.B, 1))
 
         for name, (weight, func, kind) in self.COST_funcs.items():
-            cost = self._process_cost(func(self._tensors, self))
+            if weight is None:
+                continue
+
             weight = build_scheduled_value(weight, "COST_{}_weight".format(name))
+            cost = self._process_cost(func(self._tensors, self))
             weighted_cost = weight * cost
 
             if kind == "both":
@@ -918,23 +942,34 @@ class YoloRL_Network(Parameterized):
 
         # --- losses ---
 
-        recorded_tensors['area_loss'] = tf_mean_sum(tf.abs(self._tensors['area'] - self.target_area) * self.program['obj'])
+        losses = dict()
 
-        losses = dict(
-            reconstruction=tf_mean_sum(self._tensors['per_pixel_reconstruction_loss']),
-            weighted_area=self.area_weight * recorded_tensors['area_loss']
-        )
+        if self.reconstruction_weight is not None:
+            recorded_tensors['raw_reconstruction_loss'] = tf_mean_sum(
+                self._tensors['per_pixel_reconstruction_loss'])
+            losses['reconstruction'] = self.reconstruction_weight * recorded_tensors['raw_reconstruction_loss']
 
-        if self.use_rl:
-            losses['rl'] = tf_mean_sum(rl_loss_map)
+        if self.area_weight is not None:
+
+            recorded_tensors['raw_area_loss'] = tf_mean_sum(
+                tf.abs(self._tensors['area'] - self.target_area) *
+                self.program['obj'])
+
+            losses['area'] = self.area_weight * recorded_tensors['raw_area_loss']
+
+        if self.rl_weight is not None:
+            recorded_tensors['raw_rl_loss'] = tf_mean_sum(rl_loss_map)
+            losses['rl'] = self.rl_weight * recorded_tensors['raw_rl_loss']
 
         # --- other evaluation metrics
 
         recorded_tensors["count_error"] = tf.reduce_mean(
-            tf.to_float(self._tensors["n_objects"] != self._tensors["n_annotations"]))
+            tf.to_float(
+                self._tensors["n_objects"] != self._tensors["n_annotations"]))
 
         recorded_tensors["count_1norm"] = tf.reduce_mean(
-            tf.to_float(tf.abs(self._tensors["n_objects"] - self._tensors["n_annotations"])))
+            tf.to_float(
+                tf.abs(self._tensors["n_objects"] - self._tensors["n_annotations"])))
 
         return {
             "tensors": self._tensors,
@@ -986,7 +1021,6 @@ class Evaluator(object):
 
 
 class YoloRL_Updater(Updater):
-    xent_loss = Param()
     optimizer_spec = Param()
     lr_schedule = Param()
     noise_schedule = Param()
@@ -1067,13 +1101,7 @@ class YoloRL_Updater(Updater):
                                         cfg.batch_size)
         self.data_manager.build_graph()
 
-        images, annotations, n_annotations = self.data_manager.iterator.get_next()
-
-        self.inp = images
-        self.annotations = annotations
-        self.n_annotations = n_annotations
-        self.is_training = self.data_manager.is_training
-        self.float_is_training = tf.to_float(self.is_training)
+        inp, *labels = self.data_manager.iterator.get_next()
 
         if cfg.background_cfg.mode == "static":
             with cfg.background_cfg.static_cfg:
@@ -1101,19 +1129,15 @@ class YoloRL_Updater(Updater):
                 centroids = np.minimum(centroids, 1-1e-6)
                 centroids = centroids.reshape(cfg.n_clusters, *image_shape)
         elif cfg.background_cfg.mode == "mode":
-            self.background = self.inp_mode[:, None, None, :] * tf.ones_like(self.inp)
+            self.background = self.inp_mode[:, None, None, :] * tf.ones_like(inp)
         else:
-            self.background = tf.zeros_like(self.inp)
+            self.background = tf.zeros_like(inp)
 
-        loss_key = 'xent' if self.xent_loss else 'squared'
         network_outputs = self.network.build_graph(
-            inp=self.inp,
-            annotations=self.annotations,
-            n_annotations=self.n_annotations,
+            inp=inp,
+            labels=labels,
             is_training=self.is_training,
-            float_is_training=self.float_is_training,
             background=self.background,
-            loss_key=loss_key
         )
 
         network_tensors = network_outputs["tensors"]
@@ -1127,7 +1151,7 @@ class YoloRL_Updater(Updater):
 
         output = network_tensors["output"]
         recorded_tensors.update({
-            name + "_loss": tf_mean_sum(builder(output, self.inp))
+            name + "_loss": tf_mean_sum(builder(output, inp))
             for name, builder in loss_builders.items()
         })
 
@@ -1174,8 +1198,8 @@ class YoloRL_RenderHook(object):
         to_fetch = network.program.copy()
 
         to_fetch["images"] = network._tensors["inp"]
-        to_fetch["annotations"] = updater.annotations
-        to_fetch["n_annotations"] = updater.n_annotations
+        to_fetch["annotations"] = network._tensors["annotations"]
+        to_fetch["n_annotations"] = network._tensors["n_annotations"]
         to_fetch["output"] = network._tensors["output"]
         to_fetch["objects"] = network._tensors["objects"]
         to_fetch["routing"] = network._tensors["routing"]
@@ -1424,11 +1448,11 @@ config.update(
     obj_default=0.5,
     explore_during_val=False,
 
-    # Costs
-    use_baseline=True,
+    rl_weight=1.0,
+
     area_weight=0.02,
     nonzero_weight=1.0,
-    use_rl=True,
+    use_baseline=True,
 
     local_reconstruction_cost=True,
     area_neighbourhood_size=1,
@@ -1492,4 +1516,3 @@ reset_config = single_digit_config.copy(
         dict(obj_exploration=0.0),
     ]
 )
-

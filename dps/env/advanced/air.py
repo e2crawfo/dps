@@ -434,19 +434,26 @@ class AIR_Network(Parameterized):
             recorded_tensors.update(_recorded_tensors)
         return recorded_tensors
 
-    def build_graph(self, **kwargs):
+    def build_graph(self, *args, **kwargs):
         with tf.variable_scope('AIR'):
             self.scope = tf.get_variable_scope()
-            return self._build_graph(**kwargs)
+            return self._build_graph(*args, **kwargs)
 
-    def _build_graph(self, loss_key, **network_inputs):
+    def _build_graph(self, inp, labels, is_training, background):
         # --- process input ---
 
-        self._tensors = network_inputs.copy()
+        self._tensors = dict(
+            inp=inp,
+            annotations=labels[0],
+            n_annotations=labels[1],
+            is_training=is_training,
+            float_is_training=tf.to_float(is_training),
+            background=background,
+            batch_size=tf.shape(inp)[0]
+        )
 
         # This is the form expected by the AIR code. It reshapes it to a volume when necessary.
         self.input_images = tf.layers.flatten(self._tensors["inp"])
-        self._tensors["batch_size"] = tf.shape(network_inputs["inp"])[0]
 
         self.target_n_digits = self._tensors["n_annotations"]
 
@@ -1024,7 +1031,6 @@ config = Config(
     max_chars=2,
     characters=list(range(10)),
     n_sub_image_examples=0,
-    xent_loss=True,
     sub_image_shape=(28, 28),
     spacing=(-6, -6),
     use_dataset_cache=True,
