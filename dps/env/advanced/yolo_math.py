@@ -16,21 +16,31 @@ def get_math_updater(env):
 def lifted_addition(inp1, inp2):
     """
     Assume both are based at 0.
-    inp1: shape=(batch_size, max_1)
-    inp2: shape=(batch_size, max_2)
+    inp1: shape=(batch_size, max1)
+    inp2: shape=(batch_size, max2)
+
+    Assumes max1, max2 are known statically.
 
     result: shape=(batch_size, max_1 + max_2 - 1)
 
     """
-    max2 = tf.shape(inp2)[1]
+    max1 = inp1.shape[1]
+    max2 = inp2.shape[1]
 
-    _inp1 = tf.tile(inp1[:, None, :], (1, max2, 1))
-    _inp1 = tf.pad(_inp1, [[0, 0], [0, 0], [0, max2-1]])
-    _inp1 = tf.manip.roll(_inp1, shift=tf.range(max2))
+    batch_size = tf.shape(inp1)[0]
+
+    indices = tf.range(max1 + max2 - 1)[None, :] - tf.range(max2)[:, None]
+    indices = tf.matrix_band_part(indices, 0, max1-1)
+
+    indices = tf.tile(indices[None, :, :], (batch_size, 1, 1))
+    batch_indices = tf.range(batch_size)[:, None, None] * tf.ones_like(indices)
+    indices = tf.stack([batch_indices, indices], axis=3)
+
+    _inp1 = tf.gather_nd(inp1, indices)
+    _inp1 = tf.matrix_band_part(_inp1, 0, max1-1)
 
     result = _inp1 * inp2[:, :, None]
     result = tf.reduce_sum(result, axis=1)
-    result = result[:, 0, :]
 
     return result
 
@@ -46,21 +56,22 @@ class InterpretableAdditionNetwork(ScopedFunction):
 
         attrs = inp['attr']
         H, W, B = tuple(int(i) for i in attrs.shape[1:4])
-        running_sum = None
-        first = True
+        running_sum = tf.ones((tf.shape(attrs)[0], 1), dtype=tf.float32)
         for h in range(H):
             for w in range(W):
                 for b in range(B):
                     digit_logits = self.digit_classifier(attrs[:, h, w, b, :], 10, is_training)
                     digit = tf.nn.softmax(digit_logits)
 
-                    running_sum = digit if first else lifted_addition(running_sum, digit)
-                    first = False
+                    running_sum = lifted_addition(running_sum, digit)
         return running_sum
 
 
 class SequentialMathNetwork(ScopedFunction):
-    cell = None
+    h_cell = None
+    w_cell = None
+    b_cell = None
+
     output_network = None
 
     def _call(self, inp, output_size, is_training):
@@ -71,7 +82,7 @@ class SequentialMathNetwork(ScopedFunction):
             self.w_cell = cfg.build_math_cell(scope="math_w_cell")
             self.b_cell = cfg.build_math_cell(scope="math_b_cell")
 
-        edge_state = self.h_cell.zero_state(tf.shape(inp), tf.float32)
+        edge_state = self.h_cell.zero_state(tf.shape(inp['attr'])[0], tf.float32)
 
         attrs = inp['attr']
         H, W, B = tuple(int(i) for i in attrs.shape[1:4])
@@ -123,38 +134,35 @@ class ConvolutionalMathNetwork(ScopedFunction):
 
 class YoloRL_MathNetwork(yolo_rl.YoloRL_Network):
     math_weight = Param()
+    largest_digit = Param()
 
     math_network = None
 
     def trainable_variables(self, for_opt):
-        tvars = super(YoloRL_MathNetwork, self).trainable_variables()
-        math_network_tvars = trainable_variables(
-            self.math_network.scope, for_opt=for_opt)
-        tvars.append(math_network_tvars)
+        tvars = super(YoloRL_MathNetwork, self).trainable_variables(for_opt)
+        math_network_tvars = trainable_variables(self.math_network.scope, for_opt=for_opt)
+        tvars.extend(math_network_tvars)
         return tvars
-
-    def process_labels(self, labels):
-        self._tensors.update(target_answer=labels[0])
 
     def build_graph(self, *args, **kwargs):
         result = super(YoloRL_MathNetwork, self).build_graph(*args, **kwargs)
 
         if self.math_network is None:
-            self.math_network = self.build_math_network(scope="math_network")
+            self.math_network = cfg.build_math_network(scope="math_network")
 
             if "output" in self.fixed_weights:
                 self.math_network.fix_variables()
 
-        logits = self.math_network(self.program, self.is_training)
+        logits = self.math_network(self.program, self.largest_digit + 1, self.is_training)
 
-        result["recorded_tensors"]["raw_math_loss"] = (
+        result["recorded_tensors"]["raw_loss_math"] = tf.reduce_mean(
             tf.nn.softmax_cross_entropy_with_logits_v2(
-                labels=self._tensors["target_answer"],
+                labels=self._tensors["targets"],
                 logits=logits
             )
         )
 
-        result["losses"]["math"] = self.math_weight * result["recorded_tensors"]["raw_math_loss"]
+        result["losses"]["math"] = self.math_weight * result["recorded_tensors"]["raw_loss_math"]
 
         return result
 
@@ -170,7 +178,7 @@ class Env(object):
         pass
 
 
-config = yolo_rl.copy(
+config = yolo_rl.config.copy(
     get_updater=get_math_updater,
     build_env=Env,
 
@@ -186,10 +194,12 @@ config = yolo_rl.copy(
     reductions="A:sum",
 
     one_hot=True,
-    largest_digit=1000,
+    largest_digit=100,
 
     build_math_network=SequentialMathNetwork,
     # build_math_network=LeNet,
+
+    # largest_digit=144,  # 16 * 9
     # build_math_network=InterpretableAdditionNetwork,
 
     build_math_cell=lambda scope: tf.contrib.rnn.LSTMBlockCell(128),
@@ -198,7 +208,9 @@ config = yolo_rl.copy(
 
     math_weight=1.0,
     curriculum=[
-        # dict(get_updater=yolo_rl.get_updater),
-        dict(get_updater=get_math_updater),
+        # dict(math_weight=0.0, do_train=False),
+        # dict(math_weight=1.0, postprocessing=""),
+        dict(math_weight=1.0),
+        # dict(math_weight=1.0),
     ],
 )

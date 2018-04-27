@@ -251,8 +251,8 @@ class YoloRL_Network(Parameterized):
     use_input_attention = Param()
     decoder_logit_scale = Param()
 
-    max_hw = Param()
     min_hw = Param()
+    max_hw = Param()
 
     box_std = Param()
     attr_std = Param()
@@ -813,12 +813,6 @@ class YoloRL_Network(Parameterized):
             (ys * float(self.image_height)) * (xs * float(self.image_width)))
         self._tensors['output'] = output
 
-    def process_labels(self, labels):
-        self._tensors.update(
-            annotations=labels[0],
-            n_annotations=labels[1],
-        )
-
     def build_graph(self, inp, labels, is_training, background):
 
         # --- initialize containers for storing outputs ---
@@ -838,14 +832,19 @@ class YoloRL_Network(Parameterized):
         self.log_probs = self._tensors["log_probs"]
 
         self._tensors.update(
-            is_training=self.is_training,
+            inp=inp,
+            is_training=is_training,
             float_is_training=tf.to_float(is_training),
             background=background,
             float_do_explore=tf.to_float(True if self.explore_during_val else is_training),
             batch_size=tf.shape(inp)[0],
         )
 
-        self.process_labels(labels)
+        self._tensors.update(
+            annotations=labels[0],
+            n_annotations=labels[1],
+            targets=labels[2],
+        )
 
         # --- build graph ---
 
@@ -945,21 +944,21 @@ class YoloRL_Network(Parameterized):
         losses = dict()
 
         if self.reconstruction_weight is not None:
-            recorded_tensors['raw_reconstruction_loss'] = tf_mean_sum(
+            recorded_tensors['raw_loss_reconstruction'] = tf_mean_sum(
                 self._tensors['per_pixel_reconstruction_loss'])
-            losses['reconstruction'] = self.reconstruction_weight * recorded_tensors['raw_reconstruction_loss']
+            losses['reconstruction'] = self.reconstruction_weight * recorded_tensors['raw_loss_reconstruction']
 
         if self.area_weight is not None:
 
-            recorded_tensors['raw_area_loss'] = tf_mean_sum(
+            recorded_tensors['raw_loss_area'] = tf_mean_sum(
                 tf.abs(self._tensors['area'] - self.target_area) *
                 self.program['obj'])
 
-            losses['area'] = self.area_weight * recorded_tensors['raw_area_loss']
+            losses['area'] = self.area_weight * recorded_tensors['raw_loss_area']
 
         if self.rl_weight is not None:
-            recorded_tensors['raw_rl_loss'] = tf_mean_sum(rl_loss_map)
-            losses['rl'] = self.rl_weight * recorded_tensors['raw_rl_loss']
+            recorded_tensors['raw_loss_rl'] = tf_mean_sum(rl_loss_map)
+            losses['rl'] = self.rl_weight * recorded_tensors['raw_loss_rl']
 
         # --- other evaluation metrics
 
@@ -1136,7 +1135,7 @@ class YoloRL_Updater(Updater):
         network_outputs = self.network.build_graph(
             inp=inp,
             labels=labels,
-            is_training=self.is_training,
+            is_training=self.data_manager.is_training,
             background=self.background,
         )
 
@@ -1151,14 +1150,14 @@ class YoloRL_Updater(Updater):
 
         output = network_tensors["output"]
         recorded_tensors.update({
-            name + "_loss": tf_mean_sum(builder(output, inp))
+            "loss_" + name: tf_mean_sum(builder(output, inp))
             for name, builder in loss_builders.items()
         })
 
         recorded_tensors['loss'] = 0
         for name, tensor in network_losses.items():
             recorded_tensors['loss'] += tensor
-            recorded_tensors[name + '_loss'] = tensor
+            recorded_tensors['loss_' + name] = tensor
         self.loss = recorded_tensors['loss']
 
         intersection = recorded_tensors.keys() & network_recorded_tensors.keys()

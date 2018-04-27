@@ -79,11 +79,43 @@ def tf_image_representation(image, prefix=""):
     return features
 
 
+def tf_annotation_representation(annotation, prefix=""):
+    """ Get a representation of an annotation list suitable for passing to tf.train.Features """
+    flat_annotation = [v for a in annotation for v in a]  # each has 5 values
+
+    features = dict(
+        n_annotations=tf.train.Feature(int64_list=tf.train.Int64List(value=[len(annotation)])),
+        annotations=tf.train.Feature(float_list=tf.train.FloatList(value=flat_annotation))
+    )
+
+    if prefix:
+        features = {"{}_{}".format(prefix, name): rep for name, rep in features.items()}
+
+    return features
+
+
 class ImageClassification(Dataset):
     one_hot = Param()
-    shape = Param()
-    include_blank = Param()
     classes = Param()
+    image_shape = Param()
+    include_blank = Param()
+
+    features = {
+        "image_raw": tf.FixedLenFeature((), dtype=tf.string),
+        "label": tf.FixedLenFeature((), dtype=tf.int64),
+    }
+
+    @property
+    def n_classes(self):
+        return len(self.classes)
+
+    @property
+    def obs_shape(self):
+        return self.image_shape + (self.depth,)
+
+    @property
+    def depth(self):
+        return 1
 
     def _write_example(self, image, label):
         features = tf_image_representation(image)
@@ -91,6 +123,21 @@ class ImageClassification(Dataset):
         example = tf.train.Example(features=tf.train.Features(feature=features))
 
         self._writer.write(example.SerializeToString())
+
+    def parse_example_batch(self, example_proto):
+        features = tf.parse_example(example_proto, features=ImageClassification.features)
+
+        images = tf.decode_raw(features['image_raw'], tf.uint8)
+        images = tf.reshape(images, (-1,) + self.obs_shape)
+        images = tf.image.convert_image_dtype(images, tf.float32)
+        images = tf.clip_by_value(images, 1e-6, 1-1e-6)
+
+        label = tf.cast(features['label'], tf.int32)
+
+        if self.one_hot:
+            label = tf.one_hot(label, self.n_classes)
+
+        return images, label
 
 
 class Emnist(ImageClassification):
@@ -110,6 +157,9 @@ class Emnist(ImageClassification):
 
     def _make(self):
         param_values = self.param_values()
+        param_values['one_hot'] = False
+        param_values['shape'] = param_values['image_shape']
+        del param_values['image_shape']
 
         x, y, class_map = load_emnist(cfg.data_dir, **param_values)
 
@@ -132,9 +182,13 @@ class Omniglot(ImageClassification):
         return [class_pool[i] for i in classes]
 
     def _make(self, **kwargs):
-        pv = self.param_values()
-        del pv['n_examples']
-        x, y, class_map = load_omniglot(cfg.data_dir, **pv)
+        param_values = self.param_values()
+        param_values['one_hot'] = False
+        param_values['shape'] = param_values['image_shape']
+        del param_values['image_shape']
+        del param_values['n_examples']
+
+        x, y, class_map = load_omniglot(cfg.data_dir, **param_values)
 
         if x.shape[0] < self.n_examples:
             raise Exception(
@@ -191,13 +245,70 @@ class Patches(Dataset):
     max_attempts = Param(10000)
     colours = Param('red green blue')
 
+    postprocessing = Param("")
+    tile_shape = Param(None)
+    n_samples_per_image = Param(1)
+    one_hot = Param(True)
+
+    features = {
+        "image_raw": tf.FixedLenFeature((), dtype=tf.string),
+        "annotations": tf.VarLenFeature(dtype=tf.float32),
+        "n_annotations": tf.FixedLenFeature((), dtype=tf.int64),
+        "label": tf.FixedLenFeature((), dtype=tf.int64),
+    }
+
+    @property
+    def n_classes(self):
+        raise Exception("AbstractMethod")
+
     @property
     def depth(self):
         return 3 if self.colours else 1
 
     @property
     def obs_shape(self):
-        return self.image_shape + (self.depth,)
+        if self.postprocessing:
+            return self.tile_shape + (self.depth,)
+        else:
+            return self.image_shape + (self.depth,)
+
+    def _write_example(self, image, annotation, label):
+        if self.postprocessing == "tile":
+            images, annotations = self._tile_postprocess(image, annotation)
+        elif self.postprocessing == "random":
+            images, annotations = self._random_postprocess(image, annotation)
+        else:
+            images, annotations = [image], [annotation]
+
+        for image, annotation in zip(images, annotations):
+            features = tf_image_representation(image)
+            features.update(tf_annotation_representation(annotation))
+            features.update(label=_int64_feature(label))
+
+            example = tf.train.Example(features=tf.train.Features(feature=features))
+
+            self._writer.write(example.SerializeToString())
+
+    def parse_example_batch(self, example_proto):
+        features = tf.parse_example(example_proto, features=Patches.features)
+
+        images = tf.decode_raw(features['image_raw'], tf.uint8)
+        images = tf.reshape(images, (-1,) + self.obs_shape)
+        images = tf.image.convert_image_dtype(images, tf.float32)
+        images = tf.clip_by_value(images, 1e-6, 1-1e-6)
+
+        n_annotations = tf.cast(features['n_annotations'], tf.int32)
+        max_n_annotations = tf.reduce_max(n_annotations)
+
+        annotations = tf.sparse_tensor_to_dense(features['annotations'], default_value=0)
+        annotations = tf.reshape(annotations, (-1, max_n_annotations, 5))
+
+        label = tf.cast(features['label'], tf.int32)
+
+        if self.one_hot:
+            label = tf.one_hot(label, self.n_classes)
+
+        return images, annotations, n_annotations, label
 
     def _make(self):
         if self.n_examples == 0:
@@ -283,7 +394,8 @@ class Patches(Dataset):
             # --- sample and populate patches ---
 
             patches, patch_labels, image_label = self._sample_patches()
-            patch_shapes = [img.shape for img in patches]
+            patch_shapes = np.array([img.shape for img in patches])
+
             locs = self._sample_patch_locations(
                 patch_shapes,
                 max_overlap=self.max_overlap,
@@ -351,19 +463,12 @@ class Patches(Dataset):
 
             annotations = self._get_annotations(draw_offset, patches, locs, patch_labels)
 
-            self._write_example(image, image_label, annotations)
+            self._write_example(image, annotations, image_label)
 
             if j % 1000 == 0:
                 print(image_label)
                 print(image_to_string(image))
                 print("\n")
-
-    def _write_example(self, image, image_label, annotation):
-        features = tf_image_representation(image)
-        features.update(annotation=_int64_feature(image_label))
-        example = tf.train.Example(features=tf.train.Features(feature=features))
-
-        self._writer.write(example.SerializeToString())
 
     def _get_annotations(self, draw_offset, patches, locs, labels):
         new_labels = []
@@ -399,7 +504,7 @@ class Patches(Dataset):
 
     def _sample_patch_locations(self, patch_shapes, max_overlap=None, size_std=None):
         """ Sample random locations within draw_shape. """
-        if not patch_shapes:
+        if len(patch_shapes) == 0:
             return []
 
         patch_shapes = np.array(patch_shapes)
@@ -470,6 +575,99 @@ class Patches(Dataset):
         colourized = np.array(img[..., None] * colour, np.uint8)
         return colourized
 
+    def _tile_postprocess(self, image, annotations):
+        height, width, n_channels = image.shape
+
+        hangover = width % self.tile_shape[1]
+        if hangover != 0:
+            pad_amount = self.tile_shape[1] - hangover
+            pad_shape = (height, pad_amount)
+            padding = np.zeros(pad_shape)
+            image = np.concat([image, padding], axis=2)
+
+        hangover = height % self.tile_shape[0]
+        if hangover != 0:
+            pad_amount = self.tile_shape[0] - hangover
+            pad_shape = list(image.shape)
+            pad_shape[1] = pad_amount
+            padding = np.zeros(pad_shape)
+            image = np.concat([image, padding], axis=1)
+
+        pad_height = self.tile_shape[0] - height % self.tile_shape[0]
+        pad_width = self.tile_shape[1] - width % self.tile_shape[1]
+        image = np.pad(image, ((0, pad_height), (0, pad_width), (0, 0)), 'constant')
+
+        H = int(height / self.tile_shape[0])
+        W = int(width / self.tile_shape[1])
+
+        slices = np.split(image, W, axis=1)
+        new_shape = (H, *self.tile_shape, n_channels)
+        slices = [np.reshape(s, new_shape) for s in slices]
+        new_images = np.concatenate(slices, axis=1)
+        new_images = new_images.reshape(H * W, *self.tile_shape, n_channels)
+
+        new_annotations = []
+
+        for h in range(H):
+            for w in range(W):
+                offset = (h * self.tile_shape[0], w * self.tile_shape[1])
+                _new_annotations = []
+                for l, top, bottom, left, right in annotations:
+                    # Transform to tile co-ordinates
+                    top = top - offset[0]
+                    bottom = bottom - offset[0]
+                    left = left - offset[1]
+                    right = right - offset[1]
+
+                    # Restrict to chosen crop
+                    top = np.clip(top, 0, self.tile_shape[0])
+                    bottom = np.clip(bottom, 0, self.tile_shape[0])
+                    left = np.clip(left, 0, self.tile_shape[1])
+                    right = np.clip(right, 0, self.tile_shape[1])
+
+                    invalid = (bottom - top < 1e-6) or (right - left < 1e-6)
+
+                    if not invalid:
+                        _new_annotations.append((l, top, bottom, left, right))
+
+                new_annotations.append(_new_annotations)
+
+        return new_images, new_annotations
+
+    def _random_postprocess(self, image, annotations):
+        height, width, _ = image.shape
+        new_images = []
+        new_annotations = []
+
+        for j in range(self.n_samples_per_image):
+            _top = np.random.randint(0, height-self.tile_shape[0]+1)
+            _left = np.random.randint(0, width-self.tile_shape[1]+1)
+
+            crop = image[_top:_top+self.tile_shape[0], _left:_left+self.tile_shape[1], ...]
+            new_images.append(crop)
+
+            offset = (_top, _left)
+            _new_annotations = []
+            for l, top, bottom, left, right in annotations:
+                top = top - offset[0]
+                bottom = bottom - offset[0]
+                left = left - offset[1]
+                right = right - offset[1]
+
+                top = np.clip(top, 0, self.tile_shape[0])
+                bottom = np.clip(bottom, 0, self.tile_shape[0])
+                left = np.clip(left, 0, self.tile_shape[1])
+                right = np.clip(right, 0, self.tile_shape[1])
+
+                invalid = (bottom - top < 1e-6) or (right - left < 1e-6)
+
+                if not invalid:
+                    _new_annotations.append((l, top, bottom, left, right))
+
+            new_annotations.append(_new_annotations)
+
+        return new_images, new_annotations
+
     def visualize(self, n=9):
         import matplotlib.pyplot as plt
         m = int(np.ceil(np.sqrt(n)))
@@ -532,10 +730,12 @@ class VisualArithmetic(Patches):
     min_digits = Param(2)
     max_digits = Param(3)
     digits = Param(list(range(10)))
+
+    largest_digit = Param(1000, help="All digits larger than this are lumped in with the largest "
+                                     "so there are largest_digit + 1 (for zero) classes.")
+
     patch_shape = Param((14, 14))
     n_patch_examples = Param(None)
-    one_hot = Param(False)
-    largest_digit = Param(1000)
     example_range = Param(None)
 
     reductions_dict = {
@@ -545,6 +745,10 @@ class VisualArithmetic(Patches):
         "min": min,
         "len": len,
     }
+
+    @property
+    def n_classes(self):
+        return self.largest_digit + 1
 
     def _make(self):
         self.digits = [int(d) for d in self.digits]
@@ -609,6 +813,7 @@ class VisualArithmetic(Patches):
         if self.op_reps is not None:
             op_idx = np.random.randint(len(self.op_reps))
             op_x, op_y = self.op_reps[op_idx]
+            op_x = self._colourize(op_x)
             func = self._remapped_reductions[int(op_y)]
             patches = [op_x] + list(digit_x)
         else:
@@ -616,17 +821,80 @@ class VisualArithmetic(Patches):
             patches = list(digit_x)
 
         y = func(digit_y)
-
-        if self.one_hot:
-            _y = np.zeros(self.largest_digit + 2)
-            hot_idx = min(int(y), self.largest_digit + 1)
-            _y[hot_idx] = 1.0
-            y = _y
-        else:
-            y = np.minimum(y, self.largest_digit)
+        y = min(y, self.largest_digit)
 
         return patches, digit_y, y
 
 
 class GridArithmetic(VisualArithmetic, GridPatches):
+    pass
+
+
+class EmnistObjectDetection(Patches):
+    min_chars = Param(2)
+    max_chars = Param(3)
+    characters = Param(
+        [str(i) for i in range(10)] +
+        [chr(i + ord('A')) for i in range(26)] +
+        [chr(i + ord('a')) for i in range(26)]
+    )
+
+    patch_shape = Param((14, 14))
+    n_patch_examples = Param(None)
+    example_range = Param(None)
+
+    @property
+    def n_classes(self):
+        return 1
+
+    def _make(self):
+        assert self.min_chars <= self.max_chars
+
+        emnist_x, emnist_y, self.classmap = load_emnist(
+            cfg.data_dir, self.characters, balance=True, shape=self.patch_shape,
+            one_hot=False, n_examples=self.n_patch_examples,
+            example_range=self.example_range)
+
+        self.char_reps = list(zip(emnist_x, emnist_y))
+        result = super(EmnistObjectDetection, self)._make()
+        del self.char_reps
+
+        return result
+
+    def _sample_patches(self):
+        n_chars = np.random.randint(self.min_chars, self.max_chars+1)
+
+        if not n_chars:
+            return [], [], 0
+
+        indices = [np.random.randint(len(self.char_reps)) for i in range(n_chars)]
+        chars = [self.char_reps[i] for i in indices]
+        char_x, char_y = list(zip(*chars))
+        char_x = [self._colourize(cx) for cx in char_x]
+
+        return char_x, char_y, 0
+
+    def visualize(self, n=9):
+        import matplotlib.pyplot as plt
+        import matplotlib.patches as patches
+        m = int(np.ceil(np.sqrt(n)))
+        fig, subplots = plt.subplots(m, m)
+
+        height = self.x.shape[1]
+
+        for i, ax in enumerate(subplots.flatten()):
+            ax.imshow(self.x[i, ...])
+            for cls, top, bottom, left, right in self.y[i]:
+                width = right - left
+                height = bottom - top
+
+                rect = patches.Rectangle(
+                    (left, top), width, height, linewidth=1,
+                    edgecolor='white', facecolor='none')
+
+                ax.add_patch(rect)
+        plt.show()
+
+
+class GridEmnistObjectDetection(EmnistObjectDetection, GridPatches):
     pass
