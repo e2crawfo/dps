@@ -78,9 +78,9 @@ class AttentionClassifier(ScopedFunction):
 
     def _call(self, images, output_size, is_training):
         attention = Attention()
-        attended = attention(images, cfg.sub_image_shape, is_training)
+        attended = attention(images, cfg.patch_shape, is_training)
 
-        config = cfg.emnist_config.copy(shape=cfg.sub_image_shape)
+        config = cfg.emnist_config.copy(shape=cfg.patch_shape)
         classifier = cfg.emnist_config.build_function()
 
         if self.pretrain_classifier:
@@ -113,7 +113,7 @@ config = Config(
     image_shape=(42, 42),
     draw_offset=(0, 0),
     draw_shape=None,
-    sub_image_shape=(14, 14),
+    patch_shape=(14, 14),
 
     n_train=10000,
     n_val=100,

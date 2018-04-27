@@ -663,8 +663,8 @@ config = Config(
     characters=[0, 1, 2, 3],
     min_chars=1,
     max_chars=3,
-    sub_image_shape=(14, 14),
-    n_sub_image_examples=0,
+    patch_shape=(14, 14),
+    n_patch_examples=0,
     colours='red green blue',
 
     anchor_boxes=[[14, 14]],

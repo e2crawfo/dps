@@ -2,6 +2,7 @@ import numpy as np
 from skimage.transform import resize
 import os
 import tensorflow as tf
+import matplotlib.pyplot as plt
 
 from dps import cfg
 from dps.utils import image_to_string, Param, Parameterized, get_param_hash
@@ -34,7 +35,7 @@ class Dataset(Parameterized):
             try:
                 self._make()
                 self._writer.close()
-            except Exception:
+            except BaseException:
                 self._writer.close()
                 try:
                     os.remove(self.filename)
@@ -210,10 +211,17 @@ class Rectangle(object):
         self.w = w
 
     def intersects(self, r2):
-        r1 = self
-        h_overlaps = (r1.left <= r2.right) and (r1.right >= r2.left)
-        v_overlaps = (r1.top <= r2.bottom) and (r1.bottom >= r2.top)
-        return h_overlaps and v_overlaps
+        return self.overlap_area(r2) > 0
+
+    def overlap_area(self, r2):
+        overlap_bottom = np.minimum(self.bottom, r2.bottom)
+        overlap_top = np.maximum(self.top, r2.top)
+
+        overlap_right = np.minimum(self.right, r2.right)
+        overlap_left = np.maximum(self.left, r2.left)
+
+        area = np.maximum(overlap_bottom - overlap_top, 0) * np.maximum(overlap_right - overlap_left, 0)
+        return area
 
     def centre(self):
         return (
@@ -222,7 +230,7 @@ class Rectangle(object):
         )
 
     def __str__(self):
-        return "Rectangleangle({}:{}, {}:{})".format(self.top, self.bottom, self.left, self.right)
+        return "Rectangle({}:{}, {}:{})".format(self.top, self.bottom, self.left, self.right)
 
 
 class Patches(Dataset):
@@ -249,6 +257,8 @@ class Patches(Dataset):
     tile_shape = Param(None)
     n_samples_per_image = Param(1)
     one_hot = Param(True)
+
+    plot_every = Param(None)
 
     features = {
         "image_raw": tf.FixedLenFeature((), dtype=tf.string),
@@ -322,7 +332,13 @@ class Patches(Dataset):
 
         import matplotlib as mpl
         colour_map = mpl.colors.get_named_colors_mapping()
-        self._colours = [np.array(mpl.colors.to_rgb(colour_map[cn]))[None, None, :] for cn in colours]
+
+        self._colours = []
+        for c in colours:
+            c = mpl.colors.to_rgb(colour_map[c])
+            c = np.array(c)[None, None, :]
+            c = np.uint8(255. * c)
+            self._colours.append(c)
 
         # --- prepare shapes ---
 
@@ -362,9 +378,8 @@ class Patches(Dataset):
         if isinstance(self.background_colours, str):
             background_colours = background_colours.split()
         _background_colours = []
-        from matplotlib.colors import to_rgb
         for bc in background_colours:
-            color = to_rgb(bc)
+            color = mpl.colors.to_rgb(bc)
             color = np.array(color)[None, None, :]
             color = np.uint8(255. * color)
             _background_colours.append(color)
@@ -407,14 +422,11 @@ class Patches(Dataset):
                 if patch.shape[:2] != (loc.h, loc.w):
                     patch = resize(patch, (loc.h, loc.w), mode='edge', preserve_range=True)
 
-                if patch.shape[-1] == 4:
-                    alpha, patch = np.split(patch, [3, 1], axis=-1)
+                intensity = patch[:, :, :-1]
+                alpha = patch[:, :, -1:].astype('f') / 255.
 
-                    current = image[loc.top:loc.bottom, loc.left:loc.right, ...]
-                    image[loc.top:loc.bottom, loc.left:loc.right, ...] = alpha * patch + (1 - alpha) * current
-                else:
-                    current = image[loc.top:loc.bottom, loc.left:loc.right, ...]
-                    image[loc.top:loc.bottom, loc.left:loc.right, ...] = np.maximum(current, patch)
+                current = image[loc.top:loc.bottom, loc.left:loc.right, ...]
+                image[loc.top:loc.bottom, loc.left:loc.right, ...] = np.uint8(alpha * intensity + (1 - alpha) * current)
 
             # --- add distractors ---
 
@@ -427,14 +439,11 @@ class Patches(Dataset):
                     if patch.shape[:2] != (loc.h, loc.w):
                         patch = resize(patch, (loc.h, loc.w), mode='edge', preserve_range=True)
 
-                    if patch.shape[-1] == 4:
-                        alpha, patch = np.split(patch, [3, 1], axis=-1)
+                    intensity = patch[:, :, :-1]
+                    alpha = patch[:, :, -1:].astype('f') / 255.
 
-                        current = image[loc.top:loc.bottom, loc.left:loc.right, ...]
-                        image[loc.top:loc.bottom, loc.left:loc.right, ...] = alpha * patch + (1 - alpha) * current
-                    else:
-                        current = image[loc.top:loc.bottom, loc.left:loc.right, ...]
-                        image[loc.top:loc.bottom, loc.left:loc.right, ...] = np.maximum(patch, current)
+                    current = image[loc.top:loc.bottom, loc.left:loc.right, ...]
+                    image[loc.top:loc.bottom, loc.left:loc.right, ...] = np.uint8(alpha * intensity + (1 - alpha) * current)
 
             # --- possibly crop entire image ---
 
@@ -465,10 +474,12 @@ class Patches(Dataset):
 
             self._write_example(image, annotations, image_label)
 
-            if j % 1000 == 0:
+            if self.plot_every is not None and j % self.plot_every == 0:
                 print(image_label)
                 print(image_to_string(image))
                 print("\n")
+                plt.imshow(image)
+                plt.show()
 
     def _get_annotations(self, draw_offset, patches, locs, labels):
         new_labels = []
@@ -509,35 +520,45 @@ class Patches(Dataset):
 
         patch_shapes = np.array(patch_shapes)
         n_rects = patch_shapes.shape[0]
-        i = 0
-        while True:
-            if size_std is None:
-                shape_multipliers = 1.
-            else:
-                shape_multipliers = np.maximum(np.random.randn(n_rects, 2) * size_std + 1.0, 0.5)
 
-            _patch_shapes = np.ceil(shape_multipliers * patch_shapes[:, :2]).astype('i')
+        rects = []
 
-            rects = [
-                Rectangle(
+        for i in range(n_rects):
+            n_tries = 0
+            while True:
+                if size_std is None:
+                    shape_multipliers = 1.
+                else:
+                    shape_multipliers = np.maximum(np.random.randn(2) * size_std + 1.0, 0.5)
+
+                m, n = np.ceil(shape_multipliers * patch_shapes[i, :2]).astype('i')
+
+                rect = Rectangle(
                     np.random.randint(0, self.draw_shape[0]-m+1),
                     np.random.randint(0, self.draw_shape[1]-n+1), m, n)
-                for m, n in _patch_shapes]
-            area = np.zeros(self.draw_shape, 'uint8')
 
-            for rect in rects:
-                area[rect.top:rect.bottom, rect.left:rect.right] += 1
+                if max_overlap is None:
+                    rects.append(rect)
+                    break
+                else:
+                    violation = False
+                    for r in rects:
+                        if rect.overlap_area(r) > max_overlap:
+                            violation = True
+                            break
 
-            if max_overlap is None or (area[area >= 2]-1).sum() < max_overlap:
-                break
+                    if not violation:
+                        rects.append(rect)
+                        break
 
-            i += 1
+                n_tries += 1
 
-            if i > self.max_attempts:
-                raise Exception(
-                    "Could not fit rectangles. "
-                    "(n_rects: {}, draw_shape: {}, max_overlap: {})".format(
-                        n_rects, self.draw_shape, max_overlap))
+                if n_tries > self.max_attempts:
+                    raise Exception(
+                        "Could not fit rectangles. "
+                        "(n_rects: {}, draw_shape: {}, max_overlap: {})".format(
+                            n_rects, self.draw_shape, max_overlap))
+
         return rects
 
     def _sample_distractors(self):
@@ -566,14 +587,16 @@ class Patches(Dataset):
         """ Apply a colour to a gray-scale image. """
 
         if not self._colours:
-            return img[..., None]
+            return np.stack([255 * np.ones_like(img), img], axis=2)
 
         if colour_idx is None:
             colour_idx = np.random.randint(len(self._colours))
 
         colour = self._colours[colour_idx]
-        colourized = np.array(img[..., None] * colour, np.uint8)
-        return colourized
+        rgb = np.tile(colour, img.shape + (1,))
+        alpha = img[:, :, None]
+
+        return np.concatenate([rgb, alpha], axis=2).astype(np.uint8)
 
     def _tile_postprocess(self, image, annotations):
         height, width, n_channels = image.shape

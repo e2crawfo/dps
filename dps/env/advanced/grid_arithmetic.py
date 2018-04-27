@@ -58,7 +58,7 @@ class FeedforwardPretrained(ScopedFunction):
     build_convolutional_model = Param()
 
     image_shape_grid = Param()
-    sub_image_shape = Param()
+    patch_shape = Param()
 
     def __init__(self, **kwargs):
         super(FeedforwardPretrained, self).__init__(**kwargs)
@@ -154,7 +154,7 @@ class Recurrent(ScopedFunction):
     build_glimpse_processor = Param()
 
     image_shape_grid = Param()
-    sub_image_shape = Param()
+    patch_shape = Param()
 
     def __init__(self, **kwargs):
         super(Recurrent, self).__init__(**kwargs)
@@ -291,7 +291,7 @@ class _GridArithmeticRenderRollouts(object):
     def _render_rollout(self, env, T, action_names, actions, fields, f):
         if 'glimpse' in fields:
             glimpse = fields['glimpse']
-            glimpse = glimpse.reshape((glimpse.shape[0],) + env.internal.sub_image_shape)
+            glimpse = glimpse.reshape((glimpse.shape[0],) + env.internal.patch_shape)
         else:
             glimpse = None
 
@@ -381,7 +381,7 @@ config = Config(
     image_shape_grid=(2, 2),
     draw_offset=(0, 0),
     draw_shape_grid=None,
-    sub_image_shape=(14, 14),
+    patch_shape=(14, 14),
     min_digits=2,
     max_digits=3,
     parity='both',
@@ -481,7 +481,7 @@ class GridArithmetic(InternalEnv):
 
     @property
     def input_shape(self):
-        return tuple(es*s for es, s in zip(self.env_shape, self.sub_image_shape))
+        return tuple(es*s for es, s in zip(self.env_shape, self.patch_shape))
 
     @property
     def n_discrete_actions(self):
@@ -490,7 +490,7 @@ class GridArithmetic(InternalEnv):
     arithmetic_actions = Param()
     env_shape = Param(aliases="image_shape_grid")
     start_loc = Param()
-    sub_image_shape = Param()
+    patch_shape = Param()
     visible_glimpse = Param()
     salience_action = Param()
     salience_model = Param()
@@ -512,7 +512,7 @@ class GridArithmetic(InternalEnv):
     }
 
     def __init__(self, **kwargs):
-        self.sub_image_size = np.product(self.sub_image_shape)
+        self.patch_size = np.product(self.patch_shape)
         self.salience_input_size = np.product(self.salience_input_shape)
         self.salience_output_size = np.product(self.salience_output_shape)
 
@@ -538,7 +538,7 @@ class GridArithmetic(InternalEnv):
         values = (
             [0., 0., -1., 0., 0., -1.] +
             [np.zeros(self.salience_output_size, dtype='f')] +
-            [np.zeros(self.sub_image_size, dtype='f')] +
+            [np.zeros(self.patch_size, dtype='f')] +
             [np.zeros(self.salience_input_size, dtype='f')]
         )
 
@@ -598,7 +598,7 @@ class GridArithmetic(InternalEnv):
                 salience_config = cfg.salience_config.copy(
                     output_shape=self.salience_output_shape,
                     image_shape=self.salience_input_shape,
-                    sub_image_shape=self.sub_image_shape,
+                    patch_shape=self.patch_shape,
                     build_function=_build_salience_detector,
                 )
 
@@ -608,7 +608,7 @@ class GridArithmetic(InternalEnv):
                 self.salience_detector.set_pretraining_params(
                     salience_config,
                     name_params='classes std min_digits max_digits n_units '
-                                'sub_image_shape image_shape output_shape',
+                                'patch_shape image_shape output_shape',
                     directory=cfg.model_dir + '/salience_pretrained'
                 )
                 self.salience_detector.fix_variables()
@@ -618,18 +618,18 @@ class GridArithmetic(InternalEnv):
             self.salience_detector = None
 
     def _build_update_glimpse(self, fovea_y, fovea_x):
-        top_left = tf.concat([fovea_y, fovea_x], axis=-1) * self.sub_image_shape
+        top_left = tf.concat([fovea_y, fovea_x], axis=-1) * self.patch_shape
 
         inp = self.input[..., None]
 
         glimpse = extract_glimpse_numpy_like(
-            inp, self.sub_image_shape, top_left, fill_value=0.0)
-        glimpse = tf.reshape(glimpse, (-1, self.sub_image_size), name="glimpse")
+            inp, self.patch_shape, top_left, fill_value=0.0)
+        glimpse = tf.reshape(glimpse, (-1, self.patch_size), name="glimpse")
         return glimpse
 
     def _build_update_salience(self, update_salience, salience, salience_input, fovea_y, fovea_x):
-        top_left = tf.concat([fovea_y, fovea_x], axis=-1) * self.sub_image_shape
-        top_left -= (np.array(self.salience_input_shape) - np.array(self.sub_image_shape)) / 2.0
+        top_left = tf.concat([fovea_y, fovea_x], axis=-1) * self.patch_shape
+        top_left -= (np.array(self.salience_input_shape) - np.array(self.patch_shape)) / 2.0
 
         inp = self.input[..., None]
 
@@ -843,7 +843,7 @@ class OmniglotCounting(GridArithmeticEasy):
         values = (
             [0., 0., 0., -1., 0., 0., -1.] +
             [np.zeros(self.salience_output_size, dtype='f')] +
-            [np.zeros(self.sub_image_size, dtype='f')] +
+            [np.zeros(self.patch_size, dtype='f')] +
             [np.zeros(self.salience_input_size, dtype='f')]
         )
 

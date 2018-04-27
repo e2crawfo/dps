@@ -233,7 +233,7 @@ def test_salience_pretrained(test_config):
         config = SALIENCE_CONFIG.copy(
             classes=list(range(10)),
             threshold=0.016,
-            n_sub_image_examples=200,
+            n_patch_examples=200,
             n_train=10000,
         )
         config.update(test_config)
@@ -247,7 +247,7 @@ def test_salience_pretrained(test_config):
         checkpoint_dir = make_checkpoint_dir(config, 'test_emnist')
         output_size = 1
 
-        name_params = 'classes std min_digits max_digits sub_image_shape image_shape output_shape'
+        name_params = 'classes std min_digits max_digits patch_shape image_shape output_shape'
 
         g, sess = get_graph_and_session()
 

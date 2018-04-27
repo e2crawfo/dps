@@ -1020,9 +1020,9 @@ config = Config(
     min_chars=1,
     max_chars=2,
     characters=[0, 1, 2],
-    n_sub_image_examples=0,
+    n_patch_examples=0,
     image_shape=(24, 24),
-    sub_image_shape=(14, 14),
+    patch_shape=(14, 14),
     max_overlap=200,
 
     optimizer_spec="adam",

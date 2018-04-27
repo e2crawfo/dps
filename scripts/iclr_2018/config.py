@@ -32,7 +32,7 @@ env_config = Config(
     image_shape_grid=(2, 2),
     draw_offset=(0, 0),
     draw_shape_grid=None,
-    sub_image_shape=(14, 14),
+    patch_shape=(14, 14),
 
     salience_action=True,
     visible_glimpse=False,

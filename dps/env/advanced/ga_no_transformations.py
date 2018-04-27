@@ -138,7 +138,7 @@ class GridArithmeticNoTransformations(GridArithmetic):
         values = (
             [-1., -1., 0., 0., -1.] +
             [np.zeros(self.salience_output_size, dtype='f')] +
-            [np.zeros(self.sub_image_size, dtype='f')] +
+            [np.zeros(self.patch_size, dtype='f')] +
             [np.zeros(self.salience_input_size, dtype='f')] +
             [0.]
         )

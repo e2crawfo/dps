@@ -154,7 +154,7 @@ config = Config(
     min_chars=1,
     max_chars=1,
     characters=[0],
-    sub_image_shape=(28, 28),
+    patch_shape=(28, 28),
     xent_loss=True,
 
     render_hook=mnist_vae_render_hook,

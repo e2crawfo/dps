@@ -13,7 +13,7 @@ _train = EmnistObjectDetection(
     n_examples=n_examples,
     min_chars=2,
     max_chars=2,
-    sub_image_shape=crop_shape[:2],
+    patch_shape=crop_shape[:2],
     characters=[0],
     image_shape=image_shape[:2]).next_batch(n_examples, False)[0]
 

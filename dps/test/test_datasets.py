@@ -86,8 +86,8 @@ def test_visual_arithmetic_dataset():
 
         kwargs = dict(
             reductions="sum", min_digits=2, max_digits=3, digits=list(range(5)),
-            sub_image_shape=(14, 14), image_shape=(50, 50), largest_digit=1000,
-            one_hot=False, n_sub_image_examples=100, n_examples=n_examples)
+            patch_shape=(14, 14), image_shape=(50, 50), largest_digit=1000,
+            one_hot=False, n_patch_examples=100, n_examples=n_examples)
 
         dataset = VisualArithmeticDataset(**kwargs)
         assert dataset.x.shape == (n_examples, 50, 50)
@@ -162,8 +162,8 @@ def test_grid_arithmetic_dataset():
 
         kwargs = dict(
             reductions="sum", min_digits=2, max_digits=3, digits=list(range(5)),
-            sub_image_shape=(14, 14), image_shape_grid=(3, 3), largest_digit=1000,
-            one_hot=False, n_sub_image_examples=100, n_examples=n_examples)
+            patch_shape=(14, 14), image_shape_grid=(3, 3), largest_digit=1000,
+            one_hot=False, n_patch_examples=100, n_examples=n_examples)
 
         dataset = GridArithmeticDataset(**kwargs)
         assert dataset.x.shape == (n_examples, 42, 42)
@@ -272,7 +272,7 @@ def test_tile_wrapper(show_plots):
         tile_shape = (28, 35)
         n_examples = 10
         dset = GridEmnistObjectDetection(
-            min_chars=25, max_chars=25, n_sub_image_examples=100, n_examples=n_examples,
+            min_chars=25, max_chars=25, n_patch_examples=100, n_examples=n_examples,
             draw_shape_grid=(5, 5), image_shape=(4*14, 5*14), draw_offset=(0, 0), spacing=(-5, -5),
             characters=list(range(10)), colours="white", postprocessing="tile", tile_shape=tile_shape)
 
@@ -290,7 +290,7 @@ def test_random_wrapper(show_plots):
         tile_shape = (28, 35)
         n_examples = 10
         dset = GridEmnistObjectDetection(
-            min_chars=25, max_chars=25, n_sub_image_examples=100, n_examples=n_examples,
+            min_chars=25, max_chars=25, n_patch_examples=100, n_examples=n_examples,
             draw_shape_grid=(5, 5), image_shape=(4*14, 5*14), draw_offset=(0, 0), spacing=(-5, -5),
             characters=list(range(10)), colours="white", postprocessing="random", tile_shape=tile_shape, n_samples_per_image=4)
 

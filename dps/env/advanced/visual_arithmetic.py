@@ -104,7 +104,7 @@ config = Config(
     env_shape=(15, 15),
     draw_offset=(0, 0),
     draw_shape=(15, 15),
-    sub_image_shape=(14, 14),
+    patch_shape=(14, 14),
 
     n_train=10000,
     n_val=100,
@@ -163,7 +163,7 @@ class VisualArithmetic(InternalEnv):
     start_loc = Param()
 
     env_shape = Param()
-    sub_image_shape = Param()
+    patch_shape = Param()
 
     visible_glimpse = Param()
     salience_action = Param()
@@ -186,7 +186,7 @@ class VisualArithmetic(InternalEnv):
     }
 
     def __init__(self, **kwargs):
-        self.sub_image_size = np.product(self.sub_image_shape)
+        self.patch_size = np.product(self.patch_shape)
         self.salience_input_size = np.product(self.salience_input_shape)
         self.salience_output_size = np.product(self.salience_output_shape)
 
@@ -214,7 +214,7 @@ class VisualArithmetic(InternalEnv):
         values = (
             [0., 0., -1., .5, .5, -1.] +
             [np.zeros(self.salience_output_size, dtype='f')] +
-            [np.zeros(self.sub_image_size, dtype='f')] +
+            [np.zeros(self.patch_size, dtype='f')] +
             [np.zeros(self.salience_input_size, dtype='f')]
         )
 
@@ -285,7 +285,7 @@ class VisualArithmetic(InternalEnv):
                 self.salience_detector.set_pretraining_params(
                     salience_config,
                     name_params='classes std min_digits max_digits n_units '
-                                'sub_image_shape image_shape output_shape',
+                                'patch_shape image_shape output_shape',
                     directory=cfg.model_dir + '/salience_pretrained'
                 )
                 self.salience_detector.fix_variables()
@@ -297,13 +297,13 @@ class VisualArithmetic(InternalEnv):
     def _build_update_glimpse(self, fovea_y, fovea_x):
         fovea_center_px = tf.concat([fovea_y, fovea_x], axis=-1) * self.env_shape
 
-        fovea_top_left_px = fovea_center_px - 0.5 * np.array(self.sub_image_shape)
+        fovea_top_left_px = fovea_center_px - 0.5 * np.array(self.patch_shape)
 
         inp = self.input[..., None]
 
         glimpse = extract_glimpse_numpy_like(
-            inp, self.sub_image_shape, fovea_top_left_px, fill_value=0.0)
-        glimpse = tf.reshape(glimpse, (-1, self.sub_image_size), name="glimpse")
+            inp, self.patch_shape, fovea_top_left_px, fill_value=0.0)
+        glimpse = tf.reshape(glimpse, (-1, self.patch_size), name="glimpse")
         return glimpse
 
     def _build_update_salience(self, update_salience, salience, salience_input, fovea_y, fovea_x):

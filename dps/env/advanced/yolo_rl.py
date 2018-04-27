@@ -1352,14 +1352,14 @@ config = Config(
 
     min_chars=12,
     max_chars=12,
-    n_sub_image_examples=0,
+    n_patch_examples=0,
 
     image_shape=(84, 84),
     max_overlap=400,
-    sub_image_shape=(14, 14),
+    patch_shape=(14, 14),
 
     characters=list(range(10)),
-    sub_image_size_std=0.0,
+    patch_size_std=0.0,
     colours="white",
 
     n_distractors_per_image=0,

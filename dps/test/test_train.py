@@ -212,7 +212,7 @@ def test_fixed_variables(test_config):
 
     digits = [0, 1]
     config = translated_mnist.config.copy(
-        log_name="test_fixed_variables", render_step=0, n_sub_image_examples=1000,
+        log_name="test_fixed_variables", render_step=0, n_patch_examples=1000,
         value_weight=0.0, opt_steps_per_update=20, image_shape=(20, 20),
         max_steps=101, eval_step=10, use_gpu=False, seed=1034340,
         model_dir="/tmp/dps_test/models", n_train=100, digits=digits
