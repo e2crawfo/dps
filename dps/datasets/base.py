@@ -2,6 +2,7 @@ import numpy as np
 from skimage.transform import resize
 import os
 import tensorflow as tf
+import matplotlib
 import matplotlib.pyplot as plt
 
 from dps import cfg
@@ -479,12 +480,24 @@ class Patches(Dataset):
                 print(image_to_string(image))
                 print("\n")
                 plt.imshow(image)
+                ax = plt.gca()
+
+                for cls, top, bottom, left, right in annotations:
+                    width = right - left
+                    height = bottom - top
+
+                    rect = matplotlib.patches.Rectangle(
+                        (left, top), width, height, linewidth=1,
+                        edgecolor='white', facecolor='none')
+
+                    ax.add_patch(rect)
+
                 plt.show()
 
     def _get_annotations(self, draw_offset, patches, locs, labels):
         new_labels = []
         for patch, loc, label in zip(patches, locs, labels):
-            nz_y, nz_x = np.nonzero(patch.sum(axis=2))
+            nz_y, nz_x = np.nonzero(patch[:, :, -1])
 
             # In draw co-ordinates
             top = (nz_y.min() / patch.shape[0]) * loc.h + loc.top
@@ -911,7 +924,7 @@ class EmnistObjectDetection(Patches):
                 width = right - left
                 height = bottom - top
 
-                rect = patches.Rectangle(
+                rect = matplotlib.patches.Rectangle(
                     (left, top), width, height, linewidth=1,
                     edgecolor='white', facecolor='none')
 
