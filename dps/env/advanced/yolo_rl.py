@@ -1204,7 +1204,6 @@ class YoloRL_RenderHook(object):
         to_fetch["routing"] = network._tensors["routing"]
         to_fetch["n_objects"] = network._tensors["n_objects"]
         to_fetch["normalized_box"] = network._tensors["normalized_box"]
-        to_fetch["background"] = network._tensors["background"]
 
         to_fetch = {k: v[:self.N] for k, v in to_fetch.items()}
 
@@ -1215,8 +1214,6 @@ class YoloRL_RenderHook(object):
 
     def _plot_reconstruction(self, updater, fetched):
         images = fetched['images']
-        background = fetched['background']
-
         output = fetched['output']
 
         _, image_height, image_width, _ = images.shape
@@ -1235,32 +1232,36 @@ class YoloRL_RenderHook(object):
 
         sqrt_N = int(np.ceil(np.sqrt(self.N)))
 
-        fig, axes = plt.subplots(3*sqrt_N, sqrt_N, figsize=(20, 20))
-        axes = np.array(axes).reshape(3*sqrt_N, sqrt_N)
-        for n, (pred, gt, bg) in enumerate(zip(output, images, background)):
+        fig, axes = plt.subplots(2*sqrt_N, 2*sqrt_N, figsize=(20, 20))
+        axes = np.array(axes).reshape(2*sqrt_N, 2*sqrt_N)
+        for n, (pred, gt, bg) in enumerate(zip(output, images)):
             i = int(n / sqrt_N)
             j = int(n % sqrt_N)
 
-            ax1 = axes[3*i, j]
-            ax1.imshow(pred)
-            ax1.set_title('reconstruction')
+            ax1 = axes[2*i, 2*j]
+            ax1.imshow(gt)
 
-            ax2 = axes[3*i+1, j]
-            ax2.imshow(gt)
-            ax2.set_title('actual')
+            ax2 = axes[2*i, 2*j+1]
+            ax2.imshow(pred)
+
+            ax3 = axes[2*i+1, 2*j]
+            ax3.imshow(pred)
+
+            ax4 = axes[2*i+1, 2*j+1]
+            ax4.imshow(pred)
 
             # Plot proposed bounding boxes
             for o, (top, left, height, width) in zip(obj[n], box[n]):
-
                 color = "xkcd:azure" if o > 1e-6 else "xkcd:red"
 
                 rect = patches.Rectangle(
                     (left, top), width, height, linewidth=1, edgecolor=color, facecolor='none')
-                ax1.add_patch(rect)
+                ax4.add_patch(rect)
 
-                rect = patches.Rectangle(
-                    (left, top), width, height, linewidth=1, edgecolor=color, facecolor='none')
-                ax2.add_patch(rect)
+                if o > 1e-6:
+                    rect = patches.Rectangle(
+                        (left, top), width, height, linewidth=1, edgecolor=color, facecolor='none')
+                    ax3.add_patch(rect)
 
             # Plot true bounding boxes
             for k in range(n_annotations[n]):
@@ -1275,11 +1276,13 @@ class YoloRL_RenderHook(object):
 
                 rect = patches.Rectangle(
                     (left, top), width, height, linewidth=1, edgecolor="xkcd:yellow", facecolor='none')
-                ax2.add_patch(rect)
+                ax3.add_patch(rect)
 
-            ax3 = axes[3*i+2, j]
-            ax3.imshow(bg)
-            ax3.set_title('background')
+                rect = patches.Rectangle(
+                    (left, top), width, height, linewidth=1, edgecolor="xkcd:yellow", facecolor='none')
+                ax4.add_patch(rect)
+
+        plt.subplots_adjust(left=0, right=1, top=1, bottom=0, wspace=0.1, hspace=0.1)
 
         fig.suptitle('Stage={}. After {} experiences ({} updates, {} experiences per batch).'.format(
             updater.stage_idx, updater.n_experiences, updater.n_updates, cfg.batch_size))
