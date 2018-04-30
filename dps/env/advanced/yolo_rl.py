@@ -813,6 +813,13 @@ class YoloRL_Network(Parameterized):
             (ys * float(self.image_height)) * (xs * float(self.image_width)))
         self._tensors['output'] = output
 
+    def _process_labels(self, labels):
+        self._tensors.update(
+            annotations=labels[0],
+            n_annotations=labels[1],
+            targets=labels[2],
+        )
+
     def build_graph(self, inp, labels, is_training, background):
 
         # --- initialize containers for storing outputs ---
@@ -840,11 +847,7 @@ class YoloRL_Network(Parameterized):
             batch_size=tf.shape(inp)[0],
         )
 
-        self._tensors.update(
-            annotations=labels[0],
-            n_annotations=labels[1],
-            targets=labels[2],
-        )
+        self._process_labels(labels)
 
         # --- build graph ---
 

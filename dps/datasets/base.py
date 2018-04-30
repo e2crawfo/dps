@@ -36,6 +36,7 @@ class Dataset(Parameterized):
             try:
                 self._make()
                 self._writer.close()
+                print("Done creating dataset.")
             except BaseException:
                 self._writer.close()
                 try:

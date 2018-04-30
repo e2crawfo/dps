@@ -67,7 +67,7 @@ class InterpretableAdditionNetwork(ScopedFunction):
         return running_sum
 
 
-class SequentialMathNetwork(ScopedFunction):
+class SequentialRegressionNetwork(ScopedFunction):
     h_cell = None
     w_cell = None
     b_cell = None
@@ -78,9 +78,9 @@ class SequentialMathNetwork(ScopedFunction):
         """ inp is the program dictionary from YoloRL_Network """
 
         if self.h_cell is None:
-            self.h_cell = cfg.build_math_cell(scope="math_h_cell")
-            self.w_cell = cfg.build_math_cell(scope="math_w_cell")
-            self.b_cell = cfg.build_math_cell(scope="math_b_cell")
+            self.h_cell = cfg.build_regression_cell(scope="regression_h_cell")
+            self.w_cell = cfg.build_regression_cell(scope="regression_w_cell")
+            self.b_cell = cfg.build_regression_cell(scope="regression_b_cell")
 
         edge_state = self.h_cell.zero_state(tf.shape(inp['attr'])[0], tf.float32)
 
@@ -109,7 +109,7 @@ class SequentialMathNetwork(ScopedFunction):
                     _, b_states[h, w, b] = self.b_cell(b_inp, b_state)
 
         if self.output_network is None:
-            self.output_network = cfg.build_math_output(scope="math_output")
+            self.output_network = cfg.build_regression_output(scope="regression_output")
 
         final_layer_input = tf.concat(
             [h_states[-1, -1, -1].h,
@@ -120,14 +120,14 @@ class SequentialMathNetwork(ScopedFunction):
         return self.output_network(final_layer_input, output_size, is_training)
 
 
-class ConvolutionalMathNetwork(ScopedFunction):
+class ConvolutionalRegressionNetwork(ScopedFunction):
     network = None
 
     def _call(self, inp, output_size, is_training):
         """ inp is the program dictionary from YoloRL_Network """
 
         if self.network is None:
-            self.network = cfg.build_convolutional_network(scope="math_network")
+            self.network = cfg.build_convolutional_network(scope="regression_network")
 
         return self.network(inp['attr'], output_size, is_training)
 
@@ -150,7 +150,7 @@ class YoloRL_MathNetwork(yolo_rl.YoloRL_Network):
         if self.math_network is None:
             self.math_network = cfg.build_math_network(scope="math_network")
 
-            if "output" in self.fixed_weights:
+            if "math" in self.fixed_weights:
                 self.math_network.fix_variables()
 
         logits = self.math_network(self.program, self.largest_digit + 1, self.is_training)
@@ -196,7 +196,7 @@ config = yolo_rl.config.copy(
     one_hot=True,
     largest_digit=100,
 
-    build_math_network=SequentialMathNetwork,
+    build_math_network=SequentialRegressionNetwork,
     # build_math_network=LeNet,
 
     # largest_digit=144,  # 16 * 9

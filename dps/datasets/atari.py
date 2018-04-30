@@ -2,9 +2,11 @@ import gym
 from gym_recording.playback import scan_recorded_traces
 import numpy as np
 import os
+import tensorflow as tf
+import matplotlib.pyplot as plt
 
 from dps import cfg
-from dps.datasets import ImageClassification
+from dps.datasets import Dataset, ImageClassification
 from dps.utils import Param, square_subplots
 
 
@@ -180,23 +182,214 @@ def show_frames(frames):
     plt.show()
 
 
-class AtariCallback(object):
-    def __init__(self):
-        self.episodes = []
+class ArrayFeature(object):
+    def __init__(self, name, shape, dtype=np.float32):
+        self.name = name
+        self.shape = shape
+        self.dtype = dtype
 
-    def __call__(self, o, a, r):
-        self.episodes.append((o, a, r))
+    def get_write_features(self, array):
+        assert array.shape == self.shape
+        array = array.astype(self.dtype)
+
+        return {
+            self.name: tf.train.Feature(bytes_list=tf.train.BytesList(value=[array.tostring()])),
+        }
+
+    def get_read_features(self):
+        return {
+            self.name: tf.FixedLenFeature((), dtype=tf.string),
+        }
+
+    def process(self, data):
+        array_data = tf.decode_raw(data[self.name], tf.float32)
+        array_data = tf.reshape(array_data, (-1,) + self.shape)
+
+        return array_data
 
 
-class StaticAtariDataset(ImageClassification):
+class ImageFeature(ArrayFeature):
+
+    def process(self, data):
+        images = tf.decode_raw(data[self.name], tf.float32)
+        images = tf.reshape(images, (-1,) + self.shape)
+        images = tf.clip_by_value(images, 1e-6, 1-1e-6)
+
+        return images
+
+
+class ReinforcementLearningDataset(Dataset):
+    rl_data_location = Param()
+    max_episodes = Param(None)
+    max_episode_length = Param(None)
+
+    history_length = Param()
+
+    obs_shape = Param()
+    action_dim = Param()
+    reward_dim = Param()
+
+    store_o = Param(True)
+    store_a = Param(True)
+    store_r = Param(True)
+
+    store_next_o = Param(True)
+
+    _features = None
+
+    def get_read_features(self):
+        features = {}
+
+        for f in self.features:
+            features.update(f.get_read_features())
+
+        return features
+
+    @property
+    def features(self):
+        if self._features is not None:
+            return self._features
+
+        _features = []
+
+        if self.store_o:
+            obs_shape = (self.obs_shape[0], self.obs_shape[1], self.obs_shape[2] * self.history_length)
+            _features.append(ImageFeature("o", obs_shape))
+
+        if self.store_a:
+            action_dim = self.action_dim * self.history_length
+            _features.append(ArrayFeature("a", (action_dim,)))
+
+        if self.store_r:
+            reward_dim = self.reward_dim * self.history_length
+            _features.append(ArrayFeature("r", (reward_dim,)))
+
+        if self.store_next_o:
+            _features.append(ImageFeature("next_o", self.obs_shape))
+
+        self._features = _features
+
+        return _features
+
+    def _make(self):
+        scan_recorded_traces(self.rl_data_location, self._callback, self.max_episodes)
+
+    def _callback(self, o, a, r):
+        if o[0].dtype == np.uint8:
+            o = list((np.array(o) / 255.).astype('f'))
+
+        episode_length = len(o)
+
+        if self.max_episode_length is not None:
+            indices = np.random.choice(episode_length - self.history_length, size=self.max_episode_length, replace=False)
+        else:
+            indices = np.arange(episode_length - self.history_length)
+
+        for idx in indices:
+            _o, _a, _r, _next_o = None, None, None, None
+
+            if self.store_o:
+                _o = list(o[idx-self.history_length:idx])
+                _o = np.concatenate(_o, axis=2)
+
+            if self.store_a:
+                _a = np.array(a[idx-self.history_length:idx]).flatten()
+
+            if self.store_r:
+                _r = np.array(r[idx-self.history_length:idx]).flatten()
+
+            if self.store_next_o:
+                _next_o = o[idx]
+
+            self._write_example(_o, _a, _r, _next_o)
+
+    def _write_example(self, o, a, r, next_o):
+        assert o.ndim == 3
+        assert a.ndim == 1
+        assert r.ndim == 1
+
+        arrays = dict(o=o, a=a, r=r, next_o=next_o)
+        write_features = {}
+
+        for f in self.features:
+            write_features.update(f.get_write_features(arrays[f.name]))
+
+        example = tf.train.Example(features=tf.train.Features(feature=write_features))
+
+        self._writer.write(example.SerializeToString())
+
+    def parse_example_batch(self, example_proto):
+        data = tf.parse_example(example_proto, features=self.get_read_features())
+        return [f.process(data) for f in self.features]
+
+    def visualize(self):
+        batch_size = 4
+        dset = tf.data.TFRecordDataset(self.filename)
+        dset = dset.batch(batch_size).map(self.parse_example_batch)
+
+        iterator = dset.make_one_shot_iterator()
+
+        sess = tf.get_default_session()
+
+        o, a, r, next_o = None, None, None, None
+        result = sess.run(iterator.get_next())
+
+        idx = 0
+
+        if self.store_o:
+            o = result[idx]
+            idx += 1
+
+        if self.store_a:
+            a = result[idx]
+            idx += 1
+
+        if self.store_r:
+            r = result[idx]
+            idx += 1
+
+        if self.store_next_o:
+            next_o = result[idx]
+            idx += 1
+
+        stride = self.obs_shape[2]
+
+        fig, axes = plt.subplots(batch_size, self.history_length + 1)
+        for i in range(batch_size):
+            for j in range(self.history_length):
+                ax = axes[i, j]
+
+                if self.store_o:
+                    ax.imshow(np.squeeze(o[i, :, :, j*stride:(j+1)*stride]))
+
+                str_a = str(a[i, j * self.action_dim: (j+1)*self.action_dim]) if self.store_a else ""
+                str_r = str(r[i, j * self.action_dim: (j+1)*self.reward_dim]) if self.store_r else ""
+
+                ax.set_title("a={}, r={}".format(str_a, str_r))
+
+            ax = axes[i, -1]
+            ax.set_title("Next Obs")
+            if self.store_next_o:
+                ax.imshow(np.squeeze(next_o[i]))
+            plt.subplots_adjust(top=0.95, bottom=0, left=0, right=1, wspace=0.1, hspace=0.1)
+        plt.show()
+
+
+class StaticAtariDataset(ReinforcementLearningDataset):
     game = Param(aliases="atari_game")
     image_shape = Param(None)
-    samples_per_frame = Param(
-        0, help="If 0, scan over each image, extracting as many non-overlapping "
-                "sub-images of shape `image_shape` as possible. Otherwise, from each image "
-                "we sample `samples_per_frame` sub-images at random.")
     after_warp = Param(False)
-    default_shape = (210, 160)
+
+    action_dim = 1
+    reward_dim = 1
+    rl_data_location = None
+
+    @property
+    def obs_shape(self):
+        if self.after_warp:
+            return (84, 84, 1)
+        else:
+            return (210, 160, 3)
 
     def _make(self):
         directory = os.path.join(cfg.data_dir, "atari_data")
@@ -211,18 +404,7 @@ class StaticAtariDataset(ImageClassification):
             directory = os.path.join(directory, "after_warp_recording")
         else:
             directory = os.path.join(directory, "before_warp_recording")
-
-        callback = AtariCallback()
-        scan_recorded_traces(directory, callback)
-
-        frames = []
-        for o, _, _ in callback.episodes:
-            frames.extend(o)
-
-        frames = np.array(frames)
-        np.random.shuffle(frames)
-
-        return [frames]
+        scan_recorded_traces(directory, self._callback, self.max_episodes)
 
 
 if __name__ == "__main__":
@@ -234,5 +416,13 @@ if __name__ == "__main__":
     # show_frames(dset.x[:100])
     # dset = AtariAutoencodeDataset(
     #     game=game, policy=None, n_examples=100, samples_per_frame=0, image_shape=(30, 40))
-    game = "IcyHockeyNoFrameskip-v4"
-    dset = StaticAtariDataset(game)
+
+    game = "IceHockeyNoFrameskip-v4"
+    dset = StaticAtariDataset(game=game, history_length=2, max_episodes=3, max_episode_length=7, after_warp=False, store_next_o=True)
+
+    # dset = ReinforcementLearningDataset(
+    #     rl_data_location="./logs", history_length=3, obs_shape=(100, 100, 3), action_dim=1, reward_dim=1)
+
+    sess = tf.Session()
+    with sess.as_default():
+        dset.visualize()
