@@ -8,8 +8,8 @@ import os
 
 from dps import cfg
 from dps.utils import NumpySeed
-from dps.utils.tf import MLP, LeNet, SalienceMap
-from dps.vision.train import SALIENCE_CONFIG, EMNIST_CONFIG, OMNIGLOT_CONFIG
+from dps.utils.tf import MLP, LeNet
+from dps.vision.train import EMNIST_CONFIG, OMNIGLOT_CONFIG
 from dps.datasets import EmnistDataset, OmniglotDataset
 from dps.train import load_or_train
 
@@ -226,64 +226,6 @@ def test_omniglot(build_function, test_config):
 
             test_dataset = OmniglotDataset(indices=cfg.test_indices, one_hot=True)
             _eval_model(test_dataset, inference, x_ph)
-
-
-def test_salience_pretrained(test_config):
-    with NumpySeed(83849):
-        config = SALIENCE_CONFIG.copy(
-            classes=list(range(10)),
-            threshold=0.016,
-            n_patch_examples=200,
-            n_train=10000,
-        )
-        config.update(test_config)
-
-        def build_function():
-            return SalienceMap(
-                5, MLP([100, 100, 100]), cfg.output_shape,
-                std=cfg.std, flatten_output=cfg.flatten_output)
-        config.build_function = build_function
-
-        checkpoint_dir = make_checkpoint_dir(config, 'test_emnist')
-        output_size = 1
-
-        name_params = 'classes std min_digits max_digits patch_shape image_shape output_shape'
-
-        g, sess = get_graph_and_session()
-
-        with ExitStack() as stack:
-            stack.enter_context(g.as_default())
-            stack.enter_context(sess)
-            stack.enter_context(sess.as_default())
-            stack.enter_context(config)
-
-            f = build_function()
-            f.set_pretraining_params(config, name_params, checkpoint_dir)
-            x_ph = tf.placeholder(tf.float32, (None,) + cfg.image_shape)
-            f(x_ph, output_size, False)
-
-            assert f.was_loaded is False
-
-            # with config:
-            #     _eval_model(inference, x_ph)
-
-        g, sess = get_graph_and_session()
-
-        with ExitStack() as stack:
-            stack.enter_context(g.as_default())
-            stack.enter_context(sess)
-            stack.enter_context(sess.as_default())
-            stack.enter_context(config)
-
-            f = build_function()
-            f.set_pretraining_params(config, name_params, checkpoint_dir)
-            x_ph = tf.placeholder(tf.float32, (None,) + cfg.image_shape)
-            f(x_ph, output_size, False)
-
-            assert f.was_loaded is True
-
-            # with config:
-            #     _eval_model(inference, x_ph)
 
 
 def _train_classifier(build_function, config, name_params, output_size, checkpoint_dir):
