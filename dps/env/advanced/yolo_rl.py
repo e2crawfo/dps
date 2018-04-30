@@ -82,9 +82,22 @@ class ObjectDecoder(FullyConvolutional):
             dict(filters=self.n_decoder_channels, kernel_size=3, strides=1, padding="VALID", transpose=True),
             dict(filters=self.n_decoder_channels, kernel_size=5, strides=1, padding="VALID", transpose=True),
             dict(filters=self.n_decoder_channels, kernel_size=3, strides=2, padding="SAME", transpose=True),
-            dict(filters=4, kernel_size=4, strides=1, padding="SAME", transpose=True),  # For 14 x 14 output
+            dict(filters=4, kernel_size=4, strides=1, padding="SAME", transpose=True),
         ]
         super(ObjectDecoder, self).__init__(layout, check_output_shape=True, **kwargs)
+
+
+class ObjectDecoder28x28(FullyConvolutional):
+    n_decoder_channels = Param()
+
+    def __init__(self, **kwargs):
+        layout = [
+            dict(filters=self.n_decoder_channels, kernel_size=3, strides=1, padding="VALID", transpose=True),
+            dict(filters=self.n_decoder_channels, kernel_size=5, strides=1, padding="VALID", transpose=True),
+            dict(filters=self.n_decoder_channels, kernel_size=3, strides=2, padding="SAME", transpose=True),
+            dict(filters=4, kernel_size=4, strides=2, padding="SAME", transpose=True),
+        ]
+        super(ObjectDecoder28x28, self).__init__(layout, check_output_shape=True, **kwargs)
 
 
 def reconstruction_cost(_tensors, updater):
@@ -966,12 +979,16 @@ class YoloRL_Network(Parameterized):
         # --- other evaluation metrics
 
         recorded_tensors["count_error"] = tf.reduce_mean(
-            tf.to_float(
-                self._tensors["n_objects"] != self._tensors["n_annotations"]))
+            1 - tf.to_float(
+                tf.equal(self._tensors["n_objects"], self._tensors["n_annotations"])
+            )
+        )
 
         recorded_tensors["count_1norm"] = tf.reduce_mean(
             tf.to_float(
-                tf.abs(self._tensors["n_objects"] - self._tensors["n_annotations"])))
+                tf.abs(self._tensors["n_objects"] - self._tensors["n_annotations"])
+            )
+        )
 
         return {
             "tensors": self._tensors,
@@ -1237,7 +1254,7 @@ class YoloRL_RenderHook(object):
 
         fig, axes = plt.subplots(2*sqrt_N, 2*sqrt_N, figsize=(20, 20))
         axes = np.array(axes).reshape(2*sqrt_N, 2*sqrt_N)
-        for n, (pred, gt, bg) in enumerate(zip(output, images)):
+        for n, (pred, gt) in enumerate(zip(output, images)):
             i = int(n / sqrt_N)
             j = int(n % sqrt_N)
 
@@ -1475,7 +1492,7 @@ config.update(
     ),
 
     curriculum=[
-        dict(use_rl=False, fixed_values=dict(obj=1), max_steps=10000, patience=10000),
+        dict(rl_weight=0.0, fixed_values=dict(obj=1), max_steps=10000, patience=10000),
         dict(obj_exploration=0.2),
         dict(obj_exploration=0.1),
         dict(obj_exploration=0.05),
