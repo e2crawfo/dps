@@ -919,34 +919,59 @@ class time_limit(object):
             print("Time ran out.")
 
     """
+    _stack = []
+
     def __init__(self, seconds, verbose=False, timeout_callback=None):
         self.seconds = seconds
         self.verbose = verbose
         self.ran_out = False
         self.timeout_callback = timeout_callback
 
+    def __str__(self):
+        return (
+            "time_limit(seconds={}, verbose={}, ran_out={}, "
+            "timeout_callback={})".format(
+                self.seconds, self.verbose, self.ran_out, self.timeout_callback))
+
     def __enter__(self):
+        if time_limit._stack:
+            raise Exception(
+                "Only one instance of `time_limit` may be active at once. "
+                "Another time_limit instance {} was already active.".format(
+                    time_limit._stack[0]))
+
         self.old_handler = signal.signal(signal.SIGALRM, raise_alarm)
+
         if self.seconds <= 0:
             raise_alarm("Didn't get started.")
+
         if not np.isinf(self.seconds):
             signal.alarm(int(np.floor(self.seconds)))
+
         self.then = time.time()
+        time_limit._stack.append(self)
         return self
 
     def __exit__(self, exc_type, exc, exc_tb):
         self.elapsed_time = time.time() - self.then
 
+        signal.signal(signal.SIGALRM, self.old_handler)
+        time_limit._stack.pop()
+
         if exc_type is Alarm:
             self.ran_out = True
+
             if self.verbose:
-                print("Block ran for {} seconds (limit was {}).".format(self.elapsed_time, self.seconds))
+                print("Block ran for {} seconds (limit was {}).".format(
+                    self.elapsed_time, self.seconds))
+
             if self.timeout_callback:
                 self.timeout_callback(self)
+
             return True
         else:
             signal.alarm(0)  # Cancel the alarm.
-        return False
+            return False
 
 
 def timed_func(func):

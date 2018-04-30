@@ -102,7 +102,6 @@ def load_or_train(train_config, var_scope, path, target_var_scope=None, sess=Non
     saver = tf.train.Saver(to_be_loaded)
 
     if path is not None:
-        # Make sure that the location we want to save the result exists
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
     success = False
@@ -261,6 +260,7 @@ class TrainingLoop(object):
             with ExitStack() as stack:
 
                 # --------------- Stage set-up -------------------
+
                 print("\n" + "-" * 10 + " Stage set-up " + "-" * 10)
 
                 print("\nNew config values for this stage are: \n{}\n".format(pformat(stage_config)))
@@ -374,14 +374,14 @@ class TrainingLoop(object):
                     # from being handled properly, so replace it with an instance of `Exception`.
                     if cfg.robust:
                         traceback.print_exc()
-                        reason = "Exception occurred ({})".format(e)
+                        reason = "Exception occurred ({})".format(repr(e))
                     else:
                         raise Exception("NotImplemented") from e
 
                 except Exception as e:
                     if cfg.robust:
                         traceback.print_exc()
-                        reason = "Exception occurred ({})".format(e)
+                        reason = "Exception occurred ({})".format(repr(e))
                     else:
                         raise
 
@@ -407,35 +407,40 @@ class TrainingLoop(object):
                     print("\nReason: {}.\n".format(reason))
 
                     if 'best_path' in self.data.current_stage_record:
-                        # --------------- Evaluate the best hypothesis -------------------
+                        try:
+                            # --------------- Evaluate the best hypothesis -------------------
 
-                        print("\n" + "-" * 10 + " Final evaluation " + "-" * 10)
+                            print("\n" + "-" * 10 + " Final evaluation " + "-" * 10)
 
-                        print("Best hypothesis for this stage was found on "
-                              "step (l: {best_local_step}, g: {best_global_step}) "
-                              "with stopping criteria ({sc_name}) of {best_stopping_criteria}.".format(
-                                  sc_name=self.stopping_criteria_name, **self.data.current_stage_record))
+                            print("Best hypothesis for this stage was found on "
+                                  "step (l: {best_local_step}, g: {best_global_step}) "
+                                  "with stopping criteria ({sc_name}) of {best_stopping_criteria}.".format(
+                                      sc_name=self.stopping_criteria_name, **self.data.current_stage_record))
 
-                        best_path = self.data.current_stage_record['best_path']
-                        print("Loading best hypothesis for this stage "
-                              "from file {}...".format(best_path))
-                        updater.restore(sess, best_path)
+                            best_path = self.data.current_stage_record['best_path']
+                            print("Loading best hypothesis for this stage "
+                                  "from file {}...".format(best_path))
+                            updater.restore(sess, best_path)
 
-                        eval_results = updater.evaluate(cfg.batch_size)
+                            eval_results = updater.evaluate(cfg.batch_size)
 
-                        for mode, (record, _) in eval_results.items():
-                            if record:
-                                print("\n-- {} -- \n".format(mode))
-                                for k, v in sorted(record.items()):
-                                    print("* {}: {}".format(k, v))
-                        print()
+                            for mode, (record, _) in eval_results.items():
+                                if record:
+                                    print("\n-- {} -- \n".format(mode))
+                                    for k, v in sorted(record.items()):
+                                        print("* {}: {}".format(k, v))
+                            print()
 
-                        # --------------- Optionally render performance of best hypothesis -------------------
+                            # --------------- Optionally render performance of best hypothesis -------------------
 
-                        if cfg.render_step > 0 and cfg.render_hook is not None:
-                            print("Rendering...")
-                            cfg.render_hook(updater)
-                            print("Done rendering.")
+                            if cfg.render_step > 0 and cfg.render_hook is not None:
+                                print("Rendering...")
+                                cfg.render_hook(updater)
+                                print("Done rendering.")
+
+                        except BaseException:
+                            print("Exception occurred while performing final evaluation: ")
+                            traceback.print_exc()
 
                     # --------------- Finish up the stage -------------------
 
@@ -677,10 +682,10 @@ class FrozenTrainingLoopData(ExperimentDirectory):
             path = self.path_for(local_path)
             files = os.listdir(path) if os.path.isdir(path) else []
             for f in files:
-                local_step = int(f.split('=')[1].split('.')[0])
+                local_step = float(f.split('=')[1].split('.')[0])  # Filename created by `get_data_path`
                 data[(stage_idx, local_step)] = pd.read_csv(os.path.join(path, f))
 
-        data_frames = [d[1] for d in sorted(data.items())]
+        data_frames = [df for _, df in sorted(data.items())]
         if data_frames:
             return pd.concat(data_frames, axis=0, ignore_index=True)
         else:
@@ -745,10 +750,10 @@ class _TrainingLoopData(FrozenTrainingLoopData):
         for writer in self.summary_writers.values():
             writer.close()
 
-    def dirty(self):
-        return any(bool(v) for v in self.data.values())
-
     def dump_data(self, local_step):
+        if local_step is None:
+            local_step = float("inf")  # Final dump for a stage
+
         for mode, data in self.data.items():
             if data:
                 path = self.get_data_path(mode, self.stage_idx, local_step)
@@ -798,7 +803,7 @@ class _TrainingLoopData(FrozenTrainingLoopData):
 
     def _finalize(self):
         """ Write all stored data to disk. """
-        assert not self.dirty(), "_TrainingLoopData is finalizing, but still contains data that needs to be dumped."
+        self.dump_data(None)
 
         with open(self.path_for('history.pkl'), 'wb') as f:
             dill.dump(self.history, f, protocol=dill.HIGHEST_PROTOCOL, recurse=False)
