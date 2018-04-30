@@ -4,18 +4,19 @@ import numpy as np
 import tensorflow as tf
 from gym.utils import seeding
 
+from dps import cfg
 from dps.env import Env
+from dps.updater import DataManager
 
 
 class SupervisedEnv(Env):
     metadata = {"render.modes": ["human", "ansi"]}
 
-    def __init__(self, train, val, test=None, **kwargs):
-        self.train, self.val, self.test = train, val, test
+    def __init__(self, train, val, **kwargs):
+        self.train, self.val = train, val
         self.datasets = dict(
             train=self.train,
             val=self.val,
-            test=self.test,
         )
 
         if getattr(self, 'obs_shape', None) is None:
@@ -29,8 +30,8 @@ class SupervisedEnv(Env):
         self.t = 0
 
     def __str__(self):
-        return "<{} - train={}, val={}, test={}>".format(
-            self.__class__.__name__, self.train, self.val, self.test)
+        return "<{} - train={}, val={}>".format(
+            self.__class__.__name__, self.train, self.val)
 
     @property
     def recorded_names(self):
@@ -42,11 +43,6 @@ class SupervisedEnv(Env):
 
         """
         raise Exception("NotImplemented")
-
-    def _build_placeholders(self):
-        self.x = tf.placeholder(tf.float32, (None,) + self.obs_shape, name="x")
-        self.y = self.target = tf.placeholder(tf.float32, (None,) + self.action_shape, name="target")
-        self.is_training = tf.placeholder(tf.bool, (), name="is_training")
 
     def _build(self):
         """ Should be over-ridden in sub-classes. Must return a dictionary of tensors to record.
@@ -64,17 +60,23 @@ class SupervisedEnv(Env):
         return recorded_tensors
 
     def build(self, f):
+        self.data_manager = DataManager(self.datasets['train'],
+                                        self.datasets['val'],
+                                        cfg.batch_size)
+        self.data_manager.build_graph()
+
         self._build_placeholders()
         self.f = f
+
+        self.x, self.y = self.data_manager.iterator.get_next()
+        self.target = self.y
+        self.is_training = self.data_manager.is_training
+
         self.prediction = self.f(self.x, self.action_shape, self.is_training)
 
         recorded_tensors = self._build()
 
         return recorded_tensors
-
-    def make_feed_dict(self, batch_size, mode, evaluate):
-        x, target = self.datasets[mode].next_batch(batch_size=batch_size, advance=not evaluate)
-        return {self.x: x, self.target: target, self.is_training: not evaluate}
 
     def get_reward(self, actions, targets):
         raise Exception("NotImplemented")

@@ -97,7 +97,7 @@ def tf_annotation_representation(annotation, prefix=""):
     return features
 
 
-class ImageClassification(Dataset):
+class ImageClassificationDataset(Dataset):
     one_hot = Param()
     classes = Param()
     image_shape = Param()
@@ -128,7 +128,7 @@ class ImageClassification(Dataset):
         self._writer.write(example.SerializeToString())
 
     def parse_example_batch(self, example_proto):
-        features = tf.parse_example(example_proto, features=ImageClassification.features)
+        features = tf.parse_example(example_proto, features=ImageClassificationDataset.features)
 
         images = tf.decode_raw(features['image_raw'], tf.uint8)
         images = tf.reshape(images, (-1,) + self.obs_shape)
@@ -143,7 +143,7 @@ class ImageClassification(Dataset):
         return images, label
 
 
-class Emnist(ImageClassification):
+class EmnistDataset(ImageClassificationDataset):
     """
     Download and pre-process EMNIST dataset:
     python scripts/download.py emnist <desired location>
@@ -175,7 +175,7 @@ class Emnist(ImageClassification):
             self._write_example(_x, class_map[_y])
 
 
-class Omniglot(ImageClassification):
+class OmniglotDataset(ImageClassificationDataset):
     indices = Param()
 
     @staticmethod
@@ -235,7 +235,7 @@ class Rectangle(object):
         return "Rectangle({}:{}, {}:{})".format(self.top, self.bottom, self.left, self.right)
 
 
-class Patches(Dataset):
+class PatchesDataset(Dataset):
     max_overlap = Param(10)
     image_shape = Param((100, 100))
     draw_shape = Param(None)
@@ -302,7 +302,7 @@ class Patches(Dataset):
             self._writer.write(example.SerializeToString())
 
     def parse_example_batch(self, example_proto):
-        features = tf.parse_example(example_proto, features=Patches.features)
+        features = tf.parse_example(example_proto, features=PatchesDataset.features)
 
         images = tf.decode_raw(features['image_raw'], tf.uint8)
         images = tf.reshape(images, (-1,) + self.obs_shape)
@@ -715,7 +715,7 @@ class Patches(Dataset):
             s.set_title(str(self.y[i, 0]))
 
 
-class GridPatches(Patches):
+class GridPatchesDataset(PatchesDataset):
     grid_shape = Param((2, 2))
     spacing = Param((0, 0))
     random_offset_range = Param(None)
@@ -725,7 +725,7 @@ class GridPatches(Patches):
         self.cell_shape = (
             self.patch_shape[0] + self.spacing[0],
             self.patch_shape[1] + self.spacing[1])
-        return super(GridPatches, self)._make()
+        return super(GridPatchesDataset, self)._make()
 
     def _sample_patch_locations(self, patch_shapes, **kwargs):
         n_patches = len(patch_shapes)
@@ -746,7 +746,7 @@ class GridPatches(Patches):
         return [Rectangle(t, l, m, n) for (t, l), (m, n, _) in zip(top_left, patch_shapes)]
 
 
-class VisualArithmetic(Patches):
+class VisualArithmeticDataset(PatchesDataset):
     """ A dataset for the VisualArithmetic task.
 
     An image dataset that requires performing different arithmetical
@@ -830,7 +830,7 @@ class VisualArithmetic(Patches):
 
         self.digit_reps = list(zip(mnist_x, mnist_y))
 
-        result = super(VisualArithmetic, self)._make()
+        result = super(VisualArithmeticDataset, self)._make()
 
         del self.digit_reps
         del self.op_reps
@@ -863,11 +863,11 @@ class VisualArithmetic(Patches):
         return patches, digit_y, y
 
 
-class GridArithmetic(VisualArithmetic, GridPatches):
+class GridArithmeticDataset(VisualArithmeticDataset, GridPatchesDataset):
     pass
 
 
-class EmnistObjectDetection(Patches):
+class EmnistObjectDetectionDataset(PatchesDataset):
     min_chars = Param(2)
     max_chars = Param(3)
     characters = Param(
@@ -893,7 +893,7 @@ class EmnistObjectDetection(Patches):
             example_range=self.example_range)
 
         self.char_reps = list(zip(emnist_x, emnist_y))
-        result = super(EmnistObjectDetection, self)._make()
+        result = super(EmnistObjectDetectionDataset, self)._make()
         del self.char_reps
 
         return result
@@ -913,7 +913,6 @@ class EmnistObjectDetection(Patches):
 
     def visualize(self, n=9):
         import matplotlib.pyplot as plt
-        import matplotlib.patches as patches
         m = int(np.ceil(np.sqrt(n)))
         fig, subplots = plt.subplots(m, m)
 
@@ -933,5 +932,5 @@ class EmnistObjectDetection(Patches):
         plt.show()
 
 
-class GridEmnistObjectDetection(EmnistObjectDetection, GridPatches):
+class GridEmnistObjectDetectionDataset(EmnistObjectDetectionDataset, GridPatchesDataset):
     pass

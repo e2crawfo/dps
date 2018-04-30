@@ -162,7 +162,7 @@ class DifferentiableUpdater(Updater):
             train_summary)
 
     def _update(self, batch_size, collect_summaries):
-        feed_dict = self.env.make_feed_dict(batch_size, 'train', False)
+        feed_dict = self.env.data_manager.do_train()
 
         summary = b''
 
@@ -177,7 +177,7 @@ class DifferentiableUpdater(Updater):
         return {'train': (record, summary)}
 
     def _evaluate(self, batch_size, mode):
-        feed_dict = self.env.make_feed_dict(None, mode, True)
+        feed_dict = self.env.data_manager.do_val()
 
         sess = tf.get_default_session()
         result = sess.run([self.recorded_tensors, self.summary_op], feed_dict=feed_dict)
