@@ -6,8 +6,8 @@ import tensorflow as tf
 import matplotlib.pyplot as plt
 
 from dps import cfg
-from dps.datasets import Dataset, ImageClassification
-from dps.utils import Param, square_subplots
+from dps.datasets import Dataset, ArrayFeature, ImageFeature
+from dps.utils import Param
 
 
 class RandomAgent(object):
@@ -120,104 +120,6 @@ def gather_atari_human_frames(game, n_frames, density=1.0):
     return np.array(frames[:n_frames])
 
 
-class AtariAutoencode(ImageClassification):
-    game = Param(aliases="atari_game")
-    policy = Param()
-    image_shape = Param(None)
-    samples_per_frame = Param(
-        0, help="If 0, scan over each image, extracting as many non-overlapping "
-                "sub-images of shape `image_shape` as possible. Otherwise, from each image "
-                "we sample `samples_per_frame` sub-images at random.")
-    atari_render = Param(False)
-    density = Param(1.0)
-    default_shape = (210, 160)
-
-    def _make(self):
-        if self.policy == "keyboard":
-            frames = gather_atari_human_frames(self.game, self.n_examples, density=self.density)
-        else:
-            frames = gather_atari_frames(
-                self.game, self.policy, self.n_examples, render=self.atari_render, density=self.density)
-
-        frame_shape = frames.shape[1:3]
-        channel_dim = frames.shape[3]
-
-        if self.image_shape is not None:
-            if self.samples_per_frame <= 0:
-                assert (
-                    (frame_shape[0] % self.image_shape[0] == 0) and
-                    (frame_shape[1] % self.image_shape[1] == 0)), (
-                        "Frame shape: {}, image shape: {}".format(frame_shape, self.image_shape))
-
-                H = int(frame_shape[0] / self.image_shape[0])
-                W = int(frame_shape[1] / self.image_shape[1])
-
-                slices = np.split(frames, W, axis=2)
-                new_shape = (self.n_examples * H, self.image_shape[0], self.image_shape[1], channel_dim)
-                slices = [np.reshape(s, new_shape) for s in slices]
-                frames = np.concatenate(slices, axis=0)
-            else:
-                _frames = []
-                for frame in frames:
-                    for j in range(self.samples_per_frame):
-                        top = np.random.randint(0, frame_shape[0]-self.image_shape[0]+1)
-                        left = np.random.randint(0, frame_shape[1]-self.image_shape[1]+1)
-
-                        image = frame[top:top+self.image_shape[0], left:left+self.image_shape[1], ...]
-
-                        _frames.append(image)
-                frames = _frames
-
-        frames = np.array(frames)
-        np.random.shuffle(frames)
-
-        return [frames]
-
-
-def show_frames(frames):
-    _, axes = square_subplots(len(frames))
-    for ax, frame in zip(axes.flatten(), frames):
-        ax.imshow(frame)
-    import matplotlib.pyplot as plt
-    plt.show()
-
-
-class ArrayFeature(object):
-    def __init__(self, name, shape, dtype=np.float32):
-        self.name = name
-        self.shape = shape
-        self.dtype = dtype
-
-    def get_write_features(self, array):
-        assert array.shape == self.shape
-        array = array.astype(self.dtype)
-
-        return {
-            self.name: tf.train.Feature(bytes_list=tf.train.BytesList(value=[array.tostring()])),
-        }
-
-    def get_read_features(self):
-        return {
-            self.name: tf.FixedLenFeature((), dtype=tf.string),
-        }
-
-    def process(self, data):
-        array_data = tf.decode_raw(data[self.name], tf.float32)
-        array_data = tf.reshape(array_data, (-1,) + self.shape)
-
-        return array_data
-
-
-class ImageFeature(ArrayFeature):
-
-    def process(self, data):
-        images = tf.decode_raw(data[self.name], tf.float32)
-        images = tf.reshape(images, (-1,) + self.shape)
-        images = tf.clip_by_value(images, 1e-6, 1-1e-6)
-
-        return images
-
-
 class ReinforcementLearningDataset(Dataset):
     rl_data_location = Param()
     max_episodes = Param(None)
@@ -234,16 +136,6 @@ class ReinforcementLearningDataset(Dataset):
     store_r = Param(True)
 
     store_next_o = Param(True)
-
-    _features = None
-
-    def get_read_features(self):
-        features = {}
-
-        for f in self.features:
-            features.update(f.get_read_features())
-
-        return features
 
     @property
     def features(self):
@@ -302,25 +194,6 @@ class ReinforcementLearningDataset(Dataset):
                 _next_o = o[idx]
 
             self._write_example(_o, _a, _r, _next_o)
-
-    def _write_example(self, o, a, r, next_o):
-        assert o.ndim == 3
-        assert a.ndim == 1
-        assert r.ndim == 1
-
-        arrays = dict(o=o, a=a, r=r, next_o=next_o)
-        write_features = {}
-
-        for f in self.features:
-            write_features.update(f.get_write_features(arrays[f.name]))
-
-        example = tf.train.Example(features=tf.train.Features(feature=write_features))
-
-        self._writer.write(example.SerializeToString())
-
-    def parse_example_batch(self, example_proto):
-        data = tf.parse_example(example_proto, features=self.get_read_features())
-        return [f.process(data) for f in self.features]
 
     def visualize(self):
         batch_size = 4

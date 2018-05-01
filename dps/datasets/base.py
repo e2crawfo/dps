@@ -13,8 +13,48 @@ from dps.datasets import (
 )
 
 
+class ArrayFeature(object):
+    def __init__(self, name, shape, dtype=np.float32):
+        self.name = name
+        self.shape = shape
+        self.dtype = dtype
+
+    def get_write_features(self, array):
+        assert array.shape == self.shape
+        array = array.astype(self.dtype)
+
+        return {
+            self.name: tf.train.Feature(bytes_list=tf.train.BytesList(value=[array.tostring()])),
+        }
+
+    def get_read_features(self):
+        return {
+            self.name: tf.FixedLenFeature((), dtype=tf.string),
+        }
+
+    def process(self, data):
+        array_data = tf.decode_raw(data[self.name], tf.as_dtype(self.dtype))
+        array_data = tf.reshape(array_data, (-1,) + self.shape)
+
+        return array_data
+
+
+class ImageFeature(ArrayFeature):
+
+    def process(self, data):
+        images = tf.decode_raw(data[self.name], tf.float32)
+        images = tf.reshape(images, (-1,) + self.shape)
+        images = tf.clip_by_value(images, 1e-6, 1-1e-6)
+
+        return images
+
+
 class Dataset(Parameterized):
     n_examples = Param(None)
+
+    _features = None
+    _iterator = None
+    _get_next = None
 
     def __init__(self, shuffle=True, **kwargs):
         print("Trying to find dataset in cache...")
@@ -51,11 +91,52 @@ class Dataset(Parameterized):
             print("Found.")
 
     def _make(self):
-        raise Exception("AbstractMethod. When insantiating `Dataset` directly, "
-                        "`tracks` must be provided as an argument to `__init__`.")
-
-    def _write_example(self):
         raise Exception("AbstractMethod.")
+
+    @property
+    def features(self):
+        raise Exception("AbstractProperty")
+
+    def _write_example(self, **kwargs):
+        write_features = {}
+
+        for f in self.features:
+            write_features.update(f.get_write_features(kwargs[f.name]))
+
+        example = tf.train.Example(features=tf.train.Features(feature=write_features))
+
+        self._writer.write(example.SerializeToString())
+
+    def parse_example_batch(self, example_proto):
+        features = {}
+        for f in self.features:
+            features.update(f.get_read_features())
+        data = tf.parse_example(example_proto, features=features)
+        return [f.process(data) for f in self.features]
+
+    @property
+    def iterator(self):
+        if self._iterator is not None:
+            return self._iterator
+
+        dset = tf.data.TFRecordDataset(self.filename)
+        dset = dset.repeat().batch(cfg.batch_size).map(self.parse_example_batch)
+
+        self._iterator = dset.make_one_shot_iterator()
+        return self._iterator
+
+    @property
+    def get_next(self):
+        if self._get_next is not None:
+            return self._get_next
+
+        self._get_next = self.iterator.get_next()
+        return self._get_next
+
+    def next_batch(self):
+        sess = tf.get_default_session()
+        result = sess.run(self.get_next)
+        return result
 
 
 def _bytes_feature(value):
@@ -117,6 +198,13 @@ class ImageClassificationDataset(Dataset):
         return self.image_shape + (self.depth,)
 
     @property
+    def action_shape(self):
+        if self.one_hot:
+            return len(self.classes)
+        else:
+            return 1
+
+    @property
     def depth(self):
         return 1
 
@@ -157,6 +245,11 @@ class EmnistDataset(ImageClassificationDataset):
         [chr(i + ord('A')) for i in range(26)] +
         [chr(i + ord('a')) for i in range(26)]
     )
+
+    @staticmethod
+    def sample_classes(n_classes):
+        classes = np.random.choice(len(EmnistDataset.class_pool), n_classes, replace=False)
+        return [EmnistDataset.class_pool[i] for i in classes]
 
     def _make(self):
         param_values = self.param_values()

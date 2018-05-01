@@ -3,7 +3,7 @@ import shutil
 from dps.utils import NumpySeed, remove
 from dps.datasets import (
     EmnistDataset, VisualArithmeticDataset, GridArithmeticDataset, OmniglotDataset,
-    GridEmnistObjectDetection
+    GridEmnistObjectDetectionDataset
 )
 
 
@@ -271,7 +271,7 @@ def test_tile_wrapper(show_plots):
     with NumpySeed(100):
         tile_shape = (28, 35)
         n_examples = 10
-        dset = GridEmnistObjectDetection(
+        dset = GridEmnistObjectDetectionDataset(
             min_chars=25, max_chars=25, n_patch_examples=100, n_examples=n_examples,
             draw_shape_grid=(5, 5), image_shape=(4*14, 5*14), draw_offset=(0, 0), spacing=(-5, -5),
             characters=list(range(10)), colours="white", postprocessing="tile", tile_shape=tile_shape)
@@ -289,7 +289,7 @@ def test_random_wrapper(show_plots):
     with NumpySeed(100):
         tile_shape = (28, 35)
         n_examples = 10
-        dset = GridEmnistObjectDetection(
+        dset = GridEmnistObjectDetectionDataset(
             min_chars=25, max_chars=25, n_patch_examples=100, n_examples=n_examples,
             draw_shape_grid=(5, 5), image_shape=(4*14, 5*14), draw_offset=(0, 0), spacing=(-5, -5),
             characters=list(range(10)), colours="white", postprocessing="random", tile_shape=tile_shape, n_samples_per_image=4)

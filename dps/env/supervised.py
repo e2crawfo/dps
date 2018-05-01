@@ -14,19 +14,15 @@ class SupervisedEnv(Env):
 
     def __init__(self, train, val, **kwargs):
         self.train, self.val = train, val
-        self.datasets = dict(
-            train=self.train,
-            val=self.val,
-        )
+        self.datasets = dict(train=self.train, val=self.val)
 
         if getattr(self, 'obs_shape', None) is None:
-            self.obs_shape = self.train.x[0].shape
+            self.obs_shape = self.train.obs_shape
 
         if getattr(self, 'action_shape', None) is None:
-            self.action_shape = self.train.y[0].shape
+            self.action_shape = self.train.action_shape
 
         self._mode = 'train'
-        self._batch_size = None
         self.t = 0
 
     def __str__(self):
@@ -102,8 +98,7 @@ class SupervisedEnv(Env):
 
     def _reset(self):
         self.t = 0
-        advance = self._mode == 'train'
-        self.rl_x, self.rl_target = self.datasets[self._mode].next_batch(self._batch_size, advance=advance)
+        self.rl_x, self.rl_target = self.datasets[self._mode].next_batch()
         self.rl_y = self.rl_target
         return self.rl_x
 

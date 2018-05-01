@@ -10,7 +10,7 @@ from dps.utils.tf import (
 
 
 class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
-    eval_modes = "val test".split()
+    eval_modes = "val".split()
 
     def __init__(self, env, scope=None, **kwargs):
         self.scope = scope

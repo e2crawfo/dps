@@ -5,7 +5,7 @@ from dps import cfg
 from dps.register import RegisterBank
 from dps.env import CompositeEnv, InternalEnv
 from dps.env.supervised import IntegerRegressionEnv
-from dps.datasets import Dataset
+from dps.datasets import Dataset, ArrayFeature
 from dps.vision.attention import apply_gaussian_filter
 from dps.utils import Param, Config
 
@@ -13,9 +13,10 @@ from dps.utils import Param, Config
 def build_env():
     train = SimpleAdditionDataset(n_examples=cfg.n_train)
     val = SimpleAdditionDataset(n_examples=cfg.n_val)
-    test = SimpleAdditionDataset(n_examples=cfg.n_val)
-    external = IntegerRegressionEnv(train, val, test)
+
+    external = IntegerRegressionEnv(train, val)
     internal = SimpleAddition()
+
     return CompositeEnv(external, internal)
 
 
@@ -38,10 +39,31 @@ class SimpleAdditionDataset(Dataset):
     width = Param()
     base = Param()
 
+    @property
+    def obs_shape(self):
+        return (2 * self.width + 1,)
+
+    @property
+    def action_shape(self):
+        return (1,)
+
+    @property
+    def features(self):
+        if self._features is not None:
+            return self._features
+
+        self._features = [
+            ArrayFeature("x", self.obs_shape, dtype=np.uint8),
+            ArrayFeature("y", self.action_shape, dtype=np.uint8),
+        ]
+        return self._features
+
     def _make(self):
         x = np.random.randint(0, self.base, size=(self.n_examples, 2*self.width+1))
         y = x[:, :1] + x[:, -1:]
-        return x, y
+
+        for _x, _y in zip(x, y):
+            self._write_example(x=_x, y=_y)
 
 
 class SimpleAddition(InternalEnv):
