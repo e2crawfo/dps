@@ -204,11 +204,11 @@ def tf_local_filter(signal, neighbourhood_size):
     if neighbourhood_size == 0:
         return signal
 
+    if neighbourhood_size is None:
+        return tf.reduce_sum(signal, axis=(1, 2, 3, 4), keepdims=True)
+
     _, H, W, B, _ = signal.shape
     H, W, B = int(H), int(W), int(B)
-
-    if neighbourhood_size is None:
-        neighbourhood_size = max(H, W)
 
     dist_h = tf.abs(tf.range(H, dtype=tf.float32) - tf.range(H, dtype=tf.float32)[..., None])
     dist_w = tf.abs(tf.range(W, dtype=tf.float32) - tf.range(W, dtype=tf.float32)[..., None])
@@ -1533,9 +1533,9 @@ config.update(
     nonzero_weight=1.0,
     use_baseline=True,
 
-    local_reconstruction_cost=True,
-    area_neighbourhood_size=1,
-    nonzero_neighbourhood_size=1,
+    local_reconstruction_cost=False,
+    area_neighbourhood_size=None,
+    nonzero_neighbourhood_size=None,
     target_area=0,
 
     fixed_values=dict(),
