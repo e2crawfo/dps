@@ -233,8 +233,18 @@ class AreaCost(object):
         self.neighbourhood_size = neighbourhood_size
 
     def __call__(self, _tensors, updater):
-        selected_area_cost = _tensors['program']['obj'] * tf.abs(_tensors['area'] - self.target_area)
+        selected_area_cost = _tensors['program']['obj'] * tf.abs(_tensors['latent_area'] - self.target_area)
         return tf_local_filter(selected_area_cost, self.neighbourhood_size)
+
+
+class HeightWidthCost(object):
+    def __init__(self, target_hw, neighbourhood_size):
+        self.target_hw = target_hw
+        self.neighbourhood_size = neighbourhood_size
+
+    def __call__(self, _tensors, updater):
+        selected_hw_cost = _tensors['program']['obj'] * tf.abs(_tensors['latent_hw'] - self.target_hw)
+        return tf_local_filter(selected_hw_cost, self.neighbourhood_size)
 
 
 class NonzeroCost(object):
@@ -340,16 +350,20 @@ class YoloRL_Network(Parameterized):
 
     reconstruction_weight = Param(1)
     rl_weight = Param()
-    nonzero_weight = Param()
-    area_weight = Param()
-
     use_baseline = Param()
 
+    area_weight = Param()
+    hw_weight = Param()
+    nonzero_weight = Param()
+
     local_reconstruction_cost = Param()
+
     area_neighbourhood_size = Param()
+    hw_neighbourhood_size = Param()
     nonzero_neighbourhood_size = Param()
 
     target_area = Param(0.)
+    target_hw = Param(0.)
 
     fixed_values = Param()
     fixed_weights = Param()
@@ -375,11 +389,14 @@ class YoloRL_Network(Parameterized):
         _reconstruction_cost_func = local_reconstruction_cost if self.local_reconstruction_cost else reconstruction_cost
         self.COST_funcs['reconstruction'] = (self.reconstruction_weight, _reconstruction_cost_func, "both")
 
-        _nonzero_cost_func = NonzeroCost(self.nonzero_neighbourhood_size)
-        self.COST_funcs['nonzero'] = (self.nonzero_weight, _nonzero_cost_func, "obj")
-
         _area_cost_func = AreaCost(self.target_area, self.area_neighbourhood_size)
         self.COST_funcs['area'] = (self.area_weight, _area_cost_func, "obj")
+
+        _hw_cost_func = HeightWidthCost(self.target_hw, self.hw_neighbourhood_size)
+        self.COST_funcs['hw'] = (self.hw_weight, _hw_cost_func, "obj")
+
+        _nonzero_cost_func = NonzeroCost(self.nonzero_neighbourhood_size)
+        self.COST_funcs['nonzero'] = (self.nonzero_weight, _nonzero_cost_func, "obj")
 
         self.eval_funcs = dict(mAP=yolo_rl_mAP)
 
@@ -881,8 +898,12 @@ class YoloRL_Network(Parameterized):
 
         # --- Store values ---
 
+        self._tensors['latent_hw'] = boxes[..., 2:]
+        self._tensors['latent_area'] = h * w
+
         self._tensors['area'] = (
             (ys * float(self.image_height)) * (xs * float(self.image_width)))
+
         self._tensors['output'] = output
 
     def _process_labels(self, labels):
@@ -1019,20 +1040,32 @@ class YoloRL_Network(Parameterized):
         losses = dict()
 
         if self.reconstruction_weight is not None:
+
             recorded_tensors['raw_loss_reconstruction'] = tf_mean_sum(
                 self._tensors['per_pixel_reconstruction_loss'])
+
             losses['reconstruction'] = self.reconstruction_weight * recorded_tensors['raw_loss_reconstruction']
 
         if self.area_weight is not None:
 
             recorded_tensors['raw_loss_area'] = tf_mean_sum(
-                tf.abs(self._tensors['area'] - self.target_area) *
+                tf.abs(self._tensors['latent_area'] - self.target_area) *
                 self.program['obj'])
 
             losses['area'] = self.area_weight * recorded_tensors['raw_loss_area']
 
+        if self.hw_weight is not None:
+
+            recorded_tensors['raw_loss_hw'] = tf_mean_sum(
+                tf.abs(self._tensors['latent_hw'] - self.target_hw) *
+                self.program['obj'])
+
+            losses['hw'] = self.hw_weight * recorded_tensors['raw_loss_hw']
+
         if self.rl_weight is not None:
+
             recorded_tensors['raw_loss_rl'] = tf_mean_sum(rl_loss_map)
+
             losses['rl'] = self.rl_weight * recorded_tensors['raw_loss_rl']
 
         # --- other evaluation metrics
@@ -1529,14 +1562,19 @@ config.update(
 
     rl_weight=1.0,
 
-    area_weight=0.02,
+    area_weight=1.0,
+    hw_weight=0.0,
     nonzero_weight=1.0,
+
     use_baseline=True,
 
     local_reconstruction_cost=False,
     area_neighbourhood_size=None,
+    hw_neighbourhood_size=None,
     nonzero_neighbourhood_size=None,
+
     target_area=0,
+    target_hw=0,
 
     fixed_values=dict(),
     fixed_weights="",
