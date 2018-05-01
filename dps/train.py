@@ -266,6 +266,10 @@ class TrainingLoop(object):
                 print("\nNew config values for this stage are: \n{}\n".format(pformat(stage_config)))
                 stack.enter_context(stage_config)
 
+                stage_prepare_func = cfg.get("stage_prepare_func", None)
+                if callable(stage_prepare_func):
+                    stage_prepare_func()  # Modify the stage config in arbitrary ways before starting stage
+
                 for hook in cfg.hooks:
                     assert isinstance(hook, Hook)
                     hook.start_stage(self, stage_idx)

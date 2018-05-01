@@ -984,6 +984,9 @@ class YoloRL_Network(Parameterized):
 
         recorded_tensors['attr'] = tf.reduce_mean(self._tensors["program"]["attr"])
 
+        recorded_tensors['latent_area'] = tf.reduce_mean(self._tensors["latent_area"])
+        recorded_tensors['latent_hw'] = tf.reduce_mean(self._tensors["latent_hw"])
+
         # --- required for computing the reconstruction COST ---
 
         loss_key = 'xent' if self.xent_loss else 'squared'
@@ -1563,7 +1566,7 @@ config.update(
     rl_weight=1.0,
 
     area_weight=1.0,
-    hw_weight=0.0,
+    hw_weight=None,
     nonzero_weight=1.0,
 
     use_baseline=True,

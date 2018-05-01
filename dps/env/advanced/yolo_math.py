@@ -208,7 +208,7 @@ config = yolo_rl.config.copy(
 
     math_weight=1.0,
     curriculum=[
-        # dict(math_weight=0.0, do_train=False),
+        # dict(math_weight=None, do_train=False),
         # dict(math_weight=1.0, postprocessing=""),
         dict(math_weight=1.0),
         # dict(math_weight=1.0),

@@ -65,7 +65,7 @@ config = yolo_rl.config.copy(
 
     regression_weight=1.0,
     curriculum=[
-        # dict(regression_weight=0.0, do_train=False),
+        # dict(regression_weight=None, do_train=False),
         # dict(regression_weight=1.0, postprocessing=""),
         dict(regression_weight=1.0),
         # dict(regression_weight=1.0),
