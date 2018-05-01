@@ -4,6 +4,7 @@ import os
 import tensorflow as tf
 import matplotlib
 import matplotlib.pyplot as plt
+import pprint
 
 from dps import cfg
 from dps.utils import image_to_string, Param, Parameterized, get_param_hash
@@ -51,6 +52,7 @@ class ImageFeature(ArrayFeature):
 
 class Dataset(Parameterized):
     n_examples = Param(None)
+    seed = Param(None)
 
     _features = None
     _iterator = None
@@ -64,7 +66,8 @@ class Dataset(Parameterized):
 
         params = self.param_values()
         param_hash = get_param_hash(params)
-        print("Params: {}".format(params))
+        print("Params:")
+        pprint.pprint(params)
         print("Param hash: {}".format(param_hash))
 
         self.filename = os.path.join(directory, str(param_hash))
@@ -86,7 +89,7 @@ class Dataset(Parameterized):
                 raise
 
             with open(self.filename + ".cfg", 'w') as f:
-                f.write(str(params))
+                f.write(pprint.pformat(params))
         else:
             print("Found.")
 

@@ -12,7 +12,7 @@ There are 3 main hyper-parameters:
 import clify
 import numpy as np
 from dps.env.advanced import yolo_rl
-from dps.datasets import EmnistObjectDetection
+from dps.datasets import EmnistObjectDetectionDataset
 
 
 def prepare_func():
@@ -51,8 +51,8 @@ config = yolo_rl.good_config.copy(
 
 # Create the datasets if necessary.
 with config:
-    train = EmnistObjectDetection(n_examples=int(config.n_train), shuffle=True, example_range=(0.0, 0.9))
-    val = EmnistObjectDetection(n_examples=int(config.n_val), shuffle=True, example_range=(0.9, 1.))
+    train = EmnistObjectDetectionDataset(n_examples=int(config.n_train), shuffle=True, example_range=(0.0, 0.9))
+    val = EmnistObjectDetectionDataset(n_examples=int(config.n_val), shuffle=True, example_range=(0.9, 1.))
 
 from dps.hyper import build_and_submit
 clify.wrap_function(build_and_submit)(config=config, distributions=distributions)

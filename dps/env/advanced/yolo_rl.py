@@ -6,7 +6,7 @@ from sklearn.cluster import k_means
 import collections
 
 from dps import cfg
-from dps.datasets import EmnistObjectDetection
+from dps.datasets import EmnistObjectDetectionDataset
 from dps.updater import Updater
 from dps.utils import Config, Param, Parameterized, prime_factors
 from dps.utils.tf import (
@@ -20,8 +20,8 @@ from dps.updater import DataManager
 
 class Env(object):
     def __init__(self):
-        train = EmnistObjectDetection(n_examples=int(cfg.n_train), shuffle=True, example_range=(0.0, 0.9))
-        val = EmnistObjectDetection(n_examples=int(cfg.n_val), shuffle=True, example_range=(0.9, 1.))
+        train = EmnistObjectDetectionDataset(n_examples=int(cfg.n_train), shuffle=True, example_range=(0.0, 0.9))
+        val = EmnistObjectDetectionDataset(n_examples=int(cfg.n_val), shuffle=True, example_range=(0.9, 1.))
 
         self.datasets = dict(train=train, val=val)
 
@@ -1207,7 +1207,7 @@ class YoloRL_RenderHook(object):
         fetched = self._fetch(updater)
 
         self._plot_reconstruction(updater, fetched)
-        self._plot_patches(updater, fetched, self.N)
+        self._plot_patches(updater, fetched, 4)
 
     def _fetch(self, updater):
         feed_dict = updater.data_manager.do_val()
@@ -1303,9 +1303,6 @@ class YoloRL_RenderHook(object):
                 ax4.add_patch(rect)
 
         plt.subplots_adjust(left=0, right=1, top=1, bottom=0, wspace=0.1, hspace=0.1)
-
-        fig.suptitle('Stage={}. After {} experiences ({} updates, {} experiences per batch).'.format(
-            updater.stage_idx, updater.n_experiences, updater.n_updates, cfg.batch_size))
 
         path = updater.exp_dir.path_for('plots', 'stage{}'.format(updater.stage_idx), 'sampled_reconstruction.pdf')
         fig.savefig(path)

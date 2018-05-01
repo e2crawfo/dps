@@ -11,7 +11,7 @@ import os
 
 
 from dps import cfg
-from dps.datasets import EmnistObjectDetection
+from dps.datasets import EmnistObjectDetectionDataset
 from dps.updater import Updater
 from dps.utils import Param, Config, square_subplots
 from dps.utils.tf import trainable_variables, build_gradient_train_op
@@ -19,8 +19,8 @@ from dps.utils.tf import trainable_variables, build_gradient_train_op
 
 class Env(object):
     def __init__(self):
-        train = EmnistObjectDetection(n_examples=int(cfg.n_train), shuffle=True, example_range=(0.0, 0.9))
-        val = EmnistObjectDetection(n_examples=int(cfg.n_val), shuffle=True, example_range=(0.9, 1.))
+        train = EmnistObjectDetectionDataset(n_examples=int(cfg.n_train), shuffle=True, example_range=(0.0, 0.9))
+        val = EmnistObjectDetectionDataset(n_examples=int(cfg.n_val), shuffle=True, example_range=(0.9, 1.))
 
         self.datasets = dict(train=train, val=val)
 

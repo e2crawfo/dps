@@ -4,16 +4,16 @@ import os
 
 from dps import cfg
 from dps.env.advanced.mnist_vae import VAE_Env
-from dps.datasets import EmnistObjectDetection
+from dps.datasets import EmnistObjectDetectionDataset
 from dps.updater import DifferentiableUpdater
 from dps.utils import Config, Param
 from dps.utils.tf import FullyConvolutional, ScopedFunction
 
 
 def build_env():
-    train = EmnistObjectDetection(n_examples=int(cfg.n_train), example_range=(0.0, 0.9))
-    val = EmnistObjectDetection(n_examples=int(cfg.n_val), example_range=(0.9, 0.95))
-    test = EmnistObjectDetection(n_examples=int(cfg.n_val), example_range=(0.95, 1.))
+    train = EmnistObjectDetectionDataset(n_examples=int(cfg.n_train), example_range=(0.0, 0.9))
+    val = EmnistObjectDetectionDataset(n_examples=int(cfg.n_val), example_range=(0.9, 0.95))
+    test = EmnistObjectDetectionDataset(n_examples=int(cfg.n_val), example_range=(0.95, 1.))
 
     return YOLOv2_UnsupervisedEnv(train, val, test)
 

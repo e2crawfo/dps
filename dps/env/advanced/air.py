@@ -723,7 +723,7 @@ class AIR_Network(Parameterized):
             with tf.variable_scope("cnn") as cnn_scope:
                 # The cnn is hard-coded here...
 
-                cnn_input = tf.reshape(self.input_images, [-1, 50, 50, 3], name="cnn_input")
+                cnn_input = tf.reshape(self.input_images, (self.batch_size,) + self.obs_shape, name="cnn_input")
 
                 conv1 = tf.layers.conv2d(
                     inputs=cnn_input, filters=self.cnn_filters, kernel_size=[5, 5], strides=(1, 1),
@@ -744,7 +744,8 @@ class AIR_Network(Parameterized):
                     padding="same", activation=tf.nn.relu, reuse=cnn_scope.reuse, name="conv3"
                 )
 
-                self.rnn_input = tf.reshape(conv3, [-1, 12 * 12 * self.cnn_filters], name="cnn_output")
+                n_units = conv3.shape[1] * conv3.shape[2] * conv3.shape[3]
+                self.rnn_input = tf.reshape(conv3, [self.batch_size, n_units], name="cnn_output")
         else:
             self.rnn_input = self.input_images
 
@@ -907,8 +908,8 @@ class AIR_RenderHook(object):
         to_fetch = {}
 
         to_fetch["images"] = network.input_images
-        to_fetch["annotations"] = updater.annotations
-        to_fetch["n_annotations"] = updater.n_annotations
+        to_fetch["annotations"] = network._tensors["annotations"]
+        to_fetch["n_annotations"] = network._tensors["n_annotations"]
 
         to_fetch["output"] = network._tensors["output"]
         to_fetch["scales"] = network._tensors["scales"]
@@ -1008,7 +1009,11 @@ class AIR_RenderHook(object):
                 imshow(ax, np.clip(vae_output[i, t], 0, 1))
                 ax.set_title("VAE output (t={})".format(t))
 
-            path = updater.exp_dir.path_for('plots', 'stage{}'.format(updater.stage_idx), 'sampled_reconstruction_{}.pdf'.format(i))
+            path = updater.exp_dir.path_for(
+                'plots',
+                'stage{}'.format(updater.stage_idx),
+                'sampled_reconstruction_{}_local_step={}.pdf'.format(i, updater.n_updates))
+
             fig.savefig(path)
             plt.close(fig)
 
@@ -1088,7 +1093,6 @@ config = Config(
     vae_latent_dimensions=50,
     vae_recognition_units=(512, 256),
     vae_generative_units=(256, 512),
-    # scale_prior_mean=1.0,
     scale_prior_mean=-1.0,  # <- odd value
     scale_prior_variance=0.05,
     shift_prior_mean=0.0,
@@ -1105,5 +1109,5 @@ config = Config(
     z_pres_temperature=1.0,
     stopping_threshold=0.99,
     cnn=False,
-    cnn_filters=8,
+    cnn_filters=128,
 )

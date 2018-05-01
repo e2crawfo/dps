@@ -2,6 +2,7 @@ import signal
 import os
 import types
 import sys
+import numpy as np
 
 from dps.parallel.object_store import FileSystemObjectStore, ZipObjectStore
 from dps.utils import SigTerm, KeywordMapping, redirect_stream, modify_env, process_path
@@ -434,9 +435,8 @@ class Job(ReadOnlyJob):
             assert ppn > 0
             gpus = [int(i) for i in gpu_set.split(',')]
             n_gpus = len(gpus)
-            assert ppn % n_gpus == 0
             assert ppn >= n_gpus
-            procs_per_gpu = ppn // n_gpus
+            procs_per_gpu = int(np.ceil(ppn / n_gpus))
             gpu_idx = idx_in_node // procs_per_gpu
             env = dict(CUDA_VISIBLE_DEVICES=str(gpus[gpu_idx]))
         else:

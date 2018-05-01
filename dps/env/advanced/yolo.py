@@ -5,7 +5,7 @@ import os
 from dps import cfg
 from dps.updater import DifferentiableUpdater
 from dps.env.supervised import SupervisedEnv
-from dps.datasets import EmnistObjectDetection
+from dps.datasets import EmnistObjectDetectionDataset
 from dps.utils import Config, Param
 from dps.utils.tf import build_gradient_train_op, FullyConvolutional
 
@@ -325,9 +325,9 @@ def get_differentiable_updater(env):
 
 
 def build_env():
-    train = EmnistObjectDetection(n_examples=int(cfg.n_train), example_range=(0., 0.9))
-    val = EmnistObjectDetection(n_examples=int(cfg.n_val), example_range=(0.9, 0.95))
-    test = EmnistObjectDetection(n_examples=int(cfg.n_val), example_range=(0.95, 1.))
+    train = EmnistObjectDetectionDataset(n_examples=int(cfg.n_train), example_range=(0., 0.9))
+    val = EmnistObjectDetectionDataset(n_examples=int(cfg.n_val), example_range=(0.9, 0.95))
+    test = EmnistObjectDetectionDataset(n_examples=int(cfg.n_val), example_range=(0.95, 1.))
 
     return YOLOv2_SupervisedEnv(train, val, test, C=len(cfg.characters))
 
