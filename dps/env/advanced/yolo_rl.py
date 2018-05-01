@@ -62,6 +62,65 @@ class Backbone(FullyConvolutional):
         super(Backbone, self).__init__(layout, check_output_shape=True, **kwargs)
 
 
+class NewBackbone(FullyConvolutional):
+    pixels_per_cell = Param()
+    max_object_shape = Param()
+    n_channels = Param()
+    n_base_layers = Param(3)
+    n_final_layers = Param(2)
+
+    kernel_size = Param()
+
+    def __init__(self, **kwargs):
+        receptive_field_shape = (
+            self.max_object_shape[0] + self.pixels_per_cell[0],
+            self.max_object_shape[1] + self.pixels_per_cell[1],
+        )
+        cumulative_filter_shape = (
+            receptive_field_shape[0] + self.n_base_layers - 1,
+            receptive_field_shape[1] + self.n_base_layers - 1,
+        )
+
+        layout = []
+
+        for i in range(self.n_base_layers):
+            fh = cumulative_filter_shape[0] // self.n_base_layers
+            if i < cumulative_filter_shape[0] % self.n_base_layers:
+                fh += 1
+
+            fw = cumulative_filter_shape[1] // self.n_base_layers
+            if i < cumulative_filter_shape[1] % self.n_base_layers:
+                fw += 1
+
+            layout.append(
+                dict(filters=self.n_channels, kernel_size=(fh, fw), padding="VALID", strides=1))
+
+        layout.append(dict(filters=self.n_channels, kernel_size=1, padding="VALID", strides=self.pixels_per_cell))
+
+        layout += [
+            dict(filters=self.n_channels, kernel_size=self.kernel_size, strides=1, padding="SAME")
+            for i in range(self.n_final_layers)]
+
+        super(NewBackbone, self).__init__(layout, check_output_shape=True, **kwargs)
+
+    def _call(self, inp, output_size, is_training):
+        mod = int(inp.shape[1]) % self.pixels_per_cell[0]
+        bottom_padding = self.pixels_per_cell[0] - mod if mod > 0 else 0
+
+        padding_h = int(np.ceil(self.max_object_shape[0] / 2))
+
+        mod = int(inp.shape[2]) % self.pixels_per_cell[1]
+        right_padding = self.pixels_per_cell[1] - mod if mod > 0 else 0
+
+        padding_w = int(np.ceil(self.max_object_shape[1] / 2))
+
+        padding = [[0, 0], [padding_h, bottom_padding + padding_h], [padding_w, right_padding + padding_w], [0, 0]]
+
+        inp = tf.pad(inp, padding)
+
+        return super(NewBackbone, self)._call(inp, output_size, is_training)
+
+
 class NextStep(FullyConvolutional):
     kernel_size = Param()
     n_channels = Param()
@@ -1437,7 +1496,7 @@ config.update(
 
     # network params
 
-    build_backbone=Backbone,
+    build_backbone=NewBackbone,
     build_next_step=NextStep,
     build_object_decoder=ObjectDecoder,
 
@@ -1445,6 +1504,7 @@ config.update(
     decoder_logit_scale=10.0,
 
     pixels_per_cell=(12, 12),
+    max_object_shape=(28, 28),
 
     anchor_boxes=[[14, 14]],
 
