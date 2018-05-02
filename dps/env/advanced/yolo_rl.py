@@ -350,6 +350,7 @@ class YoloRL_Network(Parameterized):
 
     reconstruction_weight = Param(1)
     rl_weight = Param()
+    obj_weight = Param(1.0)
     use_baseline = Param()
 
     area_weight = Param()
@@ -1033,10 +1034,10 @@ class YoloRL_Network(Parameterized):
             COST_obj -= tf.reduce_mean(COST_obj, axis=0, keepdims=True)
             COST_z -= tf.reduce_mean(COST_z, axis=0, keepdims=True)
 
-        rl_loss_map = (
-            (COST_obj + COST) * self.log_probs['obj'] +
-            (COST_z + COST) * self.log_probs['z']
-        )
+        rl_loss_map = (COST_obj + COST) * self.log_probs['obj']
+
+        if self.z_weight is not None:
+            rl_loss_map += self.z_weight * (COST_z + COST) * self.log_probs['z']
 
         # --- losses ---
 
