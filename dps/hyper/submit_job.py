@@ -619,14 +619,9 @@ class ParallelSession(object):
             self.print_time_limits()
 
             job_id = os.getenv("SLURM_JOBID")
-            print("Job ID: {}".format(job_id))
-
             command = 'squeue -h -j {} -o "%L"'.format(job_id)
             returncode, output = self.execute_command(
                 command, frmt=False, robust=False, progress=False, output='get')
-
-            print("Command output: ")
-            print(output)
 
             days = 0
             if "-" in output:
@@ -642,7 +637,7 @@ class ParallelSession(object):
             seconds = int(time[-1])
 
             wall_time_delta = datetime.timedelta(days=days, hours=hours, minutes=minutes, seconds=seconds)
-            wall_time_seconds = wall_time_delta.total_seconds()
+            wall_time_seconds = int(wall_time_delta.total_seconds())
 
             print("Actual remaining walltime: {}".format(wall_time_delta))
             print("Time limits after adjustment:")
