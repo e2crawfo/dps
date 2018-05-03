@@ -381,12 +381,12 @@ class _RunTrainingLoop(object):
         self.base_config = base_config
 
     def __call__(self, new):
-        os.nice(10)
-
         start_time = time.time()
 
-        print("Starting new training run at: ")
+        print("Entered _RunTrainingLoop at: ")
         print(datetime.datetime.now())
+
+        os.nice(10)
 
         print("Sampled values: ")
         print(new)
@@ -412,7 +412,12 @@ class _RunTrainingLoop(object):
             cfg.update_from_command_line()
 
             from dps.train import training_loop
-            return training_loop(exp_name=exp_name, start_time=start_time)
+            result = training_loop(exp_name=exp_name, start_time=start_time)
+
+        print("Leaving _RunTrainingLoop at: ")
+        print(datetime.datetime.now())
+
+        return result
 
 
 def build_search(

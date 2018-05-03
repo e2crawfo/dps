@@ -154,6 +154,9 @@ class TrainingLoop(object):
 
         self.curriculum_remaining[idx].update(stage_config)
 
+    def timestamp(self, message):
+        print("{} (at {}, {} seconds after given start time)".format(message, datetime.datetime.now(), time.time() - self.start_time))
+
     def run(self, start_time):
         """ Run the training loop.
 
@@ -164,6 +167,12 @@ class TrainingLoop(object):
             purposes of interrupting the training loop.
 
         """
+        if start_time is None:
+            start_time = time.time()
+        self.start_time = start_time
+
+        self.timestamp("Entering TrainingLoop.run")
+
         prepare_func = cfg.get("prepare_func", None)
         if callable(prepare_func):
             prepare_func()  # Modify the config in arbitrary ways before training
@@ -203,13 +212,8 @@ class TrainingLoop(object):
             stack.enter_context(redirect_stream('stdout', self.data.path_for('stdout'), tee=cfg.tee))
             stack.enter_context(redirect_stream('stderr', self.data.path_for('stderr'), tee=cfg.tee))
 
-            if start_time is None:
-                start_time = time.time()
-            self.start_time = start_time
-
             print("\n\n" + "=" * 80)
-            print("Starting training run (name={}) at {}, {} seconds after given "
-                  "start time.".format(self.exp_name, datetime.datetime.now(), time.time() - self.start_time))
+            self.timestamp("Starting training run (name={})".format(self.exp_name))
 
             print("\nDirectory for this training run is {}.".format(exp_dir.path))
 
@@ -227,12 +231,13 @@ class TrainingLoop(object):
             finally:
                 print(self.data.summarize())
 
-                print("Done training run (name={}) at {}, {} seconds after given "
-                      "start time.".format(self.exp_name, datetime.datetime.now(), time.time() - self.start_time))
+                self.timestamp("Done training run (name={})".format(self.exp_name))
                 print("=" * 80)
                 print("\n\n")
 
                 frozen_data = self.data.freeze()
+
+        self.timestamp("Leaving TrainingLoop.run")
 
         return frozen_data
 
@@ -248,8 +253,7 @@ class TrainingLoop(object):
         stage_idx = 0
         while self.curriculum_remaining:
             print("\n" + "=" * 50)
-            print("Starting stage {} at {}, {} seconds after given "
-                  "start time.\n".format(stage_idx, datetime.datetime.now(), time.time() - self.start_time))
+            self.timestamp("Starting stage {}".format(stage_idx))
             print("\n")
 
             stage_config = self.curriculum_remaining.pop(0)
@@ -453,8 +457,8 @@ class TrainingLoop(object):
                     for hook in cfg.hooks:
                         hook.end_stage(self, stage_idx)
 
-                    print("\nDone stage {} at {}, {} seconds after given start time.".format(
-                        stage_idx, datetime.datetime.now(), time.time() - self.start_time))
+                    print()
+                    self.timestamp("Done stage {}".format(stage_idx))
                     print("=" * 50)
 
                     stage_idx += 1

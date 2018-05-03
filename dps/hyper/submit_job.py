@@ -10,6 +10,7 @@ import shutil
 from collections import defaultdict
 import sys
 import dill
+from zipfile import ZipFile
 
 import dps
 from dps import cfg
@@ -90,7 +91,7 @@ class ParallelSession(object):
             pmem=None, wall_time="1hour", cleanup_time="1min", slack_time="1min", add_date=True, dry_run=0,
             parallel_exe=None, kind="parallel", host_pool=None, load_avg_threshold=8., min_hosts=None,
             max_hosts=1, env_vars=None, output_to_files=True, n_retries=0, gpu_set="", copy_venv="",
-            step_time_limit="", ignore_gpu=False, ssh_options=None, readme=""):
+            step_time_limit=None, ignore_gpu=False, ssh_options=None):
 
         args = locals().copy()
         del args['self']
@@ -133,16 +134,13 @@ class ParallelSession(object):
         job_path = job_dir.path
         job_dir.make_directory('experiments')
 
-        if readme:
-            with open(job_dir.path_for('README.md'), 'w') as f:
-                f.write(readme)
-            del f
-
         input_zip_stem = path_stem(input_zip)
         input_zip = shutil.copy(input_zip, job_dir.path_for("orig.zip"))
         input_zip_abs = process_path(input_zip)
         input_zip_base = os.path.basename(input_zip)
         archive_root = zip_root(input_zip)
+
+        self.copy_files(job_dir, input_zip, archive_root, ["README.md", "sampled_configs.txt"])
 
         # storage local to each node, from the perspective of that node
         local_scratch = os.path.join(local_scratch_prefix, os.path.basename(job_path))
@@ -194,36 +192,12 @@ class ParallelSession(object):
 
         node_file = " --sshloginfile nodefile.txt "
 
-        wall_time = parse_timedelta(wall_time)
-        wall_time_seconds = int(wall_time.total_seconds())
-
-        cleanup_time_per_step = parse_timedelta(cleanup_time)
-        cleanup_seconds = int(cleanup_time_per_step.total_seconds())
-
-        slack_time_per_step = parse_timedelta(slack_time)
-        slack_seconds = int(slack_time_per_step.total_seconds())
-
-        assert wall_time_seconds > 0
-        assert cleanup_seconds > 0
-        assert slack_seconds > 0
-
-        if step_time_limit:
-            total_seconds_per_step = int(parse_timedelta(step_time_limit).total_seconds())
-        else:
-            total_seconds_per_step = int(np.floor(wall_time_seconds / n_steps))
-
-        # Subtract cleanup time and wall time.
-        parallel_seconds_per_step = int(total_seconds_per_step - cleanup_seconds)
-        python_seconds_per_step = int(
-            total_seconds_per_step - cleanup_seconds - slack_seconds)
+        wall_time_seconds, total_seconds_per_step, parallel_seconds_per_step, python_seconds_per_step = \
+            self.compute_time_limits(wall_time, cleanup_time, slack_time, step_time_limit, n_steps)
 
         self.__dict__.update(locals())
 
         self.print_time_limits()
-
-        assert total_seconds_per_step > 0
-        assert parallel_seconds_per_step > 0
-        assert python_seconds_per_step > 0
 
         # Create convenience `latest` symlinks
         make_symlink(job_path, os.path.join(scratch, 'latest'))
@@ -238,11 +212,65 @@ class ParallelSession(object):
     def print_time_limits(self):
         print("We have {wall_time_seconds} seconds to complete {n_jobs_to_run} "
               "sub-jobs (grouped into {n_steps} steps) using {n_procs} processors.".format(**self.__dict__))
-        print("Total time per step is {total_seconds_per_step}.".format(**self.__dict__))
-        print("Each step, we are allowing {slack_seconds} seconds as slack and "
-              "{cleanup_seconds} seconds for cleanup.".format(**self.__dict__))
-        print("Time-limit passed to parallel is {parallel_seconds_per_step}.".format(**self.__dict__))
-        print("Time-limit passed to dps-hyper is {python_seconds_per_step}.".format(**self.__dict__))
+        print("Each step, we are allowing {slack_time} as slack and "
+              "{cleanup_time} for cleanup.".format(**self.__dict__))
+        print("Total time per step is {total_seconds_per_step} seconds.".format(**self.__dict__))
+        print("Time-limit passed to parallel is {parallel_seconds_per_step} seconds.".format(**self.__dict__))
+        print("Time-limit passed to dps-hyper is {python_seconds_per_step} seconds.".format(**self.__dict__))
+
+    @staticmethod
+    def compute_time_limits(wall_time, cleanup_time_per_step, slack_time_per_step, step_time_limit, n_steps):
+        if isinstance(wall_time, str):
+            wall_time = int(parse_timedelta(wall_time).total_seconds())
+        assert isinstance(wall_time, int)
+        assert wall_time > 0
+
+        if isinstance(cleanup_time_per_step, str):
+            cleanup_time_per_step = int(parse_timedelta(cleanup_time_per_step).total_seconds())
+        assert isinstance(cleanup_time_per_step, int)
+        assert cleanup_time_per_step > 0
+
+        if isinstance(slack_time_per_step, str):
+            slack_time_per_step = int(parse_timedelta(slack_time_per_step).total_seconds())
+        assert isinstance(slack_time_per_step, int)
+        assert slack_time_per_step > 0
+
+        if step_time_limit is None:
+            total_seconds_per_step = int(np.floor(wall_time / n_steps))
+        else:
+            if isinstance(step_time_limit, str):
+                step_time_limit = int(parse_timedelta(step_time_limit).total_seconds())
+            assert isinstance(step_time_limit, int)
+            assert step_time_limit > 0
+
+            total_seconds_per_step = int(parse_timedelta(step_time_limit).total_seconds())
+
+        # Subtract cleanup time and wall time.
+        parallel_seconds_per_step = int(total_seconds_per_step - cleanup_time_per_step)
+        python_seconds_per_step = int(
+            total_seconds_per_step - cleanup_time_per_step - slack_time_per_step)
+
+        assert total_seconds_per_step > 0
+        assert parallel_seconds_per_step > 0
+        assert python_seconds_per_step > 0
+
+        return wall_time, total_seconds_per_step, parallel_seconds_per_step, python_seconds_per_step
+
+    @staticmethod
+    def copy_files(job_dir, input_zip, archive_root, filenames):
+        # Copy files from archive
+        with ZipFile(input_zip, 'r') as _input_zip:
+            for filename in filenames:
+                name_in_zip = os.path.join(archive_root, filename)
+                text = None
+                try:
+                    text = _input_zip.read(name_in_zip).decode()
+                except Exception:
+                    print("No {} found in zip file.".format(filename))
+
+                if text is not None:
+                    with open(job_dir.path_for(filename), 'w') as f:
+                        f.write(text)
 
     def recruit_hosts(self, hpc, min_hosts, max_hosts, host_pool, ppn, max_procs):
         if not hpc and getattr(self, 'candidate_hosts', None) is None:
@@ -380,12 +408,13 @@ class ParallelSession(object):
 
             if output == 'quiet':
                 stdout = subprocess.DEVNULL
+                stderr = subprocess.DEVNULL
             elif output == 'get':
                 stdout = subprocess.PIPE
+                stderr = subprocess.DEVNULL
             elif output == 'loud':
                 stdout = None
-
-            stderr = subprocess.STDOUT
+                stderr = None
 
             start = time.time()
 
@@ -551,21 +580,77 @@ class ParallelSession(object):
         with redirect_stream('stdout', 'results.txt', tee=True):
             search.print_summary(print_config=False, verbose=False)
 
+    def get_slurm_var(self, var_name):
+        parallel_command = "printenv | grep {}".format(var_name)
+        command = 'srun --ntasks 1 --no-kill sh -c "{parallel_command}"'.format(parallel_command=parallel_command)
+        returncode, output = self.execute_command(
+            command, frmt=False, robust=False, progress=False, output='get')
+        split = output.split('=')
+
+        if len(split) != 2:
+            raise Exception(
+                "Unparseable output while getting SLURM environment "
+                "variable {}: {}".format(var_name, output))
+
+        _var_name, value = split
+        _var_name = _var_name.strip()
+        value = value.strip()
+
+        if _var_name != var_name:
+            raise Exception(
+                "Got wrong variable. Wanted {}, got {} with value {}".format(var_name, _var_name, value))
+        return value
+
     def run(self):
+        if self.dry_run:
+            print("Dry run, so not running.")
+            return
+
         if "slurm" in self.kind:
             # Have to jump through a hoop to get the proper node-local storage on cedar/graham.
-            parallel_command = "printenv | grep SLURM_TMPDIR"
-            command = 'srun --ntasks 1 --no-kill sh -c "{parallel_command}"'.format(parallel_command=parallel_command)
-            returncode, output = self.execute_command(
-                command, frmt=False, robust=False, progress=False, output='get')
-            self.local_scratch_prefix = output.split('=')[-1].strip()
+            self.local_scratch_prefix = self.get_slurm_var("SLURM_TMPDIR")
             self.local_scratch = os.path.join(
                 self.local_scratch_prefix,
                 os.path.basename(self.job_path))
 
-        if self.dry_run:
-            print("Dry run, so not running.")
-            return
+            # Compute new time limits based on the actual time remaining (protect against e.g. job starting late)
+
+            print("Time limits before adjustment:")
+            self.print_time_limits()
+
+            job_id = os.getenv("SLURM_JOBID")
+            print("Job ID: {}".format(job_id))
+
+            command = 'squeue -h -j {} -o "%L"'.format(job_id)
+            returncode, output = self.execute_command(
+                command, frmt=False, robust=False, progress=False, output='get')
+
+            print("Command output: ")
+            print(output)
+
+            days = 0
+            if "-" in output:
+                days, time = output.split("-")
+                days = int(days)
+            else:
+                time = output
+
+            time = time.split(":")
+
+            hours = int(time[-3]) if len(time) > 2 else 0
+            minutes = int(time[-2]) if len(time) > 1 else 0
+            seconds = int(time[-1])
+
+            wall_time_delta = datetime.timedelta(days=days, hours=hours, minutes=minutes, seconds=seconds)
+            wall_time_seconds = wall_time_delta.total_seconds()
+
+            print("Actual remaining walltime: {}".format(wall_time_delta))
+            print("Time limits after adjustment:")
+
+            (self.wall_time_seconds, self.total_seconds_per_step,
+             self.parallel_seconds_per_step, self.python_seconds_per_step) = \
+                self.compute_time_limits(
+                    wall_time_seconds, self.cleanup_time, self.slack_time, self.step_time_limit, self.n_steps)
 
         self.print_time_limits()
 
@@ -661,10 +746,17 @@ def submit_job(
     job_path = session.job_path
 
     python_script = """#!{}
+import datetime
+start = datetime.datetime.now()
+print("Starting job at " + str(start))
 import dill
 with open("./session.pkl", "rb") as f:
     session = dill.load(f)
 session.run()
+end = datetime.datetime.now()
+print("Finishing job at " + str(end))
+print(str((end - start).total_seconds()) + " seconds elapsed between start and finish.")
+
 """.format(sys.executable)
     with open(os.path.join(job_path, "run.py"), 'w') as f:
         f.write(python_script)
@@ -705,7 +797,7 @@ session.run()
         if queue:
             queue = "-p " + queue
         command = (
-            "sbatch --job-name {name} -D {job_path} --mail-type=ALL --mail-user=e2crawfo "
+            "sbatch --job-name {name} -D {job_path} --mail-type=ALL --mail-user=e2crawfo --exclude=cdr340,cdr341,cdr294 "
             "-A {project} {queue} --export=ALL {resources} "
             "-o output.txt run.py".format(
                 name=name, job_path=job_path, email=email, project=project,
