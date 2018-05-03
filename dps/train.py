@@ -393,7 +393,6 @@ class TrainingLoop(object):
 
                 except Alarm:
                     reason = "Time limit exceeded"
-                    timeout = True
                     raise
 
                 finally:
@@ -413,14 +412,17 @@ class TrainingLoop(object):
                     print("\n" + "-" * 10 + " Optimization complete " + "-" * 10)
                     print("\nReason: {}.\n".format(reason))
 
-                    if timeout:
-                        print("\n" + "-" * 10 + " Skipping final evaluation " + "-" * 10)
+                    # --------------- Optionally render performance of best hypothesis -------------------
 
-                    elif 'best_path' in self.data.current_stage_record:
+                    do_final_rendering = (
+                        not reason == "Time limit exceeded" and
+                        'best_path' in self.data.current_stage_record and
+                        cfg.render_step > 0 and
+                        cfg.render_hook is not None)
+
+                    if do_final_rendering:
                         try:
-                            # --------------- Evaluate the best hypothesis -------------------
-
-                            print("\n" + "-" * 10 + " Final evaluation " + "-" * 10)
+                            print("\n" + "-" * 10 + " Final rendering " + "-" * 10)
 
                             print("Best hypothesis for this stage was found on "
                                   "step (l: {best_local_step}, g: {best_global_step}) "
@@ -432,25 +434,16 @@ class TrainingLoop(object):
                                   "from file {}...".format(best_path))
                             updater.restore(sess, best_path)
 
-                            eval_results = updater.evaluate(cfg.batch_size)
-
-                            for mode, (record, _) in eval_results.items():
-                                if record:
-                                    print("\n-- {} -- \n".format(mode))
-                                    for k, v in sorted(record.items()):
-                                        print("* {}: {}".format(k, v))
-                            print()
-
-                            # --------------- Optionally render performance of best hypothesis -------------------
-
-                            if cfg.render_step > 0 and cfg.render_hook is not None:
-                                print("Rendering...")
-                                cfg.render_hook(updater)
-                                print("Done rendering.")
+                            print("Rendering...")
+                            cfg.render_hook(updater)
+                            print("Done rendering.")
 
                         except BaseException:
-                            print("Exception occurred while performing final evaluation: ")
+                            print("Exception occurred while performing final rendering: ")
                             traceback.print_exc()
+
+                    else:
+                        print("\n" + "-" * 10 + " Skipping final rendering " + "-" * 10)
 
                     # --------------- Finish up the stage -------------------
 
