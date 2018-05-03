@@ -117,37 +117,40 @@ def gpu_memory_usage():
 
 
 def view_readme_cl():
-    return view_readme(".")
+    return view_readme(".", 2)
 
 
-def view_readme(path):
+def view_readme(path, max_depth):
     """ View readme files in a diretory of experiments, sorted by the time at
         which the experiment began execution.
 
     """
     import iso8601
 
-    command = "find {} -name README.md".format(path).split()
+    command = "find {} -maxdepth {} -name README.md".format(path, max_depth).split()
     p = subprocess.run(command, stdout=subprocess.PIPE)
     readme_paths = [r for r in p.stdout.decode().split('\n') if r]
     dates_paths = []
     for r in readme_paths:
         d = os.path.split(r)[0]
 
-        with open(os.path.join(d, 'stdout'), 'r') as f:
-            line = ''
-            try:
-                while not line.startswith("Starting training run"):
-                    line = next(f)
-            except StopIteration:
-                line = None
+        try:
+            with open(os.path.join(d, 'stdout'), 'r') as f:
+                line = ''
+                try:
+                    while not line.startswith("Starting training run"):
+                        line = next(f)
+                except StopIteration:
+                    line = None
 
-        if line is not None:
-            tokens = line.split()
-            assert len(tokens) == 13
-            dt = iso8601.parse_date(tokens[5] + " " + tokens[6][:-1])
-            dates_paths.append((dt, r))
-        else:
+            if line is not None:
+                tokens = line.split()
+                assert len(tokens) == 13
+                dt = iso8601.parse_date(tokens[5] + " " + tokens[6][:-1])
+                dates_paths.append((dt, r))
+            else:
+                raise Exception()
+        except Exception:
             print("Omitting {} which has no valid `stdout` file.".format(r))
 
     _sorted = sorted(dates_paths)
