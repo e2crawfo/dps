@@ -350,7 +350,7 @@ class YoloRL_Network(Parameterized):
 
     reconstruction_weight = Param(1)
     rl_weight = Param()
-    obj_weight = Param(1.0)
+    z_weight = Param(1.0)
     use_baseline = Param()
 
     area_weight = Param()
@@ -1471,7 +1471,7 @@ config = Config(
     n_patch_examples=0,
 
     image_shape=(84, 84),
-    max_overlap=400,
+    max_overlap=49,
     patch_shape=(14, 14),
 
     characters=list(range(10)),
@@ -1636,4 +1636,40 @@ reset_config = single_digit_config.copy(
         dict(obj_exploration=0.0125),
         dict(obj_exploration=0.0),
     ]
+)
+
+back_to_basics_config = config.copy(
+    curriculum=[
+        dict(area_weight=None, rl_weight=None, fixed_values=dict(obj=1)),  # All objects forced to be on, not forcing them to be small.
+        dict(rl_weight=None, fixed_values=dict(obj=1)),  # All objects on, forcing them all to be small.
+        dict(obj_exploration=0.2),
+        dict(obj_exploration=0.1),
+        dict(obj_exploration=0.05),
+    ],
+    anchor_boxes=[[7, 7]],
+    max_object_shape=[28, 28],
+    z_weight=None,
+    kernel_size=(3, 3),  # (1, 1)
+    min_hw=0.0,
+    n_channels=128,
+    # build_backbone=NewBackbone,
+
+    area_weight=19.6,
+    area_neighbourhood_size=2,
+    nonzero_weight=50.,
+    nonzero_neighbourhood_size=2,
+
+    local_reconstruction_cost=True,
+
+    build_backbone=Backbone,
+)
+
+b2b_reset_config = back_to_basics_config.copy(
+    curriculum=[
+        dict(rl_weight=None, fixed_values=dict(obj=1), load_path="/scratch/e2crawfo/dps_data/logs/yolo_rl/exp_yolo_rl_seed=347405995_2018_05_02_21_15_41/weights/best_of_stage_0"),
+        dict(obj_exploration=0.2),
+        dict(obj_exploration=0.1),
+        dict(obj_exploration=0.05),
+    ],
+    area_weight=4.9,
 )
