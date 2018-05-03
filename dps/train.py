@@ -361,6 +361,8 @@ class TrainingLoop(object):
                 threshold_reached = False
                 reason = None
 
+                timeout = False
+
                 try:
                     # --------------- Run stage -------------------
 
@@ -391,6 +393,7 @@ class TrainingLoop(object):
 
                 except Alarm:
                     reason = "Time limit exceeded"
+                    timeout = True
                     raise
 
                 finally:
@@ -410,7 +413,10 @@ class TrainingLoop(object):
                     print("\n" + "-" * 10 + " Optimization complete " + "-" * 10)
                     print("\nReason: {}.\n".format(reason))
 
-                    if 'best_path' in self.data.current_stage_record:
+                    if timeout:
+                        print("\n" + "-" * 10 + " Skipping final evaluation " + "-" * 10)
+
+                    elif 'best_path' in self.data.current_stage_record:
                         try:
                             # --------------- Evaluate the best hypothesis -------------------
 
@@ -447,9 +453,6 @@ class TrainingLoop(object):
                             traceback.print_exc()
 
                     # --------------- Finish up the stage -------------------
-
-                    if cfg.start_tensorboard:
-                        restart_tensorboard(cfg.log_dir, cfg.tbport, cfg.reload_interval)
 
                     self.data.end_stage(updater.n_updates)
 
