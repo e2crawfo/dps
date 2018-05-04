@@ -631,43 +631,55 @@ class PatchesDataset(Dataset):
         patch_shapes = np.array(patch_shapes)
         n_rects = patch_shapes.shape[0]
 
-        rects = []
+        n_tries_outer = 0
+        while True:
+            rects = []
+            for i in range(n_rects):
+                n_tries_inner = 0
+                while True:
+                    if size_std is None:
+                        shape_multipliers = 1.
+                    else:
+                        shape_multipliers = np.maximum(np.random.randn(2) * size_std + 1.0, 0.5)
 
-        for i in range(n_rects):
-            n_tries = 0
-            while True:
-                if size_std is None:
-                    shape_multipliers = 1.
-                else:
-                    shape_multipliers = np.maximum(np.random.randn(2) * size_std + 1.0, 0.5)
+                    m, n = np.ceil(shape_multipliers * patch_shapes[i, :2]).astype('i')
 
-                m, n = np.ceil(shape_multipliers * patch_shapes[i, :2]).astype('i')
+                    rect = Rectangle(
+                        np.random.randint(0, self.draw_shape[0]-m+1),
+                        np.random.randint(0, self.draw_shape[1]-n+1), m, n)
 
-                rect = Rectangle(
-                    np.random.randint(0, self.draw_shape[0]-m+1),
-                    np.random.randint(0, self.draw_shape[1]-n+1), m, n)
-
-                if max_overlap is None:
-                    rects.append(rect)
-                    break
-                else:
-                    violation = False
-                    for r in rects:
-                        if rect.overlap_area(r) > max_overlap:
-                            violation = True
-                            break
-
-                    if not violation:
+                    if max_overlap is None:
                         rects.append(rect)
                         break
+                    else:
+                        violation = False
+                        for r in rects:
+                            if rect.overlap_area(r) > max_overlap:
+                                violation = True
+                                break
 
-                n_tries += 1
+                        if not violation:
+                            rects.append(rect)
+                            break
 
-                if n_tries > self.max_attempts:
-                    raise Exception(
-                        "Could not fit rectangles. "
-                        "(n_rects: {}, draw_shape: {}, max_overlap: {})".format(
-                            n_rects, self.draw_shape, max_overlap))
+                    n_tries_inner += 1
+
+                    if n_tries_inner > self.max_attempts/10:
+                        break
+
+                if len(rects) < i + 1:  # No rectangle found
+                    break
+
+            if len(rects) == n_rects:
+                break
+
+            n_tries_outer += 1
+
+            if n_tries_outer > self.max_attempts:
+                raise Exception(
+                    "Could not fit rectangles. "
+                    "(n_rects: {}, draw_shape: {}, max_overlap: {})".format(
+                        n_rects, self.draw_shape, max_overlap))
 
         return rects
 

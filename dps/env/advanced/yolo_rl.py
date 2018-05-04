@@ -336,6 +336,9 @@ class YoloRL_Network(Parameterized):
     min_hw = Param()
     max_hw = Param()
 
+    min_yx = Param(0.0)
+    max_yx = Param(1.0)
+
     box_std = Param()
     attr_std = Param()
     z_std = Param()
@@ -543,6 +546,10 @@ class YoloRL_Network(Parameterized):
     def _build_box(self, box_logits, is_training):
         box = tf.nn.sigmoid(tf.clip_by_value(box_logits, -10., 10.))
         cell_y, cell_x, h, w = tf.split(box, 4, axis=-1)
+
+        assert self.max_yx > self.min_yx
+        cell_y = float(self.max_yx - self.min_yx) * cell_y + self.min_yx
+        cell_x = float(self.max_yx - self.min_yx) * cell_x + self.min_yx
 
         assert self.max_hw > self.min_hw
 
@@ -1048,7 +1055,9 @@ class YoloRL_Network(Parameterized):
             recorded_tensors['raw_loss_reconstruction'] = tf_mean_sum(
                 self._tensors['per_pixel_reconstruction_loss'])
 
-            losses['reconstruction'] = self.reconstruction_weight * recorded_tensors['raw_loss_reconstruction']
+            recorded_tensors['loss_weight_reconstruction'] = build_scheduled_value(self.reconstruction_weight, 'loss_weight_reconstruction')
+
+            losses['reconstruction'] = recorded_tensors['loss_weight_reconstruction'] * recorded_tensors['raw_loss_reconstruction']
 
         if self.area_weight is not None:
 
@@ -1056,7 +1065,9 @@ class YoloRL_Network(Parameterized):
                 tf.abs(self._tensors['latent_area'] - self.target_area) *
                 self.program['obj'])
 
-            losses['area'] = self.area_weight * recorded_tensors['raw_loss_area']
+            recorded_tensors['loss_weight_area'] = build_scheduled_value(self.area_weight, 'loss_weight_area')
+
+            losses['area'] = recorded_tensors['loss_weight_area'] * recorded_tensors['raw_loss_area']
 
         if self.hw_weight is not None:
 
@@ -1064,13 +1075,17 @@ class YoloRL_Network(Parameterized):
                 tf.abs(self._tensors['latent_hw'] - self.target_hw) *
                 self.program['obj'])
 
-            losses['hw'] = self.hw_weight * recorded_tensors['raw_loss_hw']
+            recorded_tensors['loss_weight_hw'] = build_scheduled_value(self.hw_weight, 'loss_weight_hw')
+
+            losses['hw'] = recorded_tensors['loss_weight_hw'] * recorded_tensors['raw_loss_hw']
 
         if self.rl_weight is not None:
 
             recorded_tensors['raw_loss_rl'] = tf_mean_sum(rl_loss_map)
 
-            losses['rl'] = self.rl_weight * recorded_tensors['raw_loss_rl']
+            recorded_tensors['loss_weight_rl'] = build_scheduled_value(self.rl_weight, 'loss_weight_rl')
+
+            losses['rl'] = recorded_tensors['loss_weight_rl'] * recorded_tensors['raw_loss_rl']
 
         # --- other evaluation metrics
 

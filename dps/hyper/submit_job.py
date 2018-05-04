@@ -511,10 +511,14 @@ class ParallelSession(object):
             bind = "--accel-bind=g" if self.gpu_set else ""
             mem = "--mem-per-cpu={}mb".format(self.pmem) if self.pmem else ""
 
-            command = ('srun --cpus-per-task {cpp} --ntasks {n_tasks} {bind} '
-                       '{mem} --no-kill sh -c "{parallel_command}"'.format(
-                           cpp=self.cpp, n_tasks=len(indices_for_step), bind=bind,
-                           mem=mem, parallel_command=parallel_command))
+            command = ('timeout --signal=INT {parallel_seconds_per_step} srun --cpus-per-task {cpp} --ntasks {n_tasks} {bind} '
+                       '{mem} --no-kill --quit-on-interrupt sh -c "{parallel_command}"'.format(
+                           parallel_seconds_per_step=self.parallel_seconds_per_step,
+                           cpp=self.cpp,
+                           n_tasks=len(indices_for_step),
+                           bind=bind,
+                           mem=mem,
+                           parallel_command=parallel_command))
         else:
             workon = "workon {launch_venv} && " if (self.copy_venv and self.launch_venv) else ""
             parallel_command = (
