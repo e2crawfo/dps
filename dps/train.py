@@ -351,10 +351,20 @@ class TrainingLoop(object):
                     print("Loading hypothesis from {}.".format(path))
                     updater.restore(sess, path)
 
+                elif cfg.load_stage is not None:
+                    load_stage = cfg.load_stage
+                    assert (isinstance(load_stage, int) and
+                            0 <= load_stage and
+                            load_stage < stage_idx), load_stage
+
+                    load_path = self.data.history[load_stage]['best_path']
+                    print("Loading best hypothesis from stage {}, located at {}.".format(load_stage, load_path))
+                    updater.restore(sess, load_path)
+
                 elif stage_idx > 0 and cfg.preserve_policy:
                     # Initialize weights from best hypothesis discovered on the previous stage
                     load_path = self.data.history[stage_idx-1]['best_path']
-                    print("Loading best hypothesis from previous stage at located {}.".format(load_path))
+                    print("Loading best hypothesis from previous stage, located at {}.".format(load_path))
                     updater.restore(sess, load_path)
 
                 self.summary_op = tf.summary.merge_all()
@@ -364,8 +374,6 @@ class TrainingLoop(object):
 
                 threshold_reached = False
                 reason = None
-
-                timeout = False
 
                 try:
                     # --------------- Run stage -------------------
