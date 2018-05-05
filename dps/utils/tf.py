@@ -1061,7 +1061,7 @@ class Polynomial(Schedule):
         assert power > 0
 
     def build(self, t):
-        t = tf.minimum(self.decay_steps, t)
+        t = tf.minimum(tf.cast(self.decay_steps, tf.int64), t)
         return (self.start - self.end) * ((1 - t / self.decay_steps) ** self.power) + self.end
 
 

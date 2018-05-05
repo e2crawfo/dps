@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import matplotlib.colors as colors
 
+from dps import cfg
 from dps.utils import Param, Parameterized, Config
 from dps.utils.tf import trainable_variables, build_scheduled_value
 from dps.env.advanced import yolo_rl
@@ -1009,10 +1010,12 @@ class AIR_RenderHook(object):
                 imshow(ax, np.clip(vae_output[i, t], 0, 1))
                 ax.set_title("VAE output (t={})".format(t))
 
+            local_step_dir = '' if cfg.overwrite_plots else 'local_step{}'.format(updater.n_updates)
             path = updater.exp_dir.path_for(
                 'plots',
                 'stage{}'.format(updater.stage_idx),
-                'sampled_reconstruction_{}_local_step={}.pdf'.format(i, updater.n_updates))
+                local_step_dir,
+                'sampled_reconstruction_{}.pdf'.format(i))
 
             fig.savefig(path)
             plt.close(fig)

@@ -11,10 +11,9 @@ from dps.updater import Updater
 from dps.utils import Config, Param, Parameterized, prime_factors
 from dps.utils.tf import (
     FullyConvolutional, build_gradient_train_op, trainable_variables,
-    tf_mean_sum, build_scheduled_value)
+    tf_mean_sum, build_scheduled_value, MLP, masked_mean)
 from dps.env.advanced.yolo import mAP
 from dps.tf_ops import render_sprites
-from dps.utils.tf import MLP
 from dps.updater import DataManager
 
 
@@ -248,11 +247,14 @@ class HeightWidthCost(object):
 
 
 class NonzeroCost(object):
-    def __init__(self, neighbourhood_size=0):
+    def __init__(self, target_nonzero, neighbourhood_size=0):
+        self.target_nonzero = target_nonzero
         self.neighbourhood_size = neighbourhood_size
 
     def __call__(self, _tensors, network):
-        return tf_local_filter(_tensors['program']['obj'], self.neighbourhood_size)
+        # The order of operations is switched intentionally here...the target applies to the overall number
+        # of objects, rather than individual object-ness values.
+        return tf.abs(tf_local_filter(_tensors['program']['obj'], self.neighbourhood_size) - self.target_nonzero)
 
 
 def yolo_rl_mAP(_tensors, updater):
@@ -368,6 +370,7 @@ class YoloRL_Network(Parameterized):
 
     target_area = Param(0.)
     target_hw = Param(0.)
+    target_nonzero = Param(0.)
 
     fixed_values = Param()
     fixed_weights = Param()
@@ -390,17 +393,28 @@ class YoloRL_Network(Parameterized):
 
         self.COST_funcs = {}
 
-        _reconstruction_cost_func = local_reconstruction_cost if self.local_reconstruction_cost else reconstruction_cost
-        self.COST_funcs['reconstruction'] = (self.reconstruction_weight, _reconstruction_cost_func, "both")
+        if self.reconstruction_weight is not None:
+            self.reconstruction_weight = build_scheduled_value(self.reconstruction_weight, "reconstruction_weight")
+            _reconstruction_cost_func = local_reconstruction_cost if self.local_reconstruction_cost else reconstruction_cost
+            self.COST_funcs['reconstruction'] = (self.reconstruction_weight, _reconstruction_cost_func, "both")
 
-        _area_cost_func = AreaCost(self.target_area, self.area_neighbourhood_size)
-        self.COST_funcs['area'] = (self.area_weight, _area_cost_func, "obj")
+        if self.area_weight is not None:
+            self.area_weight = build_scheduled_value(self.area_weight, "area_weight")
+            self.target_area = build_scheduled_value(self.target_area, "target_area")
+            _area_cost_func = AreaCost(self.target_area, self.area_neighbourhood_size)
+            self.COST_funcs['area'] = (self.area_weight, _area_cost_func, "obj")
 
-        _hw_cost_func = HeightWidthCost(self.target_hw, self.hw_neighbourhood_size)
-        self.COST_funcs['hw'] = (self.hw_weight, _hw_cost_func, "obj")
+        if self.hw_weight is not None:
+            self.hw_weight = build_scheduled_value(self.hw_weight, "hw_weight")
+            self.target_hw = build_scheduled_value(self.target_hw, "target_hw")
+            _hw_cost_func = HeightWidthCost(self.target_hw, self.hw_neighbourhood_size)
+            self.COST_funcs['hw'] = (self.hw_weight, _hw_cost_func, "obj")
 
-        _nonzero_cost_func = NonzeroCost(self.nonzero_neighbourhood_size)
-        self.COST_funcs['nonzero'] = (self.nonzero_weight, _nonzero_cost_func, "obj")
+        if self.nonzero_weight is not None:
+            self.nonzero_weight = build_scheduled_value(self.nonzero_weight, "nonzero_weight")
+            self.target_nonzero = build_scheduled_value(self.target_nonzero, "target_nonzero")
+            _nonzero_cost_func = NonzeroCost(self.target_nonzero, self.nonzero_neighbourhood_size)
+            self.COST_funcs['nonzero'] = (self.nonzero_weight, _nonzero_cost_func, "obj")
 
         self.eval_funcs = dict(mAP=yolo_rl_mAP)
 
@@ -979,8 +993,16 @@ class YoloRL_Network(Parameterized):
         recorded_tensors['cell_x'] = tf.reduce_mean(self._tensors["cell_x"])
         recorded_tensors['h'] = tf.reduce_mean(self._tensors["h"])
         recorded_tensors['w'] = tf.reduce_mean(self._tensors["w"])
+        recorded_tensors['area'] = tf.reduce_mean(self._tensors["area"])
 
-        recorded_tensors['obj'] = tf.reduce_mean(self._tensors["program"]["obj"])
+        obj = self._tensors["program"]["obj"]
+        recorded_tensors['on_cell_y'] = masked_mean(self._tensors["cell_y"], obj)
+        recorded_tensors['on_cell_x'] = masked_mean(self._tensors["cell_x"], obj)
+        recorded_tensors['on_h'] = masked_mean(self._tensors["h"], obj)
+        recorded_tensors['on_w'] = masked_mean(self._tensors["w"], obj)
+        recorded_tensors['on_area'] = masked_mean(self._tensors["area"], obj)
+
+        recorded_tensors['obj'] = tf.reduce_mean(obj)
         recorded_tensors['obj_entropy'] = tf.reduce_mean(self._tensors["entropy"]["obj"])
         recorded_tensors['obj_log_probs'] = tf.reduce_mean(self._tensors["log_probs"]["obj"])
         recorded_tensors['obj_logits'] = tf.reduce_mean(self._tensors["logits"]["obj"])
@@ -1014,7 +1036,6 @@ class YoloRL_Network(Parameterized):
             if weight is None:
                 continue
 
-            weight = build_scheduled_value(weight, "COST_{}_weight".format(name))
             cost = self._process_cost(func(self._tensors, self))
             weighted_cost = weight * cost
 
@@ -1051,41 +1072,25 @@ class YoloRL_Network(Parameterized):
         losses = dict()
 
         if self.reconstruction_weight is not None:
-
             recorded_tensors['raw_loss_reconstruction'] = tf_mean_sum(
                 self._tensors['per_pixel_reconstruction_loss'])
-
-            recorded_tensors['loss_weight_reconstruction'] = build_scheduled_value(self.reconstruction_weight, 'loss_weight_reconstruction')
-
-            losses['reconstruction'] = recorded_tensors['loss_weight_reconstruction'] * recorded_tensors['raw_loss_reconstruction']
+            losses['reconstruction'] = self.reconstruction_weight * recorded_tensors['raw_loss_reconstruction']
 
         if self.area_weight is not None:
-
             recorded_tensors['raw_loss_area'] = tf_mean_sum(
                 tf.abs(self._tensors['latent_area'] - self.target_area) *
                 self.program['obj'])
-
-            recorded_tensors['loss_weight_area'] = build_scheduled_value(self.area_weight, 'loss_weight_area')
-
-            losses['area'] = recorded_tensors['loss_weight_area'] * recorded_tensors['raw_loss_area']
+            losses['area'] = self.area_weight * recorded_tensors['raw_loss_area']
 
         if self.hw_weight is not None:
-
             recorded_tensors['raw_loss_hw'] = tf_mean_sum(
                 tf.abs(self._tensors['latent_hw'] - self.target_hw) *
                 self.program['obj'])
-
-            recorded_tensors['loss_weight_hw'] = build_scheduled_value(self.hw_weight, 'loss_weight_hw')
-
-            losses['hw'] = recorded_tensors['loss_weight_hw'] * recorded_tensors['raw_loss_hw']
+            losses['hw'] = self.hw_weight * recorded_tensors['raw_loss_hw']
 
         if self.rl_weight is not None:
-
             recorded_tensors['raw_loss_rl'] = tf_mean_sum(rl_loss_map)
-
-            recorded_tensors['loss_weight_rl'] = build_scheduled_value(self.rl_weight, 'loss_weight_rl')
-
-            losses['rl'] = recorded_tensors['loss_weight_rl'] * recorded_tensors['raw_loss_rl']
+            losses['rl'] = self.rl_weight * recorded_tensors['raw_loss_rl']
 
         # --- other evaluation metrics
 
@@ -1415,7 +1420,12 @@ class YoloRL_RenderHook(object):
 
         plt.subplots_adjust(left=0, right=1, top=1, bottom=0, wspace=0.1, hspace=0.1)
 
-        path = updater.exp_dir.path_for('plots', 'stage{}'.format(updater.stage_idx), 'sampled_reconstruction.pdf')
+        local_step_dir = '' if cfg.overwrite_plots else 'local_step{}'.format(updater.n_updates)
+        path = updater.exp_dir.path_for(
+            'plots',
+            'stage{}'.format(updater.stage_idx),
+            local_step_dir,
+            'sampled_reconstruction.pdf')
         fig.savefig(path)
 
         plt.close(fig)
@@ -1464,9 +1474,13 @@ class YoloRL_RenderHook(object):
                 ax = axes[2*h+1, w * B + b]
                 ax.imshow(objects[idx, i, :, :, 3])
 
+            local_step_dir = '' if cfg.overwrite_plots else 'local_step{}'.format(updater.n_updates)
             path = updater.exp_dir.path_for(
-                'plots', 'stage{}'.format(updater.stage_idx),
+                'plots',
+                'stage{}'.format(updater.stage_idx),
+                local_step_dir,
                 'sampled_patches', '{}.pdf'.format(idx))
+
             fig.savefig(path)
             plt.close(fig)
 
@@ -1591,9 +1605,6 @@ config.update(
     area_neighbourhood_size=None,
     hw_neighbourhood_size=None,
     nonzero_neighbourhood_size=None,
-
-    target_area=0,
-    target_hw=0,
 
     fixed_values=dict(),
     fixed_weights="",
