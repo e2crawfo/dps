@@ -226,6 +226,17 @@ def tf_local_filter(signal, neighbourhood_size):
     return signal[..., None, None]
 
 
+class NonzeroCost(object):
+    def __init__(self, target_nonzero, neighbourhood_size=0):
+        self.target_nonzero = target_nonzero
+        self.neighbourhood_size = neighbourhood_size
+
+    def __call__(self, _tensors, network):
+        # The order of operations is switched intentionally here...the target applies to the overall number
+        # of objects, rather than individual object-ness values.
+        return tf.abs(tf_local_filter(_tensors['program']['obj'], self.neighbourhood_size) - self.target_nonzero)
+
+
 class AreaCost(object):
     def __init__(self, target_area, neighbourhood_size):
         self.target_area = target_area
@@ -244,17 +255,6 @@ class HeightWidthCost(object):
     def __call__(self, _tensors, updater):
         selected_hw_cost = _tensors['program']['obj'] * tf.abs(_tensors['latent_hw'] - self.target_hw)
         return tf_local_filter(selected_hw_cost, self.neighbourhood_size)
-
-
-class NonzeroCost(object):
-    def __init__(self, target_nonzero, neighbourhood_size=0):
-        self.target_nonzero = target_nonzero
-        self.neighbourhood_size = neighbourhood_size
-
-    def __call__(self, _tensors, network):
-        # The order of operations is switched intentionally here...the target applies to the overall number
-        # of objects, rather than individual object-ness values.
-        return tf.abs(tf_local_filter(_tensors['program']['obj'], self.neighbourhood_size) - self.target_nonzero)
 
 
 def yolo_rl_mAP(_tensors, updater):
@@ -398,23 +398,23 @@ class YoloRL_Network(Parameterized):
             _reconstruction_cost_func = local_reconstruction_cost if self.local_reconstruction_cost else reconstruction_cost
             self.COST_funcs['reconstruction'] = (self.reconstruction_weight, _reconstruction_cost_func, "both")
 
-        if self.area_weight is not None:
-            self.area_weight = build_scheduled_value(self.area_weight, "area_weight")
-            self.target_area = build_scheduled_value(self.target_area, "target_area")
-            _area_cost_func = AreaCost(self.target_area, self.area_neighbourhood_size)
-            self.COST_funcs['area'] = (self.area_weight, _area_cost_func, "obj")
-
-        if self.hw_weight is not None:
-            self.hw_weight = build_scheduled_value(self.hw_weight, "hw_weight")
-            self.target_hw = build_scheduled_value(self.target_hw, "target_hw")
-            _hw_cost_func = HeightWidthCost(self.target_hw, self.hw_neighbourhood_size)
-            self.COST_funcs['hw'] = (self.hw_weight, _hw_cost_func, "obj")
-
         if self.nonzero_weight is not None:
             self.nonzero_weight = build_scheduled_value(self.nonzero_weight, "nonzero_weight")
             self.target_nonzero = build_scheduled_value(self.target_nonzero, "target_nonzero")
             _nonzero_cost_func = NonzeroCost(self.target_nonzero, self.nonzero_neighbourhood_size)
             self.COST_funcs['nonzero'] = (self.nonzero_weight, _nonzero_cost_func, "obj")
+
+        if self.area_weight is not None:
+            self.area_weight = build_scheduled_value(self.area_weight, "area_weight")
+            self.target_area = build_scheduled_value(self.target_area, "target_area")
+            # _area_cost_func = AreaCost(self.target_area, self.area_neighbourhood_size)
+            # self.COST_funcs['area'] = (self.area_weight, _area_cost_func, "obj")
+
+        if self.hw_weight is not None:
+            self.hw_weight = build_scheduled_value(self.hw_weight, "hw_weight")
+            self.target_hw = build_scheduled_value(self.target_hw, "target_hw")
+            # _hw_cost_func = HeightWidthCost(self.target_hw, self.hw_neighbourhood_size)
+            # self.COST_funcs['hw'] = (self.hw_weight, _hw_cost_func, "obj")
 
         self.eval_funcs = dict(mAP=yolo_rl_mAP)
 
@@ -852,7 +852,6 @@ class YoloRL_Network(Parameterized):
 
     def _build_program_interpreter(self):
         # --- Compute sprites from attrs using object decoder ---
-
         attrs = self.program['attr']
 
         routed_attrs = tf.gather_nd(attrs, self._tensors["routing"])
@@ -1078,14 +1077,15 @@ class YoloRL_Network(Parameterized):
 
         if self.area_weight is not None:
             recorded_tensors['raw_loss_area'] = tf_mean_sum(
-                tf.abs(self._tensors['latent_area'] - self.target_area) *
-                self.program['obj'])
+                tf.abs(self._tensors['latent_area'] - self.target_area))
+                # tf.abs(self._tensors['latent_area'] - self.target_area) * self._tensors['program']['obj'])
             losses['area'] = self.area_weight * recorded_tensors['raw_loss_area']
 
         if self.hw_weight is not None:
             recorded_tensors['raw_loss_hw'] = tf_mean_sum(
-                tf.abs(self._tensors['latent_hw'] - self.target_hw) *
-                self.program['obj'])
+                tf.abs(self._tensors['latent_hw'] - self.target_hw))
+                # tf.abs(self._tensors['latent_hw'] - self.target_hw) * self._tensors['program']['obj'])
+
             losses['hw'] = self.hw_weight * recorded_tensors['raw_loss_hw']
 
         if self.rl_weight is not None:
