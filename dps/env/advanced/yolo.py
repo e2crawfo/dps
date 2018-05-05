@@ -489,7 +489,7 @@ def yolo_render_hook(updater):
         plt.close(fig)
 
 
-def mAP(pred_boxes, gt_boxes, n_classes, recall_values=None, iou_threshold=0.5):
+def mAP(pred_boxes, gt_boxes, n_classes, recall_values=None, iou_threshold=None):
     """ Calculate mean average precision on a dataset.
 
     pred_boxes: [[class, conf, y_min, y_max, x_min, x_max] * n_boxes] * n_images
@@ -499,63 +499,65 @@ def mAP(pred_boxes, gt_boxes, n_classes, recall_values=None, iou_threshold=0.5):
     if recall_values is None:
         recall_values = np.linspace(0.0, 1.0, 11)
 
+    if iou_threshold is None:
+        iou_threshold = np.linspace(0.5, 0.95, 0.05)
+
     ap = []
 
     for c in range(n_classes):
-        predicted_list = []  # Each element is (confidence, ground-truth (0 or 1))
+        _ap = []
+        for iou_thresh in iou_threshold:
+            predicted_list = []  # Each element is (confidence, ground-truth (0 or 1))
+            n_positives = 0
 
-        n_positives = 0
+            for pred, gt in zip(pred_boxes, gt_boxes):
+                # Within a single image
 
-        for pred, gt in zip(pred_boxes, gt_boxes):
-            # Within a single image
-            pred_c = sorted([b for cls, *b in pred if cls == c], key=lambda k: -k[0])
-            area = [(ymax - ymin) * (xmax - xmin) for _, ymin, ymax, xmin, xmax in pred_c]
-            pred_c = [(*b, a) for b, a in zip(pred_c, area)]
+                # Sort by decreasing confidence within current class.
+                pred_c = sorted([b for cls, *b in pred if cls == c], key=lambda k: -k[0])
+                area = [(ymax - ymin) * (xmax - xmin) for _, ymin, ymax, xmin, xmax in pred_c]
+                pred_c = [(*b, a) for b, a in zip(pred_c, area)]
 
-            gt_c = [b for cls, *b in gt if cls == c]
-            n_positives += len(gt_c)
+                gt_c = [b for cls, *b in gt if cls == c]
+                n_positives += len(gt_c)
 
-            if not gt_c:
-                predicted_list.extend((conf, 0) for conf, *b in pred_c)
+                if not gt_c:
+                    predicted_list.extend((conf, 0) for conf, *b in pred_c)
+                    continue
+
+                gt_c = np.array(gt_c)
+                gt_c_area = (gt_c[:, 1] - gt_c[:, 0]) * (gt_c[:, 3] - gt_c[:, 2])
+                gt_c = np.concatenate([gt_c, gt_c_area[..., None]], axis=1)
+
+                for conf, *box in pred_c:
+                    iou = compute_iou(box, gt_c)
+                    best_idx = np.argmax(iou)
+                    best_iou = iou[best_idx]
+                    if best_iou > iou_thresh:
+                        predicted_list.append((conf, 1.))
+                        gt_c = np.delete(gt_c, best_idx, axis=0)
+                    else:
+                        predicted_list.append((conf, 0.))
+
+                    if not gt_c.shape[0]:
+                        break
+
+            if not predicted_list:
+                ap.append(0.0)
                 continue
 
-            gt_c = np.array(gt_c)
-            gt_c_area = (gt_c[:, 1] - gt_c[:, 0]) * (gt_c[:, 3] - gt_c[:, 2])
-            gt_c = np.concatenate([gt_c, gt_c_area[..., None]], axis=1)
+            # Sort predictions by decreasing confidence.
+            predicted_list = np.array(sorted(predicted_list, key=lambda k: -k[0]), dtype=np.float32)
 
-            for conf, *box in pred_c:
-                iou = compute_iou(box, gt_c)
-                best_idx = np.argmax(iou)
-                best_iou = iou[best_idx]
-                if best_iou > iou_threshold:
-                    predicted_list.append((conf, 1.))
-                    gt_c = np.delete(gt_c, best_idx, axis=0)
-                else:
-                    predicted_list.append((conf, 0.))
+            # Compute AP
+            cs = np.cumsum(predicted_list[:, 1])
+            precision = cs / (np.arange(predicted_list.shape[0]) + 1)
+            recall = cs / n_positives
 
-                if not gt_c.shape[0]:
-                    break
-
-        if not predicted_list:
-            ap.append(0.0)
-            continue
-
-        # Sort predictions by confidence.
-        predicted_list = np.array(sorted(predicted_list, key=lambda k: -k[0]), dtype=np.float32)
-
-        # Compute AP
-        cs = np.cumsum(predicted_list[:, 1])
-        precision = cs / (np.arange(predicted_list.shape[0]) + 1)
-        recall = cs / n_positives
-
-        _ap = []
-
-        for r in recall_values:
-            p = precision[recall >= r]
-            _ap.append(0. if p.size == 0 else p.max())
-
+            for r in recall_values:
+                p = precision[recall >= r]
+                _ap.append(0. if p.size == 0 else p.max())
         ap.append(np.mean(_ap))
-
     return np.mean(ap)
 
 
