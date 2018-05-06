@@ -407,14 +407,14 @@ class YoloRL_Network(Parameterized):
         if self.area_weight is not None:
             self.area_weight = build_scheduled_value(self.area_weight, "area_weight")
             self.target_area = build_scheduled_value(self.target_area, "target_area")
-            # _area_cost_func = AreaCost(self.target_area, self.area_neighbourhood_size)
-            # self.COST_funcs['area'] = (self.area_weight, _area_cost_func, "obj")
+            _area_cost_func = AreaCost(self.target_area, self.area_neighbourhood_size)
+            self.COST_funcs['area'] = (self.area_weight, _area_cost_func, "obj")
 
         if self.hw_weight is not None:
             self.hw_weight = build_scheduled_value(self.hw_weight, "hw_weight")
             self.target_hw = build_scheduled_value(self.target_hw, "target_hw")
-            # _hw_cost_func = HeightWidthCost(self.target_hw, self.hw_neighbourhood_size)
-            # self.COST_funcs['hw'] = (self.hw_weight, _hw_cost_func, "obj")
+            _hw_cost_func = HeightWidthCost(self.target_hw, self.hw_neighbourhood_size)
+            self.COST_funcs['hw'] = (self.hw_weight, _hw_cost_func, "obj")
 
         self.eval_funcs = dict(mAP=yolo_rl_mAP)
 
@@ -1077,15 +1077,12 @@ class YoloRL_Network(Parameterized):
 
         if self.area_weight is not None:
             recorded_tensors['raw_loss_area'] = tf_mean_sum(
-                tf.abs(self._tensors['latent_area'] - self.target_area))
-                # tf.abs(self._tensors['latent_area'] - self.target_area) * self._tensors['program']['obj'])
+                tf.abs(self._tensors['latent_area'] - self.target_area) * self._tensors['program']['obj'])
             losses['area'] = self.area_weight * recorded_tensors['raw_loss_area']
 
         if self.hw_weight is not None:
             recorded_tensors['raw_loss_hw'] = tf_mean_sum(
-                tf.abs(self._tensors['latent_hw'] - self.target_hw))
-                # tf.abs(self._tensors['latent_hw'] - self.target_hw) * self._tensors['program']['obj'])
-
+                tf.abs(self._tensors['latent_hw'] - self.target_hw) * self._tensors['program']['obj'])
             losses['hw'] = self.hw_weight * recorded_tensors['raw_loss_hw']
 
         if self.rl_weight is not None:

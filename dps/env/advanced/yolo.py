@@ -500,7 +500,7 @@ def mAP(pred_boxes, gt_boxes, n_classes, recall_values=None, iou_threshold=None)
         recall_values = np.linspace(0.0, 1.0, 11)
 
     if iou_threshold is None:
-        iou_threshold = np.linspace(0.5, 0.95, 0.05)
+        iou_threshold = np.linspace(0.5, 0.95, 10)
 
     ap = []
 
