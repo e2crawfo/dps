@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from sklearn.cluster import k_means
 import collections
+import sonnet as snt
 
 from dps import cfg
 from dps.datasets import EmnistObjectDetectionDataset
@@ -374,6 +375,7 @@ class YoloRL_Network(Parameterized):
 
     fixed_values = Param()
     fixed_weights = Param()
+    no_gradient = Param("")
     order = Param()
 
     sequential_cfg = Param(dict(
@@ -416,16 +418,30 @@ class YoloRL_Network(Parameterized):
             _hw_cost_func = HeightWidthCost(self.target_hw, self.hw_neighbourhood_size)
             self.COST_funcs['hw'] = (self.hw_weight, _hw_cost_func, "obj")
 
+        if self.rl_weight is not None:
+            self.rl_weight = build_scheduled_value(self.rl_weight, "rl_weight")
+
+        if self.z_weight is not None:
+            self.z_weight = build_scheduled_value(self.z_weight, "z_weight")
+
         self.eval_funcs = dict(mAP=yolo_rl_mAP)
 
+        self.object_encoder = None
         self.object_decoder = None
 
         if isinstance(self.fixed_weights, str):
             self.fixed_weights = self.fixed_weights.split()
 
+        if isinstance(self.no_gradient, str):
+            self.no_gradient = self.no_gradient.split()
+
         if isinstance(self.order, str):
             self.order = self.order.split()
-        assert set(self.order) == set("box obj z attr".split())
+
+        if self.use_input_attention:
+            assert set(self.order) == set("box obj z".split())
+        else:
+            assert set(self.order) == set("box obj z attr".split())
 
         self.backbone = None
         self.layer_params = dict(
@@ -489,13 +505,16 @@ class YoloRL_Network(Parameterized):
             [self.layer_params[kind]["network"] for kind in self.order]
         )
 
+        if self.object_encoder is not None:
+            scoped_functions.append(self.object_encoder)
+
         scoped_functions.append(self.backbone)
 
         tvars = []
         for sf in scoped_functions:
             tvars.extend(trainable_variables(sf.scope, for_opt=for_opt))
 
-        if self.sequential_cfg['on']:
+        if self.sequential_cfg['on'] and "edge" not in self.fixed_weights:
             tvars.append(self.edge_weights)
 
         return tvars
@@ -579,6 +598,15 @@ class YoloRL_Network(Parameterized):
         if "w" in self.fixed_values:
             w = float(self.fixed_values["w"]) * tf.ones_like(w, dtype=tf.float32)
 
+        if "cell_y" in self.no_gradient:
+            cell_y = tf.stop_gradient(cell_y)
+        if "cell_x" in self.no_gradient:
+            cell_x = tf.stop_gradient(cell_x)
+        if "h" in self.no_gradient:
+            h = tf.stop_gradient(h)
+        if "w" in self.no_gradient:
+            w = tf.stop_gradient(w)
+
         box = tf.concat([cell_y, cell_x, h, w], axis=-1)
 
         box_std = self._get_scheduled_value("box_std")
@@ -617,6 +645,9 @@ class YoloRL_Network(Parameterized):
         obj_log_probs = obj_dist.log_prob(obj_samples)
         obj_log_probs = tf.where(tf.is_nan(obj_log_probs), -100.0 * tf.ones_like(obj_log_probs), obj_log_probs)
 
+        if "obj" in self.no_gradient:
+            obj_log_probs = tf.stop_gradient(obj_log_probs)
+
         obj_entropy = obj_dist.entropy()
 
         return dict(
@@ -642,6 +673,9 @@ class YoloRL_Network(Parameterized):
 
         z_log_probs = z_dist.log_prob(z_samples)
         z_log_probs = tf.where(tf.is_nan(z_log_probs), -100.0 * tf.ones_like(z_log_probs), z_log_probs)
+
+        if "z" in self.no_gradient:
+            z_log_probs = tf.stop_gradient(z_log_probs)
 
         z_entropy = z_dist.entropy()
 
@@ -672,6 +706,9 @@ class YoloRL_Network(Parameterized):
         if self.backbone is None:
             self.backbone = cfg.build_backbone(scope="backbone")
             self.backbone.layout[-1]['filters'] = B * self.n_backbone_features
+
+            if "backbone" in self.fixed_weights:
+                self.backbone.fix_variables()
 
         inp = self._tensors["inp"]
         backbone_output = self.backbone(inp, (H, W, B * self.n_backbone_features), self.is_training)
@@ -753,13 +790,16 @@ class YoloRL_Network(Parameterized):
             self.backbone = cfg.build_backbone(scope="backbone")
             self.backbone.layout[-1]['filters'] = B * self.n_backbone_features
 
+            if "backbone" in self.fixed_weights:
+                self.backbone.fix_variables()
+
         inp = self._tensors["inp"]
         backbone_output = self.backbone(inp, (H, W, B*self.n_backbone_features), self.is_training)
         backbone_output = tf.reshape(backbone_output, (-1, H, W, B, self.n_backbone_features))
 
         # --- set-up the edge element ---
 
-        total_output_size = sum(v["output_size"] for v in self.layer_params.values())
+        total_output_size = sum(self.layer_params[kind]["output_size"] for kind in self.order)
 
         self.edge_weights = tf.get_variable("edge_weights", shape=(1, total_output_size), dtype=tf.float32)
         sizes = [self.layer_params[kind]['output_size'] for kind in self.order]
@@ -851,27 +891,6 @@ class YoloRL_Network(Parameterized):
                 self._tensors[key] = form_tensor(value)
 
     def _build_program_interpreter(self):
-        # --- Compute sprites from attrs using object decoder ---
-        attrs = self.program['attr']
-
-        routed_attrs = tf.gather_nd(attrs, self._tensors["routing"])
-        object_decoder_in = tf.reshape(routed_attrs, (-1, 1, 1, self.A))
-
-        object_logits = self.object_decoder(
-            object_decoder_in, self.object_shape + (self.image_depth+1,), self.is_training)
-
-        objects = tf.nn.sigmoid(
-            self.decoder_logit_scale * tf.clip_by_value(object_logits, -10., 10.))
-
-        objects = tf.reshape(
-            objects, (self.batch_size, self._tensors["max_objects"]) + self.object_shape + (self.image_depth+1,))
-
-        if "alpha" in self.fixed_values:
-            obj_img, obj_alpha = tf.split(objects, [3, 1], axis=-1)
-            fixed_obj_alpha = float(self.fixed_values["alpha"]) * tf.ones_like(obj_alpha, dtype=tf.float32)
-            objects = tf.concat([obj_img, fixed_obj_alpha], axis=-1)
-
-        self._tensors["objects"] = objects
 
         # --- Compute sprite locations from box parameters ---
 
@@ -904,6 +923,64 @@ class YoloRL_Network(Parameterized):
 
         scales = tf.gather_nd(tf.concat([ys, xs], axis=-1), self._tensors["routing"])
         offsets = tf.gather_nd(tf.concat([yt, xt], axis=-1), self._tensors["routing"])
+
+        # --- Compute sprites from attrs using object decoder ---
+
+        if self.use_input_attention:
+            transform_constraints = snt.AffineWarpConstraints.no_shear_2d()
+            warper = snt.AffineGridWarper(
+                (self.image_height, self.image_width), self.object_shape, transform_constraints)
+
+            _scales = tf.reshape(scales, (self.batch_size * self._tensors["max_objects"], 2))
+            _offsets = tf.reshape(offsets, (self.batch_size * self._tensors["max_objects"], 2))
+
+            _ys, _xs = tf.split(_scales, 2, axis=1)
+            _yt, _xt = tf.split(_offsets, 2, axis=1)
+
+            _yt += _ys / 2
+            _xt += _xs / 2
+
+            _boxes = tf.concat([_xs, 2*_xt-1, _ys, 2*_yt-1], axis=1)
+            grid_coords = warper(_boxes)
+            grid_coords = tf.reshape(grid_coords, (self.batch_size, self._tensors["max_objects"],) + self.object_shape + (2,))
+            input_glimpses = tf.contrib.resampler.resampler(self.inp, grid_coords)
+
+            self._tensors["input_glimpses"] = input_glimpses
+
+            object_encoder_in = tf.reshape(
+                input_glimpses,
+                (self.batch_size * self._tensors["max_objects"], self.object_shape[0] * self.object_shape[1] * self.image_depth))
+
+            attrs = self.object_encoder(object_encoder_in, self.A, self.is_training)
+            object_decoder_in = attrs
+            # object_decoder_in = tf.reshape(attrs, (self.batch_size * self._tensors["max_objects"], 1, 1, self.A))
+        else:
+            attrs = self.program['attr']
+            routed_attrs = tf.gather_nd(attrs, self._tensors["routing"])
+            object_decoder_in = routed_attrs
+            # object_decoder_in = tf.reshape(routed_attrs, (self.batch_size * self._tensors["max_objects"],  self.A))
+
+        object_logits = self.object_decoder(
+            object_decoder_in, self.object_shape[0] * self.object_shape[1] * (self.image_depth+1), self.is_training)
+
+        objects = tf.nn.sigmoid(
+            self.decoder_logit_scale * tf.clip_by_value(object_logits, -10., 10.))
+        # objects = tf.reshape(objects, self.batch_size + self.object_shape + (self.image_depth + 1,))
+
+        objects = tf.reshape(
+            objects, (self.batch_size, self._tensors["max_objects"]) + self.object_shape + (self.image_depth+1,))
+
+        if "alpha" in self.fixed_values:
+            obj_img, obj_alpha = tf.split(objects, [3, 1], axis=-1)
+            fixed_obj_alpha = float(self.fixed_values["alpha"]) * tf.ones_like(obj_alpha, dtype=tf.float32)
+            objects = tf.concat([obj_img, fixed_obj_alpha], axis=-1)
+
+        if "alpha" in self.no_gradient:
+            obj_img, obj_alpha = tf.split(objects, [3, 1], axis=-1)
+            obj_alpha = tf.stop_gradient(obj_alpha)
+            objects = tf.concat([obj_img, fixed_obj_alpha], axis=-1)
+
+        self._tensors["objects"] = objects
 
         # --- Compose images ---
 
@@ -972,9 +1049,13 @@ class YoloRL_Network(Parameterized):
 
         self._build_routing()
 
+        if self.use_input_attention and self.object_encoder is None:
+            self.object_encoder = cfg.build_object_encoder(scope="object_encoder")
+            if "encoder" in self.fixed_weights:
+                self.object_encoder.fix_variables()
+
         if self.object_decoder is None:
             self.object_decoder = cfg.build_object_decoder(scope="object_decoder")
-
             if "decoder" in self.fixed_weights:
                 self.object_decoder.fix_variables()
 
@@ -1011,7 +1092,8 @@ class YoloRL_Network(Parameterized):
         recorded_tensors['z_log_probs'] = tf.reduce_mean(self._tensors["log_probs"]["z"])
         recorded_tensors['z_logits'] = tf.reduce_mean(self._tensors["logits"]["z"])
 
-        recorded_tensors['attr'] = tf.reduce_mean(self._tensors["program"]["attr"])
+        if 'attr' in self.order:
+            recorded_tensors['attr'] = tf.reduce_mean(self._tensors["program"]["attr"])
 
         recorded_tensors['latent_area'] = tf.reduce_mean(self._tensors["latent_area"])
         recorded_tensors['latent_hw'] = tf.reduce_mean(self._tensors["latent_hw"])
@@ -1338,6 +1420,9 @@ class YoloRL_RenderHook(object):
         to_fetch["n_objects"] = network._tensors["n_objects"]
         to_fetch["normalized_box"] = network._tensors["normalized_box"]
 
+        if network.use_input_attention:
+            to_fetch["input_glimpses"] = network._tensors["input_glimpses"]
+
         to_fetch = {k: v[:self.N] for k, v in to_fetch.items()}
 
         sess = tf.get_default_session()
@@ -1372,16 +1457,16 @@ class YoloRL_RenderHook(object):
             j = int(n % sqrt_N)
 
             ax1 = axes[2*i, 2*j]
-            ax1.imshow(gt)
+            ax1.imshow(gt, vmin=0.0, vmax=1.0)
 
             ax2 = axes[2*i, 2*j+1]
-            ax2.imshow(pred)
+            ax2.imshow(pred, vmin=0.0, vmax=1.0)
 
             ax3 = axes[2*i+1, 2*j]
-            ax3.imshow(pred)
+            ax3.imshow(pred, vmin=0.0, vmax=1.0)
 
             ax4 = axes[2*i+1, 2*j+1]
-            ax4.imshow(pred)
+            ax4.imshow(pred, vmin=0.0, vmax=1.0)
 
             # Plot proposed bounding boxes
             for o, (top, left, height, width) in zip(obj[n], box[n]):
@@ -1417,12 +1502,11 @@ class YoloRL_RenderHook(object):
 
         plt.subplots_adjust(left=0, right=1, top=1, bottom=0, wspace=0.1, hspace=0.1)
 
-        local_step_dir = '' if cfg.overwrite_plots else 'local_step{}'.format(updater.n_updates)
+        local_step = np.inf if cfg.overwrite_plots else "{:0>10}".format(updater.n_updates)
         path = updater.exp_dir.path_for(
             'plots',
-            'stage{}'.format(updater.stage_idx),
-            local_step_dir,
-            'sampled_reconstruction.pdf')
+            'sampled_reconstruction',
+            'stage={:0>4}_local_step={}.pdf'.format(updater.stage_idx, local_step))
         fig.savefig(path)
 
         plt.close(fig)
@@ -1431,18 +1515,18 @@ class YoloRL_RenderHook(object):
         # Create a plot showing what each object is generating
         import matplotlib.pyplot as plt
 
-        objects = fetched['objects']
-
         H, W, B = updater.network.H, updater.network.W, updater.network.B
 
+        input_glimpses = fetched.get('input_glimpses', None)
+        objects = fetched['objects']
         obj = fetched['obj']
         n_objects = fetched['n_objects']
         routing = fetched['routing']
         z = fetched['z']
 
         for idx in range(N):
-            fig, axes = plt.subplots(2*H, W * B, figsize=(20, 20))
-            axes = np.array(axes).reshape(2*H, W * B)
+            fig, axes = plt.subplots(3*H, W*B, figsize=(20, 20))
+            axes = np.array(axes).reshape(3*H, W*B)
 
             for h in range(H):
                 for w in range(W):
@@ -1450,33 +1534,44 @@ class YoloRL_RenderHook(object):
                         _obj = obj[idx, h, w, b, 0]
                         _z = z[idx, h, w, b, 0]
 
-                        ax = axes[2*h, w * B + b]
+                        ax = axes[3*h, w * B + b]
+                        ax.set_aspect('equal')
 
                         if h == 0 and b == 0:
                             ax.set_title("w={}".format(w))
                         if w == 0 and b == 0:
                             ax.set_ylabel("h={}".format(h))
 
-                        ax = axes[2*h+1, w * B + b]
+                        ax = axes[3*h+1, w * B + b]
+                        ax.set_aspect('equal')
 
                         ax.set_title("obj={}, z={}, b={}".format(_obj, _z, b))
+
+                        ax = axes[3*h+2, w * B + b]
+                        ax.set_aspect('equal')
+                        ax.set_title("input glimpse")
 
             for i in range(n_objects[idx]):
                 _, h, w, b = routing[idx, i]
 
-                ax = axes[2*h, w * B + b]
+                ax = axes[3*h, w * B + b]
 
-                ax.imshow(objects[idx, i, :, :, :3])
+                ax.imshow(objects[idx, i, :, :, :3], vmin=0.0, vmax=1.0)
 
-                ax = axes[2*h+1, w * B + b]
-                ax.imshow(objects[idx, i, :, :, 3])
+                ax = axes[3*h+1, w * B + b]
+                ax.imshow(objects[idx, i, :, :, 3], cmap="gray", vmin=0.0, vmax=1.0)
 
-            local_step_dir = '' if cfg.overwrite_plots else 'local_step{}'.format(updater.n_updates)
+                if input_glimpses is not None:
+                    ax = axes[3*h+2, w * B + b]
+                    ax.imshow(input_glimpses[idx, i, :, :, :], vmin=0.0, vmax=1.0)
+
+            plt.subplots_adjust(left=0.02, right=.98, top=.98, bottom=0.02, wspace=0.1, hspace=0.1)
+
+            local_step = np.inf if cfg.overwrite_plots else "{:0>10}".format(updater.n_updates)
             path = updater.exp_dir.path_for(
                 'plots',
-                'stage{}'.format(updater.stage_idx),
-                local_step_dir,
-                'sampled_patches', '{}.pdf'.format(idx))
+                'sampled_patches', str(idx),
+                'stage={:0>4}_local_step={}.pdf'.format(updater.stage_idx, local_step))
 
             fig.savefig(path)
             plt.close(fig)
@@ -1561,7 +1656,9 @@ config.update(
 
     build_backbone=NewBackbone,
     build_next_step=NextStep,
-    build_object_decoder=ObjectDecoder,
+    build_object_encoder=lambda scope: MLP([100, 100], scope=scope),
+    build_object_decoder=lambda scope: MLP([100, 100], scope=scope),
+    # build_object_decoder=ObjectDecoder,
 
     use_input_attention=False,
     decoder_logit_scale=10.0,

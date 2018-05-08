@@ -357,13 +357,16 @@ class TrainingLoop(object):
                             0 <= load_stage and
                             load_stage < stage_idx), load_stage
 
-                    load_path = self.data.history[load_stage]['best_path']
+                    key = 'final_path' if cfg.load_final else 'best_path'
+                    load_path = self.data.history[load_stage][key]
+
                     print("Loading best hypothesis from stage {}, located at {}.".format(load_stage, load_path))
                     updater.restore(sess, load_path)
 
                 elif stage_idx > 0 and cfg.preserve_policy:
                     # Initialize weights from best hypothesis discovered on the previous stage
-                    load_path = self.data.history[stage_idx-1]['best_path']
+                    key = 'final_path' if cfg.load_final else 'best_path'
+                    load_path = self.data.history[stage_idx-1][key]
                     print("Loading best hypothesis from previous stage, located at {}.".format(load_path))
                     updater.restore(sess, load_path)
 
@@ -423,6 +426,11 @@ class TrainingLoop(object):
 
                     print("\n" + "-" * 10 + " Optimization complete " + "-" * 10)
                     print("\nReason: {}.\n".format(reason))
+
+                    final_path = self.data.path_for('weights/final_for_stage_{}'.format(stage_idx))
+                    final_path = cfg.get('save_path', final_path)
+                    final_path = updater.save(tf.get_default_session(), final_path)
+                    self.data.record_values_for_stage(final_path=final_path)
 
                     # --------------- Optionally render performance of best hypothesis -------------------
 

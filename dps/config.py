@@ -12,9 +12,10 @@ DEFAULT_CONFIG = Config(
     curriculum=[{}],
 
     load_path="",  # Path to load variables from.
+    load_stage=None,
+    load_final=False,
     do_train=True,
     preserve_policy=True,  # Whether to use the policy learned on the last stage of the curriculum for each new stage.
-    load_stage=None,
     preserve_env=False,
     power_through=True,  # Whether to complete the entire curriculum, even if threshold not reached.
     robust=True,
