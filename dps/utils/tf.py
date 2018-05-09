@@ -289,9 +289,7 @@ class MLP(ScopedFunction):
         super(MLP, self).__init__(scope)
 
     def _call(self, inp, output_size, is_training):
-        if len(inp.shape) > 2:
-            trailing_dim = np.product([int(s) for s in inp.shape[1:]])
-            inp = tf.reshape(inp, (tf.shape(inp)[0], trailing_dim))
+        inp = tf.layers.flatten(inp)
 
         hidden = inp
         for i, nu in enumerate(self.n_units):
@@ -301,12 +299,15 @@ class MLP(ScopedFunction):
         fc_kwargs['activation_fn'] = None
 
         try:
-            _output_size = output_size[0]
-            assert len(output_size) == 1
+            output_dim = int(np.product([int(i) for i in output_size]))
+            output_shape = output_size
         except Exception:
-            _output_size = output_size
+            output_dim = int(output_size)
+            output_shape = (output_dim,)
 
-        return fully_connected(hidden, _output_size, **fc_kwargs)
+        hidden = fully_connected(hidden, output_dim, **fc_kwargs)
+        hidden = tf.reshape(hidden, (tf.shape(inp)[0], *output_shape), name="mlp_out")
+        return hidden
 
 
 class LeNet(ScopedFunction):
@@ -1034,9 +1035,9 @@ class Exponential(Schedule):
 
     def build(self, t):
         if self.staircase:
-            t //= self.decay_steps
+            t = t // self.decay_steps
         else:
-            t /= self.decay_steps
+            t = t / self.decay_steps
         value = (self.start - self.end) * (self.decay_rate ** t) + self.end
 
         if self.log:
