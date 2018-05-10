@@ -5,6 +5,8 @@ import matplotlib.patches as patches
 from matplotlib.colors import to_rgb
 import collections
 import sonnet as snt
+import os
+import shutil
 
 from dps import cfg
 from dps.utils import Config, Param, Parameterized
@@ -63,6 +65,10 @@ def build_xent_loss(predictions, targets):
 
 def build_squared_loss(predictions, targets):
     return (predictions - targets)**2
+
+
+def build_normal_ll_loss(predictions, targets):
+    return ((predictions - targets)**2) / (0.3**2)
 
 
 def build_1norm_loss(predictions, targets):
@@ -578,6 +584,9 @@ class YoloAir_Network(Parameterized):
         if "alpha" in self.no_gradient:
             obj_alpha = tf.stop_gradient(obj_alpha)
 
+        if "alpha" in self.fixed_values:
+            obj_alpha = float(self.fixed_values["alpha"]) * tf.ones_like(obj_alpha)
+
         obj_alpha *= tf.reshape(self.program['obj'], (self.batch_size, self.HWB, 1, 1, 1))
 
         objects = tf.concat([obj_img, obj_alpha], axis=-1)
@@ -676,11 +685,13 @@ class YoloAir_Network(Parameterized):
         recorded_tensors['area'] = tf.reduce_mean(self._tensors["area"])
 
         obj = self._tensors["program"]["obj"]
-        recorded_tensors['on_cell_y_avg'] = tf.reduce_mean(self._tensors["cell_y"] * obj / self._tensors["soft_n_objects"])
-        recorded_tensors['on_cell_x_avg'] = tf.reduce_mean(self._tensors["cell_y"] * obj / self._tensors["soft_n_objects"])
-        recorded_tensors['on_h_avg'] = tf.reduce_mean(self._tensors["h"] * obj / self._tensors["soft_n_objects"])
-        recorded_tensors['on_w_avg'] = tf.reduce_mean(self._tensors["w"] * obj / self._tensors["soft_n_objects"])
-        recorded_tensors['on_area_avg'] = tf.reduce_mean(self._tensors["area"] * obj / self._tensors["soft_n_objects"])
+        soft_n_objects = self._tensors["soft_n_objects"]
+
+        recorded_tensors['on_cell_y_avg'] = tf.reduce_mean(tf.reduce_sum(self._tensors["cell_y"] * obj, axis=(1, 2, 3, 4)) / soft_n_objects)
+        recorded_tensors['on_cell_x_avg'] = tf.reduce_mean(tf.reduce_sum(self._tensors["cell_x"] * obj, axis=(1, 2, 3, 4)) / soft_n_objects)
+        recorded_tensors['on_h_avg'] = tf.reduce_mean(tf.reduce_sum(self._tensors["h"] * obj, axis=(1, 2, 3, 4)) / soft_n_objects)
+        recorded_tensors['on_w_avg'] = tf.reduce_mean(tf.reduce_sum(self._tensors["w"] * obj, axis=(1, 2, 3, 4)) / soft_n_objects)
+        recorded_tensors['on_area_avg'] = tf.reduce_mean(tf.reduce_sum(self._tensors["area"] * obj, axis=(1, 2, 3, 4)) / soft_n_objects)
         recorded_tensors['obj'] = tf.reduce_mean(obj)
 
         recorded_tensors['latent_area'] = tf.reduce_mean(self._tensors["latent_area"])
@@ -700,12 +711,14 @@ class YoloAir_Network(Parameterized):
 
         losses['obj_kl'] = tf_mean_sum(self._tensors["kl"]["obj"])
 
-        losses['cell_y_kl'] = tf_mean_sum(self._tensors["cell_y_kl"])
-        losses['cell_x_kl'] = tf_mean_sum(self._tensors["cell_y_kl"])
-        losses['h_kl'] = tf_mean_sum(self._tensors["h_kl"])
-        losses['w_kl'] = tf_mean_sum(self._tensors["w_kl"])
+        obj = self.program["obj"]
 
-        losses['attr_kl'] = tf_mean_sum(self._tensors["attr_kl"])
+        losses['cell_y_kl'] = tf_mean_sum(obj * self._tensors["cell_y_kl"])
+        losses['cell_x_kl'] = tf_mean_sum(obj * self._tensors["cell_x_kl"])
+        losses['h_kl'] = tf_mean_sum(obj * self._tensors["h_kl"])
+        losses['w_kl'] = tf_mean_sum(obj * self._tensors["w_kl"])
+
+        losses['attr_kl'] = tf_mean_sum(obj * self._tensors["attr_kl"])
 
         losses['reconstruction'] = tf_mean_sum(self._tensors['per_pixel_reconstruction_loss'])
 
@@ -879,8 +892,11 @@ class YoloAir_RenderHook(object):
             'sampled_reconstruction',
             'stage={:0>4}_local_step={}.pdf'.format(updater.stage_idx, local_step))
         fig.savefig(path)
-
         plt.close(fig)
+
+        shutil.copyfile(
+            path,
+            os.path.join(os.path.dirname(path), 'latest_stage{:0>4}.pdf'.format(updater.stage_idx)))
 
     def _plot_patches(self, updater, fetched, N):
         # Create a plot showing what each object is generating
@@ -891,6 +907,9 @@ class YoloAir_RenderHook(object):
         input_glimpses = fetched.get('input_glimpses', None)
         objects = fetched['objects']
         obj = fetched['obj']
+
+        on_colour = np.array(to_rgb("xkcd:azure"))
+        off_colour = np.array(to_rgb("xkcd:red"))
 
         for idx in range(N):
             fig, axes = plt.subplots(3*H, W*B, figsize=(20, 20))
@@ -903,6 +922,11 @@ class YoloAir_RenderHook(object):
 
                         ax = axes[3*h, w * B + b]
                         ax.imshow(objects[idx, h, w, b, :, :, :3], vmin=0.0, vmax=1.0)
+
+                        colour = _obj * on_colour + (1-_obj) * off_colour
+                        obj_rect = patches.Rectangle(
+                            (1, 0), 0.2, 1, clip_on=False, transform=ax.transAxes, facecolor=colour)
+                        ax.add_patch(obj_rect)
 
                         if h == 0 and b == 0:
                             ax.set_title("w={}".format(w))
@@ -929,6 +953,10 @@ class YoloAir_RenderHook(object):
 
             fig.savefig(path)
             plt.close(fig)
+
+            shutil.copyfile(
+                path,
+                os.path.join(os.path.dirname(path), 'latest_stage{:0>4}.pdf'.format(updater.stage_idx)))
 
 
 xkcd_colors = 'viridian,cerulean,vermillion,lavender,celadon,fuchsia,saffron,cinnamon,greyish,vivid blue'.split(',')
@@ -1001,8 +1029,8 @@ config.update(
     display_step=1000,
     render_step=500,
 
-    max_steps=40000,
-    patience=10000,
+    max_steps=50000,
+    patience=100000,
 
     render_hook=YoloAir_RenderHook(),
 
@@ -1010,8 +1038,8 @@ config.update(
 
     build_backbone=yolo_rl.Backbone,
     build_next_step=yolo_rl.NextStep,
-    build_object_encoder=lambda scope: MLP([100, 100], scope=scope),
-    build_object_decoder=lambda scope: MLP([100, 100], scope=scope),
+    build_object_encoder=lambda scope: MLP([512, 256], scope=scope),
+    build_object_decoder=lambda scope: MLP([256, 512], scope=scope),
     # build_backbone=yolo_rl.NewBackbone,
     # max_object_shape=(28, 28),
     # build_object_decoder=ObjectDecoder,
@@ -1024,7 +1052,7 @@ config.update(
 
     n_channels=128,
     n_decoder_channels=128,
-    A=100,
+    A=50,
 
     sequential_cfg=dict(
         on=True,
@@ -1032,7 +1060,7 @@ config.update(
         build_next_step=lambda scope: MLP([100, 100], scope=scope),
     ),
 
-    obj_prior_log_odds="Exp(start=100.0, end=0.00001, decay_rate=0.1, decay_steps=1000, log=True)",
+    obj_prior_log_odds="Exp(start=10000.0, end=0.000000001, decay_rate=0.1, decay_steps=200, log=True)",
     overwrite_plots=False,
 
     curriculum=[
@@ -1051,10 +1079,16 @@ big_config = config.copy(
     patch_shape=(28, 28),
     max_overlap=2*196,
     min_chars=1,
-    max_chars=2
+    max_chars=2,
+    anchor_boxes=[[48, 48]],
+    min_hw=0.0,
+    max_hw=1.0,
+    # fixed_values=dict(alpha=1),
+    hw_prior_variance=0.05,
+    obj_prior_log_odds="Exp(start=10000.0, end=0.000000001, decay_rate=0.1, decay_steps=500, log=True)",
 )
 
-colour_config = big_config.copy(
+big_colour_config = big_config.copy(
     colours="red green blue",
 )
 
