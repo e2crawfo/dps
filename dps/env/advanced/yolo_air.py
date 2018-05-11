@@ -43,11 +43,11 @@ def concrete_binary_pre_sigmoid_sample(log_odds, temperature, eps=10e-10):
     return (log_odds + noise) / temperature
 
 
-def concrete_binary_sample_kl(pre_sigmoid,
+def concrete_binary_sample_kl(pre_sigmoid_sample,
                               prior_log_odds, prior_temperature,
                               posterior_log_odds, posterior_temperature,
                               eps=10e-10):
-    y = pre_sigmoid
+    y = pre_sigmoid_sample
 
     y_times_prior_temp = y * prior_temperature
     log_prior = tf.log(prior_temperature + eps) - y_times_prior_temp + prior_log_odds - \
@@ -85,6 +85,12 @@ loss_builders = {
 }
 
 
+def tf_safe_log(value, nan_value=100.0):
+    log_value = tf.log(value)
+    log_value = tf.where(tf.is_nan(log_value), -100.0 * tf.ones_like(log_value), log_value)
+    return log_value
+
+
 class YoloAir_Network(Parameterized):
     pixels_per_cell = Param()
     object_shape = Param()
@@ -108,7 +114,8 @@ class YoloAir_Network(Parameterized):
     no_gradient = Param("")
     order = Param("box obj")
 
-    obj_prior_log_odds = Param()
+    use_concrete_kl = Param(True)
+    count_prior_log_odds = Param()
     obj_temperature = Param(1.0)
 
     yx_prior_mean = Param(0.0)
@@ -134,7 +141,7 @@ class YoloAir_Network(Parameterized):
         self.B = len(self.anchor_boxes)
         self.HWB = self.H * self.W * self.B
 
-        self.obj_prior_log_odds = build_scheduled_value(self.obj_prior_log_odds, "obj_prior_log_odds")
+        self.count_prior_log_odds = build_scheduled_value(self.count_prior_log_odds, "count_prior_log_odds")
         self.obj_temperature = build_scheduled_value(self.obj_temperature, "obj_temperature")
 
         self.yx_prior_mean = build_scheduled_value(self.yx_prior_mean, "yx_prior_mean")
@@ -296,19 +303,14 @@ class YoloAir_Network(Parameterized):
             (1 - self.float_is_training) * tf.round(obj)
         )
 
-        obj_kl = concrete_binary_sample_kl(
-            obj_pre_sigmoid,
-            self.obj_prior_log_odds, self.obj_temperature,
-            obj_log_odds, self.obj_temperature
-        )
-
         if "obj" in self.no_gradient:
             obj = tf.stop_gradient(obj)
-            obj_kl = tf.stop_gradient(obj_kl)
 
         return dict(
             program=obj,
-            kl=obj_kl,
+            obj_pre_sigmoid=obj_pre_sigmoid,
+            obj_log_odds=obj_log_odds,
+            obj_prob=tf.nn.sigmoid(obj_log_odds),
         )
 
     def _build_program_generator(self):
@@ -658,6 +660,64 @@ class YoloAir_Network(Parameterized):
         else:
             self._build_program_generator()
 
+        # --- compute obj_kl ---
+
+        count_support = tf.range(self.HWB+1, dtype=tf.float32)
+        count_prior_prob = tf.nn.sigmoid(self.count_prior_log_odds)
+        count_distribution = (1 - count_prior_prob) * (count_prior_prob ** count_support)
+        count_distribution = tf.tile(count_distribution[None, :], (self.batch_size, 1))
+        count_so_far = tf.zeros((self.batch_size, 1), dtype=tf.float32)
+
+        i = 0
+
+        obj_kl = []
+
+        for h in range(self.H):
+            for w in range(self.W):
+                for b in range(self.B):
+                    p_z_given_Cz = (count_support[None, :] - count_so_far) / (self.HWB - i)
+
+                    # Reshape for batch matmul
+                    _count_distribution = count_distribution[:, None, :]
+                    _p_z_given_Cz = p_z_given_Cz[:, :, None]
+
+                    p_z = tf.matmul(_count_distribution, _p_z_given_Cz)[:, :, 0]
+
+                    if self.use_concrete_kl:
+                        prior_log_odds = tf.log(p_z / (1-p_z))
+                        _obj_kl = concrete_binary_sample_kl(
+                            self._tensors["obj_pre_sigmoid"][:, h, w, b, :],
+                            prior_log_odds, self.obj_temperature,
+                            self._tensors["obj_log_odds"][:, h, w, b, :], self.obj_temperature
+                        )
+                    else:
+                        prob = self._tensors["obj_prob"][:, h, w, b, :]
+
+                        _obj_kl = (
+                            prob * (tf_safe_log(prob) - tf_safe_log(p_z)) +
+                            (1-prob) * (tf_safe_log(1-prob) - tf_safe_log(1-p_z))
+                        )
+
+                    obj_kl.append(_obj_kl)
+
+                    sample = tf.to_float(self.program["obj"][:, h, w, b, :] > 0.5)
+                    mult = sample * p_z_given_Cz + (1-sample) * (1-p_z_given_Cz)
+                    count_distribution = mult * count_distribution
+                    normalizer = tf.reduce_sum(count_distribution, axis=1, keepdims=True)
+                    normalizer = tf.maximum(normalizer, 1e-6)
+                    count_distribution = count_distribution / normalizer
+
+                    count_so_far += sample
+
+                    i += 1
+
+        if "obj" in self.no_gradient:
+            obj_kl = tf.stop_gradient(obj_kl)
+
+        self._tensors["obj_kl"] = tf.reshape(tf.concat(obj_kl, axis=1), (self.batch_size, self.H, self.W, self.B, 1))
+
+        # --- interpret program ---
+
         self._tensors["n_objects"] = tf.fill((self.batch_size,), self.HWB)
         self._tensors["pred_n_objects"] = tf.reduce_sum(self.program['obj'], axis=(1, 2, 3, 4))
 
@@ -712,7 +772,7 @@ class YoloAir_Network(Parameterized):
 
         losses = dict()
 
-        losses['obj_kl'] = tf_mean_sum(self._tensors["kl"]["obj"])
+        losses['obj_kl'] = tf_mean_sum(self._tensors["obj_kl"])
 
         obj = self.program["obj"]
 
@@ -1063,7 +1123,9 @@ config.update(
         build_next_step=lambda scope: MLP([100, 100], scope=scope),
     ),
 
-    obj_prior_log_odds="Exp(start=10000.0, end=0.000000001, decay_rate=0.1, decay_steps=200, log=True)",
+    count_prior_log_odds="Exp(start=10000.0, end=0.000000001, decay_rate=0.1, decay_steps=200, log=True)",
+    use_concrete_kl=False,
+
     overwrite_plots=False,
 
     curriculum=[
@@ -1086,7 +1148,9 @@ big_config = config.copy(
     anchor_boxes=[[48, 48]],
     # fixed_values=dict(alpha=1),
     hw_prior_std=np.log(.14 / (1-.14)),
-    obj_prior_log_odds="Exp(start=10000.0, end=0.000000001, decay_rate=0.1, decay_steps=100, log=True)",
+
+    count_prior_log_odds="Exp(start=10000.0, end=0.000000001, decay_rate=0.1, decay_steps=3000, log=True)",
+
     build_backbone=yolo_rl.NewBackbone,
     max_object_shape=(28, 28),
 )
