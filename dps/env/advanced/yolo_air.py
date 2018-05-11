@@ -20,7 +20,10 @@ def get_updater(env):
     return yolo_rl.YoloRL_Updater(env, network)
 
 
-def normal_kl(mean, var, prior_mean, prior_var):
+def normal_kl(mean, std, prior_mean, prior_std):
+    var = std**2
+    prior_var = prior_std**2
+
     return 0.5 * (
         tf.log(prior_var) - tf.log(var) -
         1.0 + var / prior_var +
@@ -28,9 +31,9 @@ def normal_kl(mean, var, prior_mean, prior_var):
     )
 
 
-def normal_vae(mean, var, prior_mean, prior_var):
-    sample = mean + tf.random_normal(tf.shape(mean)) * tf.sqrt(var)
-    kl = normal_kl(mean, var, prior_mean, prior_var)
+def normal_vae(mean, std, prior_mean, prior_std):
+    sample = mean + tf.random_normal(tf.shape(mean)) * std
+    kl = normal_kl(mean, std, prior_mean, prior_std)
     return sample, kl
 
 
@@ -89,8 +92,8 @@ class YoloAir_Network(Parameterized):
 
     A = Param(100, help="Dimension of attribute vector.")
 
-    min_hw = Param(0.25)
-    max_hw = Param(3.0)
+    min_hw = Param(0.0)
+    max_hw = Param(1.0)
 
     min_yx = Param(0.0)
     max_yx = Param(1.0)
@@ -109,13 +112,13 @@ class YoloAir_Network(Parameterized):
     obj_temperature = Param(1.0)
 
     yx_prior_mean = Param(0.0)
-    yx_prior_variance = Param(1.0)
+    yx_prior_std = Param(1.0)
 
-    hw_prior_mean = Param(-1.0)
-    hw_prior_variance = Param(0.05)
+    hw_prior_mean = Param(0.0)
+    hw_prior_std = Param(1.0)
 
     attr_prior_mean = Param(0.0)
-    attr_prior_variance = Param(1.0)
+    attr_prior_std = Param(1.0)
 
     sequential_cfg = Param(dict(
         on=False,
@@ -135,13 +138,13 @@ class YoloAir_Network(Parameterized):
         self.obj_temperature = build_scheduled_value(self.obj_temperature, "obj_temperature")
 
         self.yx_prior_mean = build_scheduled_value(self.yx_prior_mean, "yx_prior_mean")
-        self.yx_prior_variance = build_scheduled_value(self.yx_prior_variance, "yx_prior_variance")
+        self.yx_prior_std = build_scheduled_value(self.yx_prior_std, "yx_prior_std")
 
         self.hw_prior_mean = build_scheduled_value(self.hw_prior_mean, "hw_prior_mean")
-        self.hw_prior_variance = build_scheduled_value(self.hw_prior_variance, "hw_prior_variance")
+        self.hw_prior_std = build_scheduled_value(self.hw_prior_std, "hw_prior_std")
 
         self.attr_prior_mean = build_scheduled_value(self.attr_prior_mean, "attr_prior_mean")
-        self.attr_prior_variance = build_scheduled_value(self.attr_prior_variance, "attr_prior_variance")
+        self.attr_prior_std = build_scheduled_value(self.attr_prior_std, "attr_prior_std")
 
         self.anchor_boxes = np.array(self.anchor_boxes)
 
@@ -220,17 +223,17 @@ class YoloAir_Network(Parameterized):
         return scalar
 
     def _build_box(self, box_params, is_training):
-        mean, log_var = tf.split(box_params, 2, axis=-1)
-        var = tf.exp(log_var)
+        mean, log_std = tf.split(box_params, 2, axis=-1)
+        std = tf.exp(log_std)
 
         cy_mean, cx_mean, h_mean, w_mean = tf.split(mean, 4, axis=-1)
-        cy_var, cx_var, h_var, w_var = tf.split(var, 4, axis=-1)
+        cy_std, cx_std, h_std, w_std = tf.split(std, 4, axis=-1)
 
-        cy_logits, cy_kl = normal_vae(cy_mean, cy_var, self.yx_prior_mean, self.yx_prior_variance)
-        cx_logits, cx_kl = normal_vae(cx_mean, cx_var, self.yx_prior_mean, self.yx_prior_variance)
+        cy_logits, cy_kl = normal_vae(cy_mean, cy_std, self.yx_prior_mean, self.yx_prior_std)
+        cx_logits, cx_kl = normal_vae(cx_mean, cx_std, self.yx_prior_mean, self.yx_prior_std)
 
-        h_logits, h_kl = normal_vae(h_mean, h_var, self.hw_prior_mean, self.hw_prior_variance)
-        w_logits, w_kl = normal_vae(w_mean, w_var, self.hw_prior_mean, self.hw_prior_variance)
+        h_logits, h_kl = normal_vae(h_mean, h_std, self.hw_prior_mean, self.hw_prior_std)
+        w_logits, w_kl = normal_vae(w_mean, w_std, self.hw_prior_mean, self.hw_prior_std)
 
         cell_y = tf.nn.sigmoid(tf.clip_by_value(cy_logits, -10, 10.))
         cell_x = tf.nn.sigmoid(tf.clip_by_value(cx_logits, -10, 10.))
@@ -553,10 +556,10 @@ class YoloAir_Network(Parameterized):
 
         attr = tf.reshape(attr, (self.batch_size, self.H, self.W, self.B, 2*self.A))
 
-        attr_mean, attr_log_var = tf.split(attr, [self.A, self.A], axis=-1)
-        attr_var = tf.exp(attr_log_var)
+        attr_mean, attr_log_std = tf.split(attr, [self.A, self.A], axis=-1)
+        attr_std = tf.exp(attr_log_std)
 
-        attr, attr_kl = normal_vae(attr_mean, attr_var, self.attr_prior_mean, self.attr_prior_variance)
+        attr, attr_kl = normal_vae(attr_mean, attr_std, self.attr_prior_mean, self.attr_prior_std)
 
         if "attr" in self.no_gradient:
             attr = tf.stop_gradient(attr)
@@ -656,8 +659,7 @@ class YoloAir_Network(Parameterized):
             self._build_program_generator()
 
         self._tensors["n_objects"] = tf.fill((self.batch_size,), self.HWB)
-        self._tensors["soft_n_objects"] = tf.reduce_sum(self.program['obj'], axis=(1, 2, 3, 4))
-        self._tensors["hard_n_objects"] = tf.reduce_sum(tf.to_int32(self.program['obj'] > 0.5), axis=(1, 2, 3, 4))
+        self._tensors["pred_n_objects"] = tf.reduce_sum(self.program['obj'], axis=(1, 2, 3, 4))
 
         if self.object_encoder is None:
             self.object_encoder = cfg.build_object_encoder(scope="object_encoder")
@@ -685,13 +687,14 @@ class YoloAir_Network(Parameterized):
         recorded_tensors['area'] = tf.reduce_mean(self._tensors["area"])
 
         obj = self._tensors["program"]["obj"]
-        soft_n_objects = self._tensors["soft_n_objects"]
+        pred_n_objects = self._tensors["pred_n_objects"]
 
-        recorded_tensors['on_cell_y_avg'] = tf.reduce_mean(tf.reduce_sum(self._tensors["cell_y"] * obj, axis=(1, 2, 3, 4)) / soft_n_objects)
-        recorded_tensors['on_cell_x_avg'] = tf.reduce_mean(tf.reduce_sum(self._tensors["cell_x"] * obj, axis=(1, 2, 3, 4)) / soft_n_objects)
-        recorded_tensors['on_h_avg'] = tf.reduce_mean(tf.reduce_sum(self._tensors["h"] * obj, axis=(1, 2, 3, 4)) / soft_n_objects)
-        recorded_tensors['on_w_avg'] = tf.reduce_mean(tf.reduce_sum(self._tensors["w"] * obj, axis=(1, 2, 3, 4)) / soft_n_objects)
-        recorded_tensors['on_area_avg'] = tf.reduce_mean(tf.reduce_sum(self._tensors["area"] * obj, axis=(1, 2, 3, 4)) / soft_n_objects)
+        recorded_tensors['n_objects'] = tf.reduce_mean(pred_n_objects)
+        recorded_tensors['on_cell_y_avg'] = tf.reduce_mean(tf.reduce_sum(self._tensors["cell_y"] * obj, axis=(1, 2, 3, 4)) / pred_n_objects)
+        recorded_tensors['on_cell_x_avg'] = tf.reduce_mean(tf.reduce_sum(self._tensors["cell_x"] * obj, axis=(1, 2, 3, 4)) / pred_n_objects)
+        recorded_tensors['on_h_avg'] = tf.reduce_mean(tf.reduce_sum(self._tensors["h"] * obj, axis=(1, 2, 3, 4)) / pred_n_objects)
+        recorded_tensors['on_w_avg'] = tf.reduce_mean(tf.reduce_sum(self._tensors["w"] * obj, axis=(1, 2, 3, 4)) / pred_n_objects)
+        recorded_tensors['on_area_avg'] = tf.reduce_mean(tf.reduce_sum(self._tensors["area"] * obj, axis=(1, 2, 3, 4)) / pred_n_objects)
         recorded_tensors['obj'] = tf.reduce_mean(obj)
 
         recorded_tensors['latent_area'] = tf.reduce_mean(self._tensors["latent_area"])
@@ -724,7 +727,7 @@ class YoloAir_Network(Parameterized):
 
         # --- other evaluation metrics
 
-        count_1norm = tf.to_float(tf.abs(self._tensors["hard_n_objects"] - self._tensors["n_annotations"]))
+        count_1norm = tf.to_float(tf.abs(tf.to_int32(self._tensors["pred_n_objects"]) - self._tensors["n_annotations"]))
         recorded_tensors["count_1norm"] = tf.reduce_mean(count_1norm)
         recorded_tensors["count_error"] = tf.reduce_mean(tf.to_float(count_1norm > 0.5))
 
@@ -1081,11 +1084,11 @@ big_config = config.copy(
     min_chars=1,
     max_chars=2,
     anchor_boxes=[[48, 48]],
-    min_hw=0.0,
-    max_hw=1.0,
     # fixed_values=dict(alpha=1),
-    hw_prior_variance=0.05,
-    obj_prior_log_odds="Exp(start=10000.0, end=0.000000001, decay_rate=0.1, decay_steps=500, log=True)",
+    hw_prior_std=np.log(.14 / (1-.14)),
+    obj_prior_log_odds="Exp(start=10000.0, end=0.000000001, decay_rate=0.1, decay_steps=100, log=True)",
+    build_backbone=yolo_rl.NewBackbone,
+    max_object_shape=(28, 28),
 )
 
 big_colour_config = big_config.copy(
