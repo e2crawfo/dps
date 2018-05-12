@@ -1071,6 +1071,7 @@ config = Config(
 # model config
 
 
+# This works quite well if it is trained for long enough.
 config.update(
     get_updater=get_updater,
     build_env=yolo_rl.Env,
@@ -1109,8 +1110,6 @@ config.update(
 
     pixels_per_cell=(12, 12),
 
-    anchor_boxes=[[14, 14]],
-
     kernel_size=(1, 1),
 
     n_channels=128,
@@ -1123,7 +1122,11 @@ config.update(
         build_next_step=lambda scope: MLP([100, 100], scope=scope),
     ),
 
-    count_prior_log_odds="Exp(start=10000.0, end=0.000000001, decay_rate=0.1, decay_steps=200, log=True)",
+    hw_prior_mean = np.log(0.1/0.9),
+    hw_prior_std = 1.0,
+    anchor_boxes=[[42, 42]],
+    count_prior_log_odds="Exp(start=10000.0, end=0.2, decay_rate=0.1, decay_steps=200, log=True)",
+    # count_prior_log_odds="Exp(start=10000.0, end=0.000000001, decay_rate=0.1, decay_steps=200, log=True)",
     use_concrete_kl=False,
 
     overwrite_plots=False,
@@ -1147,9 +1150,7 @@ big_config = config.copy(
     max_chars=2,
     anchor_boxes=[[48, 48]],
     # fixed_values=dict(alpha=1),
-    hw_prior_std=np.log(.14 / (1-.14)),
-
-    count_prior_log_odds="Exp(start=10000.0, end=0.000000001, decay_rate=0.1, decay_steps=3000, log=True)",
+    hw_prior_std=10.0,
 
     build_backbone=yolo_rl.NewBackbone,
     max_object_shape=(28, 28),
