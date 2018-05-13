@@ -189,6 +189,10 @@ class HyperSearch(object):
         print("Summarizing search stored at {}.".format(os.path.realpath(self.path)))
 
         criteria_key = criteria if criteria else "stopping_criteria"
+        if not criteria:
+            config = self.objects.load_object('metadata', 'config')
+            criteria_key, max_str = config['stopping_criteria'].split(',')
+            maximize = max_str == "max"
 
         keys = self.dist_keys()
         stage_data = self.extract_stage_data()
