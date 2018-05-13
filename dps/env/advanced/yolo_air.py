@@ -127,6 +127,10 @@ class YoloAir_Network(Parameterized):
     attr_prior_mean = Param(0.0)
     attr_prior_std = Param(1.0)
 
+    obj_logit_scale = Param(10.0)
+    alpha_logit_scale = Param(0.1)
+    alpha_logit_bias = Param(5.0)
+
     sequential_cfg = Param(dict(
         on=False,
         lookback_shape=(2, 2, 2),
@@ -576,6 +580,9 @@ class YoloAir_Network(Parameterized):
 
         object_logits = self.object_decoder(
             object_decoder_in, self.object_shape + (self.image_depth+1,), self.is_training)
+
+        object_logits = object_logits * ([self.obj_logit_scale] * 3 + [self.alpha_logit_scale])
+        object_logits = object_logits + ([0.] * 3 + [self.alpha_logit_bias])
 
         objects = tf.nn.sigmoid(tf.clip_by_value(object_logits, -10., 10.))
 
@@ -1135,6 +1142,49 @@ config.update(
         dict(),
         dict(do_train=False, n_train=16, min_chars=1, postprocessing="", preserve_env=False),
     ],
+)
+
+big_single_config = config.copy(
+    image_shape=(40, 40),
+    postprocessing="",
+    curriculum=[
+        dict(),
+    ],
+    object_shape=(28, 28),
+    patch_shape=(28, 28),
+    max_overlap=2*196,
+    min_chars=1,
+    max_chars=1,
+    anchor_boxes=[[40, 40]],
+    hw_prior_std=1.0,
+    kernel_size=(3, 3),
+    # hw_prior_mean=10.0,
+
+    # build_backbone=yolo_rl.NewBackbone,
+    # max_object_shape=(28, 28),
+)
+
+big_double_config = config.copy(
+    image_shape=(48, 48),
+    postprocessing="",
+    curriculum=[
+        dict(),
+    ],
+    object_shape=(28, 28),
+    patch_shape=(28, 28),
+    max_overlap=2*196,
+    min_chars=1,
+    max_chars=2,
+    anchor_boxes=[[40, 40]],
+    kernel_size=(3, 3),
+    alpha_logit_scale=0.25,
+    obj_logit_scale=2.0,
+    count_prior_log_odds="Exp(start=10000.0, end=0.05, decay_rate=0.1, decay_steps=200, log=True)",
+    hw_prior_std=2.0,
+    # hw_prior_mean=10.0,
+
+    build_backbone=yolo_rl.NewBackbone,
+    max_object_shape=(28, 28),
 )
 
 big_config = config.copy(
