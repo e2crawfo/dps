@@ -300,7 +300,7 @@ def yolo_rl_mAP(_tensors, updater):
 
         predicted_boxes.append(_predicted_boxes)
 
-    return mAP(predicted_boxes, ground_truth_boxes, 1)
+    return mAP(predicted_boxes, ground_truth_boxes, 1, iou_threshold=[0.5])
 
 
 yolo_rl_mAP.keys_accessed = "normalized_box program:obj annotations n_annotations"

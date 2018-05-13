@@ -127,7 +127,7 @@ class YoloAir_Network(Parameterized):
     attr_prior_mean = Param(0.0)
     attr_prior_std = Param(1.0)
 
-    obj_logit_scale = Param(10.0)
+    obj_logit_scale = Param(2.0)
     alpha_logit_scale = Param(0.1)
     alpha_logit_bias = Param(5.0)
 
@@ -600,6 +600,7 @@ class YoloAir_Network(Parameterized):
             obj_alpha = float(self.fixed_values["alpha"]) * tf.ones_like(obj_alpha)
 
         obj_alpha *= tf.reshape(self.program['obj'], (self.batch_size, self.HWB, 1, 1, 1))
+        obj_alpha = tf.exp(obj_alpha * 5 + (1-obj_alpha) * -5)  # Inner expression is equivalent to 5 * (2*obj_alpha - 1)
 
         objects = tf.concat([obj_img, obj_alpha], axis=-1)
 
@@ -1107,13 +1108,13 @@ config.update(
 
     # network params
 
-    build_backbone=yolo_rl.Backbone,
-    build_next_step=yolo_rl.NextStep,
     build_object_encoder=lambda scope: MLP([512, 256], scope=scope),
     build_object_decoder=lambda scope: MLP([256, 512], scope=scope),
+    build_next_step=yolo_rl.NextStep,
     # build_backbone=yolo_rl.NewBackbone,
     # max_object_shape=(28, 28),
     # build_object_decoder=ObjectDecoder,
+    build_backbone=yolo_rl.Backbone,
 
     pixels_per_cell=(12, 12),
 
@@ -1129,9 +1130,9 @@ config.update(
         build_next_step=lambda scope: MLP([100, 100], scope=scope),
     ),
 
-    hw_prior_mean = np.log(0.1/0.9),
-    hw_prior_std = 1.0,
-    anchor_boxes=[[42, 42]],
+    hw_prior_mean=np.log(0.1/0.9),
+    hw_prior_std=1.0,
+    anchor_boxes=[[48, 48]],
     count_prior_log_odds="Exp(start=10000.0, end=0.2, decay_rate=0.1, decay_steps=200, log=True)",
     # count_prior_log_odds="Exp(start=10000.0, end=0.000000001, decay_rate=0.1, decay_steps=200, log=True)",
     use_concrete_kl=False,
@@ -1179,7 +1180,7 @@ big_double_config = config.copy(
     kernel_size=(3, 3),
     alpha_logit_scale=0.25,
     obj_logit_scale=2.0,
-    count_prior_log_odds="Exp(start=10000.0, end=0.05, decay_rate=0.1, decay_steps=200, log=True)",
+    count_prior_log_odds="Exp(start=10000.0, end=0.2, decay_rate=0.1, decay_steps=200, log=True)",
     hw_prior_std=2.0,
     # hw_prior_mean=10.0,
 

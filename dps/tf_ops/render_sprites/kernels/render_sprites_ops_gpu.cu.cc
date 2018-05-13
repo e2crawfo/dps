@@ -95,7 +95,8 @@ __global__ void RenderSprites2DKernel(const T* __restrict__ sprites,
     const T img_y_T = static_cast<T>(img_y);
     const T img_x_T = static_cast<T>(img_x);
 
-    T pixel_value = backgrounds[index];
+    T weighted_sum = 1.0 * backgrounds[index];
+    T alpha_sum = 1.0;
 
     for (int sprite_id = 0; sprite_id < n_sprites[batch_id]; ++sprite_id) {
       const T scale_y = scales[batch_id * scales_batch_stride + sprite_id * 2];
@@ -156,10 +157,12 @@ __global__ void RenderSprites2DKernel(const T* __restrict__ sprites,
                          dx * (one - dy) * img_fxcy +
                          (one - dx) * dy * img_cxfy;
 
-        pixel_value = alpha * interp + (1 - alpha) * pixel_value;
+        weighted_sum += alpha * interp;
+        alpha_sum += alpha;
       }
     } // sprite_id
-    output[index] = pixel_value;
+
+    output[index] = weighted_sum / alpha_sum;
   }
 }
 
@@ -296,9 +299,6 @@ __global__ void RenderSpritesGrad2DKernel(const T* __restrict__ sprites,
 
                                           const int n_channels){
 
-  extern __shared__ T shared_scratch[];
-  T* scratch = &shared_scratch[(max_sprites+1) * threadIdx.x];
-
   const int output_size = batch_size * img_height * img_width * n_channels;
   const int sprites_batch_stride = max_sprites * sprite_height * sprite_width * (n_channels + 1);
   const int sprites_sprite_stride = sprite_height * sprite_width * (n_channels + 1);
@@ -330,9 +330,10 @@ __global__ void RenderSpritesGrad2DKernel(const T* __restrict__ sprites,
     const T img_y_T = static_cast<T>(img_y);
     const T img_x_T = static_cast<T>(img_x);
 
-    scratch[0] = backgrounds[batch_id * img_batch_stride +
-                             img_y * img_row_stride +
-                             img_x * n_channels + chan];
+    T weighted_sum = 1.0 * backgrounds[batch_id * img_batch_stride +
+                                       img_y * img_row_stride +
+                                       img_x * n_channels + chan];
+    T alpha_sum = 1.0;
 
     for (int sprite_id = 0; sprite_id < n_sprites[batch_id]; ++sprite_id) {
       const T scale_y = scales[batch_id * scales_batch_stride + sprite_id * 2];
@@ -393,15 +394,17 @@ __global__ void RenderSpritesGrad2DKernel(const T* __restrict__ sprites,
                          dx * (one - dy) * img_fxcy +
                          (one - dx) * dy * img_cxfy;
 
-        scratch[sprite_id + 1] = alpha * interp + (1 - alpha) * scratch[sprite_id];
+        weighted_sum += alpha * interp;
+        alpha_sum += alpha;
       }
     } // sprite_id - forward pass
 
-    T premult = grad_output[batch_id * img_batch_stride +
-                            img_y * img_row_stride +
-                            img_x * n_channels + chan];
+    T go = grad_output[batch_id * img_batch_stride +
+                       img_y * img_row_stride +
+                       img_x * n_channels + chan];
 
-    for (int sprite_id = n_sprites[batch_id]-1; sprite_id >= 0 ; --sprite_id) {
+    // second forward pass
+    for (int sprite_id = 0; sprite_id < n_sprites[batch_id]; ++sprite_id) {
       const T scale_y = scales[batch_id * scales_batch_stride + sprite_id * 2];
       const T scale_x = scales[batch_id * scales_batch_stride + sprite_id * 2 + 1];
 
@@ -471,9 +474,7 @@ __global__ void RenderSpritesGrad2DKernel(const T* __restrict__ sprites,
         const T alpha_y_factor = dx * (alpha_fxcy - alpha_fxfy) + (1 - dx) * (alpha_cxcy - alpha_cxfy);
         const T alpha_x_factor = dy * (alpha_cxfy - alpha_fxfy) + (1 - dy) * (alpha_cxcy - alpha_fxcy);
 
-        const T bg = scratch[sprite_id];
-
-        const T alpha_premult = premult * (interp - bg);
+        const T alpha_premult = go * (interp / alpha_sum - weighted_sum / (alpha_sum * alpha_sum));
 
         UPDATE_GRAD_SCALES_Y(alpha_premult * alpha_y_factor * grad_y_wrt_scale_y);
         UPDATE_GRAD_SCALES_X(alpha_premult * alpha_x_factor * grad_x_wrt_scale_x);
@@ -495,7 +496,7 @@ __global__ void RenderSpritesGrad2DKernel(const T* __restrict__ sprites,
 
         // ------ update gradient through sprites ------
 
-        const T sprite_premult = premult * alpha;
+        const T sprite_premult = go * alpha / alpha_sum;
 
         const T sprite_y_factor = dx * (img_fxcy - img_fxfy) + (1 - dx) * (img_cxcy - img_cxfy);
         const T sprite_x_factor = dy * (img_cxfy - img_fxfy) + (1 - dy) * (img_cxcy - img_fxcy);
@@ -517,14 +518,12 @@ __global__ void RenderSpritesGrad2DKernel(const T* __restrict__ sprites,
         if (cx <= sprite_width - 1 && fy >= 0) {
           UPDATE_GRAD_SPRITES(cx, fy, sprite_premult * (1-dx) * dy);
         }
-
-        premult *= (1 - alpha);
       }
     } // sprite_id - backward pass
 
     grad_backgrounds[batch_id * img_batch_stride +
                      img_y * img_row_stride +
-                     img_x * n_channels + chan] = premult;
+                     img_x * n_channels + chan] = go * 1.0 / alpha_sum;
   }
 }
 
@@ -601,29 +600,31 @@ struct RenderSpritesGrad2DFunctor<GPUDevice, T>{
     }
 
     // shared memoy calculations
-    const int max_bytes_per_block = 49152;  // 48 KB * 1024. (48KB is maximum logical shared memory/block)
-    const int required_bytes_per_thread = 4 * (max_sprites + 1);
-    const int max_threads_per_block = max_bytes_per_block / required_bytes_per_thread;
+    // const int max_bytes_per_block = 49152;  // 48 KB * 1024. (48KB is maximum logical shared memory/block)
+    // const int required_bytes_per_thread = 4 * (max_sprites + 1);
+    // const int max_threads_per_block = max_bytes_per_block / required_bytes_per_thread;
 
+    // config = ::tensorflow::GetCudaLaunchConfig(grad_backgrounds_size, d, RenderSpritesGrad2DKernel<T>, 0, 0);
+    // const int threads_per_block_limit = config.thread_per_block; // A limit based on the register requirements of the kernel we're calling
+    // const int n_blocks = config.block_count; // Use the block_count returned by the config, since it is reasonable.
+
+    // // make sure threads/block is a multiple of the warp size (32) and that we don't exceed maximum block size (1024)
+    // const int actual_threads_per_block = std::min(threads_per_block_limit, 32 * (max_threads_per_block / 32));
+    // const int actual_bytes_per_block = required_bytes_per_thread * actual_threads_per_block;
+
+    // if (0) {
+    //     std::cout << "==== `render_sprites` cuda launch config ==== " << std::endl
+    //               << "n_blocks: " << n_blocks << std::endl
+    //               << "threads_per_block: " << actual_threads_per_block << std::endl
+    //               << "threads_per_block_limit: " << threads_per_block_limit << std::endl
+    //               << "shared_mem_bytes/block: " << actual_bytes_per_block << std::endl
+    //               << "n_elements_to_process: " << grad_backgrounds_size << std::endl;
+    // }
+
+    // config = ::tensorflow::GetCudaLaunchConfig(grad_backgrounds_size, d);
     config = ::tensorflow::GetCudaLaunchConfig(grad_backgrounds_size, d, RenderSpritesGrad2DKernel<T>, 0, 0);
-    const int threads_per_block_limit = config.thread_per_block; // A limit based on the register requirements of the kernel we're calling
-    const int n_blocks = config.block_count; // Use the block_count returned by the config, since it is reasonable.
-
-    // make sure threads/block is a multiple of the warp size (32) and that we don't exceed maximum block size (1024)
-    const int actual_threads_per_block = std::min(threads_per_block_limit, 32 * (max_threads_per_block / 32));
-    const int actual_bytes_per_block = required_bytes_per_thread * actual_threads_per_block;
-
-    if (0) {
-        std::cout << "==== `render_sprites` cuda launch config ==== " << std::endl
-                  << "n_blocks: " << n_blocks << std::endl
-                  << "threads_per_block: " << actual_threads_per_block << std::endl
-                  << "threads_per_block_limit: " << threads_per_block_limit << std::endl
-                  << "shared_mem_bytes/block: " << actual_bytes_per_block << std::endl
-                  << "n_elements_to_process: " << grad_backgrounds_size << std::endl;
-    }
-
     RenderSpritesGrad2DKernel<T>
-        <<<n_blocks, actual_threads_per_block, actual_bytes_per_block, d.stream()>>>(
+        <<<config.block_count, config.thread_per_block, 0, d.stream()>>>(
             sprites, n_sprites, scales, offsets, backgrounds, grad_output,
             grad_sprites, grad_n_sprites, grad_scales, grad_offsets, grad_backgrounds,
             batch_size, max_sprites, sprite_height, sprite_width,

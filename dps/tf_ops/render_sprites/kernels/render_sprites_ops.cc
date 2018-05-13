@@ -105,7 +105,7 @@ struct RenderSprites2DFunctor<CPUDevice, T>{
                : zero;
       };
 
-      std::vector<T> pixel_value(n_channels, zero);
+      std::vector<T> weighted_sum(n_channels, zero);
 
       for (int batch_id = start; batch_id < limit; ++batch_id) {
         for (int img_y = 0; img_y < img_height; ++img_y) {
@@ -115,10 +115,12 @@ struct RenderSprites2DFunctor<CPUDevice, T>{
             const T img_x_T = static_cast<T>(img_x);
 
             for(int chan = 0; chan < n_channels; ++chan){
-                pixel_value[chan] = backgrounds[batch_id * img_batch_stride +
-                                                img_y * img_row_stride +
-                                                img_x * n_channels + chan];
+                weighted_sum[chan] = 1.0 * backgrounds[batch_id * img_batch_stride +
+                                                      img_y * img_row_stride +
+                                                      img_x * n_channels + chan];
             }
+
+            T alpha_sum = 1.0;
 
             for (int sprite_id = 0; sprite_id < n_sprites[batch_id]; ++sprite_id) {
               const T scale_y = scales[batch_id * scales_batch_stride + sprite_id * 2];
@@ -167,6 +169,8 @@ struct RenderSprites2DFunctor<CPUDevice, T>{
                               dx * (one - dy) * alpha_fxcy +
                               (one - dx) * dy * alpha_cxfy;
 
+              alpha_sum += alpha;
+
               for (int chan = 0; chan < n_channels; ++chan) {
                 const T img_fxfy = get_sprite_data(batch_id, sprite_id, fx, fy, chan);
                 const T img_cxcy = get_sprite_data(batch_id, sprite_id, cx, cy, chan);
@@ -177,14 +181,14 @@ struct RenderSprites2DFunctor<CPUDevice, T>{
                                  dx * (one - dy) * img_fxcy +
                                  (one - dx) * dy * img_cxfy;
 
-                pixel_value[chan] = alpha * interp + (1 - alpha) * pixel_value[chan];
+                weighted_sum[chan] += alpha * interp;
               } // channel
             } // sprite_id
 
             for(int chan = 0; chan < n_channels; ++chan) {
                 output[batch_id * img_batch_stride +
                        img_y * img_row_stride +
-                       img_x * n_channels + chan] = pixel_value[chan];
+                       img_x * n_channels + chan] = weighted_sum[chan] / alpha_sum;
             }
 
           } // img_x
@@ -493,7 +497,7 @@ struct RenderSpritesGrad2DFunctor<CPUDevice, T>{
                      sprite_id * 2 + 1] += value;
       };
 
-      std::vector<T> pixel_value((max_sprites + 1) * n_channels, zero);
+      std::vector<T> weighted_sum(n_channels, zero);
 
       for (int batch_id = start; batch_id < limit; ++batch_id) {
 
@@ -504,12 +508,14 @@ struct RenderSpritesGrad2DFunctor<CPUDevice, T>{
             const T img_x_T = static_cast<T>(img_x);
 
             for (int chan = 0; chan < n_channels; ++chan) {
-                pixel_value[chan] = backgrounds[batch_id * img_batch_stride +
-                                                img_y * img_row_stride +
-                                                img_x * n_channels + chan];
+                weighted_sum[chan] = 1.0 * backgrounds[batch_id * img_batch_stride +
+                                                      img_y * img_row_stride +
+                                                      img_x * n_channels + chan];
             }
 
-            // redo forward pass, storing intermediate pixel values in `pixel_value`
+            T alpha_sum = 1.0;
+
+            // redo forward pass to compute weighted_sum and alpha_sum
             for (int sprite_id = 0; sprite_id < n_sprites[batch_id]; ++sprite_id) {
               const T scale_y = scales[batch_id * scales_batch_stride + sprite_id * 2];
               const T scale_x = scales[batch_id * scales_batch_stride + sprite_id * 2 + 1];
@@ -548,6 +554,8 @@ struct RenderSpritesGrad2DFunctor<CPUDevice, T>{
                               dx * (one - dy) * alpha_fxcy +
                               (one - dx) * dy * alpha_cxfy;
 
+              alpha_sum += alpha;
+
               for (int chan = 0; chan < n_channels; ++chan) {
                 const T img_fxfy = get_sprite_data(batch_id, sprite_id, fx, fy, chan);
                 const T img_cxcy = get_sprite_data(batch_id, sprite_id, cx, cy, chan);
@@ -558,16 +566,12 @@ struct RenderSpritesGrad2DFunctor<CPUDevice, T>{
                                  dx * (one - dy) * img_fxcy +
                                  (one - dx) * dy * img_cxfy;
 
-                // Store in `pixel_value` instead of writing to output as we do in regular forward pass
-                const T current = pixel_value[sprite_id * n_channels + chan];
-                pixel_value[(sprite_id + 1) * n_channels + chan] = alpha * interp + (1 - alpha) * current;
+                weighted_sum[chan] += alpha * interp;
               } // channel
             } // sprite_id - forward pass
 
-            T one_minus_alpha_prod = 1.0;
-
-            // Now do backward pass
-            for (int sprite_id = n_sprites[batch_id]-1; sprite_id >= 0 ; --sprite_id) {
+            // Now do a second forward pass
+            for (int sprite_id = 0; sprite_id < n_sprites[batch_id]; ++sprite_id) {
               const T scale_y = scales[batch_id * scales_batch_stride + sprite_id * 2];
               const T scale_x = scales[batch_id * scales_batch_stride + sprite_id * 2 + 1];
 
@@ -619,7 +623,6 @@ struct RenderSpritesGrad2DFunctor<CPUDevice, T>{
                 const T go = grad_output[batch_id * img_batch_stride +
                                          img_y * img_row_stride +
                                          img_x * n_channels + chan];
-                const T premult = go * one_minus_alpha_prod;
 
                 const T img_fxfy = get_sprite_data(batch_id, sprite_id, fx, fy, chan);
                 const T img_cxcy = get_sprite_data(batch_id, sprite_id, cx, cy, chan);
@@ -633,8 +636,7 @@ struct RenderSpritesGrad2DFunctor<CPUDevice, T>{
 
                 // ------ update gradient through alpha ------
 
-                const T bg = pixel_value[sprite_id * n_channels + chan];
-                const T alpha_premult = premult * (interp - bg);
+                const T alpha_premult = go * (interp / alpha_sum - weighted_sum[chan] / (alpha_sum * alpha_sum));
 
                 update_grad_scales_y(batch_id, sprite_id, alpha_premult * alpha_y_factor * grad_y_wrt_scale_y);
                 update_grad_scales_x(batch_id, sprite_id, alpha_premult * alpha_x_factor * grad_x_wrt_scale_x);
@@ -649,7 +651,7 @@ struct RenderSpritesGrad2DFunctor<CPUDevice, T>{
 
                 // ------ update gradient through sprites ------
 
-                const T sprite_premult = premult * alpha;
+                const T sprite_premult = go * alpha / alpha_sum;
 
                 const T y_factor = dx * (img_fxcy - img_fxfy) + (1 - dx) * (img_cxcy - img_cxfy);
                 const T x_factor = dy * (img_cxfy - img_fxfy) + (1 - dy) * (img_cxcy - img_fxcy);
@@ -665,9 +667,7 @@ struct RenderSpritesGrad2DFunctor<CPUDevice, T>{
                 update_grad_sprites(batch_id, sprite_id, fx, cy, chan, sprite_premult * dx * (1-dy));
                 update_grad_sprites(batch_id, sprite_id, cx, fy, chan, sprite_premult * (1-dx) * dy);
               } // channel
-
-              one_minus_alpha_prod *= (one - alpha);
-            } // sprite_id - backward pass
+            } // sprite_id - second pass
 
             for (int chan = 0; chan < n_channels; ++chan) {
               const T go = grad_output[batch_id * img_batch_stride +
@@ -675,7 +675,7 @@ struct RenderSpritesGrad2DFunctor<CPUDevice, T>{
                                        img_x * n_channels + chan];
               grad_backgrounds[batch_id * img_batch_stride +
                                img_y * img_row_stride +
-                               img_x * n_channels + chan] = go * one_minus_alpha_prod;
+                               img_x * n_channels + chan] = go * 1.0 / alpha_sum;
             }
           } // img_x
         } // img_y
