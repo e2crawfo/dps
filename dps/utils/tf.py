@@ -20,6 +20,10 @@ else:
     from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 
 
+def count_trainable_variables(tvars):
+    return np.sum([np.prod(v.get_shape().as_list()) for v in tvars])
+
+
 class Summarizer(object):
     def __init__(self, eval_funcs):
         self.info = []
@@ -485,12 +489,13 @@ class FullyConvolutional(ScopedFunction):
         return pad0, pad1
 
     @staticmethod
-    def _apply_layer(volume, layer_spec, idx, is_final):
+    def _apply_layer(volume, layer_spec, idx, is_final, is_training):
         filters = layer_spec['filters']
         strides = layer_spec['strides']
         transpose = layer_spec.get('transpose', False)
         kernel_size = layer_spec['kernel_size']
         padding = layer_spec.get('padding', 'VALID')
+        dropout = layer_spec.get('dropout', False)
 
         if transpose:
             volume = tf.layers.conv2d_transpose(
@@ -516,6 +521,9 @@ class FullyConvolutional(ScopedFunction):
                 volume = tf.layers.max_pooling2d(
                     volume, pool_size=2, strides=2, name='fcn-pool{}'.format(idx))
 
+        if dropout:
+            volume = tf.contrib.slim.dropout(volume, 0.5, is_training=is_training)
+
         layer_string = ', '.join("{}={}".format(k, v) for k, v in sorted(layer_spec.items(), key=lambda kv: kv[0]))
         output_shape = tuple(int(i) for i in volume.shape[1:])
         print("FCN >>> Applying layer {}: {}. Output shape: {}".format(idx, layer_string, output_shape))
@@ -529,7 +537,7 @@ class FullyConvolutional(ScopedFunction):
         print("Predicted output shape is: {}".format(self.predict_output_shape(inp.shape[1:3], self.layout)))
 
         for i, layer_spec in enumerate(self.layout):
-            volume = self._apply_layer(volume, layer_spec, i, i == len(self.layout) - 1)
+            volume = self._apply_layer(volume, layer_spec, i, i == len(self.layout) - 1, is_training)
             self.volumes.append(volume)
 
         if self.check_output_shape and output_size is not None:

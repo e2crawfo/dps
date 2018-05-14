@@ -134,10 +134,6 @@ class DifferentiableUpdater(Updater):
             "Environments used with DifferentiableUpdater must possess "
             "a method called `build` which builds returns a dictionary of scalar tensors."
         )
-        assert hasattr(env, 'make_feed_dict'), (
-            "Environments used with DifferentiableUpdater must possess "
-            "a method called `make_feed_dict` which return a feed dict "
-            "to pass to the training step.")
         self.f = f
 
         super(DifferentiableUpdater, self).__init__(env, **kwargs)

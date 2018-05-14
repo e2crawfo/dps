@@ -1,11 +1,14 @@
 import tensorflow as tf
+from tensorflow.contrib.slim import fully_connected
 import numpy as np
 
 from dps import cfg
 from dps.utils import Param
-from dps.utils.tf import trainable_variables, ScopedFunction, MLP, LeNet
+from dps.utils.tf import trainable_variables, ScopedFunction, MLP, FullyConvolutional
 from dps.env.advanced import yolo_rl, yolo_air
 from dps.datasets import VisualArithmeticDataset
+from dps.updater import DifferentiableUpdater
+from dps.env.supervised import ClassificationEnv
 
 
 def get_math_updater(env):
@@ -217,4 +220,51 @@ load_config = big_config.copy(
     train_kl=False,
     train_reconstruction=False,
     fixed_weights="object_encoder object_decoder box obj backbone edge",
+)
+
+
+class ConvEnv(ClassificationEnv):
+    def __init__(self):
+        train = VisualArithmeticDataset(n_examples=int(cfg.n_train), shuffle=True, example_range=(0.0, 0.9))
+        val = VisualArithmeticDataset(n_examples=int(cfg.n_val), shuffle=True, example_range=(0.9, 1.))
+
+        self.obs_shape = train.obs_shape
+        self.action_shape = train.largest_digit + 1
+
+        super(ConvEnv, self).__init__(train, val)
+
+
+class ConvNet(FullyConvolutional):
+    def __init__(self):
+        layout = [
+            dict(filters=64, kernel_size=5, strides=1, padding="VALID"),
+            dict(filters=128, kernel_size=5, strides=2, padding="VALID"),
+            dict(filters=128, kernel_size=5, strides=1, padding="VALID"),
+            dict(filters=128, kernel_size=5, strides=2, padding="VALID"),
+            dict(filters=128, kernel_size=5, strides=1, padding="VALID"),
+        ]
+        super(ConvNet, self).__init__(layout, check_output_shape=False)
+
+    def _call(self, inp, output_size, is_training):
+        output = super(ConvNet, self)._call(inp, output_size, is_training)
+        output = tf.nn.relu(output)  # FullyConvolutional doesn't apply non-linearity to final layer
+        size = np.product([int(i) for i in output.shape[1:]])
+        output = tf.reshape(output, (tf.shape(inp)[0], size))
+        output = fully_connected(output, 100)
+        output = fully_connected(output, output_size, activation_fn=None)
+        return output
+
+
+def get_diff_updater(env):
+    model = ConvNet()
+    return DifferentiableUpdater(env, model)
+
+
+convolutional_config = big_config.copy(
+    log_name="yolo_air_math_convolutional",
+    get_updater=get_diff_updater,
+    render_hook=None,
+    build_env=ConvEnv,
+    stopping_criteria="01_loss,min",
+    threshold=0.0,
 )

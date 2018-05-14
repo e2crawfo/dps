@@ -61,10 +61,9 @@ class SupervisedEnv(Env):
                                         cfg.batch_size)
         self.data_manager.build_graph()
 
-        self._build_placeholders()
         self.f = f
 
-        self.x, self.y = self.data_manager.iterator.get_next()
+        self.x, *rest, self.y = self.data_manager.iterator.get_next()
         self.target = self.y
         self.is_training = self.data_manager.is_training
 
@@ -133,7 +132,7 @@ class ClassificationEnv(SupervisedEnv):
             targets = tf.one_hot(
                 tf.squeeze(tf.cast(targets, tf.int32), axis=-1),
                 depth=tf.shape(actions)[-1])
-        return tf.nn.softmax_cross_entropy_with_logits(
+        return tf.nn.softmax_cross_entropy_with_logits_v2(
             labels=targets, logits=actions)[..., None]
 
     def build_01_loss(self, actions, targets):
