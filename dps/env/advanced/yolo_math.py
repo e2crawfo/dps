@@ -184,13 +184,9 @@ config = yolo_air.config.copy(
 
     build_math_network=SequentialRegressionNetwork,
 
-    # largest_digit=144,  # 16 * 9
-    # build_math_network=InterpretableAdditionNetwork,
-
     build_math_cell=lambda scope: tf.contrib.rnn.LSTMBlockCell(128),
     build_math_output=lambda scope: MLP([100, 100], scope=scope),
     build_math_input=lambda scope: MLP([100, 100], scope=scope),
-    build_digit_classifier=lambda scope: LeNet(128, scope=scope),
 
     math_weight=5.0,
     train_kl=True,
