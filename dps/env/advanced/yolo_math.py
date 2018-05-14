@@ -20,7 +20,7 @@ class SequentialRegressionNetwork(ScopedFunction):
 
     output_network = None
 
-    def _call(self, program, output_size, is_training):
+    def _call(self, _inp, output_size, is_training):
         """ program is the program dictionary from YoloAir_Network """
 
         if self.h_cell is None:
@@ -28,15 +28,9 @@ class SequentialRegressionNetwork(ScopedFunction):
             self.w_cell = cfg.build_math_cell(scope="regression_w_cell")
             self.b_cell = cfg.build_math_cell(scope="regression_b_cell")
 
-        edge_state = self.h_cell.zero_state(tf.shape(program['attr'])[0], tf.float32)
+        edge_state = self.h_cell.zero_state(tf.shape(_inp)[0], tf.float32)
 
-        attr = program['attr']
-        obj = program['obj']
-
-        _inp = obj * attr
-        # _inp = tf.concat([obj, attrs], axis=4)
-
-        H, W, B = tuple(int(i) for i in attr.shape[1:4])
+        H, W, B = tuple(int(i) for i in _inp.shape[1:4])
         h_states = np.empty((H, W, B), dtype=np.object)
         w_states = np.empty((H, W, B), dtype=np.object)
         b_states = np.empty((H, W, B), dtype=np.object)
@@ -87,16 +81,33 @@ class YoloAir_MathNetwork(yolo_air.YoloAir_Network):
     math_weight = Param()
     largest_digit = Param()
 
+    math_input_network = None
     math_network = None
 
     def trainable_variables(self, for_opt):
         tvars = super(YoloAir_MathNetwork, self).trainable_variables(for_opt)
         math_network_tvars = trainable_variables(self.math_network.scope, for_opt=for_opt)
         tvars.extend(math_network_tvars)
+        math_input_network_tvars = trainable_variables(self.math_input_network.scope, for_opt=for_opt)
+        tvars.extend(math_input_network_tvars)
         return tvars
 
     def build_graph(self, *args, **kwargs):
         result = super(YoloAir_MathNetwork, self).build_graph(*args, **kwargs)
+
+        if self.math_input_network is None:
+            self.math_input_network = cfg.build_math_input(scope="math_input_network")
+
+            if "math" in self.fixed_weights:
+                self.math_input_network.fix_variables()
+
+        attr = tf.reshape(self.program['attr'], (self.batch_size * self.HWB, self.A))
+        math_attr = self.math_input_network(attr, self.A, self.is_training)
+        math_attr = tf.reshape(math_attr, (self.batch_size, self.H, self.W, self.B, self.A))
+        self._tensors["math_attr"] = math_attr
+
+        # Use raw_obj so that there is no discrepancy between validation and train
+        _inp = self._tensors["raw_obj"] * math_attr
 
         if self.math_network is None:
             self.math_network = cfg.build_math_network(scope="math_network")
@@ -104,7 +115,7 @@ class YoloAir_MathNetwork(yolo_air.YoloAir_Network):
             if "math" in self.fixed_weights:
                 self.math_network.fix_variables()
 
-        logits = self.math_network(self.program, self.largest_digit + 1, self.is_training)
+        logits = self.math_network(_inp, self.largest_digit + 1, self.is_training)
 
         if self.math_weight is not None:
             result["recorded_tensors"]["raw_loss_math"] = tf.reduce_mean(
@@ -178,9 +189,10 @@ config = yolo_air.config.copy(
 
     build_math_cell=lambda scope: tf.contrib.rnn.LSTMBlockCell(128),
     build_math_output=lambda scope: MLP([100, 100], scope=scope),
+    build_math_input=lambda scope: MLP([100, 100], scope=scope),
     build_digit_classifier=lambda scope: LeNet(128, scope=scope),
 
-    math_weight=1.0,
+    math_weight=5.0,
     train_kl=True,
     train_reconstruction=True,
     postprocessing="",

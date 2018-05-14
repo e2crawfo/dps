@@ -304,10 +304,10 @@ class YoloAir_Network(Parameterized):
         obj_pre_sigmoid = concrete_binary_pre_sigmoid_sample(
             obj_log_odds, self.obj_temperature
         )
-        obj = tf.nn.sigmoid(obj_pre_sigmoid)
+        raw_obj = tf.nn.sigmoid(obj_pre_sigmoid)
         obj = (
-            self.float_is_training * obj +
-            (1 - self.float_is_training) * tf.round(obj)
+            self.float_is_training * raw_obj +
+            (1 - self.float_is_training) * tf.round(raw_obj)
         )
 
         if "obj" in self.no_gradient:
@@ -315,6 +315,7 @@ class YoloAir_Network(Parameterized):
 
         return dict(
             program=obj,
+            raw_obj=raw_obj,
             obj_pre_sigmoid=obj_pre_sigmoid,
             obj_log_odds=obj_log_odds,
             obj_prob=tf.nn.sigmoid(obj_log_odds),
