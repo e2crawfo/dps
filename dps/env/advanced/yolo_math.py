@@ -206,10 +206,15 @@ big_config = config.copy(
     max_chars=12,
 )
 
-load_config = config.copy(
+load_config = big_config.copy(
+    max_steps=10000,
+    curriculum=[
+        dict(fixed_weights="math", math_weight=0.0, postprocessing="random", tile_shape=(48, 48), train_kl=True, train_reconstruction=True),
+        dict(preserve_env=False,),
+    ],
+
     math_weight=1.0,
     train_kl=False,
     train_reconstruction=False,
     fixed_weights="object_encoder object_decoder box obj backbone edge",
-    # load_path="/media/data/dps_data/logs/yolo_air/good/weights/best_of_stage_0",
 )

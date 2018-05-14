@@ -66,6 +66,7 @@ class Dataset(Parameterized):
 
         params = self.param_values()
         param_hash = get_param_hash(params)
+        print(self.__class__.__name__)
         print("Params:")
         pprint.pprint(params)
         print("Param hash: {}".format(param_hash))
