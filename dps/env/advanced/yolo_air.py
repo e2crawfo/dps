@@ -118,6 +118,9 @@ class YoloAir_Network(Parameterized):
     count_prior_log_odds = Param()
     obj_temperature = Param(1.0)
 
+    train_reconstruction = Param(True)
+    train_kl = Param(True)
+
     yx_prior_mean = Param(0.0)
     yx_prior_std = Param(1.0)
 
@@ -572,6 +575,7 @@ class YoloAir_Network(Parameterized):
             attr_kl = tf.stop_gradient(attr_kl)
 
         self._tensors["attr"] = attr
+        self.program["attr"] = attr
         self._tensors["attr_kl"] = attr_kl
 
         object_decoder_in = tf.reshape(attr, (self.batch_size * self.HWB, 1, 1, self.A))
@@ -758,11 +762,16 @@ class YoloAir_Network(Parameterized):
         pred_n_objects = self._tensors["pred_n_objects"]
 
         recorded_tensors['n_objects'] = tf.reduce_mean(pred_n_objects)
-        recorded_tensors['on_cell_y_avg'] = tf.reduce_mean(tf.reduce_sum(self._tensors["cell_y"] * obj, axis=(1, 2, 3, 4)) / pred_n_objects)
-        recorded_tensors['on_cell_x_avg'] = tf.reduce_mean(tf.reduce_sum(self._tensors["cell_x"] * obj, axis=(1, 2, 3, 4)) / pred_n_objects)
-        recorded_tensors['on_h_avg'] = tf.reduce_mean(tf.reduce_sum(self._tensors["h"] * obj, axis=(1, 2, 3, 4)) / pred_n_objects)
-        recorded_tensors['on_w_avg'] = tf.reduce_mean(tf.reduce_sum(self._tensors["w"] * obj, axis=(1, 2, 3, 4)) / pred_n_objects)
-        recorded_tensors['on_area_avg'] = tf.reduce_mean(tf.reduce_sum(self._tensors["area"] * obj, axis=(1, 2, 3, 4)) / pred_n_objects)
+        recorded_tensors['on_cell_y_avg'] = tf.reduce_mean(
+            tf.reduce_sum(self._tensors["cell_y"] * obj, axis=(1, 2, 3, 4)) / pred_n_objects)
+        recorded_tensors['on_cell_x_avg'] = tf.reduce_mean(
+            tf.reduce_sum(self._tensors["cell_x"] * obj, axis=(1, 2, 3, 4)) / pred_n_objects)
+        recorded_tensors['on_h_avg'] = tf.reduce_mean(
+            tf.reduce_sum(self._tensors["h"] * obj, axis=(1, 2, 3, 4)) / pred_n_objects)
+        recorded_tensors['on_w_avg'] = tf.reduce_mean(
+            tf.reduce_sum(self._tensors["w"] * obj, axis=(1, 2, 3, 4)) / pred_n_objects)
+        recorded_tensors['on_area_avg'] = tf.reduce_mean(
+            tf.reduce_sum(self._tensors["area"] * obj, axis=(1, 2, 3, 4)) / pred_n_objects)
         recorded_tensors['obj'] = tf.reduce_mean(obj)
 
         recorded_tensors['latent_area'] = tf.reduce_mean(self._tensors["latent_area"])
@@ -770,28 +779,27 @@ class YoloAir_Network(Parameterized):
 
         recorded_tensors['attr'] = tf.reduce_mean(self._tensors["attr"])
 
-        loss_key = 'xent' if self.xent_loss else 'squared'
-
-        output = self._tensors['output']
-        inp = self._tensors['inp']
-        self._tensors['per_pixel_reconstruction_loss'] = loss_builders[loss_key](output, inp)
-
         # --- losses ---
-
         losses = dict()
 
-        losses['obj_kl'] = tf_mean_sum(self._tensors["obj_kl"])
+        if self.train_reconstruction:
+            loss_key = 'xent' if self.xent_loss else 'squared'
 
-        obj = self.program["obj"]
+            output = self._tensors['output']
+            inp = self._tensors['inp']
+            self._tensors['per_pixel_reconstruction_loss'] = loss_builders[loss_key](output, inp)
+            losses['reconstruction'] = tf_mean_sum(self._tensors['per_pixel_reconstruction_loss'])
 
-        losses['cell_y_kl'] = tf_mean_sum(obj * self._tensors["cell_y_kl"])
-        losses['cell_x_kl'] = tf_mean_sum(obj * self._tensors["cell_x_kl"])
-        losses['h_kl'] = tf_mean_sum(obj * self._tensors["h_kl"])
-        losses['w_kl'] = tf_mean_sum(obj * self._tensors["w_kl"])
+        if self.train_kl:
+            losses['obj_kl'] = tf_mean_sum(self._tensors["obj_kl"])
 
-        losses['attr_kl'] = tf_mean_sum(obj * self._tensors["attr_kl"])
+            obj = self.program["obj"]
 
-        losses['reconstruction'] = tf_mean_sum(self._tensors['per_pixel_reconstruction_loss'])
+            losses['cell_y_kl'] = tf_mean_sum(obj * self._tensors["cell_y_kl"])
+            losses['cell_x_kl'] = tf_mean_sum(obj * self._tensors["cell_x_kl"])
+            losses['h_kl'] = tf_mean_sum(obj * self._tensors["h_kl"])
+            losses['w_kl'] = tf_mean_sum(obj * self._tensors["w_kl"])
+            losses['attr_kl'] = tf_mean_sum(obj * self._tensors["attr_kl"])
 
         # --- other evaluation metrics
 
@@ -804,48 +812,6 @@ class YoloAir_Network(Parameterized):
             "recorded_tensors": recorded_tensors,
             "losses": losses
         }
-
-
-class Evaluator(object):
-    def __init__(self, functions, tensors, updater):
-        self.placeholders = {name: tf.placeholder(tf.float32, ()) for name in functions.keys()}
-        self.summary_op = tf.summary.merge([tf.summary.scalar(k, v) for k, v in self.placeholders.items()])
-        self.functions = functions
-        self.updater = updater
-
-        fetch_keys = set()
-        for f in functions.values():
-            for key in f.keys_accessed.split():
-                fetch_keys.add(key)
-
-        fetches = {}
-        for key in list(fetch_keys):
-            dst = fetches
-            src = tensors
-            subkeys = key.split(":")
-
-            for i, _key in enumerate(subkeys):
-                if i == len(subkeys)-1:
-                    dst[_key] = src[_key]
-                else:
-                    if _key not in dst:
-                        dst[_key] = dict()
-                    dst = dst[_key]
-                    src = src[_key]
-
-        self.fetches = fetches
-
-    def eval(self, fetched):
-        record = {}
-        feed_dict = {}
-        for name, func in self.functions.items():
-            record[name] = np.mean(func(fetched, self.updater))
-            feed_dict[self.placeholders[name]] = record[name]
-
-        sess = tf.get_default_session()
-        summary = sess.run(self.summary_op, feed_dict=feed_dict)
-
-        return record, summary
 
 
 class YoloAir_RenderHook(object):
@@ -874,6 +840,10 @@ class YoloAir_RenderHook(object):
         to_fetch["normalized_box"] = network._tensors["normalized_box"]
         to_fetch["input_glimpses"] = network._tensors["input_glimpses"]
 
+        if 'prediction' in network._tensors:
+            to_fetch["prediction"] = network._tensors["prediction"]
+            to_fetch["targets"] = network._tensors["targets"]
+
         to_fetch = {k: v[:self.N] for k, v in to_fetch.items()}
 
         sess = tf.get_default_session()
@@ -884,6 +854,8 @@ class YoloAir_RenderHook(object):
     def _plot_reconstruction(self, updater, fetched):
         images = fetched['images']
         output = fetched['output']
+        prediction = fetched.get("prediction", None)
+        targets = fetched.get("targets", None)
 
         _, image_height, image_width, _ = images.shape
         H, W, B = updater.network.H, updater.network.W, updater.network.B
@@ -913,6 +885,11 @@ class YoloAir_RenderHook(object):
 
             ax1 = axes[2*i, 2*j]
             ax1.imshow(gt, vmin=0.0, vmax=1.0)
+
+            if prediction is not None:
+                _target = targets[n]
+                _prediction = prediction[n]
+                ax1.set_title("target={}, prediction={}".format(np.argmax(_target), np.argmax(_prediction)))
 
             ax2 = axes[2*i, 2*j+1]
             ax2.imshow(pred, vmin=0.0, vmax=1.0)
@@ -955,7 +932,10 @@ class YoloAir_RenderHook(object):
                     (left, top), width, height, linewidth=1, edgecolor="xkcd:yellow", facecolor='none')
                 ax4.add_patch(rect)
 
-        plt.subplots_adjust(left=0, right=1, top=1, bottom=0, wspace=0.1, hspace=0.1)
+        if prediction is None:
+            plt.subplots_adjust(left=0, right=1, top=1, bottom=0, wspace=0.1, hspace=0.1)
+        else:
+            plt.subplots_adjust(left=0, right=1, top=.9, bottom=0, wspace=0.1, hspace=0.2)
 
         local_step = np.inf if cfg.overwrite_plots else "{:0>10}".format(updater.n_updates)
         path = updater.exp_dir.path_for(

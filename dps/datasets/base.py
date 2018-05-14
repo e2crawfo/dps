@@ -486,6 +486,8 @@ class PatchesDataset(Dataset):
         # --- start dataset creation ---
 
         for j in range(self.n_examples):
+            if j % 1000 == 0:
+                print("Working on datapoint {}...".format(j))
 
             # --- populate background ---
 
@@ -813,14 +815,26 @@ class PatchesDataset(Dataset):
 
         return new_images, new_annotations
 
-    def visualize(self, n=9):
-        import matplotlib.pyplot as plt
-        m = int(np.ceil(np.sqrt(n)))
-        fig, subplots = plt.subplots(m, m)
-        size = int(np.sqrt(self.x.shape[1]))
-        for i, s in enumerate(subplots.flatten()):
-            s.imshow(self.x[i, :].reshape(size, size))
-            s.set_title(str(self.y[i, 0]))
+    def visualize(self, n=4):
+        batch_size = n
+        dset = tf.data.TFRecordDataset(self.filename)
+        dset = dset.batch(batch_size).map(self.parse_example_batch)
+
+        iterator = dset.make_one_shot_iterator()
+
+        sess = tf.get_default_session()
+
+        images, annotations, n_annotations, label = sess.run(iterator.get_next())
+
+        fig, axes = plt.subplots(1, batch_size)
+        for i in range(batch_size):
+            ax = axes[i]
+
+            ax.imshow(np.squeeze(images[i]))
+            ax.set_title("label={}".format(label[i]))
+
+        plt.subplots_adjust(top=0.95, bottom=0, left=0, right=1, wspace=0.1, hspace=0.1)
+        plt.show()
 
 
 class GridPatchesDataset(PatchesDataset):
@@ -1042,3 +1056,11 @@ class EmnistObjectDetectionDataset(PatchesDataset):
 
 class GridEmnistObjectDetectionDataset(EmnistObjectDetectionDataset, GridPatchesDataset):
     pass
+
+
+if __name__ == "__main__":
+    dset = VisualArithmeticDataset(n_examples=4, reductions="A:sum", largest_digit=28)
+
+    sess = tf.Session()
+    with sess.as_default():
+        dset.visualize()
