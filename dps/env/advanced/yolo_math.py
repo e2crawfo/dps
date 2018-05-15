@@ -249,6 +249,7 @@ class SimpleMathNetwork(Parameterized):
     fixed_weights = Param("")
     train_reconstruction = Param(True)
     train_kl = Param(True)
+    variational = Param(True)
     math_weight = Param(1.0)
     xent_loss = Param(True)
     code_prior_mean = Param(0.0)
@@ -300,6 +301,7 @@ class SimpleMathNetwork(Parameterized):
         )
 
     def build_graph(self, inp, labels, is_training, background):
+        attr_dim = 2 * self.A if self.variational else self.A
 
         # --- init modules ---
 
@@ -308,7 +310,7 @@ class SimpleMathNetwork(Parameterized):
 
             if "encoder" in self.fixed_weights:
                 self.encoder.fix_variables()
-            self.encoder.layout[-1]['filters'] = 2 * self.A
+            self.encoder.layout[-1]['filters'] = attr_dim
 
         if self.decoder is None:
             self.decoder = cfg.build_math_decoder(scope="math_decoder")
@@ -346,13 +348,18 @@ class SimpleMathNetwork(Parameterized):
 
         # --- encode ---
 
-        code = self.encoder(inp, (self.H, self.W, 2*self.A), is_training)
-        code_mean, code_log_std = tf.split(code, [self.A, self.A], axis=-1)
-        code_std = tf.exp(code_log_std)
-        code, code_kl = yolo_air.normal_vae(code_mean, code_std, self.code_prior_mean, self.code_prior_std)
+        code = self.encoder(inp, (self.H, self.W, attr_dim), is_training)
+
+        if self.variational:
+            code_mean, code_log_std = tf.split(code, 2, axis=-1)
+            code_std = tf.exp(code_log_std)
+            code, code_kl = yolo_air.normal_vae(code_mean, code_std, self.code_prior_mean, self.code_prior_std)
+            self._tensors["code_kl"] = code_kl
+
+            if self.train_kl:
+                losses['code_kl'] = tf_mean_sum(self._tensors["code_kl"])
 
         self._tensors["code"] = code
-        self._tensors["code_kl"] = code_kl
 
         # --- decode ---
 
@@ -364,9 +371,6 @@ class SimpleMathNetwork(Parameterized):
             loss_key = 'xent' if self.xent_loss else 'squared'
             self._tensors['per_pixel_reconstruction_loss'] = yolo_rl.loss_builders[loss_key](reconstruction, inp)
             losses['reconstruction'] = tf_mean_sum(self._tensors['per_pixel_reconstruction_loss'])
-
-        if self.train_kl:
-            losses['code_kl'] = tf_mean_sum(self._tensors["code_kl"])
 
         # --- predict ---
 
@@ -427,4 +431,5 @@ simple_config = big_config.copy(
     threshold=1.0,
     build_math_encoder=yolo_rl.Backbone,
     build_math_decoder=yolo_rl.InverseBackbone,
+    variational=False,
 )
