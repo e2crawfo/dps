@@ -268,6 +268,8 @@ class SimpleMathNetwork(Parameterized):
         self.W = int(np.ceil(self.image_width / self.pixels_per_cell[1]))
         self.HW = self.H * self.W
         self.eval_funcs = dict()
+        if isinstance(self.fixed_weights, str):
+            self.fixed_weights = self.fixed_weights.split()
 
     @property
     def inp(self):
@@ -307,7 +309,6 @@ class SimpleMathNetwork(Parameterized):
 
         if self.encoder is None:
             self.encoder = cfg.build_math_encoder(scope="math_encoder")
-
             if "encoder" in self.fixed_weights:
                 self.encoder.fix_variables()
             self.encoder.layout[-1]['filters'] = attr_dim
