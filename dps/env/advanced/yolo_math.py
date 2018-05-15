@@ -1,6 +1,9 @@
 import tensorflow as tf
 from tensorflow.contrib.slim import fully_connected
 import numpy as np
+import matplotlib.pyplot as plt
+import shutil
+import os
 
 from dps import cfg
 from dps.utils import Param, Parameterized
@@ -419,6 +422,75 @@ class SimpleMathNetwork(Parameterized):
         }
 
 
+class SimpleMath_RenderHook(object):
+    def __init__(self, N=16):
+        self.N = N
+
+    def __call__(self, updater):
+        fetched = self._fetch(updater)
+
+        self._plot_reconstruction(updater, fetched)
+
+    def _fetch(self, updater):
+        feed_dict = updater.data_manager.do_val()
+
+        network = updater.network
+
+        to_fetch = dict()
+
+        to_fetch["images"] = network._tensors["inp"]
+        to_fetch["output"] = network._tensors["output"]
+
+        if 'prediction' in network._tensors:
+            to_fetch["prediction"] = network._tensors["prediction"]
+            to_fetch["targets"] = network._tensors["targets"]
+
+        to_fetch = {k: v[:self.N] for k, v in to_fetch.items()}
+
+        sess = tf.get_default_session()
+        fetched = sess.run(to_fetch, feed_dict=feed_dict)
+
+        return fetched
+
+    def _plot_reconstruction(self, updater, fetched):
+        images = fetched['images']
+        output = fetched['output']
+        prediction = fetched.get("prediction", None)
+        targets = fetched.get("targets", None)
+
+        sqrt_N = int(np.ceil(np.sqrt(self.N)))
+
+        fig, axes = plt.subplots(sqrt_N, 2*sqrt_N, figsize=(20, 20))
+        axes = np.array(axes).reshape(sqrt_N, 2*sqrt_N)
+        for n, (pred, gt) in enumerate(zip(output, images)):
+            i = int(n / sqrt_N)
+            j = int(n % sqrt_N)
+
+            ax = axes[i, 2*j]
+            ax.imshow(gt, vmin=0.0, vmax=1.0)
+
+            _target = targets[n]
+            _prediction = prediction[n]
+            ax.set_title("target={}, prediction={}".format(np.argmax(_target), np.argmax(_prediction)))
+
+            ax = axes[i, 2*j+1]
+            ax.imshow(pred, vmin=0.0, vmax=1.0)
+
+        plt.subplots_adjust(left=0, right=1, top=.9, bottom=0, wspace=0.1, hspace=0.2)
+
+        local_step = np.inf if cfg.overwrite_plots else "{:0>10}".format(updater.n_updates)
+        path = updater.exp_dir.path_for(
+            'plots',
+            'sampled_reconstruction',
+            'stage={:0>4}_local_step={}.pdf'.format(updater.stage_idx, local_step))
+        fig.savefig(path)
+        plt.close(fig)
+
+        shutil.copyfile(
+            path,
+            os.path.join(os.path.dirname(path), 'latest_stage{:0>4}.pdf'.format(updater.stage_idx)))
+
+
 def get_simple_math_updater(env):
     network = SimpleMathNetwork(env)
     return yolo_rl.YoloRL_Updater(env, network)
@@ -427,7 +499,7 @@ def get_simple_math_updater(env):
 simple_config = big_config.copy(
     log_name="yolo_math_simple",
     get_updater=get_simple_math_updater,
-    render_hook=None,
+    render_hook=SimpleMath_RenderHook(),
     stopping_criteria="math_accuracy,max",
     threshold=1.0,
     build_math_encoder=yolo_rl.Backbone,
