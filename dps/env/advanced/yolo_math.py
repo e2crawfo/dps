@@ -4,7 +4,8 @@ import numpy as np
 
 from dps import cfg
 from dps.utils import Param
-from dps.utils.tf import trainable_variables, ScopedFunction, MLP, FullyConvolutional
+from dps.utils.tf import (
+    trainable_variables, ScopedFunction, MLP, FullyConvolutional)
 from dps.env.advanced import yolo_rl, yolo_air
 from dps.datasets import VisualArithmeticDataset
 from dps.updater import DifferentiableUpdater

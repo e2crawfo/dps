@@ -105,6 +105,8 @@ class HyperSearch(object):
 
                 if 'best_path' in record:
                     del record['best_path']
+                if 'final_path' in record:
+                    del record['final_path']
 
                 sc.append(record['stage_config'])
                 del record['stage_config']

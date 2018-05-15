@@ -243,7 +243,7 @@ class ParallelSession(object):
             assert isinstance(step_time_limit, int)
             assert step_time_limit > 0
 
-            total_seconds_per_step = int(parse_timedelta(step_time_limit).total_seconds())
+            total_seconds_per_step = step_time_limit
 
         # Subtract cleanup time and wall time.
         parallel_seconds_per_step = int(total_seconds_per_step - cleanup_time_per_step)
