@@ -358,6 +358,9 @@ class SimpleMathNetwork(Parameterized):
             code_mean, code_log_std = tf.split(code, 2, axis=-1)
             code_std = tf.exp(code_log_std)
             code, code_kl = yolo_air.normal_vae(code_mean, code_std, self.code_prior_mean, self.code_prior_std)
+
+            self._tensors["code_mean"] = code_mean
+            self._tensors["code_std"] = code_std
             self._tensors["code_kl"] = code_kl
 
             if self.train_kl:
@@ -378,7 +381,8 @@ class SimpleMathNetwork(Parameterized):
 
         # --- predict ---
 
-        _code = tf.reshape(code, (self.batch_size * self.HW, self.A))
+        _code = code_mean if self.variational else code
+        _code = tf.reshape(_code, (self.batch_size * self.HW, self.A))
         math_code = self.math_input_network(_code, self.A, self.is_training)
         self._tensors["math_code"] = tf.reshape(math_code, (self.batch_size, self.H, self.W, self.A))
         math_code = tf.reshape(math_code, (self.batch_size, self.H, self.W, 1, self.A))
