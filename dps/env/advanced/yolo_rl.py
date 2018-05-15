@@ -62,6 +62,34 @@ class Backbone(FullyConvolutional):
         super(Backbone, self).__init__(layout, check_output_shape=True, **kwargs)
 
 
+class InverseBackbone(FullyConvolutional):
+    pixels_per_cell = Param()
+    kernel_size = Param()
+    n_channels = Param()
+    n_final_layers = Param(2)
+
+    def __init__(self, **kwargs):
+        # These layers don't change the shape
+        layout = [
+            dict(filters=self.n_channels, kernel_size=self.kernel_size, strides=1, padding="SAME", transpose=True)
+            for i in range(self.n_final_layers)]
+
+        sh = sorted(prime_factors(self.pixels_per_cell[0]))
+        sw = sorted(prime_factors(self.pixels_per_cell[1]))
+        assert max(sh) <= 4
+        assert max(sw) <= 4
+
+        if len(sh) < len(sw):
+            sh = sh + [1] * (len(sw) - len(sh))
+        elif len(sw) < len(sh):
+            sw = sw + [1] * (len(sh) - len(sw))
+
+        layout += [dict(filters=self.n_channels, kernel_size=4, strides=(_sh, _sw), padding="SAME", transpose=True)
+                   for _sh, _sw in zip(sh, sw)]
+
+        super(InverseBackbone, self).__init__(layout, check_output_shape=True, **kwargs)
+
+
 class NewBackbone(FullyConvolutional):
     pixels_per_cell = Param()
     max_object_shape = Param()
@@ -1194,10 +1222,15 @@ class YoloRL_Network(Parameterized):
 
 class Evaluator(object):
     def __init__(self, functions, tensors, updater):
-        self.placeholders = {name: tf.placeholder(tf.float32, ()) for name in functions.keys()}
-        self.summary_op = tf.summary.merge([tf.summary.scalar(k, v) for k, v in self.placeholders.items()])
         self.functions = functions
         self.updater = updater
+
+        if not functions:
+            self.fetches = {}
+            return
+
+        self.placeholders = {name: tf.placeholder(tf.float32, ()) for name in functions.keys()}
+        self.summary_op = tf.summary.merge([tf.summary.scalar(k, v) for k, v in self.placeholders.items()])
 
         fetch_keys = set()
         for f in functions.values():
@@ -1222,6 +1255,9 @@ class Evaluator(object):
         self.fetches = fetches
 
     def eval(self, fetched):
+        if not self.functions:
+            return {}, b''
+
         record = {}
         feed_dict = {}
         for name, func in self.functions.items():

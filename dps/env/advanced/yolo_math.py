@@ -3,13 +3,11 @@ from tensorflow.contrib.slim import fully_connected
 import numpy as np
 
 from dps import cfg
-from dps.utils import Param
+from dps.utils import Param, Parameterized
 from dps.utils.tf import (
-    trainable_variables, ScopedFunction, MLP, FullyConvolutional)
+    trainable_variables, ScopedFunction, MLP, FullyConvolutional, tf_mean_sum)
 from dps.env.advanced import yolo_rl, yolo_air
 from dps.datasets import VisualArithmeticDataset
-from dps.updater import DifferentiableUpdater
-from dps.env.supervised import ClassificationEnv
 
 
 def get_math_updater(env):
@@ -167,7 +165,7 @@ class Env(object):
 
 
 config = yolo_air.config.copy(
-    log_name="yolo_air_math",
+    log_name="yolo_math",
     get_updater=get_math_updater,
     build_env=Env,
 
@@ -187,7 +185,6 @@ config = yolo_air.config.copy(
     # reductions="A:sum,M:prod,N:min,X:max,C:len",
 
     build_math_network=SequentialRegressionNetwork,
-
     build_math_cell=lambda scope: tf.contrib.rnn.LSTMBlockCell(128),
     build_math_output=lambda scope: MLP([100, 100], scope=scope),
     build_math_input=lambda scope: MLP([100, 100], scope=scope),
@@ -224,17 +221,6 @@ load_config = big_config.copy(
 )
 
 
-class ConvEnv(ClassificationEnv):
-    def __init__(self):
-        train = VisualArithmeticDataset(n_examples=int(cfg.n_train), shuffle=True, example_range=(0.0, 0.9))
-        val = VisualArithmeticDataset(n_examples=int(cfg.n_val), shuffle=True, example_range=(0.9, 1.))
-
-        self.obs_shape = train.obs_shape
-        self.action_shape = train.largest_digit + 1
-
-        super(ConvEnv, self).__init__(train, val)
-
-
 class ConvNet(FullyConvolutional):
     def __init__(self):
         layout = [
@@ -256,16 +242,189 @@ class ConvNet(FullyConvolutional):
         return output
 
 
-def get_diff_updater(env):
-    model = ConvNet()
-    return DifferentiableUpdater(env, model)
+class SimpleMathNetwork(Parameterized):
+    largest_digit = Param()
+    A = Param()
+    pixels_per_cell = Param()
+    fixed_weights = Param("")
+    train_reconstruction = Param(True)
+    train_kl = Param(True)
+    math_weight = Param(1.0)
+    xent_loss = Param(True)
+    code_prior_mean = Param(0.0)
+    code_prior_std = Param(1.0)
+
+    encoder = None
+    decoder = None
+    math_input_network = None
+    math_network = None
+
+    def __init__(self, env, **kwargs):
+        self.obs_shape = env.datasets['train'].obs_shape
+        self.image_height, self.image_width, self.image_depth = self.obs_shape
+
+        self.H = int(np.ceil(self.image_height / self.pixels_per_cell[0]))
+        self.W = int(np.ceil(self.image_width / self.pixels_per_cell[1]))
+        self.HW = self.H * self.W
+        self.eval_funcs = dict()
+
+    @property
+    def inp(self):
+        return self._tensors["inp"]
+
+    @property
+    def batch_size(self):
+        return self._tensors["batch_size"]
+
+    @property
+    def is_training(self):
+        return self._tensors["is_training"]
+
+    @property
+    def float_is_training(self):
+        return self._tensors["float_is_training"]
+
+    def trainable_variables(self, for_opt):
+
+        tvars = []
+        for sf in [self.encoder, self.decoder, self.math_input_network, self.math_network]:
+            tvars.extend(trainable_variables(sf.scope, for_opt=for_opt))
+
+        return tvars
+
+    def _process_labels(self, labels):
+        self._tensors.update(
+            annotations=labels[0],
+            n_annotations=labels[1],
+            targets=labels[2],
+        )
+
+    def build_graph(self, inp, labels, is_training, background):
+
+        # --- init modules ---
+
+        if self.encoder is None:
+            self.encoder = cfg.build_math_encoder(scope="math_encoder")
+
+            if "encoder" in self.fixed_weights:
+                self.encoder.fix_variables()
+            self.encoder.layout[-1]['filters'] = 2 * self.A
+
+        if self.decoder is None:
+            self.decoder = cfg.build_math_decoder(scope="math_decoder")
+            if "decoder" in self.fixed_weights:
+                self.decoder.fix_variables()
+            self.decoder.layout[-1]['filters'] = 3
+
+        if self.math_input_network is None:
+            self.math_input_network = cfg.build_math_input(scope="math_input_network")
+
+            if "math" in self.fixed_weights:
+                self.math_input_network.fix_variables()
+
+        if self.math_network is None:
+            self.math_network = cfg.build_math_network(scope="math_network")
+
+            if "math" in self.fixed_weights:
+                self.math_network.fix_variables()
+
+        self._tensors = dict(
+            inp=inp,
+            is_training=is_training,
+            float_is_training=tf.to_float(is_training),
+            background=background,
+            batch_size=tf.shape(inp)[0],
+        )
+        recorded_tensors = dict(
+            batch_size=tf.to_float(self.batch_size),
+            float_is_training=self.float_is_training
+        )
+
+        losses = dict()
+
+        self._process_labels(labels)
+
+        # --- encode ---
+
+        code = self.encoder(inp, (self.H, self.W, 2*self.A), is_training)
+        code_mean, code_log_std = tf.split(code, [self.A, self.A], axis=-1)
+        code_std = tf.exp(code_log_std)
+        code, code_kl = yolo_air.normal_vae(code_mean, code_std, self.code_prior_mean, self.code_prior_std)
+
+        self._tensors["code"] = code
+        self._tensors["code_kl"] = code_kl
+
+        # --- decode ---
+
+        reconstruction = self.decoder(code, inp.shape[1:], is_training)
+        reconstruction = tf.nn.sigmoid(tf.clip_by_value(reconstruction, -10, 10))
+        self._tensors["output"] = reconstruction
+
+        if self.train_reconstruction:
+            loss_key = 'xent' if self.xent_loss else 'squared'
+            self._tensors['per_pixel_reconstruction_loss'] = yolo_rl.loss_builders[loss_key](reconstruction, inp)
+            losses['reconstruction'] = tf_mean_sum(self._tensors['per_pixel_reconstruction_loss'])
+
+        if self.train_kl:
+            losses['code_kl'] = tf_mean_sum(self._tensors["code_kl"])
+
+        # --- predict ---
+
+        _code = tf.reshape(code, (self.batch_size * self.HW, self.A))
+        math_code = self.math_input_network(_code, self.A, self.is_training)
+        self._tensors["math_code"] = tf.reshape(math_code, (self.batch_size, self.H, self.W, self.A))
+        math_code = tf.reshape(math_code, (self.batch_size, self.H, self.W, 1, self.A))
+
+        logits = self.math_network(math_code, self.largest_digit + 1, self.is_training)
+
+        if self.math_weight is not None:
+            recorded_tensors["raw_loss_math"] = tf.reduce_mean(
+                tf.nn.softmax_cross_entropy_with_logits_v2(
+                    labels=self._tensors["targets"],
+                    logits=logits
+                )
+            )
+            losses["math"] = self.math_weight * recorded_tensors["raw_loss_math"]
+
+        self._tensors["prediction"] = tf.nn.softmax(logits)
+
+        recorded_tensors["math_accuracy"] = tf.reduce_mean(
+            tf.to_float(
+                tf.equal(
+                    tf.argmax(logits, axis=1),
+                    tf.argmax(self._tensors['targets'], axis=1)
+                )
+            )
+        )
+
+        recorded_tensors["math_1norm"] = tf.reduce_mean(
+            tf.to_float(
+                tf.abs(tf.argmax(logits, axis=1) - tf.argmax(self._tensors['targets'], axis=1))
+            )
+        )
+
+        recorded_tensors["math_correct_prob"] = tf.reduce_mean(
+            tf.reduce_sum(tf.nn.softmax(logits) * self._tensors['targets'], axis=1)
+        )
+
+        return {
+            "tensors": self._tensors,
+            "recorded_tensors": recorded_tensors,
+            "losses": losses
+        }
 
 
-convolutional_config = big_config.copy(
-    log_name="yolo_air_math_convolutional",
-    get_updater=get_diff_updater,
+def get_simple_math_updater(env):
+    network = SimpleMathNetwork(env)
+    return yolo_rl.YoloRL_Updater(env, network)
+
+
+simple_config = big_config.copy(
+    log_name="yolo_math_simple",
+    get_updater=get_simple_math_updater,
     render_hook=None,
-    build_env=ConvEnv,
-    stopping_criteria="01_loss,min",
-    threshold=0.0,
+    stopping_criteria="math_accuracy,max",
+    threshold=1.0,
+    build_math_encoder=yolo_rl.Backbone,
+    build_math_decoder=yolo_rl.InverseBackbone,
 )
