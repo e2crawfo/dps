@@ -144,7 +144,7 @@ cnn_config.update(
     log_name="cnn_grid_arithmetic",
     patience=5000,
     reward_window=0.499,
-    preserve_policy=True,
+    load_stage=-1,
 
     build_env=grid_arithmetic.sl_build_env,
     build_model=grid_arithmetic.feedforward_build_model,
@@ -189,7 +189,7 @@ rnn_config.update(
     log_name="rnn_grid_arithmetic",
     patience=5000,
     reward_window=0.499,
-    preserve_policy=True,
+    load_stage=-1,
 
     build_env=grid_arithmetic.sl_build_env,
     build_model=grid_arithmetic.recurrent_build_model,

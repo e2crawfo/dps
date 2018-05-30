@@ -345,33 +345,16 @@ class TrainingLoop(object):
                 # Optionally initialize policy weights
                 if cfg.load_path:
                     # Initialize weights from specified check point file
-                    if isinstance(cfg.load_path, list):
-                        repeat = getattr(cfg, 'repeat', 0)
-                        path = cfg.load_path[repeat % len(cfg.load_path)]
-                    else:
-                        path = cfg.load_path
-                    path = os.path.realpath(path)
+                    path = os.path.realpath(cfg.load_path)
                     assert isinstance(path, str)
                     print("Loading hypothesis from {}.".format(path))
                     updater.restore(sess, path)
 
-                elif cfg.load_stage is not None:
-                    load_stage = cfg.load_stage
-                    assert (isinstance(load_stage, int) and
-                            0 <= load_stage and
-                            load_stage < stage_idx), load_stage
-
+                elif stage_idx > 0 and cfg.load_stage is not None:
                     key = 'final_path' if cfg.load_final else 'best_path'
-                    load_path = self.data.history[load_stage][key]
+                    load_path = self.data.history[cfg.load_stage][key]
 
-                    print("Loading best hypothesis from stage {}, located at {}.".format(load_stage, load_path))
-                    updater.restore(sess, load_path)
-
-                elif stage_idx > 0 and cfg.preserve_policy:
-                    # Initialize weights from best hypothesis discovered on the previous stage
-                    key = 'final_path' if cfg.load_final else 'best_path'
-                    load_path = self.data.history[stage_idx-1][key]
-                    print("Loading best hypothesis from previous stage, located at {}.".format(load_path))
+                    print("Loading best hypothesis from stage {}, located at {}.".format(cfg.load_stage, load_path))
                     updater.restore(sess, load_path)
 
                 self.summary_op = tf.summary.merge_all()
