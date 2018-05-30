@@ -9,15 +9,10 @@ import os
 import shutil
 
 from dps import cfg
-from dps.utils import Config, Param, Parameterized
-from dps.utils.tf import trainable_variables, tf_mean_sum, build_scheduled_value, MLP
+from dps.utils import Config, Param
+from dps.utils.tf import ScopedFunction, trainable_variables, tf_mean_sum, build_scheduled_value, MLP
 from dps.tf_ops import render_sprites
 from dps.env.advanced import yolo_rl
-
-
-def get_updater(env):
-    network = YoloAir_Network(env)
-    return yolo_rl.YoloRL_Updater(env, network)
 
 
 def normal_kl(mean, std, prior_mean, prior_std):
@@ -91,7 +86,7 @@ def tf_safe_log(value, nan_value=100.0):
     return log_value
 
 
-class YoloAir_Network(Parameterized):
+class YoloAir_Network(ScopedFunction):
     pixels_per_cell = Param()
     object_shape = Param()
     anchor_boxes = Param(help="List of (h, w) pairs.")
@@ -642,7 +637,8 @@ class YoloAir_Network(Parameterized):
             targets=labels[2],
         )
 
-    def build_graph(self, inp, labels, is_training, background):
+    def _call(self, inp, _, is_training):
+        inp, labels, background = inp
 
         # --- initialize containers for storing outputs ---
 
@@ -1074,7 +1070,8 @@ env_config = Config(
 
 # This works quite well if it is trained for long enough.
 alg_config = Config(
-    get_updater=get_updater,
+    get_updater=yolo_rl.YoloRL_Updater,
+    build_network=YoloAir_Network,
 
     lr_schedule=1e-4,
     batch_size=32,

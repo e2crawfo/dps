@@ -170,6 +170,15 @@ class ScopedFunction(Parameterized):
         The scope where we will build the variables, or a string giving the name of a variable
         scope to be created within the variable scope where this function is first called.
 
+    Attributes
+    ----------
+    scope: VariableScope instance or None
+        If a VariableScope is passed to __init__, it is stored here. Otherwise, the first time
+        that this instance of ScopedFunction is called, a new variable scope is created inside the
+        scope in which the function is called. The name of the new variable scope is given by self.name.
+    initialized: bool
+        False up until the end of the first time that this instance of ScopedFunction is called.
+
     """
     def __init__(self, scope=None, **kwargs):
         if scope is None:
@@ -182,17 +191,16 @@ class ScopedFunction(Parameterized):
             self.name = scope
             self.scope = None
 
-        self.n_builds = 0
-
         self.initialized = False
         self.path = None
         self.directory = None
         self.train_config = None
         self.was_loaded = None
-
         self.do_pretraining = False
-
         self.fixed_variables = False
+
+    def trainable_variables(self, for_opt):
+        return trainable_variables(self.scope, for_opt)
 
     def resolve_scope(self):
         if self.scope is None:
@@ -205,10 +213,8 @@ class ScopedFunction(Parameterized):
     def __call__(self, inp, output_size, is_training):
         self.resolve_scope()
 
-        with tf.variable_scope(self.scope, reuse=self.n_builds > 0):
+        with tf.variable_scope(self.scope, reuse=self.initialized):
             outp = self._call(inp, output_size, is_training)
-
-        self.n_builds += 1
 
         self._maybe_initialize()
 
@@ -225,18 +231,18 @@ class ScopedFunction(Parameterized):
                 self.path = os.path.join(self.directory, filename)
 
                 self.was_loaded = load_or_train(self.train_config, self.scope, self.path, target_var_scope=self.name)
-                self.initialized = True
 
-                param_path = os.path.join(
-                    self.directory, "{}_{}.params".format(self.name, self.param_hash))
+                param_path = os.path.join(self.directory, "{}_{}.params".format(self.name, self.param_hash))
+
                 if not os.path.exists(param_path):
                     with open(param_path, 'w') as f:
                         f.write(str(self.param_dict))
 
             if self.fixed_variables:
-                my_trainable_variables = trainable_variables(self.scope.name, False)
-                for v in my_trainable_variables:
+                for v in self.trainable_variables(False):
                     tf.add_to_collection(FIXED_COLLECTION, v)
+
+            self.initialized = True
 
     def set_pretraining_params(self, train_config, name_params=None, directory=None):
         if self.initialized:
@@ -244,13 +250,17 @@ class ScopedFunction(Parameterized):
                             "it is an error to call `set_pretraining_params` at this point")
 
         assert train_config is not None
-        self.directory = directory or dps.cfg.log_dir
+        self.train_config = train_config
+
+        self.do_pretraining = True
+
         if isinstance(name_params, str):
             name_params = name_params.split()
         name_params = sorted(name_params or [])
         self.param_hash = get_param_hash(train_config, name_params)
-        self.train_config = train_config
-        self.do_pretraining = True
+
+        self.directory = directory or dps.cfg.log_dir
+
         self.param_dict = OrderedDict((key, train_config[key]) for key in name_params)
 
     def fix_variables(self):
@@ -258,6 +268,17 @@ class ScopedFunction(Parameterized):
             raise Exception("ScopedFunction with scope {} has already been initialized, "
                             "it is an error to call `fix_variables` at this point")
         self.fixed_variables = True
+
+    def save(self, session, filename):
+        updater_variables = {v.name: v for v in self.trainable_variables(for_opt=False)}
+        saver = tf.train.Saver(updater_variables)
+        path = saver.save(tf.get_default_session(), filename)
+        return path
+
+    def restore(self, session, path):
+        updater_variables = {v.name: v for v in self.trainable_variables(for_opt=False)}
+        saver = tf.train.Saver(updater_variables)
+        saver.restore(tf.get_default_session(), path)
 
 
 def get_param_hash(train_config, name_params):

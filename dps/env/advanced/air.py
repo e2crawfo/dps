@@ -1021,14 +1021,10 @@ class AIR_RenderHook(object):
             plt.close(fig)
 
 
-def get_updater(env):
-    network = AIR_Network(env)
-    return yolo_rl.YoloRL_Updater(env, network)
-
-
 config = Config(
     log_name="attend_infer_repeat",
-    get_updater=get_updater,
+    get_updater=yolo_rl.YoloRL_Updater,
+    build_network=AIR_Network,
     build_env=yolo_rl.Env,
 
     curriculum=[dict()] * 12,
@@ -1041,7 +1037,6 @@ config = Config(
     n_patch_examples=0,
     patch_shape=(28, 28),
     spacing=(-6, -6),
-    use_dataset_cache=True,
     image_shape=(50, 50),
     draw_shape_grid=(1, 1),
     max_overlap=200,

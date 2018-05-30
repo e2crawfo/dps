@@ -19,8 +19,6 @@ DEFAULT_CONFIG = Config(
     power_through=True,  # Whether to complete the entire curriculum, even if threshold not reached.
     robust=True,
 
-    use_dataset_cache=False,
-
     patience=np.inf,
 
     render_step=np.inf,
@@ -40,19 +38,11 @@ DEFAULT_CONFIG = Config(
     noise_schedule=None,
     max_grad_norm=None,
 
-    standardize_advantage=True,
-    reset_env=True,
-
-    n_controller_units=64,
-
-    save_utils=False,
-
     max_time=0,
     max_steps=1000000,
     max_experiences=np.inf,
 
-    render_n_rollouts=10,
-    render_hook=rl_render_hook,
+    render_hook=None,
 
     stopping_criteria="",
     eval_mode="val",
@@ -71,6 +61,14 @@ DEFAULT_CONFIG = Config(
 
 RL_EXPERIMENT_CONFIG = DEFAULT_CONFIG.copy(
     name="RLExperiment",
+
+    render_n_rollouts=10,
+    render_hook=rl_render_hook,
+
+    standardize_advantage=True,
+    reset_env=True,
+    n_controller_units=64,
+    save_utils=False,
 
     display_step=100,
     eval_step=100,

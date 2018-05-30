@@ -1052,8 +1052,6 @@ config = Config(
     render_hook=NeuralEM_RenderHook(4),
     render_step=5000,
 
-    use_dataset_cache=True,
-
     # ------- from nem.py --------
 
     noise_prob=0.2,                              # probability of annihilating the pixel

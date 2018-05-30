@@ -6,16 +6,22 @@ import shutil
 import os
 
 from dps import cfg
-from dps.utils import Param, Parameterized
+from dps.utils import Param, Parameterized, Config
 from dps.utils.tf import (
     trainable_variables, ScopedFunction, MLP, FullyConvolutional, tf_mean_sum)
 from dps.env.advanced import yolo_rl, yolo_air
 from dps.datasets import VisualArithmeticDataset
 
 
-def get_math_updater(env):
-    network = YoloAir_MathNetwork(env)
-    return yolo_rl.YoloRL_Updater(env, network)
+class Env(object):
+    def __init__(self):
+        train = VisualArithmeticDataset(n_examples=int(cfg.n_train), shuffle=True, example_range=(0.0, 0.9))
+        val = VisualArithmeticDataset(n_examples=int(cfg.n_val), shuffle=True, example_range=(0.9, 1.))
+
+        self.datasets = dict(train=train, val=val)
+
+    def close(self):
+        pass
 
 
 class SequentialRegressionNetwork(ScopedFunction):
@@ -193,76 +199,6 @@ class YoloAir_MathNetwork(yolo_air.YoloAir_Network):
         )
 
         return result
-
-
-class Env(object):
-    def __init__(self):
-        train = VisualArithmeticDataset(n_examples=int(cfg.n_train), shuffle=True, example_range=(0.0, 0.9))
-        val = VisualArithmeticDataset(n_examples=int(cfg.n_val), shuffle=True, example_range=(0.9, 1.))
-
-        self.datasets = dict(train=train, val=val)
-
-    def close(self):
-        pass
-
-
-config = yolo_air.config.copy(
-    log_name="yolo_math",
-    get_updater=get_math_updater,
-    build_env=Env,
-    stopping_criteria="math_accuracy,max",
-    threshold=1.0,
-
-    patch_shape=(14, 14),
-
-    min_digits=1,
-    max_digits=3,
-    # max_digits=11,
-
-    min_chars=1,
-    max_chars=3,
-    # max_chars=11,
-
-    largest_digit=99,
-    one_hot=True,
-    reductions="sum",
-    # reductions="A:sum,M:prod,N:min,X:max,C:len",
-
-    build_math_network=SequentialRegressionNetwork,
-    build_math_cell=lambda scope: tf.contrib.rnn.LSTMBlockCell(128),
-    build_math_output=lambda scope: MLP([100, 100], scope=scope),
-    build_math_input=lambda scope: MLP([100, 100], scope=scope),
-
-    math_weight=5.0,
-    train_kl=True,
-    train_reconstruction=True,
-    postprocessing="",
-
-    curriculum=[
-        dict(),
-    ],
-
-    image_shape=(48, 48),
-)
-
-big_config = config.copy(
-    image_shape=(84, 84),
-    max_digits=12,
-    max_chars=12,
-)
-
-load_config = big_config.copy(
-    max_steps=10000,
-    curriculum=[
-        dict(fixed_weights="math", math_weight=0.0, postprocessing="random", tile_shape=(48, 48), train_kl=True, train_reconstruction=True),
-        dict(preserve_env=False,),
-    ],
-
-    math_weight=1.0,
-    train_kl=False,
-    train_reconstruction=False,
-    fixed_weights="object_encoder object_decoder box obj backbone edge",
-)
 
 
 class ConvNet(FullyConvolutional):
@@ -545,13 +481,48 @@ class SimpleMath_RenderHook(object):
             os.path.join(os.path.dirname(path), 'latest_stage{:0>4}.pdf'.format(updater.stage_idx)))
 
 
-def get_simple_math_updater(env):
-    network = SimpleMathNetwork(env)
-    return yolo_rl.YoloRL_Updater(env, network)
+env_config = Config(
+    log_name="yolo_math",
+    build_env=Env,
 
+    image_shape=(48, 48),
+    patch_shape=(14, 14),
 
-simple_config = big_config.copy(
-    get_updater=get_simple_math_updater,
+    min_digits=1,
+    max_digits=11,
+
+    largest_digit=99,
+    one_hot=True,
+    reductions="sum",
+    # reductions="A:sum,M:prod,N:min,X:max,C:len",
+)
+
+alg_config = Config(
+    get_updater=yolo_rl.YoloRL_Updater,
+    build_network=YoloAir_MathNetwork,
+    stopping_criteria="math_accuracy,max",
+    threshold=1.0,
+
+    build_math_network=SequentialRegressionNetwork,
+    build_math_cell=lambda scope: tf.contrib.rnn.LSTMBlockCell(128),
+    build_math_output=lambda scope: MLP([100, 100], scope=scope),
+    build_math_input=lambda scope: MLP([100, 100], scope=scope),
+
+    math_weight=5.0,
+    train_kl=True,
+    train_reconstruction=True,
+    postprocessing="",
+
+    curriculum=[
+        dict(),
+    ],
+)
+
+config = alg_config.copy()
+config.update(env_config)
+
+simple_config = config.copy(
+    build_network=SimpleMathNetwork,
     render_hook=SimpleMath_RenderHook(),
     stopping_criteria="math_accuracy,max",
     threshold=1.0,

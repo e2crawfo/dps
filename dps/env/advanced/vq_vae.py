@@ -7,7 +7,7 @@ from dps.updater import DifferentiableUpdater
 from dps.env.supervised import BernoulliSigmoid
 from dps.datasets import EmnistObjectDetectionDataset
 from dps.utils import Config, Param
-from dps.utils.tf import VQ_FullyConvolutional, FullyConvolutional, ScopedFunction, tf_mean_sum
+from dps.utils.tf import VQ_FullyConvolutional, FullyConvolutional, ScopedFunction
 
 
 tf_flatten = tf.layers.flatten
@@ -208,8 +208,6 @@ config = Config(
     beta=4.0,
 
     image_shape=(28, 28),
-
-    use_dataset_cache=True,
 
     H=4,
     W=4,
