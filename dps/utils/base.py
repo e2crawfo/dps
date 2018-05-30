@@ -25,6 +25,7 @@ import hashlib
 import configparser
 import socket
 from zipfile import ZipFile
+import importlib
 
 import clify
 import dps
@@ -259,7 +260,7 @@ class GitSummary(object):
         s = []
         with cd(self.directory):
             s.append("*" * 40)
-            s.append("GitSummary for directory {}\n".format(self.directory))
+            s.append("git summary for directory {}\n".format(self.directory))
 
             s.append("log:\n")
             log = _run_cmd('git log -n {}'.format(n_logs))
@@ -276,12 +277,30 @@ class GitSummary(object):
             else:
                 s.append("<ommitted>")
 
-            s.append("\nEnd of GitSummary for directory {}".format(self.directory))
-            s.append("*" * 40)
+            s.append("\nEnd of git summary for directory {}".format(self.directory))
+            s.append("*" * 40 + "\n")
         return '\n'.join(s)
 
     def freeze(self):
         pass
+
+
+def find_git_packages():
+    all_packages = pip_freeze()
+    all_packages = all_packages.split('\n')
+
+    git_packages = [p.split('=')[-1] for p in all_packages if p.startswith('-e git+')]
+
+    vc_packages = []
+
+    for p in git_packages:
+        package = importlib.import_module(p)
+        directory = os.path.dirname(os.path.dirname(package.__file__))
+        git_dir = os.path.join(directory, '.git')
+
+        if os.path.isdir(git_dir):
+            vc_packages.append(package)
+    return vc_packages
 
 
 def module_git_summary(module, **kwargs):
@@ -475,18 +494,11 @@ class ExperimentDirectory(object):
         os.makedirs(full_path, exist_ok=exist_ok)
         return full_path
 
-    def record_environment(self, config=None, dill_recurse=False,
-                           git_modules=None, git_diff=True):
-
-        git_modules = [] if git_modules is None else git_modules
-        if not isinstance(git_modules, list):
-            git_modules = [git_modules]
-
-        for module in git_modules:
-            git_summary = module_git_summary(module)
-            git_summary_path = self.path_for(module.__name__ + '_git_summary.txt')
-
-            with open(git_summary_path, 'w') as f:
+    def record_environment(self, config=None, dill_recurse=False, git_diff=True):
+        with open(self.path_for('git_summary.txt'), 'w') as f:
+            git_packages = find_git_packages()
+            for module in git_packages:
+                git_summary = module_git_summary(module)
                 f.write(git_summary.summarize(diff=git_diff))
 
         uname_path = self.path_for("uname.txt")

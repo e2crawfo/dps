@@ -24,38 +24,6 @@ def count_trainable_variables(tvars):
     return np.sum([np.prod(v.get_shape().as_list()) for v in tvars])
 
 
-class Summarizer(object):
-    def __init__(self, eval_funcs):
-        self.info = []
-        summaries = []
-
-        for name, func in self.eval_funcs.items():
-            placeholder = tf.placeholder((), tf.float32)
-
-            self.info.append(
-                dict(
-                    name=name,
-                    func=func,
-                    placeholder=placeholder,
-                )
-            )
-
-            summaries.append(tf.summary.scalar(name, placeholder))
-        self.summary_op = tf.summary.merge(summaries)
-
-    def eval(self, func_inp):
-        values = {}
-        feed_dict = {}
-        for info in self.info:
-            value = info['func'](func_inp)
-            feed_dict[info['placeholder']] = value
-            values[info['name']] = value
-
-        sess = tf.get_default_session()
-        summary = sess.run(self.summary_op, feed_dict=feed_dict)
-        return values, summary
-
-
 def tf_normal_kl(q_mean, q_std, p_mean, p_std):
     return tf.log(p_std / q_std) + (q_std**2 + (q_mean - p_mean)**2) / (2 * p_std**2) - 0.5
 
