@@ -804,9 +804,10 @@ class YoloAir_Network(Parameterized):
 
         # --- other evaluation metrics
 
-        count_1norm = tf.to_float(tf.abs(tf.to_int32(self._tensors["pred_n_objects"]) - self._tensors["n_annotations"]))
-        recorded_tensors["count_1norm"] = tf.reduce_mean(count_1norm)
-        recorded_tensors["count_error"] = tf.reduce_mean(tf.to_float(count_1norm > 0.5))
+        if "n_annotations" in self._tensors:
+            count_1norm = tf.to_float(tf.abs(tf.to_int32(self._tensors["pred_n_objects"]) - self._tensors["n_annotations"]))
+            recorded_tensors["count_1norm"] = tf.reduce_mean(count_1norm)
+            recorded_tensors["count_error"] = tf.reduce_mean(tf.to_float(count_1norm > 0.5))
 
         return {
             "tensors": self._tensors,
@@ -833,17 +834,22 @@ class YoloAir_RenderHook(object):
         to_fetch = network.program.copy()
 
         to_fetch["images"] = network._tensors["inp"]
-        to_fetch["annotations"] = network._tensors["annotations"]
-        to_fetch["n_annotations"] = network._tensors["n_annotations"]
         to_fetch["output"] = network._tensors["output"]
         to_fetch["objects"] = network._tensors["objects"]
         to_fetch["n_objects"] = network._tensors["n_objects"]
         to_fetch["normalized_box"] = network._tensors["normalized_box"]
         to_fetch["input_glimpses"] = network._tensors["input_glimpses"]
 
+        if "n_annotations" in network._tensors:
+            to_fetch["annotations"] = network._tensors["annotations"]
+            to_fetch["n_annotations"] = network._tensors["n_annotations"]
+
         if 'prediction' in network._tensors:
             to_fetch["prediction"] = network._tensors["prediction"]
             to_fetch["targets"] = network._tensors["targets"]
+
+        if "actions" in network._tensors:
+            to_fetch["actions"] = network._tensors["actions"]
 
         to_fetch = {k: v[:self.N] for k, v in to_fetch.items()}
 
@@ -869,8 +875,10 @@ class YoloAir_RenderHook(object):
         )
         box = box.reshape(self.N, H*W*B, 4)
 
-        annotations = fetched["annotations"]
-        n_annotations = fetched["n_annotations"]
+        n_annotations = fetched.get("n_annotations", [0] * self.N)
+        annotations = fetched.get("annotations", None)
+
+        actions = fetched.get("actions", None)
 
         sqrt_N = int(np.ceil(np.sqrt(self.N)))
 
@@ -887,10 +895,12 @@ class YoloAir_RenderHook(object):
             ax1 = axes[2*i, 2*j]
             ax1.imshow(gt, vmin=0.0, vmax=1.0)
 
+            title = ""
             if prediction is not None:
-                _target = targets[n]
-                _prediction = prediction[n]
-                ax1.set_title("target={}, prediction={}".format(np.argmax(_target), np.argmax(_prediction)))
+                title += "target={}, prediction={}".format(np.argmax(targets[n]), np.argmax(prediction[n]))
+            if actions is not None:
+                title += ", actions={}".format(actions[n, 0])
+            ax1.set_title(title)
 
             ax2 = axes[2*i, 2*j+1]
             ax2.imshow(pred, vmin=0.0, vmax=1.0)
@@ -1016,8 +1026,10 @@ xkcd_colors = 'viridian,cerulean,vermillion,lavender,celadon,fuchsia,saffron,cin
 
 # env config
 
-config = Config(
+env_config = Config(
     log_name="yolo_air",
+
+    build_env=yolo_rl.Env,
     seed=347405995,
 
     min_chars=12,
@@ -1061,9 +1073,8 @@ config = Config(
 
 
 # This works quite well if it is trained for long enough.
-config.update(
+alg_config = Config(
     get_updater=get_updater,
-    build_env=yolo_rl.Env,
 
     lr_schedule=1e-4,
     batch_size=32,
@@ -1125,6 +1136,9 @@ config.update(
         dict(do_train=False, n_train=16, min_chars=1, postprocessing="", preserve_env=False),
     ],
 )
+
+config = env_config.copy()
+config.update(alg_config)
 
 big_single_config = config.copy(
     image_shape=(40, 40),

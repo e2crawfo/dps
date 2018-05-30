@@ -70,6 +70,38 @@ class SequentialRegressionNetwork(ScopedFunction):
         return self.output_network(final_layer_input, output_size, is_training)
 
 
+class ObjectBasedRegressionNetwork(ScopedFunction):
+    n_objects = Param(5)
+
+    embedding = None
+    output_network = None
+
+    def _call(self, _inp, output_size, is_training):
+        """ program is the program dictionary from YoloAir_Network """
+
+        batch_size = tf.shape(_inp)[0]
+        H, W, B, A = tuple(int(i) for i in _inp.shape[1:])
+
+        if self.embedding is None:
+            self.embedding = tf.get_variable(
+                "embedding", shape=(int(A/2), self.n_objects), dtype=tf.float32)
+
+        inp = tf.reshape(_inp, (batch_size, H * W * B, A))
+        key, value = tf.split(inp, 2, axis=2)
+        raw_attention = tf.tensordot(key, self.embedding, [[2], [0]])
+        attention = tf.nn.softmax(raw_attention, axis=1)
+
+        attention_t = tf.transpose(attention, (0, 2, 1))
+        weighted_value = tf.matmul(attention_t, value)
+
+        flat_weighted_value = tf.reshape(weighted_value, (batch_size, self.n_objects * int(A/2)))
+
+        if self.output_network is None:
+            self.output_network = cfg.build_math_output(scope="math_output")
+
+        return self.output_network(flat_weighted_value, output_size, is_training)
+
+
 class ConvolutionalRegressionNetwork(ScopedFunction):
     network = None
 
@@ -89,6 +121,10 @@ class YoloAir_MathNetwork(yolo_air.YoloAir_Network):
     math_input_network = None
     math_network = None
 
+    @property
+    def n_classes(self):
+        return self.largest_digit + 1
+
     def trainable_variables(self, for_opt):
         tvars = super(YoloAir_MathNetwork, self).trainable_variables(for_opt)
         math_network_tvars = trainable_variables(self.math_network.scope, for_opt=for_opt)
@@ -96,6 +132,10 @@ class YoloAir_MathNetwork(yolo_air.YoloAir_Network):
         math_input_network_tvars = trainable_variables(self.math_input_network.scope, for_opt=for_opt)
         tvars.extend(math_input_network_tvars)
         return tvars
+
+    def build_math_representation(self, math_attr):
+        # Use raw_obj so that there is no discrepancy between validation and train
+        return self._tensors["raw_obj"] * math_attr
 
     def build_graph(self, *args, **kwargs):
         result = super(YoloAir_MathNetwork, self).build_graph(*args, **kwargs)
@@ -111,8 +151,7 @@ class YoloAir_MathNetwork(yolo_air.YoloAir_Network):
         math_attr = tf.reshape(math_attr, (self.batch_size, self.H, self.W, self.B, self.A))
         self._tensors["math_attr"] = math_attr
 
-        # Use raw_obj so that there is no discrepancy between validation and train
-        _inp = self._tensors["raw_obj"] * math_attr
+        _inp = self.build_math_representation(math_attr)
 
         if self.math_network is None:
             self.math_network = cfg.build_math_network(scope="math_network")
@@ -120,7 +159,7 @@ class YoloAir_MathNetwork(yolo_air.YoloAir_Network):
             if "math" in self.fixed_weights:
                 self.math_network.fix_variables()
 
-        logits = self.math_network(_inp, self.largest_digit + 1, self.is_training)
+        logits = self.math_network(_inp, self.n_classes, self.is_training)
 
         if self.math_weight is not None:
             result["recorded_tensors"]["raw_loss_math"] = tf.reduce_mean(
@@ -171,6 +210,8 @@ config = yolo_air.config.copy(
     log_name="yolo_math",
     get_updater=get_math_updater,
     build_env=Env,
+    stopping_criteria="math_accuracy,max",
+    threshold=1.0,
 
     patch_shape=(14, 14),
 
@@ -305,6 +346,13 @@ class SimpleMathNetwork(Parameterized):
             targets=labels[2],
         )
 
+    def build_math_representation(self, math_code):
+        return math_code
+
+    @property
+    def n_classes(self):
+        return self.largest_digit + 1
+
     def build_graph(self, inp, labels, is_training, background):
         attr_dim = 2 * self.A if self.variational else self.A
 
@@ -387,7 +435,9 @@ class SimpleMathNetwork(Parameterized):
         self._tensors["math_code"] = tf.reshape(math_code, (self.batch_size, self.H, self.W, self.A))
         math_code = tf.reshape(math_code, (self.batch_size, self.H, self.W, 1, self.A))
 
-        logits = self.math_network(math_code, self.largest_digit + 1, self.is_training)
+        math_code = self.build_math_representation(math_code)
+
+        logits = self.math_network(math_code, self.n_classes, self.is_training)
 
         if self.math_weight is not None:
             recorded_tensors["raw_loss_math"] = tf.reduce_mean(
@@ -501,7 +551,6 @@ def get_simple_math_updater(env):
 
 
 simple_config = big_config.copy(
-    log_name="yolo_math_simple",
     get_updater=get_simple_math_updater,
     render_hook=SimpleMath_RenderHook(),
     stopping_criteria="math_accuracy,max",

@@ -52,6 +52,9 @@ class ImageFeature(ArrayFeature):
 
 class Dataset(Parameterized):
     n_examples = Param(None)
+
+    # Use of this seed is currently broken (though its not super important)...
+    # each dataset should generate its own seed, which it uses to index into the cache.
     seed = Param(None)
 
     _features = None
@@ -299,6 +302,112 @@ class OmniglotDataset(ImageClassificationDataset):
             self._write_example(_x, class_map[_y])
 
 
+class ImageDataset(Dataset):
+    postprocessing = Param("")
+    tile_shape = Param(None)
+    n_samples_per_image = Param(1)
+
+    @property
+    def obs_shape(self):
+        if self.postprocessing:
+            return self.tile_shape + (self.depth,)
+        else:
+            return self.image_shape + (self.depth,)
+
+    def _tile_postprocess(self, image, annotations):
+        height, width, n_channels = image.shape
+
+        hangover = width % self.tile_shape[1]
+        if hangover != 0:
+            pad_amount = self.tile_shape[1] - hangover
+            pad_shape = (height, pad_amount)
+            padding = np.zeros(pad_shape)
+            image = np.concat([image, padding], axis=2)
+
+        hangover = height % self.tile_shape[0]
+        if hangover != 0:
+            pad_amount = self.tile_shape[0] - hangover
+            pad_shape = list(image.shape)
+            pad_shape[1] = pad_amount
+            padding = np.zeros(pad_shape)
+            image = np.concat([image, padding], axis=1)
+
+        pad_height = self.tile_shape[0] - height % self.tile_shape[0]
+        pad_width = self.tile_shape[1] - width % self.tile_shape[1]
+        image = np.pad(image, ((0, pad_height), (0, pad_width), (0, 0)), 'constant')
+
+        H = int(height / self.tile_shape[0])
+        W = int(width / self.tile_shape[1])
+
+        slices = np.split(image, W, axis=1)
+        new_shape = (H, *self.tile_shape, n_channels)
+        slices = [np.reshape(s, new_shape) for s in slices]
+        new_images = np.concatenate(slices, axis=1)
+        new_images = new_images.reshape(H * W, *self.tile_shape, n_channels)
+
+        new_annotations = []
+
+        for h in range(H):
+            for w in range(W):
+                offset = (h * self.tile_shape[0], w * self.tile_shape[1])
+                _new_annotations = []
+                for l, top, bottom, left, right in annotations:
+                    # Transform to tile co-ordinates
+                    top = top - offset[0]
+                    bottom = bottom - offset[0]
+                    left = left - offset[1]
+                    right = right - offset[1]
+
+                    # Restrict to chosen crop
+                    top = np.clip(top, 0, self.tile_shape[0])
+                    bottom = np.clip(bottom, 0, self.tile_shape[0])
+                    left = np.clip(left, 0, self.tile_shape[1])
+                    right = np.clip(right, 0, self.tile_shape[1])
+
+                    invalid = (bottom - top < 1e-6) or (right - left < 1e-6)
+
+                    if not invalid:
+                        _new_annotations.append((l, top, bottom, left, right))
+
+                new_annotations.append(_new_annotations)
+
+        return new_images, new_annotations
+
+    def _random_postprocess(self, image, annotations):
+        height, width, _ = image.shape
+        new_images = []
+        new_annotations = []
+
+        for j in range(self.n_samples_per_image):
+            _top = np.random.randint(0, height-self.tile_shape[0]+1)
+            _left = np.random.randint(0, width-self.tile_shape[1]+1)
+
+            crop = image[_top:_top+self.tile_shape[0], _left:_left+self.tile_shape[1], ...]
+            new_images.append(crop)
+
+            offset = (_top, _left)
+            _new_annotations = []
+            for l, top, bottom, left, right in annotations:
+                top = top - offset[0]
+                bottom = bottom - offset[0]
+                left = left - offset[1]
+                right = right - offset[1]
+
+                top = np.clip(top, 0, self.tile_shape[0])
+                bottom = np.clip(bottom, 0, self.tile_shape[0])
+                left = np.clip(left, 0, self.tile_shape[1])
+                right = np.clip(right, 0, self.tile_shape[1])
+
+                invalid = (bottom - top < 1e-6) or (right - left < 1e-6)
+
+                if not invalid:
+                    _new_annotations.append((l, top, bottom, left, right))
+
+            new_annotations.append(_new_annotations)
+
+        return new_images, new_annotations
+
+
 class Rectangle(object):
     def __init__(self, y, x, h, w):
         self.top = y
@@ -332,7 +441,7 @@ class Rectangle(object):
         return "Rectangle({}:{}, {}:{})".format(self.top, self.bottom, self.left, self.right)
 
 
-class PatchesDataset(Dataset):
+class PatchesDataset(ImageDataset):
     max_overlap = Param(10)
     image_shape = Param((100, 100))
     draw_shape = Param(None)
@@ -352,11 +461,7 @@ class PatchesDataset(Dataset):
     max_attempts = Param(10000)
     colours = Param('red green blue')
 
-    postprocessing = Param("")
-    tile_shape = Param(None)
-    n_samples_per_image = Param(1)
     one_hot = Param(True)
-
     plot_every = Param(None)
 
     features = {
@@ -373,13 +478,6 @@ class PatchesDataset(Dataset):
     @property
     def depth(self):
         return 3 if self.colours else 1
-
-    @property
-    def obs_shape(self):
-        if self.postprocessing:
-            return self.tile_shape + (self.depth,)
-        else:
-            return self.image_shape + (self.depth,)
 
     def _write_example(self, image, annotation, label):
         if self.postprocessing == "tile":
@@ -722,99 +820,6 @@ class PatchesDataset(Dataset):
         alpha = img[:, :, None]
 
         return np.concatenate([rgb, alpha], axis=2).astype(np.uint8)
-
-    def _tile_postprocess(self, image, annotations):
-        height, width, n_channels = image.shape
-
-        hangover = width % self.tile_shape[1]
-        if hangover != 0:
-            pad_amount = self.tile_shape[1] - hangover
-            pad_shape = (height, pad_amount)
-            padding = np.zeros(pad_shape)
-            image = np.concat([image, padding], axis=2)
-
-        hangover = height % self.tile_shape[0]
-        if hangover != 0:
-            pad_amount = self.tile_shape[0] - hangover
-            pad_shape = list(image.shape)
-            pad_shape[1] = pad_amount
-            padding = np.zeros(pad_shape)
-            image = np.concat([image, padding], axis=1)
-
-        pad_height = self.tile_shape[0] - height % self.tile_shape[0]
-        pad_width = self.tile_shape[1] - width % self.tile_shape[1]
-        image = np.pad(image, ((0, pad_height), (0, pad_width), (0, 0)), 'constant')
-
-        H = int(height / self.tile_shape[0])
-        W = int(width / self.tile_shape[1])
-
-        slices = np.split(image, W, axis=1)
-        new_shape = (H, *self.tile_shape, n_channels)
-        slices = [np.reshape(s, new_shape) for s in slices]
-        new_images = np.concatenate(slices, axis=1)
-        new_images = new_images.reshape(H * W, *self.tile_shape, n_channels)
-
-        new_annotations = []
-
-        for h in range(H):
-            for w in range(W):
-                offset = (h * self.tile_shape[0], w * self.tile_shape[1])
-                _new_annotations = []
-                for l, top, bottom, left, right in annotations:
-                    # Transform to tile co-ordinates
-                    top = top - offset[0]
-                    bottom = bottom - offset[0]
-                    left = left - offset[1]
-                    right = right - offset[1]
-
-                    # Restrict to chosen crop
-                    top = np.clip(top, 0, self.tile_shape[0])
-                    bottom = np.clip(bottom, 0, self.tile_shape[0])
-                    left = np.clip(left, 0, self.tile_shape[1])
-                    right = np.clip(right, 0, self.tile_shape[1])
-
-                    invalid = (bottom - top < 1e-6) or (right - left < 1e-6)
-
-                    if not invalid:
-                        _new_annotations.append((l, top, bottom, left, right))
-
-                new_annotations.append(_new_annotations)
-
-        return new_images, new_annotations
-
-    def _random_postprocess(self, image, annotations):
-        height, width, _ = image.shape
-        new_images = []
-        new_annotations = []
-
-        for j in range(self.n_samples_per_image):
-            _top = np.random.randint(0, height-self.tile_shape[0]+1)
-            _left = np.random.randint(0, width-self.tile_shape[1]+1)
-
-            crop = image[_top:_top+self.tile_shape[0], _left:_left+self.tile_shape[1], ...]
-            new_images.append(crop)
-
-            offset = (_top, _left)
-            _new_annotations = []
-            for l, top, bottom, left, right in annotations:
-                top = top - offset[0]
-                bottom = bottom - offset[0]
-                left = left - offset[1]
-                right = right - offset[1]
-
-                top = np.clip(top, 0, self.tile_shape[0])
-                bottom = np.clip(bottom, 0, self.tile_shape[0])
-                left = np.clip(left, 0, self.tile_shape[1])
-                right = np.clip(right, 0, self.tile_shape[1])
-
-                invalid = (bottom - top < 1e-6) or (right - left < 1e-6)
-
-                if not invalid:
-                    _new_annotations.append((l, top, bottom, left, right))
-
-            new_annotations.append(_new_annotations)
-
-        return new_images, new_annotations
 
     def visualize(self, n=4):
         batch_size = n

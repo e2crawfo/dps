@@ -1,51 +1,22 @@
 import tensorflow as tf
 
 from dps import cfg
-from dps.utils import Param
-from dps.utils.tf import trainable_variables, MLP, LeNet, tf_mean_sum
-from dps.env.advanced import yolo_rl, yolo_math
-from dps.datasets import VisualArithmetic
+from dps.utils import Param, Config
+from dps.env.advanced import yolo_math, yolo_rl
+from dps.datasets.atari import RewardClassificationDataset
 
 
-def get_regression_updater(env):
-    network = YoloRL_RegressionNetwork(env)
-    return yolo_rl.YoloRL_Updater(env, network)
-
-
-class YoloRL_RegressionNetwork(yolo_rl.YoloRL_Network):
-    regression_weight = Param()
-    regression_dim = Param(1)
-
-    regression_network = None
-
-    def trainable_variables(self, for_opt):
-        tvars = super(YoloRL_RegressionNetwork, self).trainable_variables(for_opt)
-        regression_network_tvars = trainable_variables(self.regression_network.scope, for_opt=for_opt)
-        tvars.extend(regression_network_tvars)
-        return tvars
-
-    def build_graph(self, *args, **kwargs):
-        result = super(YoloRL_RegressionNetwork, self).build_graph(*args, **kwargs)
-
-        if self.regression_network is None:
-            self.regression_network = cfg.build_regression_network(scope="regression_network")
-
-            if "regression" in self.fixed_weights:
-                self.regression_network.fix_variables()
-
-        output = self.regression_network(self.program, self.regression_dim, self.is_training)
-
-        result["recorded_tensors"]["raw_loss_regression"] = tf_mean_sum((self._tensors["targets"] - output)**2)
-
-        result["losses"]["regression"] = self.regression_weight * result["recorded_tensors"]["raw_loss_regression"]
-
-        return result
-
-
-class Env(object):
+class XO_Env(object):
     def __init__(self):
-        train = VisualArithmetic(n_examples=int(cfg.n_train), shuffle=True, example_range=(0.0, 0.9))
-        val = VisualArithmetic(n_examples=int(cfg.n_val), shuffle=True, example_range=(0.9, 1.))
+        train = RewardClassificationDataset(
+            rl_data_location=cfg.train_rl_data_location,
+            max_examples_per_class=cfg.n_train_per_class,
+            balanced=cfg.train_balanced)
+
+        val = RewardClassificationDataset(
+            rl_data_location=cfg.val_rl_data_location,
+            max_examples_per_class=cfg.n_val_per_class,
+            balanced=True)
 
         self.datasets = dict(train=train, val=val)
 
@@ -53,21 +24,162 @@ class Env(object):
         pass
 
 
-config = yolo_rl.config.copy(
-    get_updater=get_regression_updater,
-    build_env=Env,
+class YoloAIR_XONetwork(yolo_math.YoloAir_MathNetwork):
+    n_actions = Param()
+    classes = Param()
 
-    build_regression_network=yolo_math.SequentialRegressionNetwork,
+    def __init__(self, env, **kwargs):
+        super(YoloAIR_XONetwork, self).__init__(env, **kwargs)
+        self.eval_funcs = dict()
 
-    build_regression_cell=lambda scope: tf.contrib.rnn.LSTMBlockCell(128),
-    build_regression_output=lambda scope: MLP([100, 100], scope=scope),
-    build_digit_classifier=lambda scope: LeNet(128, scope=scope),
+    @property
+    def n_classes(self):
+        return len(self.classes)
 
-    regression_weight=1.0,
+    def build_math_representation(self, math_attr):
+        one_hot_actions = tf.one_hot(tf.to_int32(self._tensors["actions"][:, 0]), self.n_actions)
+        actions = tf.tile(one_hot_actions[:, None, None, None, :], (1, self.H, self.W, self.B, 1))
+
+        attr_rep = self._tensors["raw_obj"] * math_attr
+
+        return tf.concat([attr_rep, self.program["box"], actions], axis=4)
+
+    def _process_labels(self, labels):
+        self._tensors.update(
+            actions=labels[0],
+            targets=labels[1],
+        )
+
+
+def get_xo_updater(env):
+    network = YoloAIR_XONetwork(env)
+    return yolo_rl.YoloRL_Updater(env, network)
+
+
+env_config = Config(
+    log_name="yolo_xo",
+
+    build_env=XO_Env,
+    one_hot=True,
+
+    # image_shape=(72, 72),
+    # tile_shape=(48, 48),
+    # postprocessing="random",
+    # train_rl_data_location="/media/data/Dropbox/projects/PyDSRL/train",
+    # val_rl_data_location="/media/data/Dropbox/projects/PyDSRL/val",
+    # n_train_per_class=10000,
+
+    n_train_per_class=5000,
+    train_rl_data_location="/media/data/Dropbox/projects/PyDSRL/train_48x48",
+    val_rl_data_location="/media/data/Dropbox/projects/PyDSRL/val_48x48",
+    image_shape=(48, 48),
+    tile_shape=(48, 48),
+    postprocessing="",
+    n_samples_per_image=4,
+    train_balanced=False,
+
+    classes=[-1, 0, 1],
+    n_actions=4,
+
+    n_val_per_class=100,
+)
+
+alg_config = Config(
+    get_updater=get_xo_updater,
+    math_weight=1.0,
+    train_kl=True,
+    train_reconstruction=True,
+    min_yx=-0.5,
+    max_yx=1.5,
+
+    # build_math_network=yolo_math.SequentialRegressionNetwork,
+    build_math_network=yolo_math.ObjectBasedRegressionNetwork,
+    n_objects=3,
+
     curriculum=[
-        # dict(regression_weight=None, do_train=False),
-        # dict(regression_weight=1.0, postprocessing=""),
-        dict(regression_weight=1.0),
-        # dict(regression_weight=1.0),
+        dict(
+            max_steps=3000,
+            math_weight=0.0,
+            fixed_weights="math",
+            stopping_criteria="loss_reconstruction,min",
+            threshold=0.0,
+        ),
+        dict(
+            render_step=10000,
+            max_steps=100000000,
+            postprocessing="",
+            preserve_env=False,
+            math_weight=1.0,
+            train_kl=False,
+            train_reconstruction=False,
+            fixed_weights="object_encoder object_decoder box obj backbone edge",
+        )
+    ],
+)
+
+config = yolo_math.config.copy()
+config.update(alg_config)
+config.update(env_config)
+
+
+class SimpleXONetwork(yolo_math.SimpleMathNetwork):
+    largest_digit = None
+    n_actions = Param()
+    classes = Param()
+
+    @property
+    def n_classes(self):
+        return len(self.classes)
+
+    def build_math_representation(self, math_code):
+        one_hot_actions = tf.one_hot(tf.to_int32(self._tensors["actions"][:, 0]), self.n_actions)
+        actions = tf.tile(one_hot_actions[:, None, None, None, :], (1, self.H, self.W, 1, 1))
+        return tf.concat([math_code, actions], axis=4)
+
+    def _process_labels(self, labels):
+        self._tensors.update(
+            actions=labels[0],
+            targets=labels[1],
+        )
+
+
+def get_simple_xo_updater(env):
+    network = SimpleXONetwork(env)
+    return yolo_rl.YoloRL_Updater(env, network)
+
+
+simple_xo_config = yolo_math.simple_config.copy()
+simple_xo_config.update(env_config)
+simple_xo_config.update(
+    get_updater=get_simple_xo_updater,
+
+    train_reconstruction=False,
+    train_kl=False,
+    variational=False,
+)
+
+simple_xo_2stage_config = simple_xo_config.copy(
+    get_updater=get_xo_updater,
+
+    math_weight=1.0,
+    train_reconstruction=True,
+    variational=False,
+
+    curriculum=[
+        dict(
+            math_weight=0.0,
+            fixed_weights="math",
+            stopping_criteria="loss_reconstruction,min",
+            threshold=0.0,
+            noise_schedule=0.001,  # Helps avoid collapse
+        ),
+        dict(
+            max_steps=100000000,
+            postprocessing="",
+            preserve_env=False,
+            math_weight=1.0,
+            train_reconstruction=False,
+            fixed_weights="object_encoder object_decoder box obj backbone edge",
+        )
     ],
 )
