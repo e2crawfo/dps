@@ -5,6 +5,7 @@ import tensorflow as tf
 import matplotlib
 import matplotlib.pyplot as plt
 import pprint
+import shutil
 
 from dps import cfg
 from dps.utils import image_to_string, Param, Parameterized, get_param_hash
@@ -12,6 +13,50 @@ from dps.datasets import (
     load_emnist, load_omniglot, omniglot_classes,
     load_backgrounds, background_names
 )
+
+
+class RawDataset(Parameterized):
+    """ A non-tensorflow dataset, wrapper for data that we might want to cache. """
+
+    def __init__(self, **kwargs):
+        print("Trying to find dataset in cache...")
+
+        directory = os.path.join(cfg.data_dir, "cached_datasets", self.__class__.__name__)
+        os.makedirs(directory, exist_ok=True)
+
+        params = self.param_values()
+        param_hash = get_param_hash(params)
+        print(self.__class__.__name__)
+        print("Params:")
+        pprint.pprint(params)
+        print("Param hash: {}".format(param_hash))
+
+        self.directory = os.path.join(directory, str(param_hash))
+
+        if not os.path.exists(self.directory):
+            print("Directory for dataset not found, creating...")
+            os.makedirs(self.directory, exist_ok=False)
+
+            try:
+                self._make()
+                print("Done creating dataset.")
+            except BaseException:
+                try:
+                    shutil.rmtree(self.directory)
+                except FileNotFoundError:
+                    pass
+                raise
+
+            with open(os.path.join(self.directory, "config.txt"), 'w') as f:
+                f.write(pprint.pformat(params))
+        else:
+            print("Found.")
+
+        print()
+
+    def _make(self):
+        """ Write data to `self.directory`. """
+        raise Exception("AbstractMethod.")
 
 
 class ArrayFeature(object):

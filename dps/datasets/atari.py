@@ -298,7 +298,7 @@ class RewardClassificationDataset(ReinforcementLearningDataset):
     classes = Param()
     one_hot = Param(True)
     max_examples_per_class = Param(None)
-    balanced = Param()
+    balanced = Param(False)
 
     store_o = True
     store_a = True
@@ -362,7 +362,7 @@ class RewardClassificationDataset(ReinforcementLearningDataset):
             # Only one observation, and no actions or rewards
             return
 
-        if self.max_episode_length is not None:
+        if self.max_episode_length is not None and episode_length > self.max_episode_length:
             indices = np.random.choice(episode_length, size=self.max_episode_length, replace=False)
         else:
             indices = np.arange(episode_length)
