@@ -6,13 +6,15 @@ from dps.rl import rl_render_hook
 
 
 DEFAULT_CONFIG = Config(
-    log_name="Default",
+    env_name="default_env",
+    exp_name="",
+
     seed=-1,
 
     curriculum=[{}],
 
     load_path="",  # Path to load variables from.
-    load_stage=None,
+    load_stage=-1,
     load_final=False,
     do_train=True,
     preserve_env=False,

@@ -23,7 +23,7 @@ config = Config(
     build_env=build_env,
     T=30,
     curriculum=[dict(width=2, base=10)],
-    log_name='pointer',
+    env_name='pointer',
 )
 
 

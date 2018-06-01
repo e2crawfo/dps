@@ -13,7 +13,7 @@ def build_grid():
 config = Config(
     build_env=build_grid,
     curriculum=[dict(), dict()],
-    log_name='grid',
+    env_name='grid',
     restart_prob=0.0,
     l2l=False,
     shape=(5, 5),

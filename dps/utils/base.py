@@ -249,7 +249,7 @@ def sha_cache(directory, recurse=False):
 def _run_cmd(cmd):
     if isinstance(cmd, str):
         cmd = cmd.split()
-    return subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode()
+    return subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode()
 
 
 class GitSummary(object):
@@ -1466,7 +1466,7 @@ class ConfigStack(dict, metaclass=Singleton):
 
     @property
     def log_dir(self):
-        return os.path.join(self.log_root, self.log_name)
+        return os.path.join(self.log_root, self.env_name)
 
     def update_from_command_line(self):
         cl_args = clify.wrap_object(self).parse()

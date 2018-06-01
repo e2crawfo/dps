@@ -13,7 +13,7 @@ def build_env():
 config = Config(
     build_env=build_env,
     curriculum=[dict()],
-    log_name='cliff_walk',
+    env_name='cliff_walk',
     T=20,
     n_states=10,
     order=None,

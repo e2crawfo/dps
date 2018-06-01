@@ -646,7 +646,7 @@ xkcd_colors = 'viridian,cerulean,vermillion,lavender,celadon,fuchsia,saffron,cin
 
 
 config = Config(
-    log_name="yolo",
+    env_name="yolo",
 
     get_updater=get_differentiable_updater,
     render_hook=yolo_render_hook,

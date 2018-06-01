@@ -477,7 +477,7 @@ def build_search(
             f.write(readme)
 
     print(config)
-    exp_dir.record_environment(config=config, git_modules=dps)
+    exp_dir.record_environment(config=config)
 
     print("Building parameter search at {}.".format(exp_dir.path))
 
@@ -515,7 +515,7 @@ def build_search(
 
 
 def build_and_submit(
-        name, config, distributions=None, wall_time="1year", n_param_settings=0,
+        name, config, distributions, wall_time="1year", n_param_settings=0,
         n_repeats=1, do_local_test=False, kind="local", readme="", **run_kwargs):
     """ Build a job and submit it. Meant to be called from within a script.
 

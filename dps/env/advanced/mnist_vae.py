@@ -177,7 +177,7 @@ def mnist_vae_render_hook(updater):
 
 
 config = Config(
-    log_name="mnist_vae",
+    env_name="mnist_vae",
     build_env=build_env,
     get_updater=get_updater,
     min_chars=1,

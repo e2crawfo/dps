@@ -11,7 +11,7 @@ config = DEFAULT_CONFIG.copy()
 
 
 config.update(
-    log_name="cartpole",
+    env_name="cartpole",
 
     build_env=build_env,
 

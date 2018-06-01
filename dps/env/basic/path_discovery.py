@@ -17,7 +17,7 @@ config = Config(
         dict(shape=(3, 3), threshold=4),
         dict(shape=(4, 4), threshold=2)
     ],
-    log_name='path_discovery',
+    env_name='path_discovery',
     shape=(3, 3),
     T=10,
     stopping_criteria="reward_per_ep,max",

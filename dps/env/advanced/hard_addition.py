@@ -26,7 +26,7 @@ config = Config(
     curriculum=[
         dict(height=2, width=3, base=2, entropy_start=1.0),
         dict(height=2, width=3, base=2, entropy_start=0.0)],
-    log_name='hard_addition',
+    env_name='hard_addition',
 )
 
 

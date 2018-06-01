@@ -129,7 +129,7 @@ class ParallelSession(object):
             delete_old=False, prefix="run_search")
 
         job_dir = es.new_experiment(name, 0, add_date=add_date, force_fresh=1)
-        job_dir.record_environment(git_modules=[dps])
+        job_dir.record_environment()
 
         job_path = job_dir.path
         job_dir.make_directory('experiments')

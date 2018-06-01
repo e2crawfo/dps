@@ -25,7 +25,7 @@ def _get_deterministic_output(filename):
 def test_simple_add(test_config):
     # Fully specify the config here so that this test is not affected by config changes external to this file.
     config = Config(
-        log_name="test_simple_add_a2c",
+        env_name="test_simple_add_a2c",
         name="test_simple_add_a2c",
         get_updater=a2c.A2C,
         n_controller_units=32,

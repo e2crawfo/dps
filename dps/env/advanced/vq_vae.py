@@ -190,7 +190,7 @@ def vq_vae_render_hook(updater):
 
 
 config = Config(
-    log_name="mnist_vqvae",
+    env_name="mnist_vqvae",
     build_env=build_env,
     get_updater=get_updater,
     min_chars=1,

@@ -22,7 +22,7 @@ config = DEFAULT_CONFIG.copy()
 
 
 config.update(
-    log_name="mountain_car",
+    env_name="mountain_car",
 
     build_env=build_env,
 

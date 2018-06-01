@@ -13,7 +13,7 @@ def build_env():
 config = Config(
     build_env=build_env,
     curriculum=[dict()],
-    log_name='grid_bandit',
+    env_name='grid_bandit',
     threshold=-5,
     T=5,
     shape=(2, 2),

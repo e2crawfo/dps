@@ -26,7 +26,7 @@ config = Config(
         dict(order=order[:3], T=3),
         dict(order=order[:4], T=4),
     ],
-    log_name='hello_world',
+    env_name='hello_world',
 )
 
 

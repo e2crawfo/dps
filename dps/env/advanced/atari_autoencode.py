@@ -100,7 +100,7 @@ def get_updater(env):
 
 
 config = Config(
-    log_name='atari_autoencode',
+    env_name='atari_autoencode',
     get_updater=get_updater,
     build_env=build_env,
     build_model=build_model,

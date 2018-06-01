@@ -25,7 +25,7 @@ def build_emnist_env():
 # For training networks on EMNIST datasets.
 EMNIST_CONFIG = DEFAULT_CONFIG.copy(
     name="emnist",
-    log_name='emnist_pretrained',
+    env_name='emnist_pretrained',
     get_updater=get_differentiable_updater,
     build_env=build_emnist_env,
 
@@ -61,7 +61,7 @@ def build_omniglot_env():
 # For training networks on OMNIGLOT datasets.
 OMNIGLOT_CONFIG = DEFAULT_CONFIG.copy(
     name="omniglot",
-    log_name='omniglot_pretrained',
+    env_name='omniglot_pretrained',
     get_updater=get_differentiable_updater,
     build_env=build_omniglot_env,
 

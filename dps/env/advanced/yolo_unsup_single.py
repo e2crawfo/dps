@@ -431,7 +431,7 @@ xkcd_colors = 'viridian,cerulean,vermillion,lavender,celadon,fuchsia,saffron,cin
 
 
 config = Config(
-    log_name="yolo_unsup_single",
+    env_name="yolo_unsup_single",
     build_env=build_env,
     get_updater=get_updater,
     min_chars=1,

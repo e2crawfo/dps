@@ -30,7 +30,7 @@ def build_fcn():
 
 
 config = yolo_config.copy(
-    log_name="yolo_single_output",
+    env_name="yolo_single_output",
     build_fully_conv_net=build_fcn,
     characters=[0, 1],
     min_chars=1,

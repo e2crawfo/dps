@@ -98,7 +98,7 @@ class AttentionClassifier(ScopedFunction):
 
 config = Config(
     name="ATTENTION",
-    log_name='translated_mnist',
+    env_name='translated_mnist',
     build_env=sl_build_env,
     get_updater=sl_get_updater,
 
