@@ -8,7 +8,7 @@ import pprint
 import shutil
 
 from dps import cfg
-from dps.utils import image_to_string, Param, Parameterized, get_param_hash
+from dps.utils import image_to_string, Param, Parameterized, get_param_hash, NumpySeed
 from dps.datasets import (
     load_emnist, load_omniglot, omniglot_classes,
     load_backgrounds, background_names
@@ -17,6 +17,7 @@ from dps.datasets import (
 
 class RawDataset(Parameterized):
     """ A non-tensorflow dataset, wrapper for data that we might want to cache. """
+    seed = Param(None)
 
     def __init__(self, **kwargs):
         print("Trying to find dataset in cache...")
@@ -38,7 +39,9 @@ class RawDataset(Parameterized):
             os.makedirs(self.directory, exist_ok=False)
 
             try:
-                self._make()
+                with NumpySeed(self.seed):
+                    self._make()
+
                 print("Done creating dataset.")
             except BaseException:
                 try:
@@ -126,7 +129,8 @@ class Dataset(Parameterized):
 
             self._writer = tf.python_io.TFRecordWriter(self.filename)
             try:
-                self._make()
+                with NumpySeed(self.seed):
+                    self._make()
                 self._writer.close()
                 print("Done creating dataset.")
             except BaseException:

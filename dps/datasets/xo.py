@@ -363,18 +363,22 @@ class RandomAgent(object):
 
 
 class Filter(object):
-    def __init__(self, m):
-        self.m = m
+    def __init__(self, keep_prob):
+        self.keep_prob = keep_prob
 
     def __call__(self, n):
-        return n % self.m == 0
+        return np.random.rand() < self.keep_prob
 
 
-def do_rollouts(env, agent, n_examples_per_class, max_episode_length, render=False):
+def do_rollouts(env, agent, n_examples, max_episode_length, balanced, render=False):
     reward = 0
     done = False
 
     ob = env.reset()
+
+    n_examples_per_class = None
+    if balanced:
+        n_examples_per_class = n_examples
 
     while True:
         env.reset()
@@ -386,7 +390,10 @@ def do_rollouts(env, agent, n_examples_per_class, max_episode_length, render=Fal
             action = agent.act(ob, reward, done)
             ob, reward, done, info = env.step(action)
 
-            if min(env.recording.keep_freqs.values()) >= n_examples_per_class:
+            if balanced and min(env.recording.keep_freqs.values()) >= n_examples_per_class:
+                env.close()
+                return
+            elif not balanced and env.recording.n_recorded >= n_examples:
                 env.close()
                 return
 
@@ -403,22 +410,27 @@ del xo_env_params['self']
 
 
 class XO_RewardRawDataset(RawDataset):
-    max_examples_per_class = Param()
     classes = Param()
     max_episode_length = Param(100)
+
+    n_examples = Param()
     persist_prob = Param(0.0)
+    keep_prob = Param(1)
+    balanced = Param(True)
 
     def _make(self):
         env_kwargs = {k: v for k, v in self.param_values().items() if k in xo_env_params}
         env = XO_Env(**env_kwargs)
 
+        reward_classes = self.classes if self.balanced else None
+
         env = TraceRecordingWrapper(
             env, directory=self.directory, episode_filter=Filter(1),
-            frame_filter=Filter(1), reward_classes=self.classes)
+            frame_filter=Filter(self.keep_prob), reward_classes=reward_classes)
         env.seed(0)
         agent = RandomAgent(env.action_space, self.persist_prob)
 
-        do_rollouts(env, agent, self.max_examples_per_class, self.max_episode_length)
+        do_rollouts(env, agent, self.n_examples, self.max_episode_length, self.balanced)
 
 
 for name, p in xo_env_params.items():
@@ -426,7 +438,10 @@ for name, p in xo_env_params.items():
 
 
 class XO_RewardClassificationDataset(RewardClassificationDataset):
+    n_examples = Param()
     persist_prob = Param(0.0)
+    keep_prob = Param(1)
+    balanced = Param(True)
 
     rl_data_location = None
 
@@ -444,8 +459,9 @@ for name, p in xo_env_params.items():
 
 if __name__ == "__main__":
     dataset = XO_RewardClassificationDataset(
-        classes=[-1, 0, 1], max_examples_per_class=100, persist_prob=0.3,
-        max_episode_length=100, corner="top_left")
+        classes=[-1, 0, 1], n_examples=100, persist_prob=0.3,
+        max_episode_length=100, image_shape=(72, 72), min_entities=20, max_entities=30,
+    )
 
     import tensorflow as tf
     sess = tf.Session()

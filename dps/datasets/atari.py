@@ -295,10 +295,9 @@ class ReinforcementLearningDataset(ImageDataset):
 class RewardClassificationDataset(ReinforcementLearningDataset):
     """ Note that in general, the data returned by gym_recording will contain
         one more observation than the number of rewards/actions. """
+
     classes = Param()
     one_hot = Param(True)
-    max_examples_per_class = Param(None)
-    balanced = Param(False)
 
     store_o = True
     store_a = True
@@ -328,30 +327,6 @@ class RewardClassificationDataset(ReinforcementLearningDataset):
         self.examples = defaultdict(list)
         scan_recorded_traces(self.rl_data_location, self._callback, self.max_episodes)
 
-        if self.balanced:
-            lengths = [len(v) for v in self.examples.values()]
-            max_length = max(lengths)
-
-            if self.max_examples_per_class is not None:
-                max_length = min(max_length, self.max_examples_per_class)
-
-            balanced_examples = []
-
-            for r, _examples in self.examples.items():
-                balanced = []
-
-                while len(balanced) < max_length:
-                    balanced.extend(_examples)
-                balanced = balanced[:max_length]
-
-                balanced = [(o, a, np.array([r])) for o, a in balanced]
-                balanced_examples.extend(balanced)
-
-            balanced_examples = np.random.permutation(balanced_examples)
-
-            for o, a, r in balanced_examples:
-                self._write_example(o=o, a=a, r=r)
-
     def _callback(self, o, a, r):
         if o[0].dtype == np.uint8:
             o = list((np.array(o) / 255.).astype('f'))
@@ -373,12 +348,7 @@ class RewardClassificationDataset(ReinforcementLearningDataset):
             _a = np.array(a[idx:idx+1]).flatten()
             _r = int(r[idx])
 
-            if self.balanced:
-                if _r in self.classes:
-                    # Store examples instead of writing them, so that we can balance the classes later.
-                    self.examples[_r].append((_o, _a))
-            else:
-                self._write_example(o=_o, a=_a, r=np.array([_r]))
+            self._write_example(o=_o, a=_a, r=np.array([_r]))
 
     def parse_example_batch(self, example_proto):
         o, a, r = super(RewardClassificationDataset, self).parse_example_batch(example_proto)
@@ -442,7 +412,7 @@ if __name__ == "__main__":
 
     dset = RewardClassificationDataset(
         rl_data_location=xo_dir, image_shape=(100, 100),
-        classes=[-2, -1, 0, 1, 2], max_examples_per_class=99, postprocessing="random",
+        classes=[-2, -1, 0, 1, 2], postprocessing="random",
         n_samples_per_image=3, tile_shape=(48, 48))
 
     sess = tf.Session()
