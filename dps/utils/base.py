@@ -1193,14 +1193,21 @@ class Config(dict, MutableMapping):
             keys = key.split(':')
             to_set = self
             for k in keys[:-1]:
+                nxt = None
                 try:
-                    to_set = to_set[k]
-                except Exception:
+                    nxt = to_set[k]
+                except KeyError:
                     try:
-                        to_set = to_set[int(k)]
+                        nxt = to_set[int(k)]
                     except Exception:
-                        to_set[k] = self.__class__()
-                        to_set = to_set[k]
+                        pass
+
+                if not isinstance(nxt, (list, dict)):
+                    nxt = self.__class__()
+                    to_set[k] = nxt
+
+                to_set = nxt
+
             try:
                 to_set[keys[-1]] = value
             except Exception:
@@ -1255,7 +1262,6 @@ class Config(dict, MutableMapping):
     def _validate_key(self, key):
         msg = "Bad key for config: `{}`.".format(key)
         assert isinstance(key, str), msg
-        assert key.isidentifier(), msg
         assert not key.startswith('_'), msg
         assert key not in self._reserved_keys, msg
 

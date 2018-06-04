@@ -19,7 +19,7 @@ config = DEFAULT_CONFIG.copy(
     eval_step=10,
     patience=np.inf,
     power_through=False,
-    load_stage=-1,
+    load_path=-1,
 
     start_tensorboard=True,
     verbose=False,

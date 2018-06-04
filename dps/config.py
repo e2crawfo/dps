@@ -13,9 +13,7 @@ DEFAULT_CONFIG = Config(
 
     curriculum=[{}],
 
-    load_path="",  # Path to load variables from.
-    load_stage=-1,
-    load_final=False,
+    load_path=-1,  # path or stage to load variables from.
     do_train=True,
     preserve_env=False,
     power_through=True,  # Whether to complete the entire curriculum, even if threshold not reached.
@@ -77,7 +75,6 @@ RL_EXPERIMENT_CONFIG = DEFAULT_CONFIG.copy(
     patience=np.inf,
     max_steps=1000000,
     power_through=False,
-    load_stage=-1,
 )
 
 

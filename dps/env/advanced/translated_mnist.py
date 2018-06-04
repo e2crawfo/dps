@@ -138,5 +138,5 @@ config = Config(
     batch_size=64,
     n_controller_units=128,
     patience=5000,
-    load_stage=-1,
+    load_path=-1,
 )

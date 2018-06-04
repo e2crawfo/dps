@@ -21,7 +21,7 @@ class Config(SystemConfig):
     power_through = False
     optimizer_spec = 'rmsprop'
     max_steps = 100000
-    load_stage=-1,
+    load_path=-1,
     start_tensorboard = True
     verbose = 0
 

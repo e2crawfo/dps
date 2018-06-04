@@ -342,23 +342,64 @@ class TrainingLoop(object):
                 n_trainable_variables = count_trainable_variables(updater.trainable_variables(for_opt=True))
                 print("n_trainable_variables: {}".format(n_trainable_variables))
 
-                # Optionally initialize policy weights
-                if cfg.load_path:
-                    # Initialize weights from specified check point file
-                    path = os.path.realpath(cfg.load_path)
-                    assert isinstance(path, str)
-                    print("Loading hypothesis from {}.".format(path))
-                    updater.restore(sess, path)
+                # Optionally initialize network weights.
+                # Let a *path_specification* be one of three things:
+                #     1. An integer specifying a stage to load the best hypothesis from.
+                #     2. A string of format: "stage_idx,kind" where `stage_idx` specifies a stage to load from
+                #        and `kind` is either "final" or "best", specifying whether to load final or best
+                #        hypothesis from that stage.
+                #     3. A path on the filesystem that gives a prefix for a tensorflow checkpoint file to load from.
+                #
+                # Then cfg.load_path can either be a path_specification itself, in which case all variables
+                # in the network will be loaded from that path_specification, or a dictionary mapping from
+                # variable scope names to path specifications, in which case all variables in each supplied
+                # variable scope name will be loaded from the path_specification paired with that scope name.
+                load_path = cfg.load_path
+                if load_path:
+                    if isinstance(load_path, str) or isinstance(load_path, int):
+                        load_path = {"": load_path}
 
-                elif stage_idx > 0 and cfg.load_stage is not None:
-                    kind = 'final' if cfg.load_final else 'best'
-                    key = kind + '_path'
+                    load_path = dict(load_path)
 
-                    completed_history = self.data.history[:-1]
-                    load_path = completed_history[cfg.load_stage][key]
+                    # Sort in increasing order, so that it if one variable scope lies within another scope,
+                    # the outer scope gets loaded before the inner scope, rather than having the outer scope
+                    # wipe out the inner scope.
+                    items = sorted(load_path.items())
 
-                    print("Loading {} hypothesis from stage {}, located at {}.".format(kind, cfg.load_stage, load_path))
-                    updater.restore(sess, load_path)
+                    for var_scope, path in items:
+                        variables = {v.name: v for v in trainable_variables(var_scope, for_opt=False)}
+                        saver = tf.train.Saver(variables)
+
+                        load_stage, kind = None, None
+
+                        if isinstance(path, int):
+                            load_stage = path
+                            kind = "best"
+                        elif isinstance(path, str):
+                            try:
+                                split = path.split(',')
+                                load_stage = int(split[0])
+                                kind = 'best' if len(split) > 1 else split[1]
+                                assert kind in 'best final'.split(), "path={}".format(path)
+                            except Exception:
+                                load_stage, kind = None, None
+
+                        if load_stage is not None:
+                            if stage_idx == 0:
+                                print(
+                                    "Not loading var scope \"{}\" from stage {}, "
+                                    "currently in stage 0.".format(var_scope, load_stage))
+                                continue
+                            else:
+                                key = kind + '_path'
+                                completed_history = self.data.history[:-1]
+                                path = completed_history[cfg.load_stage][key]
+
+                        path = os.path.realpath(path)
+
+                        saver.restore(tf.get_default_session(), path)
+
+                        print("Loading var scope \"{}\" from {}.".format(var_scope, path))
                 else:
                     print("Using a fresh set of weights, not loading anything.")
 
