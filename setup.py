@@ -35,6 +35,7 @@ setup(
     entry_points={
         'console_scripts': ['dps-hyper=dps.hyper.command_line:dps_hyper_cl',
                             'dps-run=dps.run:run',
-                            'readme=dps.utils.base:view_readme_cl']
+                            'readme=dps.utils.base:view_readme_cl',
+                            'tf-inspect=dps.utils.tf:tf_inspect_cl']
     }
 )

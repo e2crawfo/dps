@@ -3,6 +3,8 @@ import numpy as np
 from collections import deque, OrderedDict
 import os
 import hashlib
+import pprint
+import argparse
 
 import tensorflow as tf
 from tensorflow.python.ops import random_ops
@@ -12,6 +14,21 @@ from tensorflow.contrib.slim import fully_connected
 import dps
 from dps.utils.base import _bool, popleft, Parameterized, Param
 from dps.utils.inspect_checkpoint import get_tensors_from_checkpoint_file  # noqa: F401
+
+
+def tf_inspect_cl():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("path")
+    parser.add_argument("--names-only", action="store_true")
+    args, _ = parser.parse_known_args()
+
+    path = os.path.realpath(args.path)
+    variables = get_tensors_from_checkpoint_file(path)
+
+    if args.names_only:
+        pprint.pprint(list(variables.keys()))
+    else:
+        pprint.pprint(variables)
 
 
 if tf.__version__ >= "1.2":
@@ -182,6 +199,8 @@ class ScopedFunction(Parameterized):
         self.resolve_scope()
 
         with tf.variable_scope(self.scope, reuse=self.initialized):
+            if not self.initialized:
+                print("Entering var scope {} for first time.".format(self.scope.name))
             outp = self._call(inp, output_size, is_training)
 
         self._maybe_initialize()
