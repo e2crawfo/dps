@@ -339,7 +339,8 @@ class TrainingLoop(object):
                 updater.exp_dir = self.exp_dir
                 updater.build_graph()
 
-                n_trainable_variables = count_trainable_variables(updater.trainable_variables(for_opt=True))
+                n_trainable_variables = count_trainable_variables(
+                    variables=updater.trainable_variables(for_opt=True))
                 print("n_trainable_variables: {}".format(n_trainable_variables))
 
                 # Optionally initialize network weights.

@@ -37,8 +37,13 @@ else:
     from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 
 
-def count_trainable_variables(tvars):
-    return np.sum([np.prod(v.get_shape().as_list()) for v in tvars])
+def count_trainable_variables(variables=None, var_scope=None):
+    assert (variables is None) != (var_scope is None)
+
+    if var_scope is not None:
+        variables = trainable_variables(var_scope, for_opt=True)
+
+    return np.sum([np.prod(v.get_shape().as_list()) for v in variables])
 
 
 def tf_normal_kl(q_mean, q_std, p_mean, p_std):
@@ -201,7 +206,12 @@ class ScopedFunction(Parameterized):
         with tf.variable_scope(self.scope, reuse=self.initialized):
             if not self.initialized:
                 print("Entering var scope {} for first time.".format(self.scope.name))
+
             outp = self._call(inp, output_size, is_training)
+
+            if not self.initialized:
+                n_trainable_variables = count_trainable_variables(scope=self.scope)
+                print("Leaving var scope {} for first time. {} trainable variables in scope".format(self.scope.name, n_trainable_variables))
 
         self._maybe_initialize()
 
