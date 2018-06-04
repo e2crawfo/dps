@@ -781,7 +781,7 @@ print(str((end - start).total_seconds()) + " seconds elapsed between start and f
         if queue:
             queue = "-p " + queue
         command = (
-            "sbatch --job-name {name} -D {job_path} --mail-type=ALL --mail-user=e2crawfo --exclude=cdr340,cdr341,cdr294 "
+            "sbatch --job-name {name} -D {job_path} --mail-type=ALL --mail-user=e2crawfo "
             "-A {project} {queue} --export=ALL {resources} "
             "-o stdout -e stderr run.py".format(
                 name=name, job_path=job_path, email=email, project=project,
