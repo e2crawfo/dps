@@ -342,7 +342,7 @@ def sample_configs(distributions, n_repeats, n_samples=None):
 
     Parameters
     ----------
-    distributions: dict
+    distributions: dict or None
         Mapping from parameter names to distributions (objects with
         member function ``rvs`` which accepts a shape and produces
         an array of samples with that shape).
@@ -354,7 +354,9 @@ def sample_configs(distributions, n_repeats, n_samples=None):
     """
     samples = []
 
-    if isinstance(distributions, list):
+    if distributions is None:
+        samples = [Config()]
+    elif isinstance(distributions, list):
         samples = distributions + []
 
         if n_samples:

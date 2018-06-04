@@ -12,7 +12,6 @@ import sys
 import dill
 from zipfile import ZipFile
 
-import dps
 from dps import cfg
 from dps.parallel import ReadOnlyJob
 from dps.utils import (
@@ -140,7 +139,7 @@ class ParallelSession(object):
         input_zip_base = os.path.basename(input_zip)
         archive_root = zip_root(input_zip)
 
-        self.copy_files(job_dir, input_zip, archive_root, ["README.md", "sampled_configs.txt"])
+        self.copy_files(job_dir, input_zip, archive_root, ["README.md", "sampled_configs.txt", "config.txt"])
 
         # storage local to each node, from the perspective of that node
         local_scratch = os.path.join(local_scratch_prefix, os.path.basename(job_path))
@@ -203,7 +202,7 @@ class ParallelSession(object):
         make_symlink(job_path, os.path.join(scratch, 'latest'))
 
     def get_load_avg(self, host):
-        return_code, stdout = self.ssh_execute("uptime", host, output='get', robust=True)
+        return_code, stdout, stderr = self.ssh_execute("uptime", host, robust=True)
         print(stdout)
         if return_code:
             return 1000.0, 1000.0, 1000.0
@@ -280,7 +279,7 @@ class ParallelSession(object):
                 if host is not ':':
                     print("\n" + "~" * 40)
                     print("Testing connection to host {}...".format(host))
-                    failed = self.ssh_execute("echo Connected to \$HOSTNAME", host, robust=True)
+                    failed, _, _ = self.ssh_execute("echo Connected to \$HOSTNAME", host, robust=True)
                     if failed:
                         print("Could not connect.")
                         continue
@@ -322,20 +321,20 @@ class ParallelSession(object):
             print("Preparing host...")
             try:
                 command = "stat {local_scratch}"
-                create_local_scratch = self.ssh_execute(command, host, robust=True)
+                create_local_scratch, _, _ = self.ssh_execute(command, host, robust=True, output="quiet")
 
                 if create_local_scratch:
                     print("Creating local scratch directory...")
                     command = "mkdir -p {local_scratch}"
-                    self.ssh_execute(command, host, robust=False, output='get')
+                    self.ssh_execute(command, host, robust=False)
                     self.dirty_hosts.add(host)
 
                 command = "cd {local_scratch} && stat {archive_root}"
-                missing_archive = self.ssh_execute(command, host, robust=True)
+                missing_archive, _, _ = self.ssh_execute(command, host, robust=True, output="quiet")
 
                 if missing_archive:
                     command = "cd {local_scratch} && stat {input_zip_base}"
-                    missing_zip = self.ssh_execute(command, host, robust=True)
+                    missing_zip, _, _ = self.ssh_execute(command, host, robust=True, output="quiet")
 
                     if missing_zip:
                         print("Copying zip to local scratch...")
@@ -346,11 +345,11 @@ class ParallelSession(object):
                                 "rsync -av -e \"ssh {ssh_options}\" "
                                 "{input_zip_abs} {host}:{local_scratch}".format(host=host, **self.__dict__)
                             )
-                        self.execute_command(command, frmt=False, robust=False, output='get')
+                        self.execute_command(command, frmt=False, robust=False)
 
                     print("Unzipping...")
                     command = "cd {local_scratch} && unzip -ouq {input_zip_base}"
-                    self.ssh_execute(command, host, robust=False, output='get')
+                    self.ssh_execute(command, host, robust=False)
 
                 print("Host successfully prepared.")
                 hosts.append(host)
@@ -375,8 +374,8 @@ class ParallelSession(object):
         return hosts, n_procs
 
     def execute_command(
-            self, command, frmt=True, shell=True, robust=False, max_seconds=None,
-            progress=False, verbose=False, output='quiet'):
+            self, command, frmt=True, shell=True, max_seconds=None,
+            progress=False, robust=False, output=None):
         """ Uses `subprocess` to execute `command`.
 
         if command returns non-zero exit status:
@@ -387,10 +386,7 @@ class ParallelSession(object):
 
         Returns
         -------
-        if output == 'quiet' or output == 'loud':
-            returncode
-        elif output == 'get':
-            returncode, stdout
+        returncode, stdout, stderr
 
         """
         p = None
@@ -399,22 +395,15 @@ class ParallelSession(object):
             if frmt:
                 command = command.format(**self.__dict__)
 
-            if verbose:
+            if output == "loud":
                 print("\nExecuting command: " + (">" * 40) + "\n")
                 print(command)
 
             if not shell:
                 command = command.split()
 
-            if output == 'quiet':
-                stdout = subprocess.DEVNULL
-                stderr = subprocess.DEVNULL
-            elif output == 'get':
-                stdout = subprocess.PIPE
-                stderr = subprocess.DEVNULL
-            elif output == 'loud':
-                stdout = None
-                stderr = None
+            stdout = None if output == "loud" else subprocess.PIPE
+            stderr = None if output == "loud" else subprocess.PIPE
 
             start = time.time()
 
@@ -447,8 +436,11 @@ class ParallelSession(object):
             if progress_bar is not None:
                 progress_bar.finish()
 
-            if verbose:
+            if output == "loud":
                 print("\nCommand took {} seconds.\n".format(time.time() - start))
+
+            _stdout = "" if p.stdout is None else p.stdout.read()
+            _stderr = "" if p.stderr is None else p.stderr.read()
 
             if p.returncode != 0:
                 if isinstance(command, list):
@@ -457,24 +449,20 @@ class ParallelSession(object):
                 print("The following command returned with non-zero exit code "
                       "{}:\n    {}".format(p.returncode, command))
 
-                if robust:
-                    if output == 'get':
-                        stdout = p.stdout.read()
-                        return p.returncode, stdout
-                    else:
-                        return p.returncode
-                else:
-                    if output == 'get':
-                        stdout = p.stdout.read()
-                        raise subprocess.CalledProcessError(p.returncode, command, stdout)
-                    else:
-                        raise subprocess.CalledProcessError(p.returncode, command)
+                if output is None or (output == "quiet" and not robust):
+                    print("\n" + "-" * 20 + " stdout " + "-" * 20 + "\n")
+                    print(_stdout)
 
-            if output == 'get':
-                stdout = p.stdout.read()
-                return p.returncode, stdout
-            else:
-                return p.returncode
+                    print("\n" + "-" * 20 + " stderr " + "-" * 20 + "\n")
+                    print(_stderr)
+
+                if robust:
+                    return p.returncode, _stdout, _stderr
+                else:
+                    raise subprocess.CalledProcessError(p.returncode, command, _stdout, _stderr)
+
+            return p.returncode, _stdout, _stderr
+
         except BaseException as e:
             if p is not None:
                 p.terminate()
@@ -504,7 +492,7 @@ class ParallelSession(object):
             parallel_command = (
                 "cd {local_scratch} && "
                 "dps-hyper run {archive_root} {pattern} {indices} --max-time {python_seconds_per_step} "
-                "--log-root {local_scratch} --log-name experiments --gpu-set={gpu_set} --ppn={ppn} "
+                "--log-root {local_scratch} --env-name experiments --gpu-set={gpu_set} --ppn={ppn} "
                 "{_ignore_gpu} {output_to_files}"
             )
 
@@ -525,7 +513,7 @@ class ParallelSession(object):
                 workon +
                 "cd {local_scratch} && "
                 "dps-hyper run {archive_root} {pattern} {{}} --max-time {python_seconds_per_step} "
-                "--log-root {local_scratch} --log-name experiments "
+                "--log-root {local_scratch} --env-name experiments "
                 "--idx-in-node={{%}} --gpu-set={gpu_set} --ppn={ppn} {_ignore_gpu} {output_to_files}"
             )
 
@@ -543,7 +531,7 @@ class ParallelSession(object):
         self.execute_command(
             command, frmt=False, robust=True,
             max_seconds=self.parallel_seconds_per_step, progress=not self.hpc,
-            output='loud', verbose=True)
+            output='loud')
 
     def _checkpoint(self, i):
         print("Fetching results of step {} at: ".format(i))
@@ -587,14 +575,13 @@ class ParallelSession(object):
     def get_slurm_var(self, var_name):
         parallel_command = "printenv | grep {}".format(var_name)
         command = 'srun --ntasks 1 --no-kill sh -c "{parallel_command}"'.format(parallel_command=parallel_command)
-        returncode, output = self.execute_command(
-            command, frmt=False, robust=False, progress=False, output='get')
-        split = output.split('=')
+        returncode, stdout, stderr = self.execute_command(command, frmt=False, robust=False, progress=False)
+        split = stdout.split('=')
 
         if len(split) != 2:
             raise Exception(
                 "Unparseable output while getting SLURM environment "
-                "variable {}: {}".format(var_name, output))
+                "variable {}: {}".format(var_name, stdout))
 
         _var_name, value = split
         _var_name = _var_name.strip()
@@ -624,15 +611,13 @@ class ParallelSession(object):
 
             job_id = os.getenv("SLURM_JOBID")
             command = 'squeue -h -j {} -o "%L"'.format(job_id)
-            returncode, output = self.execute_command(
-                command, frmt=False, robust=False, progress=False, output='get')
-
+            returncode, stdout, stderr = self.execute_command(command, frmt=False, robust=False)
             days = 0
-            if "-" in output:
-                days, time = output.split("-")
+            if "-" in stdout:
+                days, time = stdout.split("-")
                 days = int(days)
             else:
-                time = output
+                time = stdout
 
             time = time.split(":")
 
@@ -798,7 +783,7 @@ print(str((end - start).total_seconds()) + " seconds elapsed between start and f
         command = (
             "sbatch --job-name {name} -D {job_path} --mail-type=ALL --mail-user=e2crawfo --exclude=cdr340,cdr341,cdr294 "
             "-A {project} {queue} --export=ALL {resources} "
-            "-o output.txt run.py".format(
+            "-o stdout -e stderr run.py".format(
                 name=name, job_path=job_path, email=email, project=project,
                 queue=queue, resources=resources
             )

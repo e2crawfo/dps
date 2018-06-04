@@ -598,7 +598,11 @@ class TrainingLoop(object):
                     best_path = self.data.path_for(
                         'weights/best_of_stage_{}'.format(stage_idx))
                     best_path = cfg.get('save_path', best_path)
+
+                    weight_start = time.time()
                     best_path = updater.save(tf.get_default_session(), best_path)
+
+                    print("Done saving weights, took {} seconds".format(time.time() - weight_start))
 
                     self.data.record_values_for_stage(
                         best_path=best_path, best_global_step=global_step)

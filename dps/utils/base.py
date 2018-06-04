@@ -495,24 +495,24 @@ class ExperimentDirectory(object):
         return full_path
 
     def record_environment(self, config=None, dill_recurse=False, git_diff=True):
-        with open(self.path_for('git_summary.txt'), 'w') as f:
+        with open(self.path_for('context/git_summary.txt'), 'w') as f:
             git_packages = find_git_packages()
             for module in git_packages:
                 git_summary = module_git_summary(module)
                 f.write(git_summary.summarize(diff=git_diff))
 
-        uname_path = self.path_for("uname.txt")
+        uname_path = self.path_for("context/uname.txt")
         subprocess.run("uname -a > {}".format(uname_path), shell=True)
 
-        lscpu_path = self.path_for("lscpu.txt")
+        lscpu_path = self.path_for("context/lscpu.txt")
         subprocess.run("lscpu > {}".format(lscpu_path), shell=True)
 
         environ = {k.decode(): v.decode() for k, v in os.environ._data.items()}
-        with open(self.path_for('os_environ.txt'), 'w') as f:
+        with open(self.path_for('context/os_environ.txt'), 'w') as f:
             f.write(pformat(environ))
 
         pip = pip_freeze()
-        with open(self.path_for('pip_freeze.txt'), 'w') as f:
+        with open(self.path_for('context/pip_freeze.txt'), 'w') as f:
             f.write(pip)
 
         if config is not None:
@@ -526,7 +526,7 @@ class ExperimentDirectory(object):
 
     @property
     def host(self):
-        with open(self.path_for('uname.txt'), 'r') as f:
+        with open(self.path_for('context/uname.txt'), 'r') as f:
             return f.read().split()[1]
 
 
