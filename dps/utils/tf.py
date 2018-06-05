@@ -211,7 +211,8 @@ class ScopedFunction(Parameterized):
 
             if not self.initialized:
                 n_trainable_variables = count_trainable_variables(scope=self.scope)
-                print("Leaving var scope {} for first time. {} trainable variables in scope".format(self.scope.name, n_trainable_variables))
+                print("Leaving var scope {} for first time. "
+                      "{} trainable variables in scope".format(self.scope.name, n_trainable_variables))
 
         self._maybe_initialize()
 

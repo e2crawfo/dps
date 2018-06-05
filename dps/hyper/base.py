@@ -17,7 +17,7 @@ import clify
 import dps
 from dps import cfg
 from dps.config import DEFAULT_CONFIG
-from dps.utils import gen_seed, Config, ExperimentStore, edit_text
+from dps.utils import gen_seed, Config, ExperimentStore, edit_text, NumpySeed
 from dps.parallel import Job, ReadOnlyJob
 from dps.train import FrozenTrainingLoopData
 from dps.hyper.submit_job import submit_job, ParallelSession
@@ -460,60 +460,64 @@ def build_search(
         String specifiying context/purpose of search.
 
     """
-    es = ExperimentStore(path, max_experiments=None, prefix="build_search")
+    if config.get('seed', None) is None:
+        config.seed = gen_seed()
 
-    count = 0
-    base_name = name
-    has_built = False
-    while not has_built:
-        try:
-            exp_dir = es.new_experiment(
-                name, config.seed, add_date=add_date, force_fresh=1)
-            has_built = True
-        except FileExistsError:
-            name = "{}_{}".format(base_name, count)
-            count += 1
+    with NumpySeed(config.seed):
+        es = ExperimentStore(path, max_experiments=None, prefix="build_search")
 
-    if readme:
-        with open(exp_dir.path_for('README.md'), 'w') as f:
-            f.write(readme)
+        count = 0
+        base_name = name
+        has_built = False
+        while not has_built:
+            try:
+                exp_dir = es.new_experiment(
+                    name, config.seed, add_date=add_date, force_fresh=1)
+                has_built = True
+            except FileExistsError:
+                name = "{}_{}".format(base_name, count)
+                count += 1
 
-    print(config)
-    exp_dir.record_environment(config=config)
+        if readme:
+            with open(exp_dir.path_for('README.md'), 'w') as f:
+                f.write(readme)
 
-    print("Building parameter search at {}.".format(exp_dir.path))
+        print(config)
+        exp_dir.record_environment(config=config)
 
-    job = Job(exp_dir.path)
+        print("Building parameter search at {}.".format(exp_dir.path))
 
-    new_configs = sample_configs(distributions, n_repeats, n_param_settings)
+        job = Job(exp_dir.path)
 
-    with open(exp_dir.path_for("sampled_configs.txt"), "w") as f:
-        f.write("\n".join("idx={}: {}".format(config["idx"], pformat(config)) for config in new_configs))
+        new_configs = sample_configs(distributions, n_repeats, n_param_settings)
 
-    print("{} configs were sampled for parameter search.".format(len(new_configs)))
+        with open(exp_dir.path_for("sampled_configs.txt"), "w") as f:
+            f.write("\n".join("idx={}: {}".format(config["idx"], pformat(config)) for config in new_configs))
 
-    if do_local_test:
-        print("\nStarting local test " + ("=" * 80))
-        test_config = new_configs[0].copy()
-        test_config.update(max_steps=1000, render_hook=None)
-        _RunTrainingLoop(config)(test_config)
-        print("Done local test " + ("=" * 80) + "\n")
+        print("{} configs were sampled for parameter search.".format(len(new_configs)))
 
-    job.map(_RunTrainingLoop(config.copy()), new_configs)
+        if do_local_test:
+            print("\nStarting local test " + ("=" * 80))
+            test_config = new_configs[0].copy()
+            test_config.update(max_steps=1000, render_hook=None)
+            _RunTrainingLoop(config)(test_config)
+            print("Done local test " + ("=" * 80) + "\n")
 
-    job.save_object('metadata', 'distributions', distributions)
-    job.save_object('metadata', 'config', config)
+        job.map(_RunTrainingLoop(config.copy()), new_configs)
 
-    print(job.summary())
+        job.save_object('metadata', 'distributions', distributions)
+        job.save_object('metadata', 'config', config)
 
-    if _zip:
-        path = job.zip(delete=True)
-    else:
-        path = exp_dir.path
+        print(job.summary())
 
-    print("Zipped {} as {}.".format(exp_dir.path, path))
+        if _zip:
+            path = job.zip(delete=True)
+        else:
+            path = exp_dir.path
 
-    return path
+        print("Zipped {} as {}.".format(exp_dir.path, path))
+
+        return path
 
 
 def build_and_submit(
