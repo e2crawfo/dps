@@ -181,23 +181,24 @@ class DifferentiableUpdater(Updater):
         return result
 
 
-class DataManager(object):
-    def __init__(self, train_dataset, val_dataset, batch_size):
+class DataManager(Parameterized):
+    shuffle_buffer_size = Param(1000)
+
+    def __init__(self, train_dataset, val_dataset, batch_size, **kwargs):
         self.train_dataset = train_dataset
         self.val_dataset = val_dataset
         self.batch_size = batch_size
 
     def build_graph(self):
-        # Does no shuffling. Make sure dataset is pre-shuffled.
-
         # --- train ---
 
         train_dataset = tf.data.TFRecordDataset(self.train_dataset.filename)
 
-        train_dataset = (train_dataset.repeat()
+        shuffle_and_repeat = tf.contrib.data.shuffle_and_repeat(self.shuffle_buffer_size)
+        train_dataset = (train_dataset.apply(shuffle_and_repeat)
                                       .batch(self.batch_size)
                                       .map(self.train_dataset.parse_example_batch)
-                                      .prefetch(self.batch_size))
+                                      .prefetch(10))
 
         self.train_iterator = train_dataset.make_one_shot_iterator()
 
@@ -210,7 +211,7 @@ class DataManager(object):
 
         val_dataset = (val_dataset.batch(self.batch_size)
                                   .map(self.val_dataset.parse_example_batch)
-                                  .prefetch(self.batch_size))
+                                  .prefetch(10))
 
         self.val_iterator = val_dataset.make_initializable_iterator()
 
