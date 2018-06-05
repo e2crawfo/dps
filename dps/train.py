@@ -326,6 +326,8 @@ class TrainingLoop(object):
                 if cpu_ram_limit_mb is not None:
                     stack.enter_context(memory_limit(cfg.cpu_ram_limit_mb))
 
+                print("\nBuilding env...\n")
+
                 # Optionally build env
                 if stage_idx == 0 or not cfg.preserve_env:
                     if getattr(self, 'env', None):
@@ -333,11 +335,16 @@ class TrainingLoop(object):
 
                     self.env = cfg.build_env()
 
+                print("\nDone building env.\n")
+
                 # Build updater
                 updater = cfg.get_updater(self.env)
                 updater.stage_idx = stage_idx
                 updater.exp_dir = self.exp_dir
+
+                print("\nBuilding network...\n")
                 updater.build_graph()
+                print("\nDone building network.\n")
 
                 n_trainable_variables = count_trainable_variables(
                     variables=updater.trainable_variables(for_opt=True))
@@ -394,7 +401,7 @@ class TrainingLoop(object):
                             else:
                                 key = kind + '_path'
                                 completed_history = self.data.history[:-1]
-                                path = completed_history[cfg.load_stage][key]
+                                path = completed_history[load_stage][key]
 
                         path = os.path.realpath(path)
 
