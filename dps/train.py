@@ -553,6 +553,7 @@ class TrainingLoop(object):
         # Start stage
         print("{} seconds left at the beginning of stage {}.".format(self.time_remaining, stage_idx))
         print("\n" + "-" * 10 + " Training begins " + "-" * 10 + "\n")
+        self.timestamp("training begins")
 
         total_train_time = 0.0
         time_per_example = 0.0

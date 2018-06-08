@@ -6,6 +6,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import pprint
 import shutil
+import time
 
 from dps import cfg
 from dps.utils import image_to_string, Param, Parameterized, get_param_hash, NumpySeed
@@ -20,6 +21,7 @@ class RawDataset(Parameterized):
     seed = Param(None)
 
     def __init__(self, **kwargs):
+        start = time.time()
         print("Trying to find dataset in cache...")
 
         directory = os.path.join(cfg.data_dir, "cached_datasets", self.__class__.__name__)
@@ -55,7 +57,7 @@ class RawDataset(Parameterized):
         else:
             print("Found.")
 
-        print()
+        print("Took {} seconds.\n".format(time.time() - start))
 
     def _make(self):
         """ Write data to `self.directory`. """
@@ -100,9 +102,6 @@ class ImageFeature(ArrayFeature):
 
 class Dataset(Parameterized):
     n_examples = Param(None)
-
-    # Use of this seed is currently broken (though its not super important)...
-    # each dataset should generate its own seed, which it uses to index into the cache.
     seed = Param(None)
 
     _features = None
@@ -110,6 +109,7 @@ class Dataset(Parameterized):
     _get_next = None
 
     def __init__(self, shuffle=True, **kwargs):
+        start = time.time()
         print("Trying to find dataset in cache...")
 
         directory = os.path.join(cfg.data_dir, "cached_datasets", self.__class__.__name__)
@@ -146,7 +146,7 @@ class Dataset(Parameterized):
         else:
             print("Found.")
 
-        print()
+        print("Took {} seconds.\n".format(time.time() - start))
 
     def _make(self):
         raise Exception("AbstractMethod.")
