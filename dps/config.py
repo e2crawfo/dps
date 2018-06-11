@@ -30,11 +30,9 @@ DEFAULT_CONFIG = Config(
     n_train=10000,
     n_val=500,
     batch_size=16,
-    opt_steps_per_update=1,
     reward_window=0.499,
     threshold=0.01,
 
-    gamma=1.0,
     noise_schedule=None,
     max_grad_norm=None,
 
@@ -68,7 +66,9 @@ RL_EXPERIMENT_CONFIG = DEFAULT_CONFIG.copy(
     standardize_advantage=True,
     reset_env=True,
     n_controller_units=64,
+    gamma=1.0,
     save_utils=False,
+    opt_steps_per_update=1,
 
     display_step=100,
     eval_step=100,

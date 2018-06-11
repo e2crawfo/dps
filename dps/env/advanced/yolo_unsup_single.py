@@ -460,7 +460,6 @@ config = Config(
 
     n_train=1e5,
     n_val=1e2,
-    n_test=1e2,
 
     object_sparsity=0.0,  # Within a single image, we want as few bounding boxes to be active as possible
     class_sparsity=0.0,  # We want each of the class distributions to be as spare as possible

@@ -96,7 +96,7 @@ class HyperSearch(object):
             md = {}
             md['host'] = exp_data.host
             for k in config_keys:
-                md[k] = exp_data.config[k]
+                md[k] = exp_data.get_config_value(k)
 
             sc = []
             records = []
@@ -122,10 +122,10 @@ class HyperSearch(object):
 
                 records.append(_record)
 
-            key = KeyTuple(*(exp_data.config[k] for k in config_keys))
+            key = KeyTuple(*(exp_data.get_config_value(k) for k in config_keys))
 
-            repeat = exp_data.config["repeat"]
-            seed = exp_data.config["seed"]
+            repeat = exp_data.get_config_value("repeat")
+            seed = exp_data.get_config_value("seed")
 
             if bare:
                 stage_data[key][(repeat, seed)] = pd.DataFrame.from_records(records)
@@ -176,10 +176,10 @@ class HyperSearch(object):
                     print("Valid keys are: {}".format(_step_data.keys()))
                     raise
 
-            key = KeyTuple(*(exp_data.config[k] for k in config_keys))
+            key = KeyTuple(*(exp_data.get_config_value(k) for k in config_keys))
 
-            repeat = exp_data.config["repeat"]
-            seed = exp_data.config["seed"]
+            repeat = exp_data.get_config_value("repeat")
+            seed = exp_data.get_config_value("seed")
 
             step_data[key][(repeat, seed)] = _step_data
 
@@ -211,8 +211,8 @@ class HyperSearch(object):
                 else:
                     _best.append(dict(df.iloc[df[criteria_key].idxmin()]))
 
-                for key in keys:
-                    _best[-1][key] = md[key]
+                for k in keys:
+                    _best[-1][k] = md[k]
 
             _best = pd.DataFrame.from_records(_best)
             _best = _best.sort_values(criteria_key)

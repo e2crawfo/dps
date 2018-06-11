@@ -12,6 +12,8 @@ import pandas as pd
 import dill
 from collections import defaultdict
 import traceback
+import json
+import subprocess
 
 from dps import cfg
 from dps.utils import (
@@ -363,7 +365,7 @@ class TrainingLoop(object):
                 # variable scope names to path specifications, in which case all variables in each supplied
                 # variable scope name will be loaded from the path_specification paired with that scope name.
                 load_path = cfg.load_path
-                if load_path:
+                if load_path is not None:
                     if isinstance(load_path, str) or isinstance(load_path, int):
                         load_path = {"": load_path}
 
@@ -711,9 +713,7 @@ class FrozenTrainingLoopData(ExperimentDirectory):
     Parameters
     ----------
     path: str
-        Path to the the directory for the experiment whose data we want
-        to anaylze.  Should contain a sub-directory for each data-collection
-        mode (e.g. train, test).
+        Path to the the directory for the experiment whose data we want to access.
 
     """
     def __init__(self, path):
@@ -760,9 +760,53 @@ class FrozenTrainingLoopData(ExperimentDirectory):
     @property
     def config(self):
         if self._config is None:
-            with open(self.path_for('config.pkl'), 'rb') as f:
-                self._config = dill.load(f)
+            try:
+                with open(self.path_for('config.pkl'), 'rb') as f:
+                    self._config = dill.load(f)
+            except Exception:
+                pass
+            else:
+                return self._config
+
+            try:
+                with open(self.path_for('config.json'), 'r') as f:
+                    self._config = json.load(f)
+            except Exception:
+                pass
+            else:
+                return self._config
+
         return self._config
+
+    def get_config_value(self, key):
+        """ A temporary hack to deal with version inconsistencies. """
+        if self.config is None:
+            command = "grep \"'{}':\" < {}".format(key, self.path_for("config.txt"))
+            p = subprocess.run(command, shell=True, stdout=subprocess.PIPE)
+
+            # Get the line with the least amount of indentation.
+            lines = p.stdout.decode().split('\n')
+            lines = [l for l in lines if l.strip()]
+            indentations = []
+            for line in lines:
+                n_leading_spaces = 0
+                for c in line:
+                    if c.isspace():
+                        n_leading_spaces += 1
+                    else:
+                        break
+                indentations.append((n_leading_spaces, line))
+            smallest_indent = min(indentations)
+            with_smallest = [(s, l) for s, l in indentations if s == smallest_indent[0]]
+            assert len(with_smallest) == 1, with_smallest
+            line = with_smallest[0][1]
+
+            left, right = line.split(':')
+            right = right.strip()[:-1]
+            right = eval(right)
+            return right
+        else:
+            return self.config[key]
 
     @property
     def n_stages(self):
@@ -771,8 +815,12 @@ class FrozenTrainingLoopData(ExperimentDirectory):
     @property
     def history(self):
         if self._history is None:
-            with open(self.path_for('history.pkl'), 'rb') as f:
-                self._history = dill.load(f)
+            try:
+                with open(self.path_for('history.json'), 'r') as f:
+                    self._history = json.load(f)
+            except Exception:
+                with open(self.path_for('history.pkl'), 'rb') as f:
+                    self._history = dill.load(f)
         return self._history
 
     @property
@@ -787,7 +835,7 @@ class _TrainingLoopData(FrozenTrainingLoopData):
     """
     def setup(self):
         # Record training session environment for later diagnostic purposes
-        self.record_environment(config=cfg.freeze())
+        self.record_environment(config=cfg)
         self.curriculum = []
 
         self.make_directory('weights')
@@ -871,8 +919,8 @@ class _TrainingLoopData(FrozenTrainingLoopData):
         """ Write all stored data to disk. """
         self.dump_data(None)
 
-        with open(self.path_for('history.pkl'), 'wb') as f:
-            dill.dump(self.history, f, protocol=dill.HIGHEST_PROTOCOL, recurse=False)
+        with open(self.path_for('history.json'), 'w') as f:
+            json.dump(self.history, f)
 
     def freeze(self):
         self._finalize()

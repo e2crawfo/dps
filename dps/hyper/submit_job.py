@@ -553,7 +553,7 @@ class ParallelSession(object):
                     "{host}:{local_scratch}/experiments/ ./experiments".format(
                         host=host, **self.__dict__)
                 )
-                self.execute_command(command, frmt=False, robust=True)
+                self.execute_command(command, frmt=False, robust=True, output="loud")
 
                 command = "rm -rf {local_scratch}/experiments"
                 self.ssh_execute(command, host, robust=True)
@@ -561,7 +561,7 @@ class ParallelSession(object):
                 command = (
                     "rsync -avz -e \"ssh {ssh_options}\" "
                     "{host}:{local_scratch}/{archive_root} .".format(
-                        host=host, **self.__dict__)
+                        host=host, **self.__dict__, output="loud")
                 )
                 self.execute_command(command, frmt=False, robust=True)
 

@@ -165,7 +165,6 @@ config = Config(
 
     n_train=1e5,
     n_val=1e2,
-    n_test=1e2,
 
     # curriculum=[dict(lr_schedule=lr) for lr in [1e-1]],
     curriculum=[dict(lr_schedule=lr) for lr in [1e-4, 1e-5, 1e-6]],

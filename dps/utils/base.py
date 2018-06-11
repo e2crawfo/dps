@@ -26,6 +26,7 @@ import configparser
 import socket
 from zipfile import ZipFile
 import importlib
+import json
 
 import clify
 import dps
@@ -517,17 +518,22 @@ class ExperimentDirectory(object):
 
         if config is not None:
             with open(self.path_for('config.pkl'), 'wb') as f:
+                dill.dump(config, f, protocol=dill.HIGHEST_PROTOCOL, recurse=dill_recurse)
 
-                dill.dump(config, f, protocol=dill.HIGHEST_PROTOCOL,
-                          recurse=dill_recurse)
+            with open(self.path_for('config.json'), 'w') as f:
+                json.dump(config.freeze(remove_callable=True), f)
 
             with open(self.path_for('config.txt'), 'w') as f:
-                f.write(str(config))
+                f.write(config.freeze(remove_callable=True), f)
 
     @property
     def host(self):
-        with open(self.path_for('context/uname.txt'), 'r') as f:
-            return f.read().split()[1]
+        try:
+            with open(self.path_for('context/uname.txt'), 'r') as f:
+                return f.read().split()[1]
+        except FileNotFoundError:
+            with open(self.path_for('uname.txt'), 'r') as f:
+                return f.read().split()[1]
 
 
 def edit_text(prefix=None, editor="vim", initial_text=None):
@@ -1280,6 +1286,15 @@ class Config(dict, MutableMapping):
     def update_from_command_line(self):
         cl_args = clify.wrap_object(self).parse()
         self.update(cl_args)
+
+    def freeze(self, remove_callable=False):
+        _config = Config()
+        for key in self.keys():
+            value = self[key]
+            if remove_callable and callable(value):
+                value = str(value)
+            _config[key] = value
+        return _config
 
 
 class SystemConfig(Config):

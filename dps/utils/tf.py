@@ -205,13 +205,13 @@ class ScopedFunction(Parameterized):
 
         with tf.variable_scope(self.scope, reuse=self.initialized):
             if not self.initialized:
-                print("Entering var scope {} for first time.".format(self.scope.name))
+                print("Entering var scope '{}' for first time.".format(self.scope.name))
 
             outp = self._call(inp, output_size, is_training)
 
             if not self.initialized:
                 n_trainable_variables = count_trainable_variables(var_scope=self.scope)
-                print("Leaving var scope {} for first time. "
+                print("Leaving var scope '{}' for first time. "
                       "{} trainable variables in scope".format(self.scope.name, n_trainable_variables))
 
         self._maybe_initialize()
@@ -1058,11 +1058,11 @@ class Exponential(Schedule):
 
         assert isinstance(self.decay_steps, int)
         assert self.decay_steps > 1
-        assert 0 < self.decay_rate < 1
+        assert 0 <= self.decay_rate <= 1
 
     def build(self, t):
         if self.staircase:
-            t = t // self.decay_steps
+            t = tf.to_float(t // self.decay_steps)
         else:
             t = t / self.decay_steps
         value = (self.start - self.end) * (self.decay_rate ** t) + self.end
@@ -1111,9 +1111,9 @@ class Reciprocal(Schedule):
 
     def build(self, t):
         if self.staircase:
-            t //= self.decay_steps
+            t = tf.to_float(t // self.decay_steps)
         else:
-            t /= self.decay_steps
+            t = t / self.decay_steps
         return ((self.start - self.end) / (1 + t))**self.gamma + self.end
 
 
