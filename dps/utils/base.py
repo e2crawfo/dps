@@ -521,10 +521,7 @@ class ExperimentDirectory(object):
                 dill.dump(config, f, protocol=dill.HIGHEST_PROTOCOL, recurse=dill_recurse)
 
             with open(self.path_for('config.json'), 'w') as f:
-                json.dump(config.freeze(remove_callable=True), f)
-
-            with open(self.path_for('config.txt'), 'w') as f:
-                f.write(config.freeze(remove_callable=True), f)
+                json.dump(config.freeze(), f, default=str, indent=4, sort_keys=True)
 
     @property
     def host(self):

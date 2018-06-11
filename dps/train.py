@@ -158,7 +158,11 @@ class TrainingLoop(object):
         self.curriculum_remaining[idx].update(stage_config)
 
     def timestamp(self, message):
-        print("{} (at {}, {} seconds after given start time)".format(message, datetime.datetime.now(), time.time() - self.start_time))
+        print("{} ({}, {:.2f}s elapsed, {:.2f}s remaining)".format(
+            message,
+            datetime.datetime.now(),
+            time.time() - self.start_time,
+            self.time_remaining))
 
     def run(self, start_time):
         """ Run the training loop.
@@ -553,9 +557,9 @@ class TrainingLoop(object):
         early_stop = EarlyStopHook(patience=cfg.patience, maximize=self.maximize_sc)
 
         # Start stage
-        print("{} seconds left at the beginning of stage {}.".format(self.time_remaining, stage_idx))
-        print("\n" + "-" * 10 + " Training begins " + "-" * 10 + "\n")
-        self.timestamp("training begins")
+        print("\n" + "-" * 10 + " Training begins " + "-" * 10)
+        self.timestamp("")
+        print()
 
         total_train_time = 0.0
         time_per_example = 0.0
@@ -920,7 +924,7 @@ class _TrainingLoopData(FrozenTrainingLoopData):
         self.dump_data(None)
 
         with open(self.path_for('history.json'), 'w') as f:
-            json.dump(self.history, f)
+            json.dump(self.history, f, default=str, indent=4, sort_keys=True)
 
     def freeze(self):
         self._finalize()
