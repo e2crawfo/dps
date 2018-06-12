@@ -139,7 +139,9 @@ class ParallelSession(object):
         input_zip_base = os.path.basename(input_zip)
         archive_root = zip_root(input_zip)
 
-        self.copy_files(job_dir, input_zip, archive_root, ["README.md", "sampled_configs.txt", "config.txt"])
+        self.copy_files(
+            job_dir, input_zip, archive_root,
+            ["README.md", "sampled_configs.txt", "config.json", "config.pkl"])
 
         # storage local to each node, from the perspective of that node
         local_scratch = os.path.join(local_scratch_prefix, os.path.basename(job_path))
