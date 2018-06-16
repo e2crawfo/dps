@@ -11,6 +11,7 @@ from collections import defaultdict
 import sys
 import dill
 from zipfile import ZipFile
+from contextlib import ExitStack
 
 from dps import cfg
 from dps.parallel import ReadOnlyJob
@@ -595,6 +596,14 @@ class ParallelSession(object):
         return value
 
     def run(self):
+        with ExitStack() as stack:
+            if not self.hpc:
+                stack.enter_context(redirect_stream('stdout', self.job_dir.path_for('stdout'), tee=True))
+                stack.enter_context(redirect_stream('stderr', self.job_dir.path_for('stderr'), tee=True))
+
+            self._run()
+
+    def _run(self):
         if self.dry_run:
             print("Dry run, so not running.")
             return

@@ -91,46 +91,50 @@ class HyperSearch(object):
         KeyTuple = namedtuple(self.__class__.__name__ + "Key", config_keys)
 
         for exp_path in self.experiment_paths:
-            exp_data = FrozenTrainingLoopData(exp_path)
+            try:
+                exp_data = FrozenTrainingLoopData(exp_path)
 
-            md = {}
-            md['host'] = exp_data.host
-            for k in config_keys:
-                md[k] = exp_data.get_config_value(k)
+                md = {}
+                md['host'] = exp_data.host
+                for k in config_keys:
+                    md[k] = exp_data.get_config_value(k)
 
-            sc = []
-            records = []
-            for stage in exp_data.history:
-                record = stage.copy()
+                sc = []
+                records = []
+                for stage in exp_data.history:
+                    record = stage.copy()
 
-                if 'best_path' in record:
-                    del record['best_path']
-                if 'final_path' in record:
-                    del record['final_path']
+                    if 'best_path' in record:
+                        del record['best_path']
+                    if 'final_path' in record:
+                        del record['final_path']
 
-                sc.append(record['stage_config'])
-                del record['stage_config']
+                    sc.append(record['stage_config'])
+                    del record['stage_config']
 
-                # Fix and filter keys
-                _record = {}
-                for k, v in record.items():
-                    if k.startswith("best_"):
-                        k = k[5:]
+                    # Fix and filter keys
+                    _record = {}
+                    for k, v in record.items():
+                        if k.startswith("best_"):
+                            k = k[5:]
 
-                    if (fields and k in fields) or not fields:
-                        _record[k] = v
+                        if (fields and k in fields) or not fields:
+                            _record[k] = v
 
-                records.append(_record)
+                    records.append(_record)
 
-            key = KeyTuple(*(exp_data.get_config_value(k) for k in config_keys))
+                key = KeyTuple(*(exp_data.get_config_value(k) for k in config_keys))
 
-            repeat = exp_data.get_config_value("repeat")
-            seed = exp_data.get_config_value("seed")
+                repeat = exp_data.get_config_value("repeat")
+                seed = exp_data.get_config_value("seed")
 
-            if bare:
-                stage_data[key][(repeat, seed)] = pd.DataFrame.from_records(records)
-            else:
-                stage_data[key][(repeat, seed)] = (pd.DataFrame.from_records(records), sc, md)
+                if bare:
+                    stage_data[key][(repeat, seed)] = pd.DataFrame.from_records(records)
+                else:
+                    stage_data[key][(repeat, seed)] = (pd.DataFrame.from_records(records), sc, md)
+
+            except Exception:
+                pass
 
         return stage_data
 

@@ -35,8 +35,16 @@ class RawDataset(Parameterized):
         print("Param hash: {}".format(param_hash))
 
         self.directory = os.path.join(directory, str(param_hash))
+        cfg_filename = os.path.join(self.directory, "config.txt")
 
-        if not os.path.exists(self.directory):
+        if not os.path.exists(cfg_filename):
+
+            # Start fresh
+            try:
+                shutil.rmtree(self.directory)
+            except FileNotFoundError:
+                pass
+
             print("Directory for dataset not found, creating...")
             os.makedirs(self.directory, exist_ok=False)
 
@@ -52,7 +60,7 @@ class RawDataset(Parameterized):
                     pass
                 raise
 
-            with open(os.path.join(self.directory, "config.txt"), 'w') as f:
+            with open(cfg_filename, 'w') as f:
                 f.write(pprint.pformat(params))
         else:
             print("Found.")
@@ -123,8 +131,21 @@ class Dataset(Parameterized):
         print("Param hash: {}".format(param_hash))
 
         self.filename = os.path.join(directory, str(param_hash))
+        cfg_filename = self.filename + ".cfg"
 
-        if not os.path.exists(self.filename):
+        # We require cfg_filename to exist as it marks that dataset creation completed successfully.
+        if not os.path.exists(self.filename) or not os.path.exists(cfg_filename):
+
+            # Start fresh
+            try:
+                os.remove(self.filename)
+            except FileNotFoundError:
+                pass
+            try:
+                os.remove(cfg_filename)
+            except FileNotFoundError:
+                pass
+
             print("File for dataset not found, creating...")
 
             self._writer = tf.python_io.TFRecordWriter(self.filename)
@@ -135,13 +156,19 @@ class Dataset(Parameterized):
                 print("Done creating dataset.")
             except BaseException:
                 self._writer.close()
+
                 try:
                     os.remove(self.filename)
                 except FileNotFoundError:
                     pass
+                try:
+                    os.remove(cfg_filename)
+                except FileNotFoundError:
+                    pass
+
                 raise
 
-            with open(self.filename + ".cfg", 'w') as f:
+            with open(cfg_filename, 'w') as f:
                 f.write(pprint.pformat(params))
         else:
             print("Found.")
@@ -874,14 +901,7 @@ class PatchesDataset(ImageDataset):
 
     def visualize(self, n=4):
         batch_size = n
-        dset = tf.data.TFRecordDataset(self.filename)
-        dset = dset.batch(batch_size).map(self.parse_example_batch)
-
-        iterator = dset.make_one_shot_iterator()
-
-        sess = tf.get_default_session()
-
-        images, annotations, n_annotations, label = sess.run(iterator.get_next())
+        images, annotations, n_annotations, label = self.sample(n)
 
         fig, axes = plt.subplots(1, batch_size)
         for i in range(batch_size):
@@ -892,6 +912,17 @@ class PatchesDataset(ImageDataset):
 
         plt.subplots_adjust(top=0.95, bottom=0, left=0, right=1, wspace=0.1, hspace=0.1)
         plt.show()
+
+    def sample(self, n=4):
+        batch_size = n
+        dset = tf.data.TFRecordDataset(self.filename)
+        dset = dset.batch(batch_size).map(self.parse_example_batch)
+
+        iterator = dset.make_one_shot_iterator()
+
+        sess = tf.get_default_session()
+
+        return sess.run(iterator.get_next())
 
 
 class GridPatchesDataset(PatchesDataset):
