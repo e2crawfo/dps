@@ -1,10 +1,11 @@
 import subprocess as sp
 import numpy as np
-from collections import deque, OrderedDict
+from collections import deque, OrderedDict, defaultdict
 import os
 import hashlib
 import pprint
 import argparse
+from tabulate import tabulate
 
 import tensorflow as tf
 from tensorflow.python.ops import random_ops
@@ -44,6 +45,53 @@ def count_trainable_variables(variables=None, var_scope=None):
         variables = trainable_variables(var_scope, for_opt=True)
 
     return np.sum([np.prod(v.get_shape().as_list()) for v in variables])
+
+
+def walk_variable_scopes(max_depth=None):
+    def _fmt(i):
+        return "{:,}".format(i)
+
+    all_fixed = set(tf.get_collection(FIXED_COLLECTION, scope=""))
+
+    fixed = defaultdict(int)
+    trainable = defaultdict(int)
+
+    for v in trainable_variables("", for_opt=False):
+        n_variables = int(np.prod(v.get_shape().as_list()))
+
+        if v in all_fixed:
+            fixed[""] += n_variables
+            trainable[""] += 0
+        else:
+            fixed[""] += 0
+            trainable[""] += n_variables
+
+        name_so_far = ""
+
+        for token in v.name.split("/")[:-1]:
+            name_so_far += token
+            if v in all_fixed:
+                fixed[name_so_far] += n_variables
+                trainable[name_so_far] += 0
+            else:
+                fixed[name_so_far] += 0
+                trainable[name_so_far] += n_variables
+            name_so_far += "/"
+
+    table = ["scope trainable fixed total".split()]
+    for scope in sorted(fixed, reverse=True):
+        depth = sum(c == "/" for c in scope) + 1
+
+        if max_depth is not None and depth > max_depth:
+            continue
+
+        table.append([
+            scope,
+            _fmt(trainable[scope]),
+            _fmt(fixed[scope]),
+            _fmt(trainable[scope] + fixed[scope])])
+
+    print(tabulate(table, headers="firstrow", tablefmt="fancy_grid"))
 
 
 def tf_normal_kl(q_mean, q_std, p_mean, p_std):
@@ -203,16 +251,16 @@ class ScopedFunction(Parameterized):
     def __call__(self, inp, output_size, is_training):
         self.resolve_scope()
 
+        first_call = not self.initialized
+
         with tf.variable_scope(self.scope, reuse=self.initialized):
-            if not self.initialized:
+            if first_call:
                 print("Entering var scope '{}' for first time.".format(self.scope.name))
 
             outp = self._call(inp, output_size, is_training)
 
-            if not self.initialized:
-                n_trainable_variables = count_trainable_variables(var_scope=self.scope)
-                print("Leaving var scope '{}' for first time. "
-                      "{} trainable variables in scope".format(self.scope.name, n_trainable_variables))
+            if first_call:
+                print("Leaving var scope '{}' for first time.".format(self.scope.name))
 
         self._maybe_initialize()
 

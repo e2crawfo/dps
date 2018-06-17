@@ -23,7 +23,7 @@ from dps.utils import (
 )
 from dps.utils.tf import (
     restart_tensorboard, uninitialized_variables_initializer,
-    trainable_variables, count_trainable_variables
+    trainable_variables, walk_variable_scopes
 )
 
 
@@ -352,9 +352,7 @@ class TrainingLoop(object):
                 updater.build_graph()
                 print("\nDone building network.\n")
 
-                n_trainable_variables = count_trainable_variables(
-                    variables=updater.trainable_variables(for_opt=True))
-                print("n_trainable_variables: {}".format(n_trainable_variables))
+                walk_variable_scopes(max_depth=3)
 
                 # Optionally initialize network weights.
                 # Let a *path_specification* be one of three things:
