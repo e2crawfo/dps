@@ -14,6 +14,7 @@ from collections import defaultdict
 import traceback
 import json
 import subprocess
+from tabulate import tabulate
 
 from dps import cfg
 from dps.utils import (
@@ -233,7 +234,7 @@ class TrainingLoop(object):
                     self._run()
 
             finally:
-                print(self.data.summarize())
+                self.data.summarize()
 
                 self.timestamp("Done training run (name={})".format(self.exp_name))
                 print("=" * 80)
@@ -595,6 +596,19 @@ class TrainingLoop(object):
                     updater.n_experiences, self.n_global_experiences,
                     **eval_results)
 
+                if display:
+                    self.data.summarize_current_stage(
+                        local_step, global_step, updater.n_experiences, self.n_global_experiences)
+                    print("\nMy PID: {}".format(os.getpid()))
+                    print("\nPhysical memory use: "
+                          "{}mb".format(memory_usage(physical=True)))
+                    print("Virtual memory use: "
+                          "{}mb".format(memory_usage(physical=False)))
+                    print("Avg time per batch: {}s".format(time_per_batch))
+
+                    if cfg.use_gpu:
+                        print(nvidia_smi())
+
                 record = eval_results[cfg.eval_mode][0]
 
                 stopping_criteria = record[self.stopping_criteria_name]
@@ -681,18 +695,6 @@ class TrainingLoop(object):
                 self.n_global_experiences += n_experiences_delta
 
             update_duration = time.time() - update_start_time
-
-            if display:
-                print(self.data.summarize(local_step, global_step, updater.n_experiences, self.n_global_experiences))
-                print("\nMy PID: {}".format(os.getpid()))
-                print("\nPhysical memory use: "
-                      "{}mb".format(memory_usage(physical=True)))
-                print("Virtual memory use: "
-                      "{}mb".format(memory_usage(physical=False)))
-                print("Avg time per batch: {}s".format(time_per_batch))
-
-                if cfg.use_gpu:
-                    print(nvidia_smi())
 
             # If `do_train` is False, we do no training and evaluate
             # exactly once, so only one iteration is required.
@@ -928,6 +930,41 @@ class _TrainingLoopData(FrozenTrainingLoopData):
         self._finalize()
         return FrozenTrainingLoopData(self.path)
 
+    def summarize_current_stage(self, local_step, global_step, n_local_experiences, n_global_experiences):
+        stage_idx = self.current_stage_record['stage_idx']
+
+        print("\n {} Stage={}, Step(l={}, g={}), Experiences(l={}, g={}) {}\n".format(
+            "*" * 20, stage_idx, local_step, global_step,
+            n_local_experiences, n_global_experiences, "*" * 20))
+
+        data = defaultdict(dict)
+
+        for k, v in sorted(self.current_stage_record.items()):
+            if isinstance(v, dict):
+                v = "\n" + pformat(v, indent=2)
+                print("* {}: {}".format(k, v))
+            elif k.endswith("_path") or not k.startswith("best_"):
+                print("* {}: {}".format(k, v))
+            else:
+                data[k[5:]]['best'] = v
+
+        for mode, mode_data in sorted(self.data.items()):
+            if mode_data:
+                record = mode_data[-1] or {}
+                for k, v in sorted(record.items()):
+                    if isinstance(v, dict):
+                        v = "\n" + pformat(v, indent=2)
+                        print("* {}_{}: {}".format(mode, k, v))
+                    else:
+                        data[k][mode] = v
+
+        headers = ["key", "best"] + sorted(self.data)
+        table = [
+            [key] + [row.get(k, None) for k in headers[1:]]
+            for key, row in sorted(data.items())]
+
+        print(tabulate(table, headers=headers, tablefmt="psql"))
+
     def summarize(self, *steps):
         """ Summarize the training data.
 
@@ -937,43 +974,31 @@ class _TrainingLoopData(FrozenTrainingLoopData):
             local_step, global_step, local_experience, global_experiences
 
         """
-        s = "\n"
-        current_stage_only = bool(steps)
-        if current_stage_only:
-            local_step, global_step, n_local_experiences, n_global_experiences = steps
-            history = [self.current_stage_record]
-        else:
-            s += "Stage-by-stage summary " + ">" * 30 + "\n"
-            history = self.history
+        print("\nStage-by-stage summary " + ">" * 30 + "\n")
 
-        for record in history:
+        table = defaultdict(dict)
+
+        for record in self.history:
             stage_idx = record['stage_idx']
-
-            if current_stage_only:
-                s += "\nStage={}, Step(l={}, g={}), Experiences(l={}, g={}): ".format(
-                    stage_idx, local_step, global_step, n_local_experiences, n_global_experiences)
-            else:
-                s += "\nStage {} ".format(stage_idx)
-
-            s += "*" * 30 + '\n'
+            print("\n" + "-" * 20 + "Stage {} ".format(stage_idx) + "-" * 20)
 
             for k, v in sorted(record.items()):
                 if isinstance(v, dict):
                     v = "\n" + pformat(v, indent=2)
-                s += "* {}: {}\n".format(k, v)
+                    print("* {}: {}".format(k, v))
+                elif isinstance(v, str) and len(v) > 20:
+                    print("* {}: {}".format(k, v))
+                else:
+                    table[k][stage_idx] = v
 
-        for mode, data in self.data.items():
-            if data:
-                record = data[-1]
+        headers = ["key"] + list(range(len(self.history)))
+        table = [
+            [key] + [row.get(k, None) for k in headers[1:]]
+            for key, row in sorted(table.items())]
 
-                if record:
-                    s += "\n-- {} -- \n".format(mode)
-                    for k, v in sorted(record.items()):
-                        if isinstance(v, dict):
-                            v = "\n" + pformat(v, indent=2)
-                        s += "* {}: {}\n".format(k, v)
-
-        return s
+        print()
+        print(tabulate(table, headers=headers, tablefmt="psql"))
+        print()
 
 
 class Hook(object):
