@@ -1292,7 +1292,7 @@ def masked_mean(array, mask, axis=None, keepdims=False):
 
 def build_gradient_train_op(
         loss, tvars, optimizer_spec, lr_schedule, max_grad_norm=None,
-        noise_schedule=None, global_step=None, summary_prefix=None):
+        noise_schedule=None, global_step=None, summary_prefix=None, return_summaries=True):
     """ By default, `global_step` is None, so the global step is not incremented. """
 
     pure_gradients = tf.gradients(loss, tvars)
@@ -1321,13 +1321,16 @@ def build_gradient_train_op(
         train_op = optimizer.apply_gradients(grads_and_vars, global_step=global_step)
 
     pre = summary_prefix + "_" if summary_prefix else ""
+    records = {
+        pre + 'grad_norm_pure': tf.global_norm(pure_gradients),
+        pre + 'grad_norm_processed': tf.global_norm(noisy_gradients),
+    }
 
-    summaries = [
-        tf.summary.scalar(pre + 'grad_norm_pure', tf.global_norm(pure_gradients)),
-        tf.summary.scalar(pre + 'grad_norm_processed', tf.global_norm(noisy_gradients)),
-    ]
-
-    return train_op, summaries
+    if return_summaries:
+        summaries = [tf.scalar.summary(k, v) for k, v in records.items()]
+        return train_op, summaries
+    else:
+        return train_op, records
 
 
 def tf_roll(a, n, axis=0, fill=None, reverse=False):

@@ -189,9 +189,6 @@ class TrainingLoop(object):
         if cfg.seed is None or cfg.seed < 0:
             cfg.seed = gen_seed()
 
-        if cfg.start_tensorboard:
-            restart_tensorboard(cfg.log_dir, cfg.tbport, cfg.reload_interval)
-
         # Create a directory to store the results of the training session.
         es = ExperimentStore(cfg.log_dir, max_experiments=cfg.max_experiments, delete_old=1)
         exp_dir = es.new_experiment(
@@ -262,6 +259,9 @@ class TrainingLoop(object):
             print("\n" + "=" * 50)
             self.timestamp("Starting stage {}".format(stage_idx))
             print("\n")
+
+            if cfg.start_tensorboard:
+                restart_tensorboard(cfg.log_dir, cfg.tbport, cfg.reload_interval)
 
             stage_config = self.curriculum_remaining.pop(0)
             stage_config = Config(stage_config)
