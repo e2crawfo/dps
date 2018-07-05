@@ -492,6 +492,9 @@ def yolo_render_hook(updater):
 def mAP(pred_boxes, gt_boxes, n_classes, recall_values=None, iou_threshold=None):
     """ Calculate mean average precision on a dataset.
 
+    Averages over:
+        classes, recall_values, iou_threshold
+
     pred_boxes: [[class, conf, y_min, y_max, x_min, x_max] * n_boxes] * n_images
     gt_boxes: [[class, y_min, y_max, x_min, x_max] * n_boxes] * n_images
 

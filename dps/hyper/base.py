@@ -372,7 +372,7 @@ def sample_configs(distributions, n_repeats, n_samples=None):
             samples = nested_sample(distributions, n_samples)
 
     print("Sampled configs:")
-    print(samples)
+    pprint(samples)
 
     configs = []
     for i, s in enumerate(samples):

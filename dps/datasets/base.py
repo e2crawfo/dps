@@ -103,7 +103,7 @@ class ImageFeature(ArrayFeature):
     def process(self, data):
         images = tf.decode_raw(data[self.name], tf.float32)
         images = tf.reshape(images, (-1,) + self.shape)
-        images = tf.clip_by_value(images, 1e-6, 1-1e-6)
+        images = tf.clip_by_value(images, 0.0, 1.0)
 
         return images
 
@@ -306,7 +306,7 @@ class ImageClassificationDataset(Dataset):
         images = tf.decode_raw(features['image_raw'], tf.uint8)
         images = tf.reshape(images, (-1,) + self.obs_shape)
         images = tf.image.convert_image_dtype(images, tf.float32)
-        images = tf.clip_by_value(images, 1e-6, 1-1e-6)
+        images = tf.clip_by_value(images, 0.0, 1.0)
 
         label = tf.cast(features['label'], tf.int32)
 
@@ -580,7 +580,7 @@ class PatchesDataset(ImageDataset):
         images = tf.decode_raw(features['image_raw'], tf.uint8)
         images = tf.reshape(images, (-1,) + self.obs_shape)
         images = tf.image.convert_image_dtype(images, tf.float32)
-        images = tf.clip_by_value(images, 1e-6, 1-1e-6)
+        images = tf.clip_by_value(images, 0.0, 1.0)
 
         n_annotations = tf.cast(features['n_annotations'], tf.int32)
         max_n_annotations = tf.reduce_max(n_annotations)
@@ -602,6 +602,8 @@ class PatchesDataset(ImageDataset):
         # --- prepare colours ---
 
         colours = self.colours
+        if colours is None:
+            colours = []
         if isinstance(colours, str):
             colours = colours.split()
 
@@ -831,9 +833,11 @@ class PatchesDataset(ImageDataset):
                         rects.append(rect)
                         break
                     else:
+                        overlap_area = 0
                         violation = False
                         for r in rects:
-                            if rect.overlap_area(r) > max_overlap:
+                            overlap_area += rect.overlap_area(r)
+                            if overlap_area > max_overlap:
                                 violation = True
                                 break
 
@@ -1147,7 +1151,10 @@ class GridEmnistObjectDetectionDataset(EmnistObjectDetectionDataset, GridPatches
 
 
 if __name__ == "__main__":
-    dset = VisualArithmeticDataset(n_examples=4, reductions="A:sum", largest_digit=28)
+    dset = VisualArithmeticDataset(
+        n_examples=16, reductions="sum", largest_digit=28,
+        min_digits=1, max_digits=3, image_shape=(24, 24),
+        max_overlap=98, colours="white")
 
     sess = tf.Session()
     with sess.as_default():

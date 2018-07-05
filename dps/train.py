@@ -642,9 +642,9 @@ class TrainingLoop(object):
                     break
 
                 if self.maximize_sc:
-                    threshold_reached = stopping_criteria > cfg.threshold
+                    threshold_reached = stopping_criteria >= cfg.threshold
                 else:
-                    threshold_reached = stopping_criteria < cfg.threshold
+                    threshold_reached = stopping_criteria <= cfg.threshold
 
                 if threshold_reached:
                     reason = "Stopping criteria threshold reached"

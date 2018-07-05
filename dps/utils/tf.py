@@ -353,6 +353,11 @@ class ScopedFunctionWrapper(ScopedFunction):
         return self.function(inp, output_size, is_training)
 
 
+class IdentityFunction(ScopedFunction):
+    def _call(self, inp, output_size, is_training):
+        return inp
+
+
 class MLP(ScopedFunction):
     def __init__(self, n_units=None, scope=None, **fc_kwargs):
         self.n_units = n_units or []

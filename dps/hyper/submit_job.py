@@ -212,6 +212,7 @@ class ParallelSession(object):
         return [float(s) for s in stdout.split(':')[-1].split(',')]
 
     def print_time_limits(self):
+        print("\n" + "~" * 40)
         print("We have {wall_time_seconds} seconds to complete {n_jobs_to_run} "
               "sub-jobs (grouped into {n_steps} steps) using {n_procs} processors.".format(**self.__dict__))
         print("Each step, we are allowing {slack_time} as slack and "
@@ -367,7 +368,8 @@ class ParallelSession(object):
                 "required hosts is {}.".format(len(hosts), min_hosts))
 
         n_procs = ppn * len(hosts)
-        print("Proceeding with {} usable hosts, translates into {} procs "
+
+        print("\nProceeding with {} usable hosts, translates into {} procs total"
               "(max_procs: {}, max_hosts: {}).".format(
                   len(hosts), n_procs, max_procs, max_hosts))
 
@@ -664,7 +666,7 @@ class ParallelSession(object):
             while subjobs_remaining:
                 step_start = datetime.datetime.now()
 
-                print("Starting step {} at: ".format(i) + "=" * 90)
+                print("\nStarting step {} at: ".format(i) + "=" * 90)
                 print("{} ({} since start of job)".format(step_start, step_start - job_start))
 
                 if not self.host_pool:
