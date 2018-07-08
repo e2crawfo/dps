@@ -346,7 +346,7 @@ class ParallelSession(object):
                             command = "cp {input_zip_abs} {local_scratch}".format(**self.__dict__)
                         else:
                             command = (
-                                "rsync -av -e \"ssh {ssh_options}\" "
+                                "rsync -av --timeout=300 -e \"ssh {ssh_options}\" "
                                 "{input_zip_abs} {host}:{local_scratch}".format(host=host, **self.__dict__)
                             )
                         self.execute_command(command, frmt=False, robust=False)
@@ -554,21 +554,21 @@ class ParallelSession(object):
                 self.execute_command(command, robust=True)
             else:
                 command = (
-                    "rsync -avz -e \"ssh {ssh_options}\" "
+                    "rsync -avvz --timeout=300 -e \"ssh {ssh_options}\" "
                     "{host}:{local_scratch}/experiments/ ./experiments".format(
                         host=host, **self.__dict__)
                 )
                 self.execute_command(command, frmt=False, robust=True, output="loud")
 
                 command = "rm -rf {local_scratch}/experiments"
-                self.ssh_execute(command, host, robust=True)
+                self.ssh_execute(command, host, robust=True, output="loud")
 
                 command = (
-                    "rsync -avz -e \"ssh {ssh_options}\" "
+                    "rsync -avvz --timeout=300 -e \"ssh {ssh_options}\" "
                     "{host}:{local_scratch}/{archive_root} .".format(
-                        host=host, **self.__dict__, output="loud")
+                        host=host, **self.__dict__)
                 )
-                self.execute_command(command, frmt=False, robust=True)
+                self.execute_command(command, frmt=False, robust=True, output="loud")
 
         self.execute_command("zip -rq results {archive_root}", robust=True)
 
@@ -805,6 +805,7 @@ print(str((end - start).total_seconds()) + " seconds elapsed between start and f
     else:
         raise Exception()
 
+    print("\n" + "~" * 40)
     print(command)
 
     with cd(job_path):
