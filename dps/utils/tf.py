@@ -260,7 +260,10 @@ class ScopedFunction(Parameterized):
             outp = self._call(inp, output_size, is_training)
 
             if first_call:
-                print("Leaving var scope '{}' for first time.".format(self.scope.name))
+                s = "Leaving var scope '{}' for first time.".format(self.scope.name)
+                if isinstance(outp, tf.Tensor):
+                    s += " Actual output shape: {}.".format(outp.shape)
+                print(s)
 
         self._maybe_initialize()
 
