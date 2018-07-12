@@ -12,6 +12,7 @@ import sys
 import dill
 from zipfile import ZipFile
 from contextlib import ExitStack
+import json
 
 from dps import cfg
 from dps.parallel import ReadOnlyJob
@@ -95,10 +96,9 @@ class ParallelSession(object):
 
         args = locals().copy()
         del args['self']
-        del args['host_pool']
+
         print("\nParallelSession args:")
         print(args)
-        del args
 
         launch_venv = os.getenv('VIRTUAL_ENV')
         if launch_venv:
@@ -130,6 +130,11 @@ class ParallelSession(object):
 
         job_dir = es.new_experiment(name, 0, add_date=add_date, force_fresh=1)
         job_dir.record_environment()
+
+        with open(job_dir.path_for('run_kwargs.json'), 'w') as f:
+            json.dump(args, f, default=str, indent=4, sort_keys=True)
+        del f
+        del args
 
         job_path = job_dir.path
         job_dir.make_directory('experiments')
@@ -730,17 +735,21 @@ def submit_job(
         wall_time=wall_time, ppn=ppn, cpp=cpp, kind=kind,
         gpu_set=gpu_set, pmem=pmem)
 
-    env_vars=dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1')
+    run_kwargs['env_vars'] = dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1')
+    run_kwargs['dry_run'] = False
 
     session = ParallelSession(
-        name, archive_path, 'map', cfg.run_experiments_dir, dry_run=False,
-        env_vars=env_vars, **run_kwargs)
+        name, archive_path, 'map', cfg.run_experiments_dir, **run_kwargs)
+
+    job_path = session.job_path
+
+    # Not strictly required if kind == "parallel", but do it anyway for completeness.
+    with open(os.path.join(job_path, "session.pkl"), 'wb') as f:
+        dill.dump(session, f, protocol=dill.HIGHEST_PROTOCOL, recurse=True)
 
     if kind in "parallel slurm-local".split():
         session.run()
         return session
-
-    job_path = session.job_path
 
     python_script = """#!{}
 import datetime
@@ -757,9 +766,6 @@ print(str((end - start).total_seconds()) + " seconds elapsed between start and f
 """.format(sys.executable)
     with open(os.path.join(job_path, "run.py"), 'w') as f:
         f.write(python_script)
-
-    with open(os.path.join(job_path, "session.pkl"), 'wb') as f:
-        dill.dump(session, f, protocol=dill.HIGHEST_PROTOCOL, recurse=True)
 
     if kind == "pbs":
         resources = "nodes={}:ppn={},walltime={}".format(session.n_nodes, session.ppn, session.wall_time_seconds)

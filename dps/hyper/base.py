@@ -24,8 +24,11 @@ from dps.hyper.submit_job import submit_job, ParallelSession
 
 
 class HyperSearch(object):
-    """ Interface to a directory storing a hyper-parameter search. """
+    """ Interface to a directory storing a hyper-parameter search.
 
+    Approximately a `frozen`, read-only handle for a directoy created by ParallelSession.
+
+    """
     def __init__(self, path):
         self.path = path
 
@@ -525,8 +528,8 @@ def build_search(
 
 
 def build_and_submit(
-        name, config, distributions, wall_time="1year", n_param_settings=0,
-        n_repeats=1, do_local_test=False, kind="local", readme="", **run_kwargs):
+        name, config, distributions, n_param_settings=0, n_repeats=1,
+        do_local_test=False, kind="local", readme="", **run_kwargs):
     """ Build a job and submit it. Meant to be called from within a script.
 
     Parameters
@@ -538,8 +541,6 @@ def build_and_submit(
     distributions: dict
         Object used to generate variations of the base config (so that different
         jobs test different parameters).
-    wall_time: str
-        Maximum amount of time that is to be used to complete jobs.
     n_param_settings: int
         Number of different configurations to sample from `distributions`. If not
         supplied, it is assumed that `distributions` actually specifies a grid
@@ -561,9 +562,6 @@ def build_and_submit(
         order to run the job.
 
     """
-    with config:
-        cfg.update_from_command_line()
-
     # Get run_kwargs from command line
     sig = inspect.signature(ParallelSession.__init__)
     default_run_kwargs = sig.bind_partial()
@@ -579,9 +577,11 @@ def build_and_submit(
     config['build_command'] = ' '.join(sys.argv)
     print(config['build_command'])
 
+    with config:
+        cfg.update_from_command_line()
+
     if kind == "local":
         with config:
-            cfg.update_from_command_line()
             from dps.train import training_loop
             return training_loop()
     else:
@@ -604,8 +604,7 @@ def build_and_submit(
             n_param_settings=n_param_settings, n_repeats=n_repeats, readme=readme)
 
         run_kwargs.update(
-            archive_path=archive_path, name=name, wall_time=wall_time,
-            kind=kind, parallel_exe=cfg.parallel_exe)
+            archive_path=archive_path, name=name, kind=kind, parallel_exe=cfg.parallel_exe)
 
         parallel_session = submit_job(**run_kwargs)
 

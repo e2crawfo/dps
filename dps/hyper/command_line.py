@@ -3,12 +3,17 @@ import pandas as pd
 from pprint import pprint
 import subprocess
 import matplotlib.pyplot as plt
+import inspect
+import os
+import json
+import dill
 
+import clify
 
 from dps.utils import Config, process_path, confidence_interval, standard_error
 from dps.parallel.command_line import SubCommand, parallel_cl
 from dps.hyper import HyperSearch
-from dps.hyper.submit_job import DEFAULT_HOST_POOL
+from dps.hyper.submit_job import DEFAULT_HOST_POOL, submit_job, ParallelSession
 
 
 def _print_config_cmd(path):
@@ -237,6 +242,38 @@ def _probe_hosts(**_):
     print("{} of those hosts have idle cpu percent > 95.".format(n_idle))
 
 
+def _resubmit_cmd(path, name=""):
+    """ Note the resubmitting still has a limitation: experiments are not copied over
+        from the previous submission. Couldn't find a clean way to do this, so just do it manually
+        for now. In the future we should revamp the build/run process so that the possibility of
+        multiple runs is taken into account, and the results of the runs can be easily combined.
+
+    """
+    # Get run_kwargs from command line
+    search = HyperSearch(path)
+    archive_path = search.job.path
+
+    try:
+        with open(os.path.join(search.path, 'run_kwargs.json'), 'r') as f:
+            reference = json.load(f)
+    except FileNotFoundError:
+        with open(os.path.join(search.path, 'session.pkl'), 'rb') as f:
+            reference = dill.load(f).__dict__
+
+    sig = inspect.signature(ParallelSession.__init__)
+    _run_kwargs = sig.bind_partial()
+    _run_kwargs.apply_defaults()
+
+    run_kwargs = {}
+    for k, v in _run_kwargs.arguments.items():
+        run_kwargs[k] = reference[k]
+
+    cl_run_kwargs = clify.command_line(run_kwargs).parse()
+    run_kwargs.update(cl_run_kwargs)
+
+    submit_job(archive_path, "resubmit", **run_kwargs)
+
+
 def dps_hyper_cl():
     config_cmd = SubCommand(
         'config', 'Print config of a hyper-parameter search.',
@@ -257,7 +294,7 @@ def dps_hyper_cl():
     style_list = ['default', 'classic'] + sorted(style for style in plt.style.available if style != 'classic')
 
     value_plot_cmd = SubCommand(
-        'value_plot', 'Plot the trajectory of a value throughout all training runs.',
+        'value_plot', 'Plot the trajectory of a value over time for all training runs (for comparing trajectories).',
         _value_plot_cmd)
 
     value_plot_cmd.add_argument('path', help="Path to directory for search.", type=str, default="results.zip")
@@ -269,7 +306,7 @@ def dps_hyper_cl():
     value_plot_cmd.add_argument('--style', help="Style for plot.", choices=style_list, default="ggplot")
 
     search_plot_cmd = SubCommand(
-        'search_plot', 'Plot a the search.',
+        'search_plot', 'Plot values against one another.',
         _search_plot_cmd)
 
     search_plot_cmd.add_argument('path', help="Path to directory for search.", type=str)
@@ -283,6 +320,9 @@ def dps_hyper_cl():
     probe_hosts_cmd = SubCommand(
         'probe_hosts', 'Check the status of the hosts in host_pool.', _probe_hosts)
 
+    resubmit_cmd = SubCommand('resubmit', 'Resubmit a job.', _resubmit_cmd)
+    resubmit_cmd.add_argument('path', help="Path to directory for search.", type=str)
+
     parallel_cl(
         'Build, run, plot and view results of hyper-parameter searches.',
-        [config_cmd, summary_cmd, value_plot_cmd, search_plot_cmd, probe_hosts_cmd])
+        [config_cmd, summary_cmd, value_plot_cmd, search_plot_cmd, probe_hosts_cmd, resubmit_cmd])
