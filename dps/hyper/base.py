@@ -207,19 +207,27 @@ class HyperSearch(object):
         stage_data = self.extract_stage_data()
 
         best = []
+        all_keys = set()
 
         # For each parameter setting, identify the stage where it got the lowest/highest value for `criteria_key`.
         for i, (key, value) in enumerate(sorted(stage_data.items())):
             _best = []
 
             for (repeat, seed), (df, sc, md) in value.items():
-                if maximize:
-                    _best.append(dict(df.iloc[df[criteria_key].idxmax()]))
-                else:
-                    _best.append(dict(df.iloc[df[criteria_key].idxmin()]))
+                try:
+                    idx = df[criteria_key].idxmax() if maximize else df[criteria_key].idxmin()
+                except KeyError:
+                    idx = -1
 
+                record = dict(df.iloc[idx])
+                if criteria_key not in record:
+                    record[criteria_key] = -np.inf if maximize else np.inf
                 for k in keys:
-                    _best[-1][k] = md[k]
+                    record[k] = md[k]
+
+                all_keys |= record.keys()
+
+                _best.append(record)
 
             _best = pd.DataFrame.from_records(_best)
             _best = _best.sort_values(criteria_key)
@@ -230,8 +238,8 @@ class HyperSearch(object):
         best = [df for _, df in best]
 
         _column_order = [criteria_key, 'seed', 'reason', 'n_steps', 'host']
-        column_order = [c for c in _column_order if c in best[0]]
-        remaining = [k for k in best[0].keys() if k not in column_order and k not in keys]
+        column_order = [c for c in _column_order if c in all_keys]
+        remaining = [k for k in all_keys if k not in column_order and k not in keys]
         column_order = column_order + sorted(remaining)
 
         with pd.option_context('display.max_rows', None, 'display.max_columns', None):
@@ -242,7 +250,8 @@ class HyperSearch(object):
             for i, b in enumerate(best):
                 print('\n {}-th {} '.format(len(best)-i, "lowest" if not maximize else "highest") + '*' * 40)
                 pprint({k: b[k].iloc[0] for k in keys})
-                b = b.drop(keys, axis=1)[column_order]
+                _column_order = [c for c in column_order if c in b.keys()]
+                b = b[_column_order]
                 with_stats = pd.merge(
                     b.transpose(), b.describe().transpose(),
                     left_index=True, right_index=True, how='outer')
