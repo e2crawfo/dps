@@ -249,7 +249,6 @@ def _resubmit_cmd(path, name=""):
         multiple runs is taken into account, and the results of the runs can be easily combined.
 
     """
-    # Get run_kwargs from command line
     search = HyperSearch(path)
     archive_path = search.job.path
 
@@ -270,6 +269,22 @@ def _resubmit_cmd(path, name=""):
 
     cl_run_kwargs = clify.command_line(run_kwargs).parse()
     run_kwargs.update(cl_run_kwargs)
+
+    done = False
+    while not done:
+        print("Current values for run_kwargs: ")
+        pprint(run_kwargs)
+
+        inp = ""
+        while inp not in ["y", "n"]:
+            inp = input("Make changes? (y/n): ")
+
+        if inp == "y":
+            inp = input("Specify changes: ")
+            new = clify.command_line(run_kwargs, cl_args=inp).parse()
+            run_kwargs.update(new)
+        else:
+            done = True
 
     submit_job(archive_path, "resubmit", **run_kwargs)
 
