@@ -480,15 +480,13 @@ class TrainingLoop(object):
 
                     # --------------- Optionally render performance of best hypothesis -------------------
 
-                    do_final_rendering = (
+                    do_final_testing = (
                         not reason == "Time limit exceeded" and
-                        'best_path' in self.data.current_stage_record and
-                        cfg.render_step > 0 and
-                        cfg.render_hook is not None)
+                        'best_path' in self.data.current_stage_record)
 
-                    if do_final_rendering:
+                    if do_final_testing:
                         try:
-                            print("\n" + "-" * 10 + " Final rendering " + "-" * 10)
+                            print("\n" + "-" * 10 + " Final testing/rendering " + "-" * 10)
 
                             print("Best hypothesis for this stage was found on "
                                   "step (l: {best_local_step}, g: {best_global_step}) "
@@ -500,12 +498,17 @@ class TrainingLoop(object):
                                   "from file {}...".format(best_path))
                             updater.restore(sess, best_path)
 
-                            print("Rendering...")
-                            cfg.render_hook(updater)
-                            print("Done rendering.")
+                            test_results = updater.evaluate(cfg.batch_size, mode="test")
+                            self.data.record_values_for_stage(
+                                **{'_test_' + k: v for k, v in test_results[0].items()})
+
+                            if cfg.render_step > 0 and cfg.render_hook is not None:
+                                print("Rendering...")
+                                cfg.render_hook(updater)
+                                print("Done rendering.")
 
                         except BaseException:
-                            print("Exception occurred while performing final rendering: ")
+                            print("Exception occurred while performing final testing/rendering: ")
                             traceback.print_exc()
 
                     else:
@@ -589,12 +592,12 @@ class TrainingLoop(object):
             # --------------- Possibly evaluate -------------------
 
             if evaluate:
-                eval_results = updater.evaluate(cfg.batch_size)
+                val_results = updater.evaluate(cfg.batch_size, mode="val")
 
                 self.data.store_step_data_and_summaries(
                     stage_idx, local_step, global_step,
                     updater.n_experiences, self.n_global_experiences,
-                    **eval_results)
+                    val=val_results)
 
                 if display:
                     self.data.summarize_current_stage(
@@ -609,7 +612,7 @@ class TrainingLoop(object):
                     if cfg.use_gpu:
                         print(nvidia_smi())
 
-                record = eval_results[cfg.eval_mode][0]
+                record = val_results[0]
 
                 stopping_criteria = record[self.stopping_criteria_name]
                 new_best, stop = early_stop.check(stopping_criteria, local_step, record)

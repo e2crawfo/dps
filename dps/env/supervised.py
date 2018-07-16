@@ -58,6 +58,7 @@ class SupervisedEnv(Env):
     def build(self, f):
         self.data_manager = DataManager(self.datasets['train'],
                                         self.datasets['val'],
+                                        self.datasets['test'],
                                         cfg.batch_size)
         self.data_manager.build_graph()
 

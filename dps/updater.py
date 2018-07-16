@@ -10,8 +10,6 @@ from dps.utils.tf import (
 
 
 class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
-    eval_modes = "val".split()
-
     def __init__(self, env, scope=None, **kwargs):
         self.scope = scope
         self.env = env
@@ -73,25 +71,21 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
     def _update(self, batch_size, collect_summaries=None):
         raise Exception("NotImplemented")
 
-    def evaluate(self, batch_size):
-        results = {}
-        for mode in self.eval_modes:
-            record, summary = self._evaluate(batch_size, mode)
+    def evaluate(self, batch_size, mode="val"):
+        assert mode in "val test".split()
+        record, summary = self._evaluate(batch_size, mode)
 
-            sess = tf.get_default_session()
+        sess = tf.get_default_session()
 
-            scheduled_value_summary = b''
-            if self.scheduled_value_summary_op is not None:
-                scheduled_value_summary = sess.run(self.scheduled_value_summary_op)
+        scheduled_value_summary = b''
+        if self.scheduled_value_summary_op is not None:
+            scheduled_value_summary = sess.run(self.scheduled_value_summary_op)
 
-            summary += scheduled_value_summary
-            results[mode] = record, summary
-
-        return results
+        summary += scheduled_value_summary
+        return record, summary
 
     @abc.abstractmethod
     def _evaluate(self, batch_size, mode):
-        assert mode in self.eval_modes
         raise Exception("NotImplemented")
 
     def trainable_variables(self, for_opt):
@@ -173,7 +167,12 @@ class DifferentiableUpdater(Updater):
         return {'train': (record, summary)}
 
     def _evaluate(self, batch_size, mode):
-        feed_dict = self.env.data_manager.do_val()
+        if mode == "val":
+            feed_dict = self.env.data_manager.do_val()
+        elif mode == "test":
+            feed_dict = self.env.data_manager.do_test()
+        else:
+            raise Exception("Unknown evaluation mode: {}".format(mode))
 
         sess = tf.get_default_session()
         result = sess.run([self.recorded_tensors, self.summary_op], feed_dict=feed_dict)
@@ -184,9 +183,11 @@ class DifferentiableUpdater(Updater):
 class DataManager(Parameterized):
     shuffle_buffer_size = Param(1000)
 
-    def __init__(self, train_dataset, val_dataset, batch_size, **kwargs):
+    def __init__(self, train_dataset, val_dataset, test_dataset, batch_size, **kwargs):
         self.train_dataset = train_dataset
         self.val_dataset = val_dataset
+        self.test_dataset = test_dataset
+
         self.batch_size = batch_size
 
     def build_graph(self):
@@ -217,6 +218,18 @@ class DataManager(Parameterized):
 
         self.val_handle = sess.run(self.val_iterator.string_handle())
 
+        # --- test --
+
+        test_dataset = tf.data.TFRecordDataset(self.test_dataset.filename)
+
+        test_dataset = (test_dataset.batch(self.batch_size)
+                                    .map(self.test_dataset.parse_example_batch)
+                                    .prefetch(10))
+
+        self.test_iterator = test_dataset.make_initializable_iterator()
+
+        self.test_handle = sess.run(self.test_iterator.string_handle())
+
         # --- outputs ---
 
         self.handle = tf.placeholder(tf.string, shape=())
@@ -231,3 +244,8 @@ class DataManager(Parameterized):
         sess = tf.get_default_session()
         sess.run(self.val_iterator.initializer)
         return {self.handle: self.val_handle, self.is_training: False}
+
+    def do_test(self):
+        sess = tf.get_default_session()
+        sess.run(self.test_iterator.initializer)
+        return {self.handle: self.test_handle, self.is_training: False}

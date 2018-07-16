@@ -218,8 +218,12 @@ def set_clear_cache(value):
     CLEAR_CACHE = value
 
 
-def sha_cache(directory, recurse=False):
+def sha_cache(directory, recurse=False, verbose=False):
     os.makedirs(directory, exist_ok=True)
+
+    def _print(s, verbose=verbose):
+        if verbose:
+            print("sha_cache: {}" .format(s))
 
     def decorator(func):
         sig = inspect.signature(func)
@@ -232,14 +236,20 @@ def sha_cache(directory, recurse=False):
             loaded = False
             try:
                 if not CLEAR_CACHE:
+                    _print("Attempting to load...")
                     with open(filename, 'rb') as f:
                         value = dill.load(f)
                     loaded = True
+                    _print("Loaded successfully.")
             except FileNotFoundError:
+                _print("File not found.")
                 pass
             finally:
                 if not loaded:
+                    _print("Calling function...")
                     value = func(**bound_args.arguments)
+
+                    _print("Saving results...")
                     with open(filename, 'wb') as f:
                         dill.dump(value, f, protocol=dill.HIGHEST_PROTOCOL, recurse=recurse)
             return value

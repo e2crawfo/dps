@@ -6,6 +6,8 @@ import hashlib
 import pprint
 import argparse
 from tabulate import tabulate
+import shutil
+import matplotlib.pyplot as plt
 
 import tensorflow as tf
 from tensorflow.python.ops import random_ops
@@ -1373,3 +1375,52 @@ def tf_discount_matrix(base, T, n=None):
         r = tf.where(r >= n, np.inf * tf.ones_like(r), r)
     r = base ** r
     return tf.matrix_band_part(r, 0, -1)
+
+
+class RenderHook(object):
+    N = 16
+
+    def __init__(self, **kwargs):
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+    def imshow(self, ax, frame, **kwargs):
+        if frame.ndim == 3 and frame.shape[2] == 1:
+            frame = frame[:, :, 0]
+        frame = np.clip(frame, 0.0, 1.0)
+
+        ax.imshow(frame, vmin=0.0, vmax=1.0, **kwargs)
+
+    def _fetch(self, updater):
+        fetches = self.fetches
+
+        if isinstance(fetches, str):
+            fetches = fetches.split()
+
+        feed_dict = updater.data_manager.do_val()
+
+        to_fetch = {
+            k: updater.network._tensors[k][:self.N]
+            for k in fetches}
+
+        sess = tf.get_default_session()
+        fetched = sess.run(to_fetch, feed_dict=feed_dict)
+
+        return fetched
+
+    def savefig(self, name, fig, updater, is_dir=True):
+        if is_dir:
+            local_step = np.inf if dps.cfg.overwrite_plots else "{:0>10}".format(updater.n_updates)
+            path = updater.exp_dir.path_for(
+                'plots', name,
+                'stage={:0>4}_local_step={}.pdf'.format(updater.stage_idx, local_step))
+            fig.savefig(path)
+            plt.close(fig)
+
+            shutil.copyfile(
+                path,
+                os.path.join(os.path.dirname(path), 'latest_stage{:0>4}.pdf'.format(updater.stage_idx)))
+        else:
+            path = updater.exp_dir.path_for('plots', name + ".pdf")
+            fig.savefig(path)
+            plt.close(fig)
