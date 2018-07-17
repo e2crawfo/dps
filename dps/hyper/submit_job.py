@@ -579,8 +579,10 @@ class ParallelSession(object):
 
         from dps.hyper import HyperSearch
         search = HyperSearch('.')
-        with redirect_stream('stdout', 'results.txt', tee=True):
+
+        with redirect_stream('stdout', 'results.txt', tee=False):
             search.print_summary(print_config=False, verbose=False)
+        print(search.job.summary(verbose=False))
 
     def get_slurm_var(self, var_name):
         parallel_command = "printenv | grep {}".format(var_name)
