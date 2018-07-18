@@ -7,7 +7,7 @@ from dps.updater import DifferentiableUpdater
 from dps.env.supervised import BernoulliSigmoid
 from dps.datasets import EmnistObjectDetectionDataset
 from dps.utils import Config, Param
-from dps.utils.tf import VQ_FullyConvolutional, FullyConvolutional, ScopedFunction
+from dps.utils.tf import VQ_ConvNet, ConvNet, ScopedFunction
 
 
 tf_flatten = tf.layers.flatten
@@ -26,7 +26,7 @@ def get_updater(env):
     return DifferentiableUpdater(env, model)
 
 
-class Encoder(FullyConvolutional):
+class Encoder(ConvNet):
     def __init__(self):
         layout = [
             dict(filters=128, kernel_size=4, strides=2, padding="SAME"),
@@ -39,7 +39,7 @@ class Encoder(FullyConvolutional):
         super(Encoder, self).__init__(layout, check_output_shape=True)
 
 
-class VQ_Decoder(VQ_FullyConvolutional):
+class VQ_Decoder(VQ_ConvNet):
     def __init__(self):
         layout = [
             dict(filters=128, kernel_size=4, strides=1, padding="VALID", transpose=True),

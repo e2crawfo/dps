@@ -184,6 +184,15 @@ class TrainingLoop(object):
         prepare_func = cfg.get("prepare_func", None)
         if callable(prepare_func):
             prepare_func()  # Modify the config in arbitrary ways before training
+        else:
+            try:
+                prepare_funcs = list(prepare_func)
+            except (TypeError, ValueError):
+                pass
+            else:
+                for f in prepare_funcs:
+                    if callable(f):
+                        f()
 
         self.curriculum = cfg.curriculum + []
 

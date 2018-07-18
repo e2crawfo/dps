@@ -1,5 +1,5 @@
 from dps.env.advanced.yolo import config as yolo_config
-from dps.env.advanced.yolo import FullyConvolutional
+from dps.env.advanced.yolo import ConvNet
 
 """ Testing YOLO on MNIST dataset when there is only 1 output grid-cell.
 
@@ -11,7 +11,7 @@ Verdict:
 """
 
 
-class TinyYoloBackbone1D(FullyConvolutional):
+class TinyYoloBackbone1D(ConvNet):
     def __init__(self):
         layout = [
             dict(filters=128, kernel_size=3, strides=2, padding="SAME"),

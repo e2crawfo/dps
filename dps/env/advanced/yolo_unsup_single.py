@@ -7,7 +7,7 @@ from dps.env.advanced.mnist_vae import VAE_Env
 from dps.datasets import EmnistObjectDetectionDataset
 from dps.updater import DifferentiableUpdater
 from dps.utils import Config, Param
-from dps.utils.tf import FullyConvolutional, ScopedFunction
+from dps.utils.tf import ConvNet, ScopedFunction
 
 
 def build_env():
@@ -23,7 +23,7 @@ def get_updater(env):
     return DifferentiableUpdater(env, network)
 
 
-class TinyYoloBackbone1D(FullyConvolutional):
+class TinyYoloBackbone1D(ConvNet):
     def __init__(self, **kwargs):
         layout = [
             # dict(filters=128, kernel_size=3, strides=2, padding="SAME"),
@@ -47,7 +47,7 @@ class TinyYoloBackbone1D(FullyConvolutional):
         super(TinyYoloBackbone1D, self).__init__(layout, check_output_shape=True, **kwargs)
 
 
-class ObjectDecoder(FullyConvolutional):
+class ObjectDecoder(ConvNet):
     def __init__(self, **kwargs):
         layout = [
             dict(filters=128, kernel_size=3, strides=1, padding="VALID", transpose=True),

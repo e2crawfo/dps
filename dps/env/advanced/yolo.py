@@ -7,7 +7,7 @@ from dps.updater import DifferentiableUpdater
 from dps.env.supervised import SupervisedEnv
 from dps.datasets import EmnistObjectDetectionDataset
 from dps.utils import Config, Param
-from dps.utils.tf import build_gradient_train_op, FullyConvolutional
+from dps.utils.tf import build_gradient_train_op, ConvNet
 
 
 class MODE(object):
@@ -272,7 +272,7 @@ class YOLOv2_SupervisedEnv(SupervisedEnv):
 #         MODE.validate_mode(self.mode)
 
 
-class TinyYoloBackbone(FullyConvolutional):
+class TinyYoloBackbone(ConvNet):
     def __init__(self):
         # Notice the striding.
         layout = [
@@ -283,7 +283,7 @@ class TinyYoloBackbone(FullyConvolutional):
         super(TinyYoloBackbone, self).__init__(layout, check_output_shape=True)
 
 
-class TinyYoloBackboneWithSharpening(FullyConvolutional):
+class TinyYoloBackboneWithSharpening(ConvNet):
     def __init__(self):
         # Best configuration so far. Notice the striding, and the final two layers.
         layout = [
@@ -296,7 +296,7 @@ class TinyYoloBackboneWithSharpening(FullyConvolutional):
         super(TinyYoloBackboneWithSharpening, self).__init__(layout, check_output_shape=True)
 
 
-class YoloBackbone(FullyConvolutional):
+class YoloBackbone(ConvNet):
     def __init__(self):
         layout = [
             dict(filters=128, kernel_size=3, strides=2, padding="SAME"),

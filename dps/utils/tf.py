@@ -472,7 +472,7 @@ class VGGNet(ScopedFunction):
             raise Exception()
 
 
-class FullyConvolutional(ScopedFunction):
+class ConvNet(ScopedFunction):
     """
     Parameters
     ----------
@@ -490,14 +490,17 @@ class FullyConvolutional(ScopedFunction):
     nonlinearities = dict(
         relu=tf.nn.relu,
         sigmoid=tf.nn.sigmoid,
-        tanh=tf.nn.tanh
+        tanh=tf.nn.tanh,
+        elu=tf.nn.elu,
+        linear=lambda x: x,
+        softmax=tf.nn.softmax
     )
 
     def __init__(self, layout, check_output_shape=False, scope=None, **kwargs):
         self.layout = layout
         self.check_output_shape = check_output_shape
         self.volumes = []
-        super(FullyConvolutional, self).__init__(scope)
+        super(ConvNet, self).__init__(scope)
 
     @staticmethod
     def _output_shape_1d(inp_dim, f, s, padding, pool):
@@ -532,8 +535,8 @@ class FullyConvolutional(ScopedFunction):
             padding = layer.get('padding', 'VALID')
             pool = layer.get('pool', False)
 
-            shape[0] = FullyConvolutional._output_shape_1d(shape[0], f0, strides0, padding, pool)
-            shape[1] = FullyConvolutional._output_shape_1d(shape[1], f1, strides1, padding, pool)
+            shape[0] = ConvNet._output_shape_1d(shape[0], f0, strides0, padding, pool)
+            shape[1] = ConvNet._output_shape_1d(shape[1], f1, strides1, padding, pool)
 
         return shape
 
@@ -567,43 +570,60 @@ class FullyConvolutional(ScopedFunction):
 
     @staticmethod
     def _apply_layer(volume, layer_spec, idx, is_final, is_training):
-        filters = layer_spec['filters']
-        strides = layer_spec['strides']
-        transpose = layer_spec.get('transpose', False)
-        kernel_size = layer_spec['kernel_size']
-        padding = layer_spec.get('padding', 'VALID')
-        dropout = layer_spec.get('dropout', False)
+        kind = layer_spec.get('kind', 'conv')
 
-        if transpose:
-            volume = tf.layers.conv2d_transpose(
-                volume, filters=filters, kernel_size=kernel_size,
-                strides=strides, padding=padding, name="fcn-conv_transpose{}".format(idx))
-        else:
-            if padding == "RIGHT_ONLY":
-                pad0, pad1 = FullyConvolutional.predict_padding(volume.shape[1:3], layer_spec)
-                paddings = [[0, 0], [0, pad0], [0, pad1], [0, 0]]
-                volume = tf.pad(volume, paddings, mode="CONSTANT")
-                padding = "VALID"
-
-            volume = tf.layers.conv2d(
-                volume, filters=filters, kernel_size=kernel_size,
-                strides=strides, padding=padding, name="fcn-conv{}".format(idx))
-
-        if not is_final:
+        if kind == 'conv':
+            filters = layer_spec['filters']
+            strides = layer_spec['strides']
+            transpose = layer_spec.get('transpose', False)
+            kernel_size = layer_spec['kernel_size']
+            padding = layer_spec.get('padding', 'VALID')
+            dropout = layer_spec.get('dropout', False)
+            pool = layer_spec.get('pool', False)
             nl_string = layer_spec.get('nl', 'relu')
-            nl = FullyConvolutional.nonlinearities[nl_string]
-            volume = nl(volume, name="fcn-{}{}".format(nl_string, idx))
+            nl = ConvNet.nonlinearities[nl_string or 'relu']
 
-            if layer_spec.get('pool', False):
-                volume = tf.layers.max_pooling2d(
-                    volume, pool_size=2, strides=2, name='fcn-pool{}'.format(idx))
+            if transpose:
+                volume = tf.layers.conv2d_transpose(
+                    volume, filters=filters, kernel_size=kernel_size,
+                    strides=strides, padding=padding, name="fcn-conv_transpose{}".format(idx))
+            else:
+                if padding == "RIGHT_ONLY":
+                    pad0, pad1 = ConvNet.predict_padding(volume.shape[1:3], layer_spec)
+                    paddings = [[0, 0], [0, pad0], [0, pad1], [0, 0]]
+                    volume = tf.pad(volume, paddings, mode="CONSTANT")
+                    padding = "VALID"
 
-        if dropout:
-            volume = tf.contrib.slim.dropout(volume, 0.5, is_training=is_training)
+                volume = tf.layers.conv2d(
+                    volume, filters=filters, kernel_size=kernel_size,
+                    strides=strides, padding=padding, name="fcn-conv{}".format(idx))
 
-        layer_string = ', '.join("{}={}".format(k, v) for k, v in sorted(layer_spec.items(), key=lambda kv: kv[0]))
+            if not is_final:
+                volume = nl(volume, name="fcn-{}{}".format(nl_string, idx))
+
+                if pool:
+                    volume = tf.layers.max_pooling2d(
+                        volume, pool_size=2, strides=2, name='fcn-pool{}'.format(idx))
+
+            if dropout:
+                volume = tf.contrib.slim.dropout(volume, 0.5, is_training=is_training)
+
+        elif kind == 'fc':
+            n_units = layer_spec['n_units']
+            output_shape = layer_spec.get('output_shape', None)
+            nl_string = layer_spec.get('nl', 'relu')
+            nl = ConvNet.nonlinearities[nl_string or 'relu']
+
+            volume = tf.layers.flatten(volume)
+            volume = fully_connected(volume, n_units, activation_fn=nl)
+
+            if output_shape is not None:
+                batch_size = tf.shape(volume)[0]
+                volume = tf.reshape(volume, (batch_size, *output_shape))
+
+        layer_string = ', '.join("{}={}".format(k, v) for k, v in sorted(layer_spec.items()))
         output_shape = tuple(int(i) for i in volume.shape[1:])
-        print("FCN >>> Applying layer {}: {}. Output shape: {}".format(idx, layer_string, output_shape))
+        print("CNN >>> Applying layer {} of kind {}: {}. Output shape: {}".format(idx, kind, layer_string, output_shape))
 
         return volume
 
@@ -621,7 +641,7 @@ class FullyConvolutional(ScopedFunction):
             actual_shape = tuple(int(i) for i in volume.shape[1:])
 
             if actual_shape == output_size:
-                print("FCN >>> Shape check passed.")
+                print("CCN >>> Shape check passed.")
             else:
                 raise Exception(
                     "Shape-checking turned on, and actual shape {} does not "
@@ -667,7 +687,7 @@ class VectorQuantization(ScopedFunction):
         return tf.stop_gradient(self.z_q - self.z_e) + self.z_e
 
 
-class VQ_FullyConvolutional(FullyConvolutional):
+class VQ_ConvNet(ConvNet):
     H = Param()
     W = Param()
     K = Param()
@@ -684,7 +704,7 @@ class VQ_FullyConvolutional(FullyConvolutional):
                 common_embedding=self.common_embedding)
 
         inp = self._vq(inp, (self.H, self.W, self.D), is_training)
-        return super(VQ_FullyConvolutional, self)._call(inp, output_size, is_training)
+        return super(VQ_ConvNet, self)._call(inp, output_size, is_training)
 
 
 class SalienceMap(ScopedFunction):

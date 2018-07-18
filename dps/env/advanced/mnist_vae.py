@@ -7,7 +7,7 @@ from dps.updater import DifferentiableUpdater
 from dps.env.supervised import BernoulliSigmoid
 from dps.datasets import EmnistObjectDetectionDataset
 from dps.utils import Config, Param
-from dps.utils.tf import FullyConvolutional, ScopedFunction
+from dps.utils.tf import ConvNet, ScopedFunction
 
 
 def build_env():
@@ -23,7 +23,7 @@ def get_updater(env):
     return DifferentiableUpdater(env, model)
 
 
-class Encoder(FullyConvolutional):
+class Encoder(ConvNet):
     def __init__(self):
         layout = [
             dict(filters=128, kernel_size=3, strides=2, padding="SAME"),
@@ -41,7 +41,7 @@ class Encoder(FullyConvolutional):
         return mean, std
 
 
-class Decoder(FullyConvolutional):
+class Decoder(ConvNet):
     def __init__(self):
         layout = [
             dict(filters=256, kernel_size=7, strides=1, padding="SAME", transpose=True),
