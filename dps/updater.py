@@ -103,6 +103,30 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
         saver.restore(tf.get_default_session(), path)
 
 
+class DummyUpdater(Updater):
+    """ For when you just want to build datasets. Much faster than most normal updaters. """
+
+    def trainable_variables(self, for_opt):
+        return []
+
+    def _build_graph(self):
+        pass
+
+    def _update(self, batch_size, collect_summaries):
+        record = {}
+        summary = b''
+        return {'train': (record, summary)}
+
+    def _evaluate(self, batch_size, mode):
+        return {}, b''
+
+    def save(self, session, filename):
+        return ''
+
+    def restore(self, session, path):
+        pass
+
+
 class DifferentiableUpdater(Updater):
     """ Update parameters of a differentiable function `f` using gradient-based algorithm.
 

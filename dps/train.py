@@ -390,6 +390,10 @@ class TrainingLoop(object):
 
                     for var_scope, path in items:
                         variables = {v.name: v for v in trainable_variables(var_scope, for_opt=False)}
+                        if not variables:
+                            print("No variables to load in scope {}.".format(str(var_scope)))
+                            continue
+
                         saver = tf.train.Saver(variables)
 
                         load_stage, kind = None, None
@@ -623,7 +627,11 @@ class TrainingLoop(object):
 
                 record = val_results[0]
 
-                stopping_criteria = record[self.stopping_criteria_name]
+                if self.stopping_criteria_name not in record:
+                    print("Stopping criteria {} not in record returned "
+                          "by updater, using 0.0.".format(self.stopping_criteria_name))
+
+                stopping_criteria = record.get(self.stopping_criteria_name, 0.0)
                 new_best, stop = early_stop.check(stopping_criteria, local_step, record)
 
                 if new_best:
