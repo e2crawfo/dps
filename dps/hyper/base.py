@@ -11,6 +11,7 @@ import inspect
 from collections import namedtuple, defaultdict
 from tabulate import tabulate
 from pprint import pprint, pformat
+import traceback
 
 import clify
 
@@ -137,7 +138,8 @@ class HyperSearch(object):
                     stage_data[key][(repeat, seed)] = (pd.DataFrame.from_records(records), sc, md)
 
             except Exception:
-                pass
+                print("Exception raised while extracting stage data for path: {}".format(exp_path))
+                traceback.print_exc()
 
         return stage_data
 
@@ -211,6 +213,7 @@ class HyperSearch(object):
 
         # For each parameter setting, identify the stage where it got the lowest/highest value for `criteria_key`.
         for i, (key, value) in enumerate(sorted(stage_data.items())):
+
             _best = []
 
             for (repeat, seed), (df, sc, md) in value.items():
