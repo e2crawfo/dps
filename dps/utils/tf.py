@@ -247,10 +247,10 @@ class ScopedFunction(Parameterized):
             with tf.variable_scope(self.name):
                 self.scope = tf.get_variable_scope()
 
-    def _call(self, inp, output_size, is_training):
+    def _call(self, *args, **kwargs):
         raise Exception("NotImplemented")
 
-    def __call__(self, inp, output_size, is_training):
+    def __call__(self, *args, **kwargs):
         self.resolve_scope()
 
         first_call = not self.initialized
@@ -259,7 +259,7 @@ class ScopedFunction(Parameterized):
             if first_call:
                 print("Entering var scope '{}' for first time.".format(self.scope.name))
 
-            outp = self._call(inp, output_size, is_training)
+            outp = self._call(*args, **kwargs)
 
             if first_call:
                 s = "Leaving var scope '{}' for first time.".format(self.scope.name)
@@ -773,42 +773,27 @@ class SalienceMap(ScopedFunction):
         return output
 
 
-class ScopedCell(RNNCell):
-    """ An RNNCell that creates its own variable scope the first time `resolve_scope` is called.
-        The scope is then carried around and used for any subsequent build operations, ensuring
-        that all uses of an instance of this class use the same set of variables.
-
-    """
-    def __init__(self, name):
-        self.scope = None
-        super(ScopedCell, self).__init__(name=name or self.__class__.__name__)
-
-    def resolve_scope(self):
-        reuse = self.scope is not None
-        if not reuse:
-            with tf.variable_scope(self.name):
-                self.scope = tf.get_variable_scope()
-        return self.scope, reuse
-
-    def _call(self, inp, state):
+class ScopedCell(ScopedFunction):
+    @property
+    def state_size(self):
         raise Exception("NotImplemented")
 
-    def __call__(self, inp, state):
-        scope, reuse = self.resolve_scope()
-        with tf.variable_scope(scope, reuse=reuse):
-            return self._call(inp, state)
+    @property
+    def output_size(self):
+        raise Exception("NotImplemented")
+
+    def zero_state(self, batch_size, dtype):
+        raise Exception("NotImplemented")
 
 
 class ScopedCellWrapper(ScopedCell):
     """ Similar to ScopedCell, but used in cases where the cell we want to scope does not inherit from ScopedCell. """
-    def __init__(self, cell, name):
+    def __init__(self, cell, scope=None, **kwargs):
         self.cell = cell
-        super(ScopedCellWrapper, self).__init__(name)
+        super(ScopedCellWrapper, self).__init__(scope=scope, **kwargs)
 
-    def __call__(self, inp, state):
-        scope, reuse = self.resolve_scope()
-        with tf.variable_scope(scope, reuse=reuse):
-            return self.cell(inp, state)
+    def _call(self, inp, state):
+        return self.cell(inp, state)
 
     @property
     def state_size(self):
