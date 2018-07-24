@@ -18,12 +18,12 @@ config.update(
     # Found Softmax to be more sample efficient AND more stable than EpsilonSoftmax
 
     build_policy=BuildSoftmaxPolicy(one_hot=False),
-    exploration_schedule="1.0",
-    val_exploration_schedule="0.1",
+    exploration_schedule=1.0,
+    val_exploration_schedule=0.1,
 
     # build_policy=BuildEpsilonSoftmaxPolicy(one_hot=False),
-    # exploration_schedule="0.1",
-    # val_exploration_schedule="0.0",
+    # exploration_schedule=0.1,
+    # val_exploration_schedule=0.0,
 
     n_controller_units=64,
 
@@ -39,7 +39,7 @@ config.update(
     render_hook=rl_render_hook,
     render_step=10,
     eval_step=10,
-    display_step=10,
+    display_step=100,
     stopping_criteria="reward_per_ep,max",
-    threshold=200,
+    threshold=1000,
 )

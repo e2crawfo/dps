@@ -46,11 +46,11 @@ def prime_factors(n):
     return factors
 
 
-def square_subplots(N):
+def square_subplots(N, **kwargs):
     sqrt_N = int(np.ceil(np.sqrt(N)))
     m = int(np.ceil(N / sqrt_N))
     import matplotlib.pyplot as plt
-    fig, axes = plt.subplots(m, sqrt_N)
+    fig, axes = plt.subplots(m, sqrt_N, **kwargs)
     return fig, axes
 
 

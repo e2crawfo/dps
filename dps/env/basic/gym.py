@@ -142,7 +142,7 @@ class BatchGymEnv(Env):
             new_obs, reward, done, info = self.step(action)
             rollouts.append(
                 obs, action, reward, done=done, entropy=entropy,
-                log_probs=log_probs, static=dict(exploration=exploration))
+                log_probs=log_probs, static=dict(exploration=exploration), info=info)
             obs = new_obs
             t += 1
 

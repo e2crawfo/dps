@@ -356,6 +356,10 @@ class RLContext(Parameterized):
         maskable = len(signal.shape) >= 2
         if masked and maskable:
             mask = self._signals['mask']
+            diff = len(signal.shape) - len(mask.shape)
+            if diff > 0:
+                new_shape = tf.concat([tf.shape(mask), [1] * diff], axis=0)
+                mask = tf.reshape(mask, new_shape)
             signal *= mask
 
         if not gradient:

@@ -44,7 +44,7 @@ class Agent(RLObject):
     ----------
     name: str
         Name for the agent.
-    controller_func: function(int, str) -> RNNCell
+    build_controller: function(int, str) -> RNNCell
         A function that accepts an integer representing an output size,
         as well as a string giving a scope name, and returns an instance
         of RNNCell that accepts observations as input and outputs utilities.
@@ -52,7 +52,7 @@ class Agent(RLObject):
         The heads that determine the agent's output based on utilities.
 
     """
-    def __init__(self, name, controller_func, heads):
+    def __init__(self, name, build_controller, heads):
         self.name = name
 
         self.heads = OrderedDict([(head.name, head) for head in heads])
@@ -69,7 +69,7 @@ class Agent(RLObject):
             self._head_offsets[k] = (start, end)
 
         self.size = offset
-        self.controller = controller_func(self.size, self.name)
+        self.controller = build_controller(self.size, self.name)
         assert isinstance(self.controller, ScopedCell)
 
         self.set_params_op = None

@@ -128,7 +128,11 @@ config = Config(
     max_grad_norm=None,
     gamma=1.0,
 
-    use_differentiable_loss=False
+    use_differentiable_loss=False,
+
+    save_utils=False,
+    reset_env=True,
+    render_n_rollouts=4,
 )
 
 

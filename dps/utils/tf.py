@@ -34,10 +34,7 @@ def tf_inspect_cl():
         pprint.pprint(variables)
 
 
-if tf.__version__ >= "1.2":
-    RNNCell = tf.nn.rnn_cell.RNNCell
-else:
-    from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
+RNNCell = tf.nn.rnn_cell.RNNCell
 
 
 def count_trainable_variables(variables=None, var_scope=None):
@@ -648,6 +645,39 @@ class ConvNet(ScopedFunction):
                     "match desired shape {}.".format(actual_shape, output_size))
 
         return volume
+
+
+class RelationNetwork(ScopedFunction):
+    f = None
+    g = None
+
+    f_dim = Param(100)
+
+    def _call(self, inp, output_size, is_training):
+        # Assumes objects range of all but the first and last dimensions
+        batch_size = tf.shape(inp)[0]
+        spatial_shape = inp.shape[1:-1]
+        n_objects = int(np.prod(spatial_shape))
+        obj_dim = int(inp.shape[-1])
+        inp = tf.reshape(inp, (batch_size, n_objects, obj_dim))
+
+        if self.f is None:
+            self.f = dps.cfg.build_relation_network_f(scope="relation_network_f")
+
+        if self.g is None:
+            self.g = dps.cfg.build_relation_network_g(scope="relation_network_g")
+
+        f_inputs = []
+        for i in range(n_objects):
+            for j in range(n_objects):
+                f_inputs.append(tf.concat([inp[:, i, :], inp[:, j, :]], axis=1))
+        f_inputs = tf.concat(f_inputs, axis=0)
+
+        f_output = self.f(f_inputs, self.f_dim, is_training)
+        f_output = tf.split(f_output, n_objects**2, axis=0)
+
+        g_input = tf.concat(f_output, axis=1)
+        return self.g(g_input, output_size, is_training)
 
 
 class VectorQuantization(ScopedFunction):
@@ -1342,7 +1372,7 @@ def build_gradient_train_op(
     }
 
     if return_summaries:
-        summaries = [tf.scalar.summary(k, v) for k, v in records.items()]
+        summaries = [tf.summary.scalar(k, v) for k, v in records.items()]
         return train_op, summaries
     else:
         return train_op, records
