@@ -58,6 +58,8 @@ config.update(
     build_controller=build_xo_controller,
     build_relation_network_f=lambda scope: MLP([100, 100], scope=scope),
     build_relation_network_g=lambda scope: MLP([100, 100], scope=scope),
+    f_dim=128,
+    symmetric_op="max",
 
     # pixels_per_cell=(12, 12),
     # kernel_size=1,

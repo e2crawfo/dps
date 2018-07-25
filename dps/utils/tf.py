@@ -651,7 +651,8 @@ class RelationNetwork(ScopedFunction):
     f = None
     g = None
 
-    f_dim = Param(100)
+    f_dim = Param()
+    symmetric_op = Param()
 
     def _call(self, inp, output_size, is_training):
         # Assumes objects range of all but the first and last dimensions
@@ -676,7 +677,18 @@ class RelationNetwork(ScopedFunction):
         f_output = self.f(f_inputs, self.f_dim, is_training)
         f_output = tf.split(f_output, n_objects**2, axis=0)
 
-        g_input = tf.concat(f_output, axis=1)
+        if self.symmetric_op == "concat" or self.symmetric_op is None:
+            g_input = tf.concat(f_output, axis=1)
+        elif self.symmetric_op == "mean":
+            g_input = tf.stack(f_output, axis=0)
+            g_input = tf.reduce_mean(g_input, axis=0, keepdims=False)
+        elif self.symmetric_op == "max":
+            g_input = tf.stack(f_output, axis=0)
+            g_input = tf.reduce_max(g_input, axis=0, keepdims=False)
+        else:
+            raise Exception("Unknown symmetric op for RelationNetwork: {}. "
+                            "Valid values are: None, concat, mean, max.".format(self.symmetric_op))
+
         return self.g(g_input, output_size, is_training)
 
 

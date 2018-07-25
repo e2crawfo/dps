@@ -205,6 +205,7 @@ class XO_Env(gym.Env):
 
                 representation[i, :] = (entity.top/height, entity.left/width, entity.h/height, entity.w/width,) + features
                 i += 1
+
         return representation
 
     def step(self, action):
