@@ -418,7 +418,7 @@ class RLContext(Parameterized):
 
         with self:
             start = time.time()
-            rollouts = self.env.do_rollouts(self.mu, batch_size, mode='train', save_utils=cfg.save_utils)
+            rollouts = self.env.do_rollouts(self.mu, batch_size, mode='train')
             train_rollout_duration = time.time() - start
 
             train_summaries = b""
@@ -471,7 +471,7 @@ class RLContext(Parameterized):
 
         with self:
             start = time.time()
-            rollouts = self.env.do_rollouts(self.pi, batch_size, mode=mode, save_utils=cfg.save_utils)
+            rollouts = self.env.do_rollouts(self.pi, batch_size, mode=mode)
             eval_rollout_duration = time.time() - start
 
             start = time.time()

@@ -66,7 +66,6 @@ RL_EXPERIMENT_CONFIG = DEFAULT_CONFIG.copy(
     reset_env=True,
     n_controller_units=64,
     gamma=1.0,
-    save_utils=False,
     opt_steps_per_update=1,
 
     display_step=100,

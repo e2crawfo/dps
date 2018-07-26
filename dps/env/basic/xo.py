@@ -9,9 +9,13 @@ from auto_yolo.models.core import Backbone
 
 def build_env():
     gym_env = XO_Env(
-        image_shape=(36, 36), background_colour="black", entity_colours="white white white",
-        entity_sizes="5 8 8", min_entities=1, max_entities=4, max_overlap=0.0, step_size=4,
+        image_shape=(12, 12), background_colour="black", entity_colours="white white white",
+        entity_sizes="3 3 3", min_entities=1, max_entities=4, max_overlap=0.0, step_size=3,
         grid=False, cross_prob=0.5, corner=None, max_episode_length=None, image_obs=False)
+    # gym_env = XO_Env(
+    #     image_shape=(36, 36), background_colour="black", entity_colours="white white white",
+    #     entity_sizes="5 8 8", min_entities=1, max_entities=4, max_overlap=0.0, step_size=4,
+    #     grid=False, cross_prob=0.5, corner=None, max_episode_length=None, image_obs=False)
     # gym_env = XO_Env(
     #     image_shape=(36, 36), background_colour="black", entity_colours="white white white",
     #     entity_sizes="5 10 10", min_entities=4, max_entities=8, overlap_factor=0.2, step_size=5,

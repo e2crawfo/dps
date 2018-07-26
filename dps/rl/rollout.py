@@ -16,8 +16,6 @@ class RolloutBatch(dict):
         Rollout actions.
     rewards: list-like
         Rollout rewards.
-    info: list-like (each element actions dict)
-        Per-time-step information.
     metadata: dictionary
         Information about the batch.
     static: dictionary
@@ -29,7 +27,7 @@ class RolloutBatch(dict):
     """
     def __init__(
             self, obs=None, actions=None, rewards=None,
-            info=None, metadata=None, static=None, **kwargs):
+            metadata=None, static=None, **kwargs):
 
         kwargs['obs'] = list([] if obs is None else obs)
         kwargs['actions'] = list([] if actions is None else actions)
@@ -38,7 +36,6 @@ class RolloutBatch(dict):
         for k, v in kwargs.items():
             self[k] = list(v)
 
-        self._info = list(info or [])
         self._metadata = metadata or {}
 
         static = static or {}
@@ -90,10 +87,6 @@ class RolloutBatch(dict):
         return self._get("rewards")
 
     @property
-    def info(self):
-        return self._info
-
-    @property
     def T(self):
         return len(self._obs)
 
@@ -120,7 +113,7 @@ class RolloutBatch(dict):
         """ Store values that are independent of time. """
         try:
             float(v)
-        except:
+        except (TypeError, ValueError):
             pass
         else:
             v = [v] * self.batch_size
@@ -137,18 +130,13 @@ class RolloutBatch(dict):
         self._o = []
         self._a = []
         self._r = []
-        self._info = []
         self._metadata = {}
         super(RolloutBatch, self).clear()
 
-    def append(self, o, a, r, info=None, **kwargs):
+    def append(self, o, a, r, **kwargs):
         self._get('obs').append(o)
         self._get('actions').append(a)
         self._get('rewards').append(r)
-
-        if info is None:
-            info = {}
-        self._info.append(info)
 
         for k, v in kwargs.items():
             self._get(k).append(v)
@@ -156,8 +144,6 @@ class RolloutBatch(dict):
     def extend(self, other):
         if not isinstance(other, RolloutBatch):
             raise Exception("Cannot concatenate a RolloutBatch with {}.".format(other))
-
-        self._info.extend(other._info)
 
         for k in other:
             self._get(k).extend(other._get(k))
@@ -168,8 +154,6 @@ class RolloutBatch(dict):
         rollouts = list(rollouts)
         if not rollouts:
             return []
-
-        info = list_concat([r.info for r in rollouts])
 
         all_keys = set()
         for r in rollouts:
@@ -183,7 +167,7 @@ class RolloutBatch(dict):
         for r in rollouts:
             metadata.update(r._metadata)
 
-        return RolloutBatch(info=info, metadata=metadata, **kwargs)
+        return RolloutBatch(metadata=metadata, **kwargs)
 
     def __add__(self, other):
         if not isinstance(other, RolloutBatch):
@@ -208,7 +192,8 @@ class RolloutBatch(dict):
 
         static_keys = set(rollouts[0]._static.keys())
         for r in rollouts[1:]:
-            assert set(r._static.keys()) == static_keys, "Cannot join rollouts, they do not have the same set of keys for static values."
+            assert set(r._static.keys()) == static_keys,(
+                "Cannot join rollouts, they do not have the same set of keys for static values.")
 
         new_static = {k: list_concat([r.get_static(k) for r in rollouts]) for k in static_keys}
         return RolloutBatch(

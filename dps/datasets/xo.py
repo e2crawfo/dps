@@ -200,6 +200,9 @@ class XO_Env(gym.Env):
             features = (0, 1, 0) if kind == "cross" else (0, 0, 1)
 
             for entity in entities:
+                if not entity.alive:
+                    continue
+
                 representation[i, :] = (entity.top/height, entity.left/width, entity.h/height, entity.w/width,) + features
                 i += 1
         return representation
@@ -218,7 +221,7 @@ class XO_Env(gym.Env):
 
         reward = collision['cross'] - collision['circle']
 
-        info = {'entities': self.entities, 'agent': self.agent}
+        info = {}
         self._step += 1
 
         if self.image_obs:
@@ -419,18 +422,12 @@ class XO_RenderHook(RenderHook):
         for learner in updater.learners:
             with learner:
                 rollouts = updater.env.do_rollouts(
-                    render_mode=None, policy=learner.pi,
-                    n_rollouts=self.N, T=cfg.T, mode='val')
+                    policy=learner.pi, n_rollouts=self.N, mode='val')
 
         if updater.env.gym_env.image_obs:
             obs = rollouts.obs
         else:
-            obs = []
-            for t in rollouts.info:
-                obs.append([])
-                for l in t:
-                    obs[-1].append(l['image'])
-            obs = np.array(obs)
+            obs = rollouts.image
 
         fig, axes = square_subplots(self.N, figsize=(5, 5))
         plt.subplots_adjust(top=0.95, bottom=0, left=0, right=1, wspace=0.1, hspace=0.1)
