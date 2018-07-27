@@ -19,6 +19,76 @@ from dps.utils.base import _bool, popleft, Parameterized, Param
 from dps.utils.inspect_checkpoint import get_tensors_from_checkpoint_file  # noqa: F401
 
 
+def apply_mask_and_group_at_front(data, mask):
+    """ For masking data and converting it into a format suitable for input into an RNN.
+        Finds all the elements of data that correspond to "on" elements of the mask,
+        and collects them all into a sequence for each batch element. Elements are
+        collected in row-major order.
+
+
+        >> data = np.arange(24).reshape(2, 2, 2, 3)
+            array([[[[ 0,  1,  2],
+                     [ 3,  4,  5]],
+                    [[ 6,  7,  8],
+                     [ 9, 10, 11]]],
+                   [[[12, 13, 14],
+                     [15, 16, 17]],
+                    [[18, 19, 20],
+                     [21, 22, 23]]]])
+
+        >> mask = np.random.randint(2, size=(2, 2, 2))
+            array([[[1, 1],
+                    [0, 1]],
+                   [[1, 0],
+                    [0, 0]]])
+
+        >> result, _ = apply_mask_and_group_at_front(data, mask)
+        >> tf.Session.run(result)
+            array([[[ 0,  1,  2],
+                    [ 3,  4,  5],
+                    [ 9, 10, 11]],
+
+                   [[12, 13, 14],
+                    [ 0,  0,  0],
+                    [ 0,  0,  0]]])
+
+    """
+    batch_size = tf.shape(data)[0]
+
+    if len(mask.shape) == len(data.shape):
+        assert mask.shape[-1] == 1
+        mask = mask[..., 0]
+
+    assert len(mask.shape) == len(data.shape)-1
+    # assert data.shape[1:-1] == mask.shape[1:]  Doesn't work if shapes partially unknown
+
+    A = data.shape[-1]
+    data = tf.reshape(data, (batch_size, -1, A))
+    mask = tf.reshape(mask, (batch_size, -1))
+
+    # data where the mask is "on". dimension should be (total_n_on, A)
+    on_data = tf.boolean_mask(data, mask)
+
+    # number of "on" elements in each batch element
+    n_on = tf.reduce_sum(tf.layers.flatten(tf.to_int32(mask)), axis=1)
+
+    # create an index array that can be used to index into on_data
+    seq_mask = tf.sequence_mask(n_on)
+    int_seq_mask = tf.to_int32(seq_mask)
+    max_n_on = tf.shape(seq_mask)[1]
+    indices = tf.cumsum(tf.reshape(int_seq_mask, (-1,)), exclusive=True, reverse=False)
+
+    # Make sure dummy indices at the end are within bounds
+    indices = tf.minimum(indices, tf.shape(on_data)[0]-1)
+
+    result = tf.gather(on_data, indices)
+    result = tf.reshape(result, (batch_size, max_n_on, A))
+
+    # zero out the extra elements we've gathered
+    result *= tf.cast(seq_mask, result.dtype)[:, :, None]
+    return result, n_on
+
+
 def tf_inspect_cl():
     parser = argparse.ArgumentParser()
     parser.add_argument("path")
