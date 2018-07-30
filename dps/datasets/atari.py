@@ -124,7 +124,7 @@ def gather_atari_human_frames(game, n_frames, density=1.0):
 class ReinforcementLearningDataset(ImageDataset):
     rl_data_location = Param()
     max_episodes = Param(None)
-    max_episode_length = Param(None)
+    max_samples_per_ep = Param(None)
 
     history_length = Param(1)
 
@@ -152,7 +152,7 @@ class ReinforcementLearningDataset(ImageDataset):
             if image is None:
                 image = kwargs['next_o']
             else:
-                image = np.concatenate([image, kwargs['next_o']], axis=3)
+                image = np.concatenate([image, kwargs['next_o']], axis=2)
 
         if self.postprocessing == "tile":
             images, _ = self._tile_postprocess(image, [])
@@ -209,8 +209,8 @@ class ReinforcementLearningDataset(ImageDataset):
 
         episode_length = len(o)
 
-        if self.max_episode_length is not None:
-            indices = np.random.choice(episode_length - self.history_length, size=self.max_episode_length, replace=False)
+        if self.max_samples_per_ep is not None:
+            indices = np.random.choice(episode_length - self.history_length, size=self.max_samples_per_ep, replace=False)
             indices += self.history_length
         else:
             indices = np.arange(self.history_length, episode_length)
@@ -245,29 +245,37 @@ class ReinforcementLearningDataset(ImageDataset):
 
         idx = 0
 
+        batch_size = N
         if self.store_o:
             o = result[idx]
             idx += 1
+            batch_size = o.shape[0]
 
         if self.store_a:
             a = result[idx]
             idx += 1
+            batch_size = a.shape[0]
 
         if self.store_r:
             r = result[idx]
             idx += 1
+            batch_size = r.shape[0]
 
         if self.store_next_o:
             next_o = result[idx]
             idx += 1
+            batch_size = next_o.shape[0]
 
         stride = self.obs_shape[2]
 
         sqrt_N = int(np.ceil(np.sqrt(N)))
         fig, axes = plt.subplots(sqrt_N, sqrt_N * (self.history_length + 1), figsize=(20, 20))
-        axes = np.array(axes).reshape(sqrt_N, 2*sqrt_N)
+        axes = np.array(axes).reshape(sqrt_N, sqrt_N * (self.history_length + 1))
 
-        for n in range(N):
+        for ax in axes.flatten():
+            ax.set_axis_off()
+
+        for n in range(batch_size):
             i = int(n / sqrt_N)
             j = int(n % sqrt_N)
 
@@ -337,8 +345,8 @@ class RewardClassificationDataset(ReinforcementLearningDataset):
             # Only one observation, and no actions or rewards
             return
 
-        if self.max_episode_length is not None and episode_length > self.max_episode_length:
-            indices = np.random.choice(episode_length, size=self.max_episode_length, replace=False)
+        if self.max_samples_per_ep is not None and episode_length > self.max_samples_per_ep:
+            indices = np.random.choice(episode_length, size=self.max_samples_per_ep, replace=False)
         else:
             indices = np.arange(episode_length)
 
@@ -366,6 +374,7 @@ class StaticAtariDataset(ReinforcementLearningDataset):
     game = Param(aliases="atari_game")
     image_shape = Param(None)
     after_warp = Param(False)
+    _obs_shape = None
 
     action_dim = 1
     reward_dim = 1
@@ -373,19 +382,28 @@ class StaticAtariDataset(ReinforcementLearningDataset):
 
     @property
     def obs_shape(self):
-        if self.after_warp:
-            return (84, 84, 1)
-        else:
-            return (210, 160, 3)
+        if self._obs_shape is None:
+            if self.after_warp:
+                self._obs_shape = (84, 84, 1)
+            else:
+                two_fifty = ("Amidar WizardOfWor DoubleDunk Centipede Tennis BankHeist Skiing "
+                             "Carnival Pooyan AirRaid Assault Tutankham Gopher VideoPinball".split())
+                if "JourneyEscape" in self.game:
+                    self._obs_shape = (230, 160, 3)
+                elif any(g in self.game for g in two_fifty):
+                    self._obs_shape = (250, 160, 3)
+                else:
+                    self._obs_shape = (210, 160, 3)
+        return self._obs_shape
 
     def _make(self):
         directory = os.path.join(cfg.data_dir, "atari_data")
         dirs = os.listdir(directory)
         starts_with = "atari_data_env={}.datetime=".format(self.game)
         dirs = [d for d in dirs if d.startswith(starts_with)]
-        assert len(dirs) == 1
+        assert dirs
 
-        directory = os.path.join(directory, dirs[0])
+        directory = os.path.join(directory, sorted(dirs)[-1])
 
         if self.after_warp:
             directory = os.path.join(directory, "after_warp_recording")
@@ -404,16 +422,23 @@ if __name__ == "__main__":
     # dset = AtariAutoencodeDataset(
     #     game=game, policy=None, n_examples=100, samples_per_frame=0, image_shape=(30, 40))
 
-    # game = "IceHockeyNoFrameskip-v4"
-    # dset = StaticAtariDataset(game=game, history_length=2, max_episodes=3, max_episode_length=7, after_warp=False, store_next_o=True)
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("game")
+    args, _ = parser.parse_known_args()
 
-    xo_dir = "/media/data/Dropbox/projects/PyDSRL/train"
-    # xo_dir = "/media/data/Dropbox/projects/PyDSRL/log"
+    game = "{}NoFrameskip-v4".format(args.game)
+    dset = StaticAtariDataset(
+        game=game, history_length=2, max_episodes=3, max_samples_per_ep=17,
+        after_warp=False, store_next_o=True)
 
-    dset = RewardClassificationDataset(
-        rl_data_location=xo_dir, image_shape=(100, 100),
-        classes=[-2, -1, 0, 1, 2], postprocessing="random",
-        n_samples_per_image=3, tile_shape=(48, 48))
+    # xo_dir = "/media/data/Dropbox/projects/PyDSRL/train"
+    # # xo_dir = "/media/data/Dropbox/projects/PyDSRL/log"
+
+    # dset = RewardClassificationDataset(
+    #     rl_data_location=xo_dir, image_shape=(100, 100),
+    #     classes=[-2, -1, 0, 1, 2], postprocessing="random",
+    #     n_samples_per_image=3, tile_shape=(48, 48))
 
     sess = tf.Session()
     with sess.as_default():
