@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import pprint
 import shutil
 import time
+import abc
 
 from dps import cfg
 from dps.utils import image_to_string, Param, Parameterized, get_param_hash, NumpySeed
@@ -72,7 +73,50 @@ class RawDataset(Parameterized):
         raise Exception("AbstractMethod.")
 
 
-class ArrayFeature(object):
+class Feature(metaclass=abc.ABCMeta):
+    """ Each Dataset class defines a set of features. Each feature defines 3 things:
+        1. How it gets turned into a dictionary of tf.train.Features (get_write_features), used for
+           storing data in a TFRecord format.
+        2. How it gets turned into a dictionary of objects similar to tf.FixedLenFeature (get_read_features)
+           used for unpacking the from the TFRecord format.
+        3. How it gets turned into a dictionary of Tensors representing a batch (process)
+
+    """
+    def __init__(self, name):
+        self.name = name
+
+    @abc.abstractmethod
+    def get_write_features(self, array):
+        pass
+
+    @abc.abstractmethod
+    def get_read_features(self):
+        pass
+
+    @abc.abstractmethod
+    def process_batch(self, data):
+        pass
+
+
+def _bytes_feature(value):
+    if isinstance(value, np.ndarray):
+        value = value.tostring()
+    return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
+
+
+def _int64_feature(value, is_list=False):
+    if not is_list:
+        value = [value]
+    return tf.train.Feature(int64_list=tf.train.Int64List(value=value))
+
+
+def _float_feature(value, is_list=False):
+    if not is_list:
+        value = [value]
+    return tf.train.Feature(float_list=tf.train.FloatList(value=value))
+
+
+class ArrayFeature(Feature):
     def __init__(self, name, shape, dtype=np.float32):
         self.name = name
         self.shape = shape
@@ -82,16 +126,12 @@ class ArrayFeature(object):
         assert array.shape == self.shape
         array = array.astype(self.dtype)
 
-        return {
-            self.name: tf.train.Feature(bytes_list=tf.train.BytesList(value=[array.tostring()])),
-        }
+        return {self.name: _bytes_feature(array)}
 
     def get_read_features(self):
-        return {
-            self.name: tf.FixedLenFeature((), dtype=tf.string),
-        }
+        return {self.name: tf.FixedLenFeature((), dtype=tf.string)}
 
-    def process(self, data):
+    def process_batch(self, data):
         array_data = tf.decode_raw(data[self.name], tf.as_dtype(self.dtype))
         array_data = tf.reshape(array_data, (-1,) + self.shape)
 
@@ -99,13 +139,69 @@ class ArrayFeature(object):
 
 
 class ImageFeature(ArrayFeature):
+    """ Stores images on disk as uint8, converts them to float32 at runtime. """
 
-    def process(self, data):
-        images = tf.decode_raw(data[self.name], tf.float32)
-        images = tf.reshape(images, (-1,) + self.shape)
-        images = tf.clip_by_value(images, 0.0, 1.0)
+    def __init__(self, name, shape):
+        self.name = name
+        self.shape = shape
+        self.dtype = np.uint8
 
+    def process_batch(self, data):
+        images = super(ImageFeature, self).process_batch(data)
+        images = tf.image.convert_image_dtype(images, tf.float32)
         return images
+
+
+class IntegerFeature(Feature):
+    """ If `maximum` is supplied, the integer is returned as a one-hot vector. """
+    def __init__(self, name, maximum=None):
+        self.name = name
+        self.maximum = maximum
+
+    def get_write_features(self, integer):
+        return {self.name: _int64_feature(integer)}
+
+    def get_read_features(self):
+        return {self.name: tf.FixedLenFeature((), dtype=tf.int64)}
+
+    def process_batch(self, data):
+        integer = tf.cast(data[self.name], tf.int32)
+        if self.maximum is not None:
+            integer = tf.one_hot(integer, self.maximum)
+        return integer
+
+
+class NestedListFeature(Feature):
+    def __init__(self, name, sublist_length=5):
+        self.name = name
+        self.sublist_length = sublist_length
+
+    def get_write_features(self, nested_list):
+        for sublist in nested_list:
+            assert len(sublist) == self.sublist_length
+
+        flat_list = [v for sublist in nested_list for v in sublist]
+
+        return {
+            self.name + "/n_sublists": _int64_feature(len(nested_list)),
+            self.name + "/data": _float_feature(flat_list, is_list=True),
+        }
+
+    def get_read_features(self):
+        return {
+            self.name + "/n_sublists": tf.FixedLenFeature((), dtype=tf.int64),
+            self.name + "/data": tf.VarLenFeature(dtype=tf.float32),
+        }
+
+    def process_batch(self, data):
+        n_sublists = tf.cast(data[self.name + "/n_sublists"], tf.int32)
+        max_n_sublists = tf.reduce_max(n_sublists)
+
+        list_data = data[self.name + '/data']
+        batch_size = tf.shape(list_data)[0]
+        data = tf.sparse_tensor_to_dense(list_data, default_value=0)
+        data = tf.reshape(data, (batch_size, max_n_sublists, self.sublist_length))
+        return data, n_sublists
 
 
 class Dataset(Parameterized):
@@ -184,12 +280,9 @@ class Dataset(Parameterized):
 
     def _write_example(self, **kwargs):
         write_features = {}
-
         for f in self.features:
             write_features.update(f.get_write_features(kwargs[f.name]))
-
         example = tf.train.Example(features=tf.train.Features(feature=write_features))
-
         self._writer.write(example.SerializeToString())
 
     def parse_example_batch(self, example_proto):
@@ -197,7 +290,15 @@ class Dataset(Parameterized):
         for f in self.features:
             features.update(f.get_read_features())
         data = tf.parse_example(example_proto, features=features)
-        return [f.process(data) for f in self.features]
+
+        result = []
+        for f in self.features:
+            r = f.process_batch(data)
+            if isinstance(r, (tuple, list)):
+                result.extend(r)
+            else:
+                result.append(r)
+        return result
 
     @property
     def iterator(self):
@@ -224,55 +325,22 @@ class Dataset(Parameterized):
         return result
 
 
-def _bytes_feature(value):
-    return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
-
-
-def _int64_feature(value):
-    return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
-
-
-def tf_image_representation(image, prefix=""):
-    """ Get a representation of an image suitable for passing to tf.train.Features """
-    height, width, n_channels = image.shape
-    image_raw = image.tostring()
-    features = dict(
-        height=_int64_feature(height),
-        width=_int64_feature(width),
-        n_channels=_int64_feature(n_channels),
-        image_raw=_bytes_feature(image_raw))
-
-    if prefix:
-        features = {"{}_{}".format(prefix, name): rep for name, rep in features.items()}
-
-    return features
-
-
-def tf_annotation_representation(annotation, prefix=""):
-    """ Get a representation of an annotation list suitable for passing to tf.train.Features """
-    flat_annotation = [v for a in annotation for v in a]  # each has 5 values
-
-    features = dict(
-        n_annotations=tf.train.Feature(int64_list=tf.train.Int64List(value=[len(annotation)])),
-        annotations=tf.train.Feature(float_list=tf.train.FloatList(value=flat_annotation))
-    )
-
-    if prefix:
-        features = {"{}_{}".format(prefix, name): rep for name, rep in features.items()}
-
-    return features
-
-
 class ImageClassificationDataset(Dataset):
     one_hot = Param()
     classes = Param()
     image_shape = Param()
     include_blank = Param()
 
-    features = {
-        "image_raw": tf.FixedLenFeature((), dtype=tf.string),
-        "label": tf.FixedLenFeature((), dtype=tf.int64),
-    }
+    _features = None
+
+    @property
+    def features(self):
+        if self._features is None:
+            self._features = [
+                ImageFeature("image", self.obs_shape),
+                IntegerFeature("label", self.n_classes if self.one_hot else None),
+            ]
+        return self._features
 
     @property
     def n_classes(self):
@@ -284,36 +352,11 @@ class ImageClassificationDataset(Dataset):
 
     @property
     def action_shape(self):
-        if self.one_hot:
-            return len(self.classes)
-        else:
-            return 1
+        return self.n_classes if self.one_hot else 1
 
     @property
     def depth(self):
         return 1
-
-    def _write_example(self, image, label):
-        features = tf_image_representation(image)
-        features.update(label=_int64_feature(label))
-        example = tf.train.Example(features=tf.train.Features(feature=features))
-
-        self._writer.write(example.SerializeToString())
-
-    def parse_example_batch(self, example_proto):
-        features = tf.parse_example(example_proto, features=ImageClassificationDataset.features)
-
-        images = tf.decode_raw(features['image_raw'], tf.uint8)
-        images = tf.reshape(images, (-1,) + self.obs_shape)
-        images = tf.image.convert_image_dtype(images, tf.float32)
-        images = tf.clip_by_value(images, 0.0, 1.0)
-
-        label = tf.cast(features['label'], tf.int32)
-
-        if self.one_hot:
-            label = tf.one_hot(label, self.n_classes)
-
-        return images, label
 
 
 class EmnistDataset(ImageClassificationDataset):
@@ -350,7 +393,7 @@ class EmnistDataset(ImageClassificationDataset):
                 "only {} are available.".format(self.n_examples, x.shape[0]))
 
         for _x, _y in x, y:
-            self._write_example(_x, class_map[_y])
+            self._write_example(image=_x, label=class_map[_y])
 
 
 class OmniglotDataset(ImageClassificationDataset):
@@ -377,7 +420,7 @@ class OmniglotDataset(ImageClassificationDataset):
                 "only {} are available.".format(self.n_examples, x.shape[0]))
 
         for _x, _y in x, y:
-            self._write_example(_x, class_map[_y])
+            self._write_example(image=_x, label=class_map[_y])
 
 
 class ImageDataset(Dataset):
@@ -391,6 +434,23 @@ class ImageDataset(Dataset):
             return self.tile_shape + (self.depth,)
         else:
             return self.image_shape + (self.depth,)
+
+    def _write_single_example(self, **kwargs):
+        return Dataset._write_example(self, **kwargs)
+
+    def _write_example(self, **kwargs):
+        image = kwargs['image']
+        annotation = kwargs.get("annotation", [])
+        label = kwargs.get("label", None)
+        if self.postprocessing == "tile":
+            images, annotations = self._tile_postprocess(image, annotation)
+        elif self.postprocessing == "random":
+            images, annotations = self._random_postprocess(image, annotation)
+        else:
+            images, annotations = [image], [annotation]
+
+        for img, a in zip(images, annotations):
+            self._write_single_example(image=img, annotations=a, label=label)
 
     def _tile_postprocess(self, image, annotations):
         height, width, n_channels = image.shape
@@ -542,12 +602,17 @@ class PatchesDataset(ImageDataset):
     one_hot = Param(True)
     plot_every = Param(None)
 
-    features = {
-        "image_raw": tf.FixedLenFeature((), dtype=tf.string),
-        "annotations": tf.VarLenFeature(dtype=tf.float32),
-        "n_annotations": tf.FixedLenFeature((), dtype=tf.int64),
-        "label": tf.FixedLenFeature((), dtype=tf.int64),
-    }
+    _features = None
+
+    @property
+    def features(self):
+        if self._features is None:
+            self._features = [
+                ImageFeature("image", self.obs_shape),
+                NestedListFeature("annotations", 5),
+                IntegerFeature("label", self.n_classes if self.one_hot else None)]
+
+        return self._features
 
     @property
     def n_classes(self):
@@ -556,44 +621,6 @@ class PatchesDataset(ImageDataset):
     @property
     def depth(self):
         return 3 if self.colours else 1
-
-    def _write_example(self, image, annotation, label):
-        if self.postprocessing == "tile":
-            images, annotations = self._tile_postprocess(image, annotation)
-        elif self.postprocessing == "random":
-            images, annotations = self._random_postprocess(image, annotation)
-        else:
-            images, annotations = [image], [annotation]
-
-        for image, annotation in zip(images, annotations):
-            features = tf_image_representation(image)
-            features.update(tf_annotation_representation(annotation))
-            features.update(label=_int64_feature(label))
-
-            example = tf.train.Example(features=tf.train.Features(feature=features))
-
-            self._writer.write(example.SerializeToString())
-
-    def parse_example_batch(self, example_proto):
-        features = tf.parse_example(example_proto, features=PatchesDataset.features)
-
-        images = tf.decode_raw(features['image_raw'], tf.uint8)
-        images = tf.reshape(images, (-1,) + self.obs_shape)
-        images = tf.image.convert_image_dtype(images, tf.float32)
-        images = tf.clip_by_value(images, 0.0, 1.0)
-
-        n_annotations = tf.cast(features['n_annotations'], tf.int32)
-        max_n_annotations = tf.reduce_max(n_annotations)
-
-        annotations = tf.sparse_tensor_to_dense(features['annotations'], default_value=0)
-        annotations = tf.reshape(annotations, (-1, max_n_annotations, 5))
-
-        label = tf.cast(features['label'], tf.int32)
-
-        if self.one_hot:
-            label = tf.one_hot(label, self.n_classes)
-
-        return images, annotations, n_annotations, label
 
     def _make(self):
         if self.n_examples == 0:
@@ -751,7 +778,7 @@ class PatchesDataset(ImageDataset):
 
             annotations = self._get_annotations(draw_offset, patches, locs, patch_labels)
 
-            self._write_example(image, annotations, image_label)
+            self._write_example(image=image, annotations=annotations, label=image_label)
 
             if self.plot_every is not None and j % self.plot_every == 0:
                 print(image_label)
@@ -1152,9 +1179,9 @@ class GridEmnistObjectDetectionDataset(EmnistObjectDetectionDataset, GridPatches
 
 if __name__ == "__main__":
     dset = VisualArithmeticDataset(
-        n_examples=16, reductions="sum", largest_digit=28,
-        min_digits=1, max_digits=3, image_shape=(24, 24),
-        max_overlap=98, colours="white")
+        n_examples=18, reductions="sum", largest_digit=28,
+        min_digits=2, max_digits=3, image_shape=(24, 24),
+        max_overlap=98, colours="white blue")
 
     sess = tf.Session()
     with sess.as_default():

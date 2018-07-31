@@ -63,16 +63,20 @@ def gather_atari_human_frames(game, n_frames, density=1.0):
 
     def key_press(key, mod):
         nonlocal human_agent_action, human_wants_restart, human_sets_pause
-        if key==0xff0d: human_wants_restart = True
-        if key==32: human_sets_pause = not human_sets_pause
+        if key == 0xff0d:
+            human_wants_restart = True
+        if key == 32:
+            human_sets_pause = not human_sets_pause
         a = int(key - ord('0'))
-        if a <= 0 or a >= ACTIONS: return
+        if a <= 0 or a >= ACTIONS:
+            return
         human_agent_action = a
 
     def key_release(key, mod):
         nonlocal human_agent_action
         a = int(key - ord('0'))
-        if a <= 0 or a >= ACTIONS: return
+        if a <= 0 or a >= ACTIONS:
+            return
         if human_agent_action == a:
             human_agent_action = 0
 
@@ -172,7 +176,7 @@ class ReinforcementLearningDataset(ImageDataset):
             _kwargs['o'] = o
             _kwargs['next_o'] = next_o
 
-            super(ReinforcementLearningDataset, self)._write_example(**_kwargs)
+            self._write_single_example(**_kwargs)
 
     @property
     def features(self):
@@ -204,9 +208,6 @@ class ReinforcementLearningDataset(ImageDataset):
         scan_recorded_traces(self.rl_data_location, self._callback, self.max_episodes)
 
     def _callback(self, o, a, r):
-        if o[0].dtype == np.uint8:
-            o = list((np.array(o) / 255.).astype('f'))
-
         episode_length = len(o)
 
         if self.max_samples_per_ep is not None:
@@ -336,9 +337,6 @@ class RewardClassificationDataset(ReinforcementLearningDataset):
         scan_recorded_traces(self.rl_data_location, self._callback, self.max_episodes)
 
     def _callback(self, o, a, r):
-        if o[0].dtype == np.uint8:
-            o = list((np.array(o) / 255.).astype('f'))
-
         episode_length = len(o)-1
 
         if not episode_length:
@@ -404,11 +402,7 @@ class StaticAtariDataset(ReinforcementLearningDataset):
         assert dirs
 
         directory = os.path.join(directory, sorted(dirs)[-1])
-
-        if self.after_warp:
-            directory = os.path.join(directory, "after_warp_recording")
-        else:
-            directory = os.path.join(directory, "before_warp_recording")
+        directory = os.path.join(directory, ("after" if self.after_warp else "before") + "_warp_recording")
         scan_recorded_traces(directory, self._callback, self.max_episodes)
 
 
@@ -429,7 +423,7 @@ if __name__ == "__main__":
 
     game = "{}NoFrameskip-v4".format(args.game)
     dset = StaticAtariDataset(
-        game=game, history_length=2, max_episodes=3, max_samples_per_ep=17,
+        game=game, history_length=2, max_episodes=3, max_samples_per_ep=18,
         after_warp=False, store_next_o=True)
 
     # xo_dir = "/media/data/Dropbox/projects/PyDSRL/train"
