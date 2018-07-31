@@ -440,7 +440,7 @@ class ImageDataset(Dataset):
 
     def _write_example(self, **kwargs):
         image = kwargs['image']
-        annotation = kwargs.get("annotation", [])
+        annotation = kwargs.get("annotations", [])
         label = kwargs.get("label", None)
         if self.postprocessing == "tile":
             images, annotations = self._tile_postprocess(image, annotation)
