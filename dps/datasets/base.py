@@ -2,12 +2,13 @@ import numpy as np
 from skimage.transform import resize
 import os
 import tensorflow as tf
-import matplotlib
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import pprint
 import shutil
 import time
 import abc
+from itertools import zip_longest 
 
 from dps import cfg
 from dps.utils import image_to_string, Param, Parameterized, get_param_hash, NumpySeed
@@ -79,7 +80,7 @@ class Feature(metaclass=abc.ABCMeta):
            storing data in a TFRecord format.
         2. How it gets turned into a dictionary of objects similar to tf.FixedLenFeature (get_read_features)
            used for unpacking the from the TFRecord format.
-        3. How it gets turned into a dictionary of Tensors representing a batch (process)
+        3. How it gets turned into a dictionary of Tensors representing a batch (process_batch)
 
     """
     def __init__(self, name):
@@ -442,48 +443,57 @@ class ImageDataset(Dataset):
         image = kwargs['image']
         annotation = kwargs.get("annotations", [])
         label = kwargs.get("label", None)
+        background = kwargs.get("background", None)
+
         if self.postprocessing == "tile":
-            images, annotations = self._tile_postprocess(image, annotation)
+            images, annotations, backgrounds = self._tile_postprocess(image, annotation, background=background)
         elif self.postprocessing == "random":
-            images, annotations = self._random_postprocess(image, annotation)
+            images, annotations, backgrounds = self._random_postprocess(image, annotation, background=background)
         else:
-            images, annotations = [image], [annotation]
+            images, annotations, backgrounds = [image], [annotation], [background]
 
-        for img, a in zip(images, annotations):
-            self._write_single_example(image=img, annotations=a, label=label)
+        for img, a, bg in zip_longest(images, annotations, backgrounds):
+            self._write_single_example(image=img, annotations=a, label=label, background=bg)
 
-    def _tile_postprocess(self, image, annotations):
+    @staticmethod
+    def tile_sample(image, tile_shape):
         height, width, n_channels = image.shape
 
-        hangover = width % self.tile_shape[1]
+        hangover = width % tile_shape[1]
         if hangover != 0:
-            pad_amount = self.tile_shape[1] - hangover
+            pad_amount = tile_shape[1] - hangover
             pad_shape = (height, pad_amount)
             padding = np.zeros(pad_shape)
             image = np.concat([image, padding], axis=2)
 
-        hangover = height % self.tile_shape[0]
+        hangover = height % tile_shape[0]
         if hangover != 0:
-            pad_amount = self.tile_shape[0] - hangover
+            pad_amount = tile_shape[0] - hangover
             pad_shape = list(image.shape)
             pad_shape[1] = pad_amount
             padding = np.zeros(pad_shape)
             image = np.concat([image, padding], axis=1)
 
-        pad_height = self.tile_shape[0] - height % self.tile_shape[0]
-        pad_width = self.tile_shape[1] - width % self.tile_shape[1]
+        pad_height = tile_shape[0] - height % tile_shape[0]
+        pad_width = tile_shape[1] - width % tile_shape[1]
         image = np.pad(image, ((0, pad_height), (0, pad_width), (0, 0)), 'constant')
 
-        H = int(height / self.tile_shape[0])
-        W = int(width / self.tile_shape[1])
+        H = int(height / tile_shape[0])
+        W = int(width / tile_shape[1])
 
         slices = np.split(image, W, axis=1)
-        new_shape = (H, *self.tile_shape, n_channels)
+        new_shape = (H, *tile_shape, n_channels)
         slices = [np.reshape(s, new_shape) for s in slices]
         new_images = np.concatenate(slices, axis=1)
-        new_images = new_images.reshape(H * W, *self.tile_shape, n_channels)
+        new_images = new_images.reshape(H * W, *tile_shape, n_channels)
+        return new_images
 
+    def _tile_postprocess(self, image, annotations, background=None):
+        new_images = self.tile_sample(image, self.tile_shape)
         new_annotations = []
+
+        H = int(image.shape[0] / self.tile_shape[0])
+        W = int(image.shape[1] / self.tile_shape[1])
 
         for h in range(H):
             for w in range(W):
@@ -509,12 +519,17 @@ class ImageDataset(Dataset):
 
                 new_annotations.append(_new_annotations)
 
-        return new_images, new_annotations
+        new_backgrounds = []
+        if background is not None:
+            new_backgrounds = self.tile_sample(background, self.tile_shape)
 
-    def _random_postprocess(self, image, annotations):
+        return new_images, new_annotations, new_backgrounds
+
+    def _random_postprocess(self, image, annotations, background=None):
         height, width, _ = image.shape
         new_images = []
         new_annotations = []
+        new_backgrounds = []
 
         for j in range(self.n_samples_per_image):
             _top = np.random.randint(0, height-self.tile_shape[0]+1)
@@ -522,6 +537,10 @@ class ImageDataset(Dataset):
 
             crop = image[_top:_top+self.tile_shape[0], _left:_left+self.tile_shape[1], ...]
             new_images.append(crop)
+
+            if background is not None:
+                bg_crop = background[_top:_top+self.tile_shape[0], _left:_left+self.tile_shape[1], ...]
+                new_backgrounds.append(bg_crop)
 
             offset = (_top, _left)
             _new_annotations = []
@@ -543,7 +562,7 @@ class ImageDataset(Dataset):
 
             new_annotations.append(_new_annotations)
 
-        return new_images, new_annotations
+        return new_images, new_annotations, new_backgrounds
 
 
 class Rectangle(object):
@@ -634,7 +653,6 @@ class PatchesDataset(ImageDataset):
         if isinstance(colours, str):
             colours = colours.split()
 
-        import matplotlib as mpl
         colour_map = mpl.colors.get_named_colors_mapping()
 
         self._colours = []
@@ -691,7 +709,7 @@ class PatchesDataset(ImageDataset):
 
         # --- start dataset creation ---
 
-        for j in range(self.n_examples):
+        for j in range(int(self.n_examples)):
             if j % 1000 == 0:
                 print("Working on datapoint {}...".format(j))
 
@@ -791,7 +809,7 @@ class PatchesDataset(ImageDataset):
                     width = right - left
                     height = bottom - top
 
-                    rect = matplotlib.patches.Rectangle(
+                    rect = mpl.patches.Rectangle(
                         (left, top), width, height, linewidth=1,
                         edgecolor='white', facecolor='none')
 
@@ -915,16 +933,18 @@ class PatchesDataset(ImageDataset):
 
         return distractor_images
 
-    def _colourize(self, img, colour_idx=None):
+    def _colourize(self, img, colour=None):
         """ Apply a colour to a gray-scale image. """
 
-        if not self._colours:
-            return np.stack([255 * np.ones_like(img), img], axis=2)
+        if isinstance(colour, str):
+            colour = mpl.colors.to_rgb(colour)
+            colour = np.array(colour)[None, None, :]
+            colour = np.uint8(255. * colour)
+        else:
+            if colour is None:
+                colour = np.random.randint(len(self._colours))
+            colour = self._colours[int(colour)]
 
-        if colour_idx is None:
-            colour_idx = np.random.randint(len(self._colours))
-
-        colour = self._colours[colour_idx]
         rgb = np.tile(colour, img.shape + (1,))
         alpha = img[:, :, None]
 
@@ -937,6 +957,7 @@ class PatchesDataset(ImageDataset):
         fig, axes = plt.subplots(1, batch_size)
         for i in range(batch_size):
             ax = axes[i]
+            ax.set_axis_off()
 
             ax.imshow(np.squeeze(images[i]))
             ax.set_title("label={}".format(label[i]))
@@ -1153,7 +1174,6 @@ class EmnistObjectDetectionDataset(PatchesDataset):
         return char_x, char_y, 0
 
     def visualize(self, n=9):
-        import matplotlib.pyplot as plt
         m = int(np.ceil(np.sqrt(n)))
         fig, subplots = plt.subplots(m, m)
 
@@ -1165,7 +1185,7 @@ class EmnistObjectDetectionDataset(PatchesDataset):
                 width = right - left
                 height = bottom - top
 
-                rect = matplotlib.patches.Rectangle(
+                rect = mpl.patches.Rectangle(
                     (left, top), width, height, linewidth=1,
                     edgecolor='white', facecolor='none')
 

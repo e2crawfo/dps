@@ -1505,6 +1505,7 @@ class RenderHook(object):
         if frame.ndim == 3 and frame.shape[2] == 1:
             frame = frame[:, :, 0]
         frame = np.clip(frame, 0.0, 1.0)
+        frame = np.where(np.isnan(frame), 0, frame)
 
         ax.imshow(frame, vmin=0.0, vmax=1.0, **kwargs)
 

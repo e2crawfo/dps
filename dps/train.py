@@ -335,6 +335,7 @@ class TrainingLoop(object):
 
                 # Set the seed for the stage. Notice we generate a new tf seed for each stage.
                 tf_seed = gen_seed()
+                print("Setting tensorflow seed to generated seed: {}".format(tf_seed))
                 tf.set_random_seed(tf_seed)
 
                 # Set limit on CPU RAM for the stage

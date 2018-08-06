@@ -7,15 +7,18 @@ import matplotlib.patches as patches
 from skimage.transform import resize
 import json
 from itertools import product
+import collections
 
 from dps import cfg
-from dps.datasets.base import ImageDataset, ImageFeature, NestedListFeature
+from dps.datasets.base import ImageDataset, ImageFeature, NestedListFeature, IntegerFeature
 from dps.utils import Param
 
 
 class ClevrDataset(ImageDataset):
     clevr_kind = Param()
     image_shape = Param()
+    clevr_background_mode = Param()
+    example_range = Param()
 
     _features = None
 
@@ -26,10 +29,17 @@ class ClevrDataset(ImageDataset):
     @property
     def features(self):
         if self._features is None:
-            if self.has_annotations:
-                self._features = [ImageFeature("image", self.obs_shape), NestedListFeature("annotations", 5)]
-            else:
-                self._features = [ImageFeature("image", self.obs_shape)]
+            self._features = [
+                ImageFeature("image", self.obs_shape),
+                NestedListFeature("annotations", 5),
+                IntegerFeature("label", 1),
+            ]
+
+            if self.clevr_background_mode is not None:
+                self._features.append(
+                    ImageFeature("background", self.obs_shape)
+                )
+
         return self._features
 
     @property
@@ -37,8 +47,110 @@ class ClevrDataset(ImageDataset):
         return 3
 
     def get_idx_from_filename(self, filename):
+        filename = os.path.split(filename)[1]
         idx_start = 10 if self.clevr_kind == "val" else 12
         return int(filename[idx_start:idx_start+6])
+
+    @staticmethod
+    def compute_pixelwise_mean(files, shape):
+        mean = None
+        n_points = 0
+        for k, f in enumerate(files):
+            if k % 100 == 0:
+                print("Processing files {}".format(k))
+            image = imageio.imread(os.path.join(f))
+            image = resize(image[:, :, :3], shape, mode='edge', preserve_range=True)
+
+            if mean is None:
+                mean = image
+            else:
+                mean = (mean * n_points + image) / (n_points + 1)
+            n_points += 1
+
+        return mean.astype(image.dtype)
+
+    @staticmethod
+    def compute_pixelwise_mode(files, shape):
+        counters = None
+
+        for k, f in enumerate(files):
+            if k % 100 == 0:
+                print("Processing files {}".format(k))
+            image = imageio.imread(os.path.join(f))
+            image = resize(image[:, :, :3], shape, mode='edge', preserve_range=True)
+
+            if counters is None:
+                counters = np.array([collections.Counter() for i in range(image.shape[0] * image.shape[1])])
+                counters = counters.reshape(image.shape[:2])
+
+            for i in range(image.shape[0]):
+                for j in range(image.shape[1]):
+                    counters[i, j].update([tuple(image[i, j])])
+
+        mode_image = [[c.most_common(1)[0][0] for c in row] for row in counters]
+        return np.array(mode_image).astype(image.dtype)
+
+    # @staticmethod
+    # def compute_pixelwise_mode(files):
+    #     import scipy
+    #     images = []
+    #     for f in files:
+    #         image = imageio.imread(os.path.join(f))
+    #         image = image[..., :3]  # Get rid of alpha channel.
+    #         images.append(image)
+    #     images = np.array(images).astype('i')
+    #     images = images[..., 0] + 256 * images[..., 1] * 256 * 256 * images[..., 2]
+    #     mode_image = scipy.stats.mode(images, axis=0)[0]
+    #     r = mode_image % 256
+    #     mode_image = (mode_image - r) / 256
+    #     g = mode_image % 256
+    #     mode_image = (mode_image - g) / 256
+    #     b = mode_image
+    #     mode_image = np.stack([r, g, b], axis=2)
+    #     return np.array(mode_image).astype(image.dtype)
+
+    @staticmethod
+    def compute_pixelwise_mode2(files, shape):
+        data = []
+
+        for f in files[:10]:
+            image = imageio.imread(os.path.join(f))
+            image = resize(image[:, :, :3], shape, mode='edge', preserve_range=True)
+            data.extend(list(image.reshape(-1, 3)))
+
+        data = np.random.permutation(data)[:10000]
+
+        from sklearn import cluster
+        n_clusters = 64
+        kmeans = cluster.KMeans(n_clusters=n_clusters)
+        print("Clustering...")
+        kmeans.fit(data)
+
+        values = kmeans.cluster_centers_.squeeze()[:, None, None, :]
+
+        counters = None
+
+        print("Counting...")
+        for f in files:
+            image = imageio.imread(os.path.join(f))
+            image = resize(image[:, :, :3], shape, mode='edge', preserve_range=True)
+
+            if counters is None:
+                counters = np.array([collections.Counter() for i in range(image.shape[0] * image.shape[1])])
+                counters = counters.reshape(image.shape[:2])
+
+            distances = np.linalg.norm(values - image[None, :, :, :], axis=3)
+            indices = np.argmin(distances, axis=0)
+
+            for i in range(image.shape[0]):
+                for j in range(image.shape[1]):
+                    counters[i, j].update([indices[i, j]])
+
+        print("Computing mode...")
+        mode_image = [[values[c.most_common(1)[0][0], 0, 0, :] for c in row] for row in counters]
+
+        print("Done...")
+        return np.array(mode_image).astype(image.dtype)
 
     def _make(self):
         assert self.clevr_kind in "train val test".split()
@@ -57,11 +169,31 @@ class ClevrDataset(ImageDataset):
 
         directory = os.path.join(cfg.data_dir, "CLEVR_v1.0/images", self.clevr_kind)
         files = os.listdir(directory)
-        files = np.random.choice(files, size=self.n_examples, replace=False)
 
-        for f in files:
-            image = imageio.imread(os.path.join(directory, f))
-            image = image[..., :3]  # Get rid of alpa channel.
+        if self.example_range is not None:
+            assert self.example_range[0] < self.example_range[1]
+            files = [(f, self.get_idx_from_filename(f)) for f in files]
+            files = [f for f, idx in files if self.example_range[0] <= idx < self.example_range[1]]
+
+        files = np.random.choice(files, size=int(self.n_examples), replace=False)
+        files = [os.path.join(directory, f) for f in files]
+
+        background = None
+        if self.clevr_background_mode == "mean":
+            background = self.compute_pixelwise_mean(files[:5000], self.image_shape)
+        elif self.clevr_background_mode == "median":
+            background = self.compute_pixelwise_median(files[:5000], self.image_shape)
+        elif self.clevr_background_mode == "mode":
+            background = self.compute_pixelwise_mode(files[:5000], self.image_shape)
+            # background = self.compute_pixelwise_mode2(files, self.image_shape)
+        if background is not None:
+            background = background.astype('uint8')
+
+        for k, f in enumerate(files):
+            if k % 100 == 0:
+                print("Processing image {}".format(k))
+            image = imageio.imread(f)
+            image = image[..., :3]  # Get rid of alpha channel.
 
             if image.shape[:2] != self.image_shape:
                 image = resize(image, self.image_shape, mode='edge', preserve_range=True)
@@ -69,11 +201,12 @@ class ClevrDataset(ImageDataset):
             if self.has_annotations:
                 idx = self.get_idx_from_filename(f)
                 scene = scenes[idx]
-                assert scene['image_filename'] == f
+                assert scene['image_filename'] == os.path.split(f)[1]
                 annotations = self.extract_bounding_boxes(scene)
-                self._write_example(image=image, annotations=annotations)
             else:
-                self._write_example(image=image)
+                annotations = []
+
+            self._write_example(image=image, annotations=annotations, label=0, background=background)
 
     def extract_bounding_boxes(self, scene):
         objs = scene['objects']
@@ -133,24 +266,28 @@ class ClevrDataset(ImageDataset):
         batch_size = n
 
         if self.has_annotations:
-            images, annotations, n_annotations = self.sample(n)
+            images, annotations, n_annotations, _, backgrounds = self.sample(n)
 
             for i in range(batch_size):
-                fig, ax = plt.subplots(1, 1)
+                fig, axes = plt.subplots(1, 2)
+                ax = axes[0]
                 ax.imshow(images[i])
                 for cls, ymin, ymax, xmin, xmax in annotations[i]:
                     height = ymax - ymin
                     width = xmax - xmin
                     rect = patches.Rectangle(
-                        (xmin, ymin), width, height, linewidth=2, edgecolor="xkcd:azure", facecolor='none')
+                        (xmin, ymin), width, height, linewidth=2,
+                        edgecolor="xkcd:azure", facecolor='none')
                     ax.add_patch(rect)
+                axes[1].imshow(backgrounds[i])
                 plt.show()
         else:
-            images, *_ = self.sample(n)
+            images, _, _, _, backgrounds = self.sample(n)
 
             for i in range(batch_size):
-                fig, ax = plt.subplots(1, 1)
-                ax.imshow(images[i])
+                fig, ax = plt.subplots(1, 2)
+                ax[0].imshow(images[i])
+                ax[1].imshow(backgrounds[i])
                 plt.show()
 
     def sample(self, n=4):
@@ -167,8 +304,11 @@ class ClevrDataset(ImageDataset):
 
 if __name__ == "__main__":
     dset = ClevrDataset(
-        n_examples=20, clevr_kind="train", seed=0, image_shape=(80, 120),
-        postprocessing="random", tile_shape=(60, 60), n_samples_per_image=10)
+        n_examples=10000, clevr_kind="train", seed=0, image_shape=(80, 120),
+        n_samples_per_image=10, clevr_background_mode="mean")
+    # dset = ClevrDataset(
+    #     n_examples=20, clevr_kind="train", seed=0, image_shape=(80, 120),
+    #     postprocessing="random", tile_shape=(60, 60), n_samples_per_image=10)
 
     with tf.Session().as_default():
-        dset.visualize(16)
+        dset.visualize(4)
