@@ -1,1 +1,1 @@
-from .env import Env, TensorFlowEnv, BatchGymEnv, BatchBox
+from .env import Env, TensorFlowEnv, BatchGymEnv

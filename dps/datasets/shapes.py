@@ -3,6 +3,7 @@ import imageio
 import os
 from skimage.transform import resize
 
+import dps
 from dps.datasets.base import PatchesDataset
 from dps.utils import Param
 
@@ -23,7 +24,7 @@ class RandomShapesDataset(PatchesDataset):
 
         self.images = {}
         for shape in self.shapes:
-            f = os.path.join(os.path.dirname(__file__), "shape_images", "{}.png".format(shape))
+            f = os.path.join(os.path.dirname(dps.__file__), "shapes", "{}.png".format(shape))
             image = imageio.imread(f)
             image = resize(image, self.patch_shape, mode='edge', preserve_range=True)
 
@@ -40,7 +41,7 @@ class RandomShapesDataset(PatchesDataset):
 
 
 class ShapesDataset(PatchesDataset):
-    """ Display a specific set of shapes in ranom positions. """
+    """ Display a specific set of shapes in random positions. """
     shapes = Param(help="space-separated string of shape specs. Each shape spec is of form color,shape")
     patch_shape = Param()
 
@@ -54,10 +55,9 @@ class ShapesDataset(PatchesDataset):
         for spec in self.shapes:
             colour, shape = spec.split(",")
 
-            f = os.path.join(os.path.dirname(__file__), "shape_images", "{}.png".format(shape))
+            f = os.path.join(os.path.dirname(__file__), "shapes", "{}.png".format(shape))
             image = imageio.imread(f)
-            image = image[..., 3]
-            image = resize(image, self.patch_shape, mode='edge', preserve_range=True)
+            image = resize(image[..., 3], self.patch_shape, mode='edge', preserve_range=True)
             image = self._colourize(image, colour)
 
             self.patches.append(image)
