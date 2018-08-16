@@ -57,8 +57,7 @@ class ReplayBuffer(RLObject):
 
 
 class PrioritizedReplayBuffer(RLObject):
-    """
-    Implements rank-based version of Prioritized Experience Replay.
+    """ Implements rank-based version of Prioritized Experience Replay.
 
     Parameters
     ----------

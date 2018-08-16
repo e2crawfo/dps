@@ -53,7 +53,7 @@ class ValueFunction(AgentHead):
 
         elif key == 'monte_carlo_td_errors':
             if context.truncated_rollouts:
-                raise Exceltion("NotImplemented")
+                raise Exception("NotImplemented")
 
             discounted_returns = context.get_signal('discounted_returns', self.policy)
             values = context.get_signal('values', self, gradient=True)
@@ -268,7 +268,7 @@ class RetraceCell(RNNCell):
 
 
 class Retrace(RLObject):
-    """ An off-policy (though also works on-policy) returned-based estimate of the value of
+    """ An off-policy (though also works on-policy) return-based estimate of the value of
         a policy as a function of either a state or a state-action pair. The estimate
         is based on an existing value function or action-value function.
 
@@ -278,8 +278,7 @@ class Retrace(RLObject):
     """
     def __init__(
             self, policy, value_function, lmbda=1.0, importance_c=0,
-            to_action_value=False, from_action_value=False,
-            name=None):
+            to_action_value=False, from_action_value=False, name=None):
 
         self.policy = policy
         self.value_function = value_function

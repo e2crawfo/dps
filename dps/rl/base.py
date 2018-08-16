@@ -202,12 +202,15 @@ class RLContext(Parameterized):
     def build_core_signals(self):
         self._signals['mask'] = tf.placeholder(
             tf.float32, shape=(cfg.T, None, 1), name="_mask")
-        self._signals['obs'] = tf.placeholder(
-            tf.float32, shape=(cfg.T, None) + self.obs_shape, name="_obs")
 
-        if hasattr(self.env, 'rb'):
-            self._signals['hidden'] = tf.placeholder(
-                tf.float32, shape=(cfg.T, None, self.env.rb.hidden_width,), name="_hidden")
+        self._signals['all_obs'] = tf.placeholder(
+            tf.float32, shape=(cfg.T+1, None) + self.obs_shape, name="_all_obs")
+
+        # observations that we learn about
+        self._signals['obs'] = tf.identity(self._signals['all_obs'][:-1, ...], name="_obs")
+
+        # observations that we use as targets
+        self._signals['target_obs'] = tf.identity(self._signals['all_obs'][1:, ...], name="_target_obs")
 
         self._signals['actions'] = tf.placeholder(
             tf.float32, shape=(cfg.T, None) + self.action_shape, name="_actions")
@@ -283,8 +286,7 @@ class RLContext(Parameterized):
             discount_matrix, self._signals['rewards'], axes=1, name="_discounted_returns")
         self._signals['discounted_returns'] = discounted_returns
 
-        mask = self._signals['mask']
-        mean_returns = masked_mean(discounted_returns, mask, axis=1, keepdims=True)
+        mean_returns = masked_mean(discounted_returns, self.signals['mask'], axis=1, keepdims=True)
         mean_returns += tf.zeros_like(discounted_returns)
         self._signals['average_discounted_returns'] = mean_returns
 
@@ -306,6 +308,7 @@ class RLContext(Parameterized):
             weights = np.tile(weights.reshape(1, -1, 1), (rollouts.T, 1, 1))
 
         feed_dict = {
+            self._signals['done']: rollouts.done,
             self._signals['mask']: (1-shift_fill(rollouts.done, 1)).astype('f'),
             self._signals['obs']: rollouts.o,
             self._signals['actions']: rollouts.a,
@@ -314,9 +317,6 @@ class RLContext(Parameterized):
             self._signals['mu_log_probs']: rollouts.log_probs,
             self._signals['mode']: mode,
         }
-
-        if hasattr(rollouts, 'hidden'):
-            feed_dict[self._signals['hidden']] = rollouts.hidden
 
         if hasattr(rollouts, 'utils'):
             # utils are not always stored in the rollouts as they can occupy a lot of memory
@@ -418,7 +418,7 @@ class RLContext(Parameterized):
 
         with self:
             start = time.time()
-            rollouts = self.env.do_rollouts(self.mu, batch_size, mode='train')
+            rollouts = self.env.do_rollouts(self.mu, n_rollouts=batch_size, T=cfg.T, mode='train')
             train_rollout_duration = time.time() - start
 
             train_summaries = b""

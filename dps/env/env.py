@@ -142,14 +142,14 @@ class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
                 obs_ta, action_ta, reward_ta, done_ta, log_prob_ta, entropy_ta, util_ta, policy_state_ta, *info_tas = tas
 
                 rollout = dict(
-                    obs=obs_ta.stack(),
+                    obs=tf.concat([obs_ta.stack(), final_obs[None, ...]], axis=0),
                     actions=action_ta.stack(),
                     rewards=reward_ta.stack(),
                     done=tf.concat([done_ta.stack()[1:], final_done[None, :, :]], axis=0),
                     log_probs=log_prob_ta.stack(),
                     entropy=entropy_ta.stack(),
                     utils=util_ta.stack(),
-                    policy_states=policy_state_ta.stack(),
+                    policy_states=tf.concat([policy_state_ta.stack(), final_policy_state[None, ...]], axis=0)
                 )
 
                 assert len(self.info_shapes) == len(info_tas)
@@ -159,11 +159,7 @@ class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
 
                 rollout.update(info)
 
-                static = dict(
-                    # final_policy_state=final_policy_state,
-                    # final_obs=final_obs,
-                    exploration=policy.exploration
-                )
+                static = dict(exploration=policy.exploration)
 
             self._samplers[id(policy)] = rollout, static
             sampler = self._samplers[id(policy)]
@@ -297,9 +293,8 @@ class BatchGymEnv(Env):
         self.done = self._done[:n_rollouts, ...]
 
     def reset(self):
-        if cfg.reset_env:
-            for i, env in enumerate(self._active_envs):
-                self.done[i, 0] = True
+        for i, env in enumerate(self._active_envs):
+            self.done[i, 0] = True
 
         for idx, env in enumerate(self._active_envs):
             if self.done[idx, 0]:
@@ -314,7 +309,6 @@ class BatchGymEnv(Env):
         assert len(actions) == self._n_rollouts
 
         for idx, (a, env) in enumerate(zip(actions, self._active_envs)):
-            # a = np.squeeze(np.array(a))
             if self.done[idx, 0]:
                 rewards.append(0.0)
                 info.append({})

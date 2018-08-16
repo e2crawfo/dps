@@ -88,7 +88,7 @@ class RolloutBatch(dict):
 
     @property
     def T(self):
-        return len(self._obs)
+        return len(self._r)
 
     @property
     def batch_size(self):
@@ -192,7 +192,7 @@ class RolloutBatch(dict):
 
         static_keys = set(rollouts[0]._static.keys())
         for r in rollouts[1:]:
-            assert set(r._static.keys()) == static_keys,(
+            assert set(r._static.keys()) == static_keys, (
                 "Cannot join rollouts, they do not have the same set of keys for static values.")
 
         new_static = {k: list_concat([r.get_static(k) for r in rollouts]) for k in static_keys}

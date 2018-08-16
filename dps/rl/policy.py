@@ -266,11 +266,6 @@ class ActionSelection(object):
         raise Exception()
 
 
-def final_d(tensor):
-    """ tf.split does not accept axis=-1, so use this instead. """
-    return len(tensor.shape)-1
-
-
 class ProductDist(ActionSelection):
     def __init__(self, *components):
         self.components = components
@@ -288,24 +283,24 @@ class ProductDist(ActionSelection):
         self.action_shape = (self.action_dim,)
 
     def _sample(self, utils, exploration):
-        _utils = tf.split(utils, self.param_dim_vector, axis=final_d(utils))
+        _utils = tf.split(utils, self.param_dim_vector, axis=-1)
         _samples = [tf.to_float(c.sample(u, exploration)) for u, c in zip(_utils, self.components)]
         return tf.concat(_samples, axis=1)
 
     def _log_probs(self, utils, actions, exploration):
-        _utils = tf.split(utils, self.param_dim_vector, axis=final_d(utils))
-        _actions = tf.split(actions, self.action_dim_vector, axis=final_d(actions))
+        _utils = tf.split(utils, self.param_dim_vector, axis=-1)
+        _actions = tf.split(actions, self.action_dim_vector, axis=-1)
         _log_probs = [c.log_probs(u, a, exploration) for u, a, c in zip(_utils, _actions, self.components)]
         return tf.reduce_sum(tf.concat(_log_probs, axis=-1), axis=-1, keepdims=True)
 
     def _entropy(self, utils, exploration):
-        _utils = tf.split(utils, self.param_dim_vector, axis=final_d(utils))
+        _utils = tf.split(utils, self.param_dim_vector, axis=-1)
         _entropies = [c.entropy(u, exploration) for u, c in zip(_utils, self.components)]
         return tf.reduce_sum(tf.concat(_entropies, axis=-1), axis=-1, keepdims=True)
 
     def _kl(self, utils1, utils2, e1, e2=None):
-        _utils1 = tf.split(utils1, self.param_dim_vector, axis=final_d(utils1))
-        _utils2 = tf.split(utils2, self.param_dim_vector, axis=final_d(utils2))
+        _utils1 = tf.split(utils1, self.param_dim_vector, axis=-1)
+        _utils2 = tf.split(utils2, self.param_dim_vector, axis=-1)
 
         _splitwise_kl = tf.concat(
             [c.kl(u1, u2, e1, e2)
@@ -363,23 +358,6 @@ def softplus(x):
     return tf.log(1 + tf.exp(x))
 
 
-class SigmoidNormal(TensorFlowSelection):
-    def __init__(self, scale=None):
-        self.scale = scale
-        self.action_shape = (1,)
-        self.param_shape = (1,) if self.scale else (2,)
-
-    def _dist(self, utils, exploration):
-        mean = tf.nn.sigmoid(utils[..., 0])
-
-        if self.scale:
-            scale = self.scale
-        else:
-            scale = softplus(utils[..., 1])
-
-        return tf_dists.Normal(loc=mean, scale=scale)
-
-
 class SigmoidBeta(TensorFlowSelection):
     def __init__(self, c0_bounds, c1_bounds):
         self.action_shape = (1,)
@@ -394,35 +372,29 @@ class SigmoidBeta(TensorFlowSelection):
 
 
 class Normal(TensorFlowSelection):
-    def __init__(self):
+    def __init__(self, explore=False):
         self.action_shape = (1,)
-        self.param_shape = (2,)
+        self.param_shape = (1,) if explore else (2,)
+        self.explore = explore
 
     def _dist(self, utils, exploration):
         mean = utils[..., 0]
-        scale = softplus(utils[..., 1])
-        # Could use tf_dists.NormalWithSoftplusScale, but found it to cause problems
-        # when taking hessian-vector products.
+        scale = exploration if self.explore else softplus(utils[..., 1])
         return tf_dists.Normal(loc=mean, scale=scale)
 
 
-class NormalWithFixedScale(TensorFlowSelection):
-    def __init__(self, scale):
+class SigmoidNormal(TensorFlowSelection):
+    def __init__(self, low=0.0, high=1.0, explore=False):
         self.action_shape = (1,)
-        self.param_shape = (1,)
-        self.scale = scale
+        self.param_shape = (1,) if explore else (2,)
+        self.low = low
+        self.high = high
+        self.explore = explore
 
     def _dist(self, utils, exploration):
-        return tf_dists.Normal(loc=utils[..., 0], scale=self.scale)
-
-
-class NormalWithExploration(TensorFlowSelection):
-    def __init__(self):
-        self.action_shape = (1,)
-        self.param_shape = (1,)
-
-    def _dist(self, utils, exploration):
-        return tf_dists.Normal(loc=utils[..., 0], scale=exploration)
+        mean = tf.nn.sigmoid(utils[..., 0]) * (self.high - self.low) + self.low
+        scale = exploration if self.explore else softplus(utils[..., 1])
+        return tf_dists.Normal(loc=mean, scale=scale)
 
 
 class Gamma(TensorFlowSelection):

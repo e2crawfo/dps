@@ -13,7 +13,7 @@ import copy
 import dps
 from dps import cfg
 from dps.config import DEFAULT_CONFIG
-from dps.rl import BuildSoftmaxPolicy, BuildEpsilonSoftmaxPolicy
+from dps.rl.policy import Policy, ProductDist, SigmoidNormal
 from dps.utils import square_subplots
 from dps.utils.tf import FeedforwardCell, MLP, ScopedFunction, RelationNetwork, RenderHook
 from dps.env.env import BatchGymEnv
@@ -343,8 +343,6 @@ class ObjectGame(gym.Env):
                 collisions.append((collision, other))
 
         collisions = sorted(collisions)
-        print("Collisions:")
-        print(collisions)
 
         total_reward = 0
 
@@ -440,12 +438,13 @@ class CollectionGame(ObjectGame):
 
         super(CollectionGame, self).__init__(
             action_space=gym.spaces.Box(low=np.array([-1, -1, 0]), high=np.array([1, 1, 1])),
+            # action_space=gym.spaces.Box(low=np.array([-1, -1, 0]), high=np.array([1, 1, 1])),
             reward_range=(-10, 10),
             entity_feature_dim=len(entity_specs)+1,
             **kwargs)
 
     def setup_field(self):
-        n_entities = np.random.randint(self.min_entities-1, self.max_entities-1)
+        n_entities = np.random.randint(self.min_entities-1, self.max_entities)
 
         if self.corner is not None:
             shape = (self.image_shape[0]/2, self.image_shape[1]/2)
@@ -554,6 +553,9 @@ class CollectionGame(ObjectGame):
 
     def move_entities(self, action):
         y, x, magnitude = action
+        y = np.clip(y, -1, 1)
+        x = np.clip(x, -1, 1)
+        magnitude = np.clip(magnitude, 0, 1)
 
         norm = np.sqrt(x**2 + y**2)
         if norm > 1e-6:
@@ -663,16 +665,21 @@ def do_rollouts(env, agent, render=False):
 
 
 def build_env():
-    agent_spec = dict(appearance="cross", color="green", shape=(14, 14))
+    entity_size = (3, 3)  # (14, 14)
+    agent_spec = dict(appearance="cross", color="green", shape=entity_size)
 
     entity_specs = [
-        dict(appearance="circle", color="blue", shape=(14, 14)),
-        dict(appearance="square", color="red", shape=(14, 14)),
+        dict(appearance="circle", color="blue", shape=entity_size, reward=-1),
+        dict(appearance="square", color="red", shape=entity_size, reward=1)
     ]
     gym_env = CollectionGame(
         agent_spec=agent_spec, entity_specs=entity_specs,
-        image_shape=(100, 100), background_colour="white", min_entities=2, max_entities=4,
-        max_overlap=0.0, step_size=7)
+        image_shape=(25, 25), background_colour="white", min_entities=10, max_entities=10,
+        max_overlap=0.0, step_size=5)
+    # gym_env = CollectionGame(
+    #     agent_spec=agent_spec, entity_specs=entity_specs,
+    #     image_shape=(100, 100), background_colour="white", min_entities=2, max_entities=4,
+    #     max_overlap=0.0, step_size=7)
 
     return BatchGymEnv(gym_env=gym_env)
 
@@ -700,6 +707,14 @@ def build_collection_game_controller(output_size, name):
     return FeedforwardCell(ff, output_size, name=name)
 
 
+def build_policy(env, **kwargs):
+    action_selection = ProductDist(
+        SigmoidNormal(-1, 1, explore=True),
+        SigmoidNormal(-1, 1, explore=True),
+        SigmoidNormal(0, 1, explore=True),)
+    return Policy(action_selection, env.obs_shape, **kwargs)
+
+
 config = DEFAULT_CONFIG.copy()
 
 
@@ -719,10 +734,9 @@ config.update(
     # n_channels=128,
     # n_final_layers=3,
 
-    build_policy=BuildSoftmaxPolicy(one_hot=False),
-    # build_policy=BuildEpsilonSoftmaxPolicy(one_hot=False),
-    exploration_schedule=1.0,
-    val_exploration_schedule=0.1,
+    build_policy=build_policy,
+    exploration_schedule=0.1,
+    val_exploration_schedule=0.01,
 
     n_controller_units=64,
 
@@ -730,7 +744,7 @@ config.update(
     opt_steps_per_update=1,
     sub_batch_size=0,
 
-    value_weight=1.0,
+    value_weight=0.0,
     T=20,
 
     n_val=100,

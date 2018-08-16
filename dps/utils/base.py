@@ -751,7 +751,7 @@ def image_to_string(array):
 def shift_fill(a, n, axis=0, fill=0.0, reverse=False):
     """ shift n spaces backward along axis, filling rest in with 0's. if n is negative, shifts forward. """
     shifted = np.roll(a, n, axis=axis)
-    shifted[:n, ...] = 0.0
+    shifted[:n, ...] = fill
     return shifted
 
 

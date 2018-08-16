@@ -14,7 +14,7 @@ from .policy import (
     BuildLstmController, BuildMlpController, BuildLinearController,
     BuildSoftmaxPolicy, BuildEpsilonGreedyPolicy, BuildEpsilonSoftmaxPolicy,
     Policy, DiscretePolicy, Softmax, EpsilonGreedy, EpsilonSoftmax, Deterministic,
-    ProductDist, Normal, NormalWithFixedScale, NormalWithExploration, Gamma,
+    ProductDist, Normal, Gamma,
 )
 from .value import (
     ValueFunction, ActionValueFunction, AverageValueEstimator, MonteCarloValueEstimator,

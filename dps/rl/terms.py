@@ -443,8 +443,7 @@ class DifferentiableLoss(ObjectiveFunctionTerm):
                 get_actions_cell, obs, initial_state=initial_state,
                 parallel_iterations=1, swap_memory=False, time_major=True)
 
-            hidden = context.get_signal('hidden')
-            loss = self.env.build_trajectory_loss(actions, obs, hidden)
+            loss = self.env.build_trajectory_loss(actions, obs)
             return loss
         else:
             raise Exception("NotImplemented")
