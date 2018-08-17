@@ -167,7 +167,6 @@ class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
         return sampler
 
     def do_rollouts(self, policy, n_rollouts=None, T=None, exploration=None, mode='train'):
-
         # Important to do this first, it can mess with the mode and other things.
         rollout, static = self.maybe_build_sampler(policy)
 

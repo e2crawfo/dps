@@ -202,6 +202,8 @@ class RLContext(Parameterized):
     def build_core_signals(self):
         self._signals['mask'] = tf.placeholder(
             tf.float32, shape=(cfg.T, None, 1), name="_mask")
+        self._signals['done'] = tf.placeholder(
+            tf.float32, shape=(cfg.T, None, 1), name="_done")
 
         self._signals['all_obs'] = tf.placeholder(
             tf.float32, shape=(cfg.T+1, None) + self.obs_shape, name="_all_obs")
@@ -286,7 +288,7 @@ class RLContext(Parameterized):
             discount_matrix, self._signals['rewards'], axes=1, name="_discounted_returns")
         self._signals['discounted_returns'] = discounted_returns
 
-        mean_returns = masked_mean(discounted_returns, self.signals['mask'], axis=1, keepdims=True)
+        mean_returns = masked_mean(discounted_returns, self._signals['mask'], axis=1, keepdims=True)
         mean_returns += tf.zeros_like(discounted_returns)
         self._signals['average_discounted_returns'] = mean_returns
 
@@ -308,9 +310,9 @@ class RLContext(Parameterized):
             weights = np.tile(weights.reshape(1, -1, 1), (rollouts.T, 1, 1))
 
         feed_dict = {
-            self._signals['done']: rollouts.done,
-            self._signals['mask']: (1-shift_fill(rollouts.done, 1)).astype('f'),
-            self._signals['obs']: rollouts.o,
+            self._signals['done']: rollouts['done'],
+            self._signals['mask']: (1-shift_fill(rollouts['done'], 1)).astype('f'),
+            self._signals['all_obs']: rollouts.o,
             self._signals['actions']: rollouts.a,
             self._signals['rewards']: rollouts.r,
             self._signals['weights']: weights,

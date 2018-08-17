@@ -703,7 +703,8 @@ class Backbone(ScopedFunction):
 def build_collection_game_controller(output_size, name):
     # ff = MLP([256, 256, 256], scope="collection_game_controller")
     # ff = Backbone(scope="collection_game_controller")
-    ff = RelationNetwork(scope="collection_controller")
+    ff = MLP([100, 100], scope="collection_controller")
+    # ff = RelationNetwork(scope="collection_controller")
     return FeedforwardCell(ff, output_size, name=name)
 
 
@@ -728,11 +729,6 @@ config.update(
     build_relation_network_g=lambda scope: MLP([100, 100], scope=scope),
     f_dim=128,
     symmetric_op="max",
-
-    # pixels_per_cell=(12, 12),
-    # kernel_size=1,
-    # n_channels=128,
-    # n_final_layers=3,
 
     build_policy=build_policy,
     exploration_schedule=0.1,
