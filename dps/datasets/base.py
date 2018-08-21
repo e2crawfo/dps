@@ -8,7 +8,7 @@ import pprint
 import shutil
 import time
 import abc
-from itertools import zip_longest 
+from itertools import zip_longest
 
 from dps import cfg
 from dps.utils import image_to_string, Param, Parameterized, get_param_hash, NumpySeed
@@ -425,6 +425,7 @@ class OmniglotDataset(ImageClassificationDataset):
 
 
 class ImageDataset(Dataset):
+    image_shape = Param((100, 100))
     postprocessing = Param("")
     tile_shape = Param(None)
     n_samples_per_image = Param(1)
@@ -564,6 +565,32 @@ class ImageDataset(Dataset):
 
         return new_images, new_annotations, new_backgrounds
 
+    def visualize(self, n=4):
+        batch_size = n
+        images, annotations, n_annotations, label = self.sample(n)
+
+        fig, axes = plt.subplots(1, batch_size)
+        for i in range(batch_size):
+            ax = axes[i]
+            ax.set_axis_off()
+
+            ax.imshow(np.squeeze(images[i]))
+            ax.set_title("label={}".format(label[i]))
+
+        plt.subplots_adjust(top=0.95, bottom=0, left=0, right=1, wspace=0.1, hspace=0.1)
+        plt.show()
+
+    def sample(self, n=4):
+        batch_size = n
+        dset = tf.data.TFRecordDataset(self.filename)
+        dset = dset.batch(batch_size).map(self.parse_example_batch)
+
+        iterator = dset.make_one_shot_iterator()
+
+        sess = tf.get_default_session()
+
+        return sess.run(iterator.get_next())
+
 
 class Rectangle(object):
     def __init__(self, y, x, h, w):
@@ -600,7 +627,6 @@ class Rectangle(object):
 
 class PatchesDataset(ImageDataset):
     max_overlap = Param(10)
-    image_shape = Param((100, 100))
     draw_shape = Param(None)
     draw_offset = Param((0, 0))
     patch_size_std = Param(None)
@@ -949,32 +975,6 @@ class PatchesDataset(ImageDataset):
         alpha = img[:, :, None]
 
         return np.concatenate([rgb, alpha], axis=2).astype(np.uint8)
-
-    def visualize(self, n=4):
-        batch_size = n
-        images, annotations, n_annotations, label = self.sample(n)
-
-        fig, axes = plt.subplots(1, batch_size)
-        for i in range(batch_size):
-            ax = axes[i]
-            ax.set_axis_off()
-
-            ax.imshow(np.squeeze(images[i]))
-            ax.set_title("label={}".format(label[i]))
-
-        plt.subplots_adjust(top=0.95, bottom=0, left=0, right=1, wspace=0.1, hspace=0.1)
-        plt.show()
-
-    def sample(self, n=4):
-        batch_size = n
-        dset = tf.data.TFRecordDataset(self.filename)
-        dset = dset.batch(batch_size).map(self.parse_example_batch)
-
-        iterator = dset.make_one_shot_iterator()
-
-        sess = tf.get_default_session()
-
-        return sess.run(iterator.get_next())
 
 
 class GridPatchesDataset(PatchesDataset):

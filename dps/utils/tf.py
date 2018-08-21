@@ -717,6 +717,46 @@ class ConvNet(ScopedFunction):
         return volume
 
 
+class ObjectNetwork(ScopedFunction):
+    """ Process each object using a network f, pool the outputs, and process the result with a network g. """
+    f = None
+    g = None
+
+    f_dim = Param()
+    symmetric_op = Param()
+
+    def _call(self, inp, output_size, is_training):
+        # Assumes objects range of all but the first and last dimensions
+        batch_size = tf.shape(inp)[0]
+        spatial_shape = inp.shape[1:-1]
+        n_objects = int(np.prod(spatial_shape))
+        obj_dim = int(inp.shape[-1])
+        inp = tf.reshape(inp, (batch_size, n_objects, obj_dim))
+
+        if self.f is None:
+            self.f = dps.cfg.build_object_network_f(scope="object_network_f")
+
+        if self.g is None:
+            self.g = dps.cfg.build_object_network_g(scope="object_network_g")
+
+        f_inputs = tf.reshape(inp, (batch_size * n_objects, obj_dim))
+
+        f_output = self.f(f_inputs, self.f_dim, is_training)
+        f_output = tf.reshape(f_output, (batch_size, n_objects, self.f_dim))
+
+        if self.symmetric_op == "concat" or self.symmetric_op is None:
+            g_input = tf.reshape(f_output, (batch_size, n_objects*self.f_dim))
+        elif self.symmetric_op == "mean":
+            g_input = tf.reduce_mean(f_output, axis=1, keepdims=False)
+        elif self.symmetric_op == "max":
+            g_input = tf.reduce_max(f_output, axis=1, keepdims=False)
+        else:
+            raise Exception("Unknown symmetric op for ObjectNetwork: {}. "
+                            "Valid values are: None, concat, mean, max.".format(self.symmetric_op))
+
+        return self.g(g_input, output_size, is_training)
+
+
 class RelationNetwork(ScopedFunction):
     f = None
     g = None

@@ -40,7 +40,6 @@ config.update(
     q_lmbda=0.8,
 
     T=None,
-    reset_env=False,
 
     n_val=100,
     batch_size=1,

@@ -15,8 +15,8 @@
    id="svg2"
    version="1.1"
    inkscape:version="0.91 r13725"
-   sodipodi:docname="x.svg"
-   inkscape:export-filename="/home/eric/Dropbox/projects/PyDSRL/cross_circle_gym/x.png"
+   sodipodi:docname="ud_triangle.svg"
+   inkscape:export-filename="/home/eric/Dropbox/projects/dps/dps/shapes/ud_triangle.png"
    inkscape:export-xdpi="90"
    inkscape:export-ydpi="90">
   <defs
@@ -28,9 +28,9 @@
      borderopacity="1.0"
      inkscape:pageopacity="0.0"
      inkscape:pageshadow="2"
-     inkscape:zoom="3.959798"
-     inkscape:cx="66.98434"
-     inkscape:cy="80.317297"
+     inkscape:zoom="4"
+     inkscape:cx="54.834283"
+     inkscape:cy="45.16587"
      inkscape:document-units="px"
      inkscape:current-layer="layer1"
      showgrid="false"
@@ -51,7 +51,7 @@
         <dc:format>image/svg+xml</dc:format>
         <dc:type
            rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
-        <dc:title />
+        <dc:title></dc:title>
       </cc:Work>
     </rdf:RDF>
   </metadata>
@@ -60,21 +60,22 @@
      inkscape:groupmode="layer"
      id="layer1"
      transform="translate(-149.65486,-75.696976)">
-    <rect
-       style="fill:#ffffff;stroke:#000000;stroke-width:35.01722717;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0"
-       id="rect4157-6-7"
-       width="0.4168717"
-       height="155.91003"
-       x="-52.504543"
-       y="-332.71246"
-       transform="matrix(-0.70710678,0.70710678,-0.70710678,-0.70710678,0,0)" />
-    <rect
-       style="fill:#ffffff;stroke:#000000;stroke-width:34.82385635;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0"
-       id="rect4157-6-7-5"
-       width="0.41456968"
-       height="155.04907"
-       x="253.92517"
-       y="-25.228413"
-       transform="matrix(0.70710678,0.70710678,0.70710678,-0.70710678,0,0)" />
+    <path
+       sodipodi:type="star"
+       style="opacity:1;fill:#000000;fill-opacity:1;stroke:#000000;stroke-width:1.60000002;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"
+       id="path4291"
+       sodipodi:sides="3"
+       sodipodi:cx="216.83"
+       sodipodi:cy="153.81665"
+       sodipodi:r1="75.976631"
+       sodipodi:r2="37.988316"
+       sodipodi:arg1="0.52359878"
+       sodipodi:arg2="1.5707963"
+       inkscape:flatsided="true"
+       inkscape:rounded="0"
+       inkscape:randomized="0"
+       d="m 282.62769,191.80497 -131.59538,0 L 216.83,77.840019 Z"
+       inkscape:transform-center-y="21.89567"
+       transform="matrix(0.99857338,0,0,-1.1527583,0.30933427,297.62301)" />
   </g>
 </svg>

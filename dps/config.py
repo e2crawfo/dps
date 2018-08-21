@@ -63,7 +63,6 @@ RL_EXPERIMENT_CONFIG = DEFAULT_CONFIG.copy(
     render_hook=rl_render_hook,
 
     standardize_advantage=True,
-    reset_env=True,
     n_controller_units=64,
     gamma=1.0,
     opt_steps_per_update=1,

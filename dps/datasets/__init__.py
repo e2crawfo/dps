@@ -6,3 +6,4 @@ from .base import (
     EmnistObjectDetectionDataset, GridEmnistObjectDetectionDataset,
 )
 from .atari import StaticAtariDataset, ReinforcementLearningDataset
+from .game import GameDataset

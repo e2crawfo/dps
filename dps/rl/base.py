@@ -473,7 +473,7 @@ class RLContext(Parameterized):
 
         with self:
             start = time.time()
-            rollouts = self.env.do_rollouts(self.pi, batch_size, mode=mode)
+            rollouts = self.env.do_rollouts(self.pi, n_rollouts=batch_size, T=cfg.T, mode=mode)
             eval_rollout_duration = time.time() - start
 
             start = time.time()

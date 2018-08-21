@@ -603,15 +603,32 @@ class TrainingLoop(object):
                       (local_step % cfg.render_step) == 0 and
                       local_step > 0)
 
+            data_to_store = []
+
+            # --------------- Run hooks -------------------
+
+            for hook in cfg.hooks:
+                if hook.call_per_timestep:
+                    run_hook = local_step == 0 and hook.initial
+                    run_hook |= local_step > 0 and local_step % hook.n == 0
+
+                    if run_hook:
+                        hook_output = hook.step(self, updater, local_step)
+
+                        if hook_output:
+                            data_to_store.extend(dict(hook_output).items())
+
+            # Possibly render
+            if render and cfg.render_hook is not None:
+                print("Rendering...")
+                cfg.render_hook(updater)
+                print("Done rendering.")
+
             # --------------- Possibly evaluate -------------------
 
             if evaluate:
                 val_results = updater.evaluate(cfg.batch_size, mode="val")
-
-                self.data.store_step_data_and_summaries(
-                    stage_idx, local_step, global_step,
-                    updater.n_experiences, self.n_global_experiences,
-                    val=val_results)
+                data_to_store.append(("val", val_results))
 
                 if display:
                     self.data.summarize_current_stage(
@@ -671,32 +688,6 @@ class TrainingLoop(object):
                     reason = "Stopping criteria threshold reached"
                     break
 
-                self.data.record_values_for_stage(
-                    time_per_example=time_per_example,
-                    time_per_batch=time_per_batch,
-                    n_steps=local_step,
-                    n_experiences=updater.n_experiences,
-                )
-
-            for hook in cfg.hooks:
-                if hook.call_per_timestep:
-                    run_hook = local_step == 0 and hook.initial
-                    run_hook |= local_step > 0 and local_step % hook.n == 0
-
-                    if run_hook:
-                        result = hook.step(self, updater)
-
-                        if result:
-                            # TODO: currently nothing is done with the record
-                            record, summary = result
-                            self.data.add_summary(self.n_global_experiences, hook.mode, summary)
-
-            # Possibly render
-            if render and cfg.render_hook is not None:
-                print("Rendering...")
-                cfg.render_hook(updater)
-                print("Done rendering.")
-
             # --------------- Perform an update -------------------
 
             update_start_time = time.time()
@@ -707,27 +698,51 @@ class TrainingLoop(object):
                 update_output = updater.update(cfg.batch_size, collect_summaries=evaluate)
 
                 if evaluate:
-                    self.data.store_step_data_and_summaries(
-                        stage_idx, local_step, global_step,
-                        updater.n_experiences, self.n_global_experiences,
-                        **update_output)
+                    data_to_store.extend(dict(update_output).items())
 
                 n_experiences_delta = updater.n_experiences - _old_n_experiences
                 self.n_global_experiences += n_experiences_delta
 
             update_duration = time.time() - update_start_time
 
-            # If `do_train` is False, we do no training and evaluate
-            # exactly once, so only one iteration is required.
-            if not cfg.do_train:
-                reason = "`do_train` set to False"
-                break
+            # --------------- Store data -------------------
+
+            records = defaultdict(dict)
+            summaries = defaultdict(list)
+
+            for mode, (r, s) in data_to_store:
+                records[mode].update(r)
+                summaries[mode].append(s)
+            summaries = {mode: b''.join(s) for mode, s in summaries.items()}
+
+            all_data = {}
+            for mode in records:
+                all_data[mode] = (records[mode], summaries[mode])
+
+            if all_data:
+                self.data.store_step_data_and_summaries(
+                    stage_idx, local_step, global_step,
+                    updater.n_experiences, self.n_global_experiences,
+                    **all_data)
 
             total_train_time += update_duration
             time_per_example = total_train_time / updater.n_experiences
             time_per_batch = total_train_time / updater.n_updates
 
+            self.data.record_values_for_stage(
+                time_per_example=time_per_example,
+                time_per_batch=time_per_batch,
+                n_steps=local_step,
+                n_experiences=updater.n_experiences,
+            )
+
             self.global_step += 1
+
+            # If `do_train` is False, we do no training and evaluate
+            # exactly once, so only one iteration is required.
+            if not cfg.do_train:
+                reason = "`do_train` set to False"
+                break
 
         return threshold_reached, reason
 
@@ -915,11 +930,11 @@ class _TrainingLoopData(FrozenTrainingLoopData):
             if record and cfg.store_step_data:
                 record = record.copy()
                 record.update(
+                    stage_idx=stage_idx,
                     local_step=local_step,
                     global_step=global_step,
                     n_local_experiences=n_local_experiences,
-                    n_global_experiences=n_global_experiences,
-                    stage_idx=stage_idx)
+                    n_global_experiences=n_global_experiences)
 
                 self.data[mode].append(record)
 
@@ -995,7 +1010,7 @@ class _TrainingLoopData(FrozenTrainingLoopData):
             local_step, global_step, local_experience, global_experiences
 
         """
-        print("\nStage-by-stage summary " + ">" * 30 + "\n")
+        print("\n" + "-" * 30 + " Stage-by-Stage Summary " + "-" * 30 + "\n")
 
         table = defaultdict(dict)
 
@@ -1029,23 +1044,20 @@ class Hook(object):
     ----------
     n: int
         Hook is called every n steps throughout training.
-    mode: str
-        The mode in which this hook is called (essentially determines where its summaries end up).
     initial: bool
         If True, this hook is called on the first step of a stage.
 
     """
-    def __init__(self, n=None, mode=None, initial=False):
+    def __init__(self, n=None, initial=False):
         self.n = n
-        self.mode = mode
         self.initial = initial
 
     @property
     def call_per_timestep(self):
-        return not (self.n is None or self.mode is None)
+        return bool(self.n)
 
     def _attrs(self):
-        return "n mode initial".split()
+        return "n initial".split()
 
     def __str__(self):
         attr_string = ", ".join("{}={}".format(k, getattr(self, k)) for k in self._attrs())

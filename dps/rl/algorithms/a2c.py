@@ -11,26 +11,14 @@ from dps.rl import (
 
 def A2C(env):
     with RLContext(cfg.gamma) as context:
-        if cfg.actor_exploration_schedule is not None:
-            actor = cfg.build_policy(
-                env, name="actor",
-                exploration_schedule=cfg.exploration_schedule,
-                val_exploration_schedule=cfg.val_exploration_schedule
-            )
+        actor = cfg.build_policy(
+            env, name="actor",
+            exploration_schedule=cfg.exploration_schedule,
+            val_exploration_schedule=cfg.val_exploration_schedule
+        )
 
-            context.set_validation_policy(actor)
-
-            mu = cfg.build_policy(env, name="mu")
-            context.set_behaviour_policy(mu)
-        else:
-            actor = cfg.build_policy(
-                env, name="actor",
-                exploration_schedule=cfg.exploration_schedule,
-                val_exploration_schedule=cfg.val_exploration_schedule
-            )
-
-            context.set_behaviour_policy(actor)
-            context.set_validation_policy(actor)
+        context.set_behaviour_policy(actor)
+        context.set_validation_policy(actor)
 
         if cfg.value_weight:
             value_function = ValueFunction(1, actor, "critic")
@@ -57,7 +45,9 @@ def A2C(env):
                 )
             else:
                 policy_eval = PolicyEvaluation_State(value_function, values_from_returns, weight=cfg.value_weight)
-                ValueFunctionRegularization(policy_eval, weight=cfg.value_reg_weight)
+
+                if cfg.value_reg_weight:
+                    ValueFunctionRegularization(policy_eval, weight=cfg.value_reg_weight)
 
             action_values_from_returns = Retrace(
                 actor, value_function, lmbda=cfg.q_lmbda, importance_c=cfg.q_importance_c,
@@ -83,9 +73,6 @@ def A2C(env):
         if env.has_differentiable_loss and cfg.use_differentiable_loss:
             DifferentiableLoss(env, actor)
 
-        if cfg.actor_exploration_schedule is not None:
-            agents[0].add_head(mu, existing_head=actor)
-
         optimizer = StochasticGradientDescent(agents=agents, alg=cfg.optimizer_spec)
         context.set_optimizer(optimizer)
 
@@ -93,30 +80,29 @@ def A2C(env):
 
 
 config = Config(
-    name="A2C",
+    exp_name="A2C",
     get_updater=A2C,
     n_controller_units=64,
     batch_size=16,
     optimizer_spec="adam",
     opt_steps_per_update=1,
     sub_batch_size=0,
-    epsilon=0.2,
-    lr_schedule="1e-4",
+    epsilon=None,
+    lr_schedule=1e-4,
+
+    exploration_schedule=0.1,
+    val_exploration_schedule=0.0,
 
     value_weight=1.0,
-    value_epsilon=0.2,
+    value_epsilon=None,
     value_n_samples=0,
     value_direct=False,
+    value_reg_weight=0.0,
 
     build_policy=BuildEpsilonSoftmaxPolicy(),
     build_controller=BuildLstmController(),
 
-    exploration_schedule="0.1",
-    val_exploration_schedule="0.0",
-    actor_exploration_schedule=None,
-
     policy_weight=1.0,
-    value_reg_weight=0.0,
     entropy_weight=0.01,
 
     split=False,
@@ -129,29 +115,28 @@ config = Config(
     gamma=1.0,
 
     use_differentiable_loss=False,
-
-    reset_env=True,
     render_n_rollouts=4,
 )
 
 
 actor_critic_config = config.copy(
-    name="ActorCritic",
+    exp_name="ActorCritic",
     split=True
 )
 
 
 ppo_config = config.copy(
-    name="PPO",
+    exp_name="PPO",
     opt_steps_per_update=10,
     sub_batch_size=2,
     epsilon=0.2,
+    value_weight=0.0,
 )
 
 
 # Same config that is used in the test.
 test_config = config.copy(
-    name="TestA2C",
+    exp_name="TestA2C",
     opt_steps_per_update=20,
     sub_batch_size=0,
     epsilon=0.2,
@@ -162,7 +147,7 @@ test_config = config.copy(
 
 
 reinforce_config = config.copy(
-    name="REINFORCE",
+    exp_name="REINFORCE",
     epsilon=0.0,
     opt_steps_per_update=1,
     value_weight=0.0,

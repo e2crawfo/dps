@@ -173,8 +173,6 @@ class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
         policy.set_mode(mode)
         self.set_mode(mode, n_rollouts)
 
-        T = T or cfg.T or 0
-
         feed_dict = {self.n_rollouts: n_rollouts, self.T: T, self.mode: mode}
 
         if exploration is not None:
