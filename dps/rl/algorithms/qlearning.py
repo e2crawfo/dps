@@ -157,6 +157,7 @@ config = Config(
     optimizer_spec="adam",
 
     batch_size=1,
+    n_val_rollouts=100,
     update_batch_size=32,
     opt_steps_per_update=1,
     updates_per_sample=10,

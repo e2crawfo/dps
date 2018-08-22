@@ -200,7 +200,7 @@ class TrainingLoop(object):
             cfg.seed = gen_seed()
 
         # Create a directory to store the results of the training session.
-        es = ExperimentStore(cfg.log_dir, max_experiments=cfg.max_experiments, delete_old=1)
+        es = ExperimentStore(cfg.log_dir)
         exp_dir = es.new_experiment(
             self.exp_name, cfg.seed, add_date=1, force_fresh=1, update_latest=cfg.update_latest)
         self.exp_dir = exp_dir
@@ -576,9 +576,17 @@ class TrainingLoop(object):
         self.timestamp("")
         print()
 
+        total_hooks_time = 0.0
+        time_per_hook = 0.0
+
+        total_eval_time = 0.0
+        time_per_eval = 0.0
+
         total_train_time = 0.0
         time_per_example = 0.0
-        time_per_batch = 0.0
+        time_per_update = 0.0
+
+        n_eval = 0
 
         while True:
             # Check whether to keep training
@@ -606,6 +614,8 @@ class TrainingLoop(object):
 
             # --------------- Run hooks -------------------
 
+            hooks_start = time.time()
+
             for hook in cfg.hooks:
                 if hook.call_per_timestep:
                     run_hook = local_step == 0 and hook.initial
@@ -617,6 +627,8 @@ class TrainingLoop(object):
                         if hook_record:
                             data_to_store.extend(dict(hook_record).items())
 
+            hooks_duration = time.time() - hooks_start
+
             # Possibly render
             if render and cfg.render_hook is not None:
                 print("Rendering...")
@@ -626,18 +638,25 @@ class TrainingLoop(object):
             # --------------- Possibly evaluate -------------------
 
             if evaluate:
+                eval_start_time = time.time()
                 val_record = updater.evaluate(cfg.batch_size, mode="val")
+                eval_duration = time.time() - eval_start_time
+
+                n_eval += 1
+                total_eval_time += eval_duration
+                time_per_eval = total_eval_time / n_eval
+
                 data_to_store.append(("val", val_record))
 
                 if display:
                     self.data.summarize_current_stage(
                         local_step, global_step, updater.n_experiences, self.n_global_experiences)
-                    print("\nMy PID: {}".format(os.getpid()))
-                    print("\nPhysical memory use: "
-                          "{}mb".format(memory_usage(physical=True)))
-                    print("Virtual memory use: "
-                          "{}mb".format(memory_usage(physical=False)))
-                    print("Avg time per batch: {}s".format(time_per_batch))
+                    print("\nMy PID: {}\n".format(os.getpid()))
+                    print("Physical memory use: {}mb".format(memory_usage(physical=True)))
+                    print("Virtual memory use: {}mb".format(memory_usage(physical=False)))
+                    print("Avg time per update: {}s".format(time_per_update))
+                    print("Avg time per eval: {}s".format(time_per_eval))
+                    print("Avg time for hooks: {}s".format(time_per_hook))
 
                     if cfg.use_gpu:
                         print(nvidia_smi())
@@ -715,11 +734,16 @@ class TrainingLoop(object):
 
             total_train_time += update_duration
             time_per_example = total_train_time / updater.n_experiences
-            time_per_batch = total_train_time / updater.n_updates
+            time_per_update = total_train_time / updater.n_updates
+
+            total_hooks_time += hooks_duration
+            time_per_hook = total_hooks_time / updater.n_updates
 
             self.data.record_values_for_stage(
                 time_per_example=time_per_example,
-                time_per_batch=time_per_batch,
+                time_per_update=time_per_update,
+                time_per_eval=time_per_eval,
+                time_per_hook=time_per_hook,
                 n_steps=local_step,
                 n_experiences=updater.n_experiences,
             )
@@ -1007,7 +1031,7 @@ class _TrainingLoopData(FrozenTrainingLoopData):
 
         for record in self.history:
             stage_idx = record['stage_idx']
-            print("\n" + "-" * 20 + "Stage {} ".format(stage_idx) + "-" * 20)
+            print("\n" + "-" * 20 + " Stage {} ".format(stage_idx) + "-" * 20)
 
             for k, v in sorted(record.items()):
                 if isinstance(v, dict):

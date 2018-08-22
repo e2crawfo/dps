@@ -432,7 +432,6 @@ class _RunTrainingLoop(object):
             start_tensorboard=False,
             update_latest=False,
             show_plots=False,
-            max_experiments=np.inf,
         )
 
         with config:
@@ -483,7 +482,7 @@ def build_search(
         config.seed = gen_seed()
 
     with NumpySeed(config.seed):
-        es = ExperimentStore(path, max_experiments=None, prefix="build_search")
+        es = ExperimentStore(path, prefix="build_search")
 
         count = 0
         base_name = name
@@ -603,7 +602,6 @@ def build_and_submit(
             start_tensorboard=False,
             update_latest=False,
             show_plots=False,
-            max_experiments=np.inf,
         )
 
         if readme == "_vim_":

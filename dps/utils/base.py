@@ -1407,9 +1407,6 @@ def _load_system_config(key=None):
         parallel_exe=process_path(_config.get(key, 'parallel_exe')),
     )
 
-    config.max_experiments = _config.getint(key, 'max_experiments')
-    if config.max_experiments <= 0:
-        config.max_experiments = np.inf
     return config
 
 

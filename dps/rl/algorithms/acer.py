@@ -95,6 +95,7 @@ config = Config(
     name="ACER",
     get_updater=ACER,
     batch_size=8,
+    n_val_rollouts=100,
     update_batch_size=8,
     n_controller_units=64,
     optimizer_spec="adam",

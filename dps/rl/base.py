@@ -3,6 +3,7 @@ import tensorflow as tf
 import abc
 from contextlib import ExitStack
 import time
+from collections import defaultdict
 
 from dps import cfg
 from dps.utils import Param, Parameterized, shift_fill
@@ -485,12 +486,20 @@ class RLUpdater(Updater):
         return dict(train=train_record, off_policy=off_policy_record)
 
     def _evaluate(self, batch_size, mode):
-        record = {}
+        n_rollouts = cfg.n_val_rollouts
+        record = defaultdict(float)
+        n_iters = int(np.ceil(n_rollouts / batch_size))
 
-        for learner in self.learners:
-            _record = learner.evaluate(batch_size, mode)
-            for k, v in _record.items():
-                key = (learner.name + ":" if learner.name else "") + k
-                record[key] = v
+        for it in range(n_iters):
+            n_remaining = n_rollouts - it * batch_size
+            _batch_size = min(batch_size, n_remaining)
 
+            for learner in self.learners:
+                _record = learner.evaluate(_batch_size, mode)
+
+                for k, v in _record.items():
+                    key = (learner.name + ":" if learner.name else "") + k
+                    record[key] += _batch_size * v
+
+        record = {k: v / n_rollouts for k, v in record.items()}
         return record

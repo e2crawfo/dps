@@ -3,6 +3,7 @@ import gym
 import copy
 from matplotlib import pyplot as plt
 from matplotlib import animation
+from collections import defaultdict
 
 from dps import cfg
 from dps.env.basic import game
@@ -181,46 +182,58 @@ class RolloutsHook(Hook):
         super(RolloutsHook, self).__init__(**kwargs)
 
     def start_stage(self, training_loop, stage_idx):
-        self.N = 16
         gym_env = self.env_class(**self.env_kwargs)
         self.env = BatchGymEnv(gym_env=gym_env)
 
-    def step(self, training_loop, updater, step_idx):
+    def plot(self, updater, rollouts):
         plt.ion()
-        for learner in updater.learners:
-            with learner:
-                rollouts = self.env.do_rollouts(policy=learner.pi, n_rollouts=self.N, T=cfg.T, mode='val')
 
-        if self.plot_step and step_idx % self.plot_step == 0:
-            if updater.env.gym_env.image_obs:
-                obs = rollouts.obs
-            else:
-                obs = rollouts.image
+        if updater.env.gym_env.image_obs:
+            obs = rollouts.obs
+        else:
+            obs = rollouts.image
 
-            fig, axes = square_subplots(self.N, figsize=(5, 5))
-            plt.subplots_adjust(top=0.95, bottom=0, left=0, right=1, wspace=0.1, hspace=0.1)
+        fig, axes = square_subplots(rollouts.batch_size, figsize=(5, 5))
+        plt.subplots_adjust(top=0.95, bottom=0, left=0, right=1, wspace=0.1, hspace=0.1)
 
-            images = []
-            for i, ax in enumerate(axes.flatten()):
-                ax.set_aspect("equal")
-                ax.set_axis_off()
-                image = ax.imshow(np.zeros(obs.shape[2:]))
-                images.append(image)
+        images = []
+        for i, ax in enumerate(axes.flatten()):
+            ax.set_aspect("equal")
+            ax.set_axis_off()
+            image = ax.imshow(np.zeros(obs.shape[2:]))
+            images.append(image)
 
-            def animate(t):
-                for i in range(self.N):
-                    images[i].set_array(obs[t, i, :, :, :])
+        def animate(t):
+            for i in range(rollouts.batch_size):
+                images[i].set_array(obs[t, i, :, :, :])
 
-            anim = animation.FuncAnimation(fig, animate, frames=len(rollouts), interval=500)
+        anim = animation.FuncAnimation(fig, animate, frames=len(rollouts), interval=500)
 
-            path = updater.exp_dir.path_for('plots', '{}_animation.gif'.format(self.name))
-            anim.save(path, writer='imagemagick')
+        path = updater.exp_dir.path_for('plots', '{}_animation.gif'.format(self.name))
+        anim.save(path, writer='imagemagick')
 
-            plt.close(fig)
+        plt.close(fig)
 
-        record = {"{}-reward_per_ep".format(self.name): rollouts.rewards.sum(0).mean()}
+    def step(self, training_loop, updater, step_idx):
+        n_rollouts = cfg.n_val_rollouts
+        batch_size = cfg.batch_size
+        record = defaultdict(float)
+        n_iters = int(np.ceil(n_rollouts / batch_size))
 
-        return dict(val=record)
+        for it in range(n_iters):
+            n_remaining = n_rollouts - it * batch_size
+            _batch_size = min(batch_size, n_remaining)
+
+            for learner in updater.learners:
+                with learner:
+                    rollouts = self.env.do_rollouts(policy=learner.pi, n_rollouts=_batch_size, T=cfg.T, mode='val')
+                    key = "{}-reward_per_ep".format(self.name)
+                    record[key] += _batch_size * rollouts.rewards.sum(0).mean()
+
+            if it == 0 and self.plot_step and step_idx % self.plot_step == 0:
+                self.plot(updater, rollouts)
+
+        return dict(val={k: v / n_rollouts for k, v in record.items()})
 
 
 agent_size = (10, 10)

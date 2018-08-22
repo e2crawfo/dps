@@ -124,9 +124,7 @@ class ParallelSession(object):
         # Create directory to run the job from - should be on scratch.
         scratch = os.path.abspath(os.path.expandvars(scratch))
 
-        es = ExperimentStore(
-            scratch, max_experiments=None,
-            delete_old=False, prefix="run_search")
+        es = ExperimentStore(scratch, prefix="run_search")
 
         job_dir = es.new_experiment(name, 0, add_date=add_date, force_fresh=1)
         job_dir.record_environment()

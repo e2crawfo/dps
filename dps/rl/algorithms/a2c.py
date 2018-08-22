@@ -84,6 +84,7 @@ config = Config(
     get_updater=A2C,
     n_controller_units=64,
     batch_size=16,
+    n_val_rollouts=100,
     optimizer_spec="adam",
     opt_steps_per_update=1,
     sub_batch_size=0,
