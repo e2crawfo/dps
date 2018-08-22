@@ -686,6 +686,12 @@ class Backbone(ScopedFunction):
         return outp
 
 
+def build_attentional_relation_network(output_size, name):
+    from dps.utils.tf import AttentionalRelationNetwork
+    ff = AttentionalRelationNetwork(scope="collection_controller")
+    return FeedforwardCell(ff, output_size, name=name)
+
+
 def build_object_network_controller(output_size, name):
     from dps.utils.tf import ObjectNetwork
     ff = ObjectNetwork(scope="collection_controller")
@@ -719,11 +725,22 @@ config = Config(
     # f_dim=256,
     # symmetric_op="max",
 
-    build_controller=build_object_network_controller,
-    build_object_network_f=lambda scope: MLP([100, 100], scope=scope),
-    build_object_network_g=lambda scope: MLP([256, 256, 256], scope=scope),
-    f_dim=512,
+    # build_controller=build_object_network_controller,
+    # build_object_network_f=lambda scope: MLP([100, 100], scope=scope),
+    # build_object_network_g=lambda scope: MLP([256, 256, 256], scope=scope),
+    # f_dim=512,
+    # symmetric_op="max",
+
+    build_controller=build_attentional_relation_network,
+    build_arn_network=lambda scope: MLP([100, 100], scope=scope),
+    build_arn_object_network=lambda scope: MLP([100, 100, 100], scope=scope),
+    build_arn_output_network=lambda scope: MLP([100, 100, 100], scope=scope),
+
+    n_heads=1,
+    n_repeats=1,
+    d=128,
     symmetric_op="max",
+    layer_norm=True,
 
     build_policy=build_policy,
     exploration_schedule=1.0,

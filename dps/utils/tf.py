@@ -717,6 +717,87 @@ class ConvNet(ScopedFunction):
         return volume
 
 
+class AttentionalRelationNetwork(ScopedFunction):
+    """ Implements one of the "attention blocks" from "Relational Deep Reinforcement Learning". """
+    query_network = None
+    key_network = None
+    value_network = None
+    object_network = None
+    output_network = None
+
+    n_heads = Param()
+    n_repeats = Param()
+    d = Param()
+    symmetric_op = Param()
+    layer_norm = Param()
+
+    def _call(self, inp, output_size, is_training):
+        if self.query_network is None:
+            self.query_network = dps.cfg.build_arn_network(scope="query_network")
+        if self.key_network is None:
+            self.key_network = dps.cfg.build_arn_network(scope="key_network")
+        if self.value_network is None:
+            self.value_network = dps.cfg.build_arn_network(scope="value_network")
+        if self.object_network is None:
+            self.object_network = dps.cfg.build_arn_object_network(scope="object_network")
+        if self.output_network is None:
+            self.output_network = dps.cfg.build_arn_output_network(scope="output_network")
+
+        batch_size = tf.shape(inp)[0]
+        spatial_shape = inp.shape[1:-1]
+        n_objects = int(np.prod(spatial_shape))
+        obj_dim = int(inp.shape[-1])
+        objects = tf.reshape(inp, (batch_size*n_objects, obj_dim))
+
+        for i in range(self.n_repeats):
+            a = []
+            for h in range(self.n_heads):
+                query = self.query_network(objects, self.d, is_training)
+                query = tf.reshape(query, (batch_size, n_objects, self.d))
+                if self.layer_norm:
+                    query = tf.contrib.layers.layer_norm(query, self.d)
+
+                key = self.key_network(objects, self.d, is_training)
+                key = tf.reshape(key, (batch_size, n_objects, self.d))
+                if self.layer_norm:
+                    key = tf.contrib.layers.layer_norm(key, self.d)
+
+                value = self.value_network(objects, self.d, is_training)
+                value = tf.reshape(value, (batch_size, n_objects, self.d))
+                if self.layer_norm:
+                    value = tf.contrib.layers.layer_norm(value, self.d)
+
+                s = tf.matmul(query, key, transpose_b=True)
+                w = tf.nn.softmax(s/np.sqrt(self.d), axis=2)
+                _a = tf.matmul(w, value)
+
+                a.append(_a)
+
+            a = tf.concat(a, axis=2)
+            a = tf.reshape(a, (batch_size * n_objects, self.n_heads * self.d))
+
+            prev_objects = objects
+            objects = self.object_network(a, obj_dim, is_training)
+            objects += prev_objects
+
+            if self.layer_norm:
+                objects = tf.contrib.layers.layer_norm(objects, obj_dim)
+
+        objects = tf.reshape(objects, (batch_size, n_objects, obj_dim))
+
+        if self.symmetric_op == "concat" or self.symmetric_op is None:
+            pooled_objects = tf.reshape(objects, (batch_size, n_objects*self.f_dim))
+        elif self.symmetric_op == "mean":
+            pooled_objects = tf.reduce_mean(objects, axis=1, keepdims=False)
+        elif self.symmetric_op == "max":
+            pooled_objects = tf.reduce_max(objects, axis=1, keepdims=False)
+        else:
+            raise Exception("Unknown symmetric op for ObjectNetwork: {}. "
+                            "Valid values are: None, concat, mean, max.".format(self.symmetric_op))
+
+        return self.output_network(pooled_objects, output_size, is_training)
+
+
 class ObjectNetwork(ScopedFunction):
     """ Process each object using a network f, pool the outputs, and process the result with a network g. """
     f = None
