@@ -22,7 +22,7 @@ class ValueFunction(AgentHead):
 
             mask = context.get_signal('mask')
             label = "{}-estimated_value".format(self.display_name)
-            context.add_summary(tf.summary.scalar(label, masked_mean(values, mask)))
+            context.add_recorded_value(label, masked_mean(values, mask))
 
             return values
 
@@ -38,23 +38,13 @@ class ValueFunction(AgentHead):
             one_step_estimate = rho * (rewards + gamma * shifted_values)
             td_errors = one_step_estimate - values
 
-            # if context.truncated_rollouts is True, this is slightly problematic
-            # as the td error at the last timestep is not correct as the one-step-estimate
-            # includes only the final reward, no value function (since we don't know what state
-            # comes next). So just zero-out the corresponding td error.
-            if context.truncated_rollouts:
-                td_errors = tf.concat([td_errors[:-1, ...], tf.zeros_like(td_errors[-1:, ...])], axis=0)
-
             mask = context.get_signal('mask')
             label = "{}-one_step_td_error".format(self.display_name)
-            context.add_summary(tf.summary.scalar(label, masked_mean(td_errors, mask)))
+            context.add_recorded_value(label, masked_mean(td_errors, mask))
 
             return td_errors
 
         elif key == 'monte_carlo_td_errors':
-            if context.truncated_rollouts:
-                raise Exception("NotImplemented")
-
             discounted_returns = context.get_signal('discounted_returns', self.policy)
             values = context.get_signal('values', self, gradient=True)
 
@@ -87,7 +77,7 @@ class ActionValueFunction(AgentHead):
 
             mask = context.get_signal('mask')
             label = "{}-estimated_action_value".format(self.display_name)
-            context.add_summary(tf.summary.scalar(label, masked_mean(action_values, mask)))
+            context.add_recorded_value(label, masked_mean(action_values, mask))
 
             return action_values
         elif key == 'one_step_td_errors':
@@ -100,16 +90,9 @@ class ActionValueFunction(AgentHead):
             one_step_estimate = rewards + gamma * shifted_values
             td_errors = one_step_estimate - action_values
 
-            # if context.truncated_rollouts is True, this is slightly problematic
-            # as the td error at the last timestep is not correct as the one-step-estimate
-            # includes only the final reward, no value function (since we don't know what state
-            # comes next). So just zero out the corresponding td error.
-            if context.truncated_rollouts:
-                td_errors = tf.concat([td_errors[:-1, ...], tf.zeros_like(td_errors[-1:, ...])], axis=0)
-
             mask = context.get_signal('mask')
             label = "{}-one_step_td_error".format(self.display_name)
-            context.add_summary(tf.summary.scalar(label, masked_mean(td_errors, mask)))
+            context.add_recorded_value(label, masked_mean(td_errors, mask))
 
             return td_errors
         else:
@@ -184,10 +167,10 @@ class AdvantageEstimator(RLObject):
             mask = context.get_signal("mask")
 
             mean_advantage = masked_mean(advantage, mask)
-            context.add_summary(tf.summary.scalar("advantage", mean_advantage))
+            context.add_recorded_value("advantage", mean_advantage)
 
             mean_abs_advantage = masked_mean(tf.abs(advantage), mask)
-            context.add_summary(tf.summary.scalar("abs_advantage", mean_abs_advantage))
+            context.add_recorded_value("abs_advantage", mean_abs_advantage)
 
             return advantage
         elif signal_key == "advantage_all":
@@ -315,10 +298,10 @@ class Retrace(RLObject):
         V = tf_roll(values, 1, fill=0.0, reverse=True)
         RHO = rho
 
-        if context.truncated_rollouts:
-            R = R[:-1, ...]
-            V = V[:-1, ...]
-            RHO = RHO[:-1, ...]
+        # if context.truncated_rollouts:
+        #     R = R[:-1, ...]
+        #     V = V[:-1, ...]
+        #     RHO = RHO[:-1, ...]
 
         if self.to_action_value:
             RHO = tf_roll(RHO, 1, fill=1.0, reverse=True)
@@ -342,16 +325,16 @@ class Retrace(RLObject):
         adjustment = tf.reverse(adjustment, axis=[0])
         retrace = tf.reverse(retrace, axis=[0])
 
-        if context.truncated_rollouts:
-            retrace = tf.concat([retrace, V[-1, ...]], axis=0)
+        # if context.truncated_rollouts:
+        #     retrace = tf.concat([retrace, V[-1, ...]], axis=0)
 
         mask = context.get_signal("mask")
         label = "{}-one_step_estimate".format(self.name)
-        context.add_summary(tf.summary.scalar(label, masked_mean(one_step_estimate, mask)))
+        context.add_recorded_value(label, masked_mean(one_step_estimate, mask))
         label = "{}-adjustment".format(self.name)
-        context.add_summary(tf.summary.scalar(label, masked_mean(adjustment, mask)))
+        context.add_recorded_value(label, masked_mean(adjustment, mask))
         label = "{}-retrace".format(self.name)
-        context.add_summary(tf.summary.scalar(label, masked_mean(retrace, mask)))
+        context.add_recorded_value(label, masked_mean(retrace, mask))
 
         return retrace
 

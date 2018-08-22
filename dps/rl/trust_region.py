@@ -31,11 +31,11 @@ class TrustRegionOptimizer(Optimizer):
         self.grad_norm_natural = tf.placeholder(tf.float32, shape=(), name="_grad_norm_natural")
         self.step_norm = tf.placeholder(tf.float32, shape=(), name="_step_norm")
 
-        for s in [
-                tf.summary.scalar("grad_norm_pure", self.grad_norm_pure),
-                tf.summary.scalar("grad_norm_natural", self.grad_norm_natural),
-                tf.summary.scalar("step_norm", self.step_norm)]:
-            context.add_train_summary(s)
+        context.add_recorded_values(
+            grad_norm_pure=self.grad_norm_pure,
+            grad_norm_natural=self.grad_norm_natural,
+            step_norm=self.step_norm,
+            train_only=True)
 
     def update(self, feed_dict):
         # Compute gradient of objective

@@ -867,6 +867,10 @@ class Parameterized(object):
     def __new__(cls, *args, **kwargs):
         obj = super(Parameterized, cls).__new__(cls)
         obj._resolve_params(**kwargs)
+
+        # Stored for copying purposes, to get parameter as they are before __init__ is called.
+        obj._resolved_params = obj.param_values()
+
         return obj
 
     def __init__(self, *args, **kwargs):
@@ -928,6 +932,14 @@ class Parameterized(object):
         if not self._resolved:
             raise Exception("Cannot supply `param_values` as parameters have not yet been resolved.")
         return {n: getattr(self, n) for n in self.param_names()}
+
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        kwargs = self._resolved_params
+        result = cls.__new__(cls, **kwargs)
+        result.__init__(**kwargs)
+        memo[id(self)] = result
+        return result
 
 
 def du(path):

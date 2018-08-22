@@ -1280,8 +1280,9 @@ def vec_to_lst(vec, reference):
         raise Exception()
 
 
-def get_scheduled_value_summaries():
-    return tf.get_collection('scheduled_value_summaries')
+def get_scheduled_values():
+    sess = tf.get_default_session()
+    return getattr(sess, "scheduled_values", {})
 
 
 def build_scheduled_value(schedule, name=None, global_step=None, dtype=None):
@@ -1293,7 +1294,8 @@ def build_scheduled_value(schedule, name=None, global_step=None, dtype=None):
         constants can be specified by simply supplying the constant value,
         with no kind string.
     name: str
-        Name to use for the output op. Also creates a summary that has this name.
+        Name to use for the output op. Also creates a record in
+        `tf.get_default_session().scheduled_values` with this name
     dtype: object convertible to tf.DType
         Will cast output value to this dtype.
 
@@ -1313,7 +1315,10 @@ def build_scheduled_value(schedule, name=None, global_step=None, dtype=None):
         scheduled_value = tf.cast(scheduled_value, tf.float32, name=op_name)
 
     if name is not None:
-        tf.summary.scalar(name, scheduled_value, collections=['scheduled_value_summaries'])
+        sess = tf.get_default_session()
+        if not hasattr(sess, "scheduled_values"):
+            sess.scheduled_values = {}
+        sess.scheduled_values[name] = scheduled_value
 
     return scheduled_value
 
@@ -1540,7 +1545,7 @@ def masked_mean(array, mask, axis=None, keepdims=False):
 
 def build_gradient_train_op(
         loss, tvars, optimizer_spec, lr_schedule, max_grad_norm=None,
-        noise_schedule=None, global_step=None, summary_prefix=None, return_summaries=True):
+        noise_schedule=None, global_step=None, record_prefix=None):
     """ By default, `global_step` is None, so the global step is not incremented. """
 
     pure_gradients = tf.gradients(loss, tvars)
@@ -1568,17 +1573,13 @@ def build_gradient_train_op(
     with tf.control_dependencies([valid_lr]):
         train_op = optimizer.apply_gradients(grads_and_vars, global_step=global_step)
 
-    pre = summary_prefix + "_" if summary_prefix else ""
+    pre = record_prefix + "_" if record_prefix else ""
     records = {
         pre + 'grad_norm_pure': tf.global_norm(pure_gradients),
         pre + 'grad_norm_processed': tf.global_norm(noisy_gradients),
     }
 
-    if return_summaries:
-        summaries = [tf.summary.scalar(k, v) for k, v in records.items()]
-        return train_op, summaries
-    else:
-        return train_op, records
+    return train_op, records
 
 
 def tf_roll(a, n, axis=0, fill=None, reverse=False):

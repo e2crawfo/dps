@@ -28,21 +28,27 @@ class StochasticGradientDescent(Optimizer):
         tvars = self.trainable_variables(for_opt=True)
 
         # `context.objective` is the quantity we want to maximize, but TF minimizes.
-        self.train_op, train_summaries = build_gradient_train_op(
+        self.train_op, train_recorded_values = build_gradient_train_op(
             -context.objective, tvars, self.alg, self.lr_schedule, self.max_grad_norm,
             self.noise_schedule)
 
-        for s in train_summaries:
-            context.add_train_summary(s)
+        context.add_recorded_values(train_recorded_values, train_only=True)
 
-    def update(self, n_rollouts, feed_dict):
+    def update(self, n_rollouts, feed_dict, fetches):
         sess = tf.get_default_session()
         for epoch in range(self.opt_steps_per_update):
+
+            record = epoch == self.opt_steps_per_update-1
+
             if not self.sub_batch_size:
-                sess.run(self.train_op, feed_dict=feed_dict)
+                _fetches = [self.train_op, fetches] if record else self.train_op
+                fetched = sess.run(_fetches, feed_dict=feed_dict)
             else:
-                for fd in self.subsample_feed_dict(n_rollouts, feed_dict):
-                    sess.run(self.train_op, feed_dict=fd)
+                for is_final, fd in self.subsample_feed_dict(n_rollouts, feed_dict):
+                    _fetches = [self.train_op, fetches] if (record and is_final) else self.train_op
+                    fetched = sess.run(_fetches, feed_dict=fd)
+
+        return fetched[1]
 
     def subsample_feed_dict(self, n_rollouts, feed_dict):
         updates_per_epoch = int(np.floor(n_rollouts / self.sub_batch_size))
@@ -56,5 +62,5 @@ class StochasticGradientDescent(Optimizer):
                     fd[k] = v[:, indices, ...]
                 else:
                     fd[k] = v
-            yield fd
+            yield i == updates_per_epoch-1, fd
             offset += self.sub_batch_size

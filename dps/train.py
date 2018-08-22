@@ -430,7 +430,6 @@ class TrainingLoop(object):
                 else:
                     print("Using a fresh set of weights, not loading anything.")
 
-                self.summary_op = tf.summary.merge_all()
                 tf.train.get_or_create_global_step()
                 sess.run(uninitialized_variables_initializer())
                 sess.run(tf.assert_variables_initialized())
@@ -512,9 +511,9 @@ class TrainingLoop(object):
                                   "from file {}...".format(best_path))
                             updater.restore(sess, best_path)
 
-                            test_results = updater.evaluate(cfg.batch_size, mode="test")
+                            test_record = updater.evaluate(cfg.batch_size, mode="test")
                             self.data.record_values_for_stage(
-                                **{'_test_' + k: v for k, v in test_results[0].items()})
+                                **{'_test_' + k: v for k, v in test_record.items()})
 
                             if cfg.render_step > 0 and cfg.render_hook is not None:
                                 print("Rendering...")
@@ -613,10 +612,10 @@ class TrainingLoop(object):
                     run_hook |= local_step > 0 and local_step % hook.n == 0
 
                     if run_hook:
-                        hook_output = hook.step(self, updater, local_step)
+                        hook_record = hook.step(self, updater, local_step)
 
-                        if hook_output:
-                            data_to_store.extend(dict(hook_output).items())
+                        if hook_record:
+                            data_to_store.extend(dict(hook_record).items())
 
             # Possibly render
             if render and cfg.render_hook is not None:
@@ -627,8 +626,8 @@ class TrainingLoop(object):
             # --------------- Possibly evaluate -------------------
 
             if evaluate:
-                val_results = updater.evaluate(cfg.batch_size, mode="val")
-                data_to_store.append(("val", val_results))
+                val_record = updater.evaluate(cfg.batch_size, mode="val")
+                data_to_store.append(("val", val_record))
 
                 if display:
                     self.data.summarize_current_stage(
@@ -643,14 +642,12 @@ class TrainingLoop(object):
                     if cfg.use_gpu:
                         print(nvidia_smi())
 
-                record = val_results[0]
-
-                if self.stopping_criteria_name not in record:
+                if self.stopping_criteria_name not in val_record:
                     print("Stopping criteria {} not in record returned "
                           "by updater, using 0.0.".format(self.stopping_criteria_name))
 
-                stopping_criteria = record.get(self.stopping_criteria_name, 0.0)
-                new_best, stop = early_stop.check(stopping_criteria, local_step, record)
+                stopping_criteria = val_record.get(self.stopping_criteria_name, 0.0)
+                new_best, stop = early_stop.check(stopping_criteria, local_step, val_record)
 
                 if new_best:
                     print("Storing new best on step (l={}, g={}), "
@@ -695,10 +692,10 @@ class TrainingLoop(object):
             if cfg.do_train:
                 _old_n_experiences = updater.n_experiences
 
-                update_output = updater.update(cfg.batch_size, collect_summaries=evaluate)
+                update_record = updater.update(cfg.batch_size)
 
                 if evaluate:
-                    data_to_store.extend(dict(update_output).items())
+                    data_to_store.extend(dict(update_record).items())
 
                 n_experiences_delta = updater.n_experiences - _old_n_experiences
                 self.n_global_experiences += n_experiences_delta
@@ -708,22 +705,13 @@ class TrainingLoop(object):
             # --------------- Store data -------------------
 
             records = defaultdict(dict)
-            summaries = defaultdict(list)
-
-            for mode, (r, s) in data_to_store:
+            for mode, r in data_to_store:
                 records[mode].update(r)
-                summaries[mode].append(s)
-            summaries = {mode: b''.join(s) for mode, s in summaries.items()}
 
-            all_data = {}
-            for mode in records:
-                all_data[mode] = (records[mode], summaries[mode])
-
-            if all_data:
-                self.data.store_step_data_and_summaries(
-                    stage_idx, local_step, global_step,
-                    updater.n_experiences, self.n_global_experiences,
-                    **all_data)
+            self.data.store_step_data_and_summaries(
+                stage_idx, local_step, global_step,
+                updater.n_experiences, self.n_global_experiences,
+                **records)
 
             total_train_time += update_duration
             time_per_example = total_train_time / updater.n_experiences
@@ -926,8 +914,11 @@ class _TrainingLoopData(FrozenTrainingLoopData):
     def store_step_data_and_summaries(
             self, stage_idx, local_step, global_step, n_local_experiences, n_global_experiences, **data):
 
-        for mode, (record, summary) in data.items():
-            if record and cfg.store_step_data:
+        for mode, record in data.items():
+            if not record:
+                continue
+
+            if cfg.store_step_data:
                 record = record.copy()
                 record.update(
                     stage_idx=stage_idx,
@@ -938,18 +929,18 @@ class _TrainingLoopData(FrozenTrainingLoopData):
 
                 self.data[mode].append(record)
 
-            if summary:
-                self.add_summary(mode, n_global_experiences, summary)
+            # Build a summary using the Summary protocol buffer
+            # See https://stackoverflow.com/questions/37902705/how-to-manually-create-a-tf-summary
+            summary_values = [tf.Summary.Value(tag="all/"+k, simple_value=float(v)) for k, v in record.items()]
+            summary = tf.Summary(value=summary_values)
+            writer = self._get_summary_writer(mode)
+            writer.add_summary(summary, n_global_experiences)
 
     def _get_summary_writer(self, mode):
         if mode not in self.summary_writers:
             self.summary_writers[mode] = tf.summary.FileWriter(
                 self.get_summary_path(mode), flush_secs=cfg.reload_interval)
         return self.summary_writers[mode]
-
-    def add_summary(self, mode, n_global_experiences, summary):
-        writer = self._get_summary_writer(mode)
-        writer.add_summary(summary, n_global_experiences)
 
     @property
     def current_stage_record(self):
@@ -1071,7 +1062,7 @@ class Hook(object):
         pass
 
     def end_stage(self, training_loop, stage_idx):
-        """ Called at the end of every stage. """
+        """ Called at the end of every stage, after best hypothesis has been reloaded. """
         pass
 
     def step(self, training_loop, updater, step_idx):

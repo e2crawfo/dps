@@ -6,7 +6,7 @@ import time
 
 from dps import cfg
 from dps.utils import Param, Parameterized, shift_fill
-from dps.utils.tf import masked_mean, tf_discount_matrix, build_scheduled_value
+from dps.utils.tf import masked_mean, tf_discount_matrix, build_scheduled_value, get_scheduled_values
 from dps.updater import Updater
 
 
@@ -81,33 +81,21 @@ def get_active_context():
 
 
 class RLContext(Parameterized):
-    """
-        truncated_rollouts: bool
-            If True, then our rollouts are sub-trajectories of longer trajectories. The consequence
-            is that in general we cannot say that the value after final state-action-reward triple
-            is 0. This implies that T-step backups (assuming the rollout is given by
-            (x_0, a_0, r_0, ..., x_(T-1), a_(T-1), r_(T-1)) will not be valid, since we don't have
-            a proper value estimate past the end of the trajectory. When not using truncated trajectories,
-            we assume that the value past the end of the trajectory is 0, and hence T-step backups are OK.
-
-    """
     active_context = None
 
     replay_updates_per_sample = Param(1)
     on_policy_updates = Param(True)
 
-    def __init__(self, gamma, truncated_rollouts=False, name=""):
+    def __init__(self, gamma, name=""):
         self.mu = None
         self.gamma = gamma
         self.name = name
         self.terms = []
         self.plugins = []
         self._signals = {}
-        self.truncated_rollouts = truncated_rollouts
         self.optimizer = None
-        self.train_summaries = []
-        self.summaries = []
-        self.recorded_values = []
+        self.train_recorded_values = {}
+        self.recorded_values = {}
         self.update_batch_size = None
         self.replay_buffer = None
         self.objective_fn_terms = []
@@ -151,15 +139,15 @@ class RLContext(Parameterized):
     def add_agent(self, agent):
         self.agents.append(agent)
 
-    def add_train_summary(self, summary):
-        """ Add a summary that should only be evaluated during training. """
-        self.train_summaries.append(summary)
+    def add_recorded_value(self, name, value, train_only=False):
+        if not train_only:
+            self.recorded_values[name] = value
+        self.train_recorded_values[name] = value
 
-    def add_summary(self, summary):
-        self.summaries.append(summary)
-
-    def add_recorded_value(self, name, tensor):
-        self.recorded_values.append((name, tensor))
+    def add_recorded_values(self, d=None, train_only=False, **kwargs):
+        if not train_only:
+            self.recorded_values.update(d or {}, **kwargs)
+        self.train_recorded_values.update(d or {}, **kwargs)
 
     def set_mode(self, mode):
         for obj in self.rl_objects:
@@ -186,18 +174,11 @@ class RLContext(Parameterized):
                 else:
                     objective += term.weight * term.build_graph(self)
             self.objective = objective
-            self.add_recorded_value("rl_objective", self.objective)
+            self.add_recorded_values(rl_objective=self.objective)
 
             self.optimizer.build_update(self)
 
-            self.recorded_tensors = {}
-            for name in getattr(env, 'recorded_names', []):
-                ph = tf.placeholder(tf.float32, (), name=name+"_ph")
-                self.recorded_tensors[name] = ph
-                self.add_summary(tf.summary.scalar("env_" + name, ph))
-
-            self.train_summary_op = tf.summary.merge(self.train_summaries + self.summaries)
-            self.summary_op = tf.summary.merge(self.summaries)
+            self.add_recorded_values(get_scheduled_values())
 
     def build_core_signals(self):
         self._signals['mask'] = tf.placeholder(
@@ -227,8 +208,7 @@ class RLContext(Parameterized):
         self._signals['reward_per_ep'] = tf.reduce_mean(
             tf.reduce_sum(self._signals['rewards'], axis=0), name="_reward_per_ep")
 
-        self.add_summary(tf.summary.scalar("reward_per_ep", self._signals['reward_per_ep']))
-        self.add_recorded_value("reward_per_ep", self._signals['reward_per_ep'])
+        self.add_recorded_values(reward_per_ep=self._signals['reward_per_ep'])
 
         self._signals['train_n_episodes'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
         self._signals['train_cumulative_reward'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
@@ -276,8 +256,7 @@ class RLContext(Parameterized):
             exclusive=True
         )
 
-        self.add_summary(tf.summary.scalar("reward_per_ep_avg", self._signals['reward_per_ep_avg']))
-        self.add_recorded_value("reward_per_ep_avg", self._signals['reward_per_ep_avg'])
+        self.add_recorded_values(reward_per_ep_avg=self._signals['reward_per_ep_avg'])
 
         self._signals['weights'] = tf.placeholder(
             tf.float32, shape=(cfg.T, None, 1), name="_weights")
@@ -369,10 +348,7 @@ class RLContext(Parameterized):
 
         return signal
 
-    def _run_and_record(self, rollouts, mode, weights, do_update, summary_op, collect_summaries):
-        assert do_update or collect_summaries, (
-            "Both `do_update` and `collect_summaries` are False, no point in calling `_run_and_record`.")
-
+    def _run_and_record(self, rollouts, mode, weights, do_update):
         sess = tf.get_default_session()
         feed_dict = self.make_feed_dict(rollouts, mode, weights)
         self.set_mode(mode)
@@ -384,25 +360,10 @@ class RLContext(Parameterized):
             else:
                 obj.pre_eval(feed_dict, self)
 
-        record = {}
-        for name in getattr(self.env, 'recorded_names', []):
-            v = rollouts._metadata[name]
-            feed_dict[self.recorded_tensors[name]] = v
-            record[name] = v
-
         if do_update:
-            self.optimizer.update(rollouts.batch_size, feed_dict)
-
-        summaries = b""
-        if collect_summaries:
-            summaries, *values = (
-                sess.run(
-                    [summary_op] + [v for _, v in self.recorded_values],
-                    feed_dict=feed_dict))
+            recorded_values = self.optimizer.update(rollouts.batch_size, feed_dict, self.train_recorded_values)
         else:
-            values = sess.run(
-                [v for _, v in self.recorded_values],
-                feed_dict=feed_dict)
+            recorded_values = sess.run(self.recorded_values, feed_dict=feed_dict)
 
         for obj in self.rl_objects:
             if do_update:
@@ -410,11 +371,9 @@ class RLContext(Parameterized):
             else:
                 obj.post_eval(feed_dict, self)
 
-        record.update({k: v for v, (k, _) in zip(values, self.recorded_values)})
+        return recorded_values
 
-        return summaries, record
-
-    def update(self, batch_size, collect_summaries):
+    def update(self, batch_size):
         assert self.mu is not None, "A behaviour policy must be set using `set_behaviour_policy` before calling `update`."
         assert self.optimizer is not None, "An optimizer must be set using `set_optimizer` before calling `update`."
 
@@ -423,23 +382,15 @@ class RLContext(Parameterized):
             rollouts = self.env.do_rollouts(self.mu, n_rollouts=batch_size, T=cfg.T, mode='train')
             train_rollout_duration = time.time() - start
 
-            train_summaries = b""
             train_record = {}
 
             start = time.time()
-            if self.replay_buffer is None or self.on_policy_updates:
-                train_summaries, train_record = self._run_and_record(
-                    rollouts, mode='train', weights=None, do_update=True,
-                    summary_op=self.train_summary_op,
-                    collect_summaries=collect_summaries)
-            elif collect_summaries:
-                train_summaries, train_record = self._run_and_record(
-                    rollouts, mode='train', weights=None, do_update=False,
-                    summary_op=self.summary_op, collect_summaries=True)
+            do_update = self.replay_buffer is None or self.on_policy_updates
+            train_record = self._run_and_record(rollouts, mode='train', weights=None, do_update=do_update)
+
             train_step_duration = time.time() - start
             train_record.update(step_duration=train_step_duration, rollout_duration=train_rollout_duration)
 
-            off_policy_summaries = b""
             off_policy_record = {}
 
             if self.replay_buffer is not None:
@@ -453,20 +404,13 @@ class RLContext(Parameterized):
                         # is there not being enough experiences in replay memory.
                         break
 
-                    _collect_summaries = (
-                        collect_summaries and
-                        i == self.replay_updates_per_sample-1
-                    )
-
-                    off_policy_summaries, off_policy_record = self._run_and_record(
-                        off_policy_rollouts, mode='off_policy', weights=weights, do_update=True,
-                        summary_op=self.train_summary_op,
-                        collect_summaries=_collect_summaries)
+                    off_policy_record = self._run_and_record(
+                        off_policy_rollouts, mode='off_policy', weights=weights, do_update=True)
 
                 off_policy_duration = time.time() - start
                 off_policy_record['step_duration'] = off_policy_duration
 
-            return train_summaries, off_policy_summaries, train_record, off_policy_record
+            return train_record, off_policy_record
 
     def evaluate(self, batch_size, mode):
         assert self.pi is not None, "A validation policy must be set using `set_validation_policy` before calling `evaluate`."
@@ -477,16 +421,13 @@ class RLContext(Parameterized):
             eval_rollout_duration = time.time() - start
 
             start = time.time()
-            eval_summaries, eval_record = self._run_and_record(
-                rollouts, mode=mode, weights=None, do_update=False,
-                summary_op=self.summary_op,
-                collect_summaries=True)
+            eval_record = self._run_and_record(rollouts, mode=mode, weights=None, do_update=False)
             eval_duration = time.time() - start
 
             eval_record.update(
                 eval_duration=eval_duration, rollout_duration=eval_rollout_duration)
 
-        return eval_summaries, eval_record
+        return eval_record
 
 
 class RLUpdater(Updater):
@@ -528,53 +469,28 @@ class RLUpdater(Updater):
         for learner in self.learners:
             learner.build_graph(self.env)
 
-    def _update(self, batch_size, collect_summaries):
+    def _update(self, batch_size):
         train_record, off_policy_record = {}, {}
-        train_summary, off_policy_summary = [], []
 
         for learner in self.learners:
-            ts, us, tr, ur = learner.update(batch_size, collect_summaries)
+            _train_record, _off_policy_record = learner.update(batch_size)
 
-            for k, v in tr.items():
-                if learner.name:
-                    s = learner.name + ":" + k
-                else:
-                    s = k
-                train_record[s] = v
+            for k, v in _train_record.items():
+                key = (learner.name + ":" if learner.name else "") + k
+                train_record[key] = v
+            for k, v in _off_policy_record.items():
+                key = (learner.name + ":" if learner.name else "") + k
+                off_policy_record[key] = v
 
-            for k, v in ur.items():
-                if learner.name:
-                    s = learner.name + ":" + k
-                else:
-                    s = k
-                off_policy_record[s] = v
-
-            train_summary.append(ts)
-            off_policy_summary.append(us)
-
-        train_summary = (b'').join(train_summary)
-        off_policy_summary = (b'').join(off_policy_summary)
-
-        return {
-            'train': (train_record, train_summary),
-            'off_policy': (off_policy_record, off_policy_summary),
-        }
+        return dict(train=train_record, off_policy=off_policy_record)
 
     def _evaluate(self, batch_size, mode):
         record = {}
-        summary = []
 
         for learner in self.learners:
-            s, r = learner.evaluate(batch_size, mode)
-            summary.append(s)
+            _record = learner.evaluate(batch_size, mode)
+            for k, v in _record.items():
+                key = (learner.name + ":" if learner.name else "") + k
+                record[key] = v
 
-            for k, v in r.items():
-                if learner.name:
-                    s = learner.name + ":" + k
-                else:
-                    s = k
-                record[s] = v
-
-        summary = (b'').join(summary)
-
-        return record, summary
+        return record

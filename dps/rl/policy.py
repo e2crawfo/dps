@@ -85,7 +85,7 @@ class Policy(AgentHead):
                 lambda: self.val_exploration
             )
         label = "{}-exploration".format(self.display_name)
-        context.add_summary(tf.summary.scalar(label, self.exploration, collections=['scheduled_value_summaries']))
+        context.add_recorded_value(label, self.exploration)
 
     def generate_signal(self, key, context, **kwargs):
         if key == 'log_probs':
@@ -101,9 +101,6 @@ class Policy(AgentHead):
         elif key == 'kl':
             raise Exception("NotImplemented")
         elif key in ['monte_carlo_values', 'monte_carlo_action_values']:
-            if context.truncated_rollouts:
-                raise Exception("NotImplemented")
-
             c = kwargs.get('c', None)
             rho = context.get_signal('rho', self, c=c)
             rewards = context.get_signal('rewards')
@@ -145,7 +142,7 @@ class Policy(AgentHead):
 
             label = "{}-mean_importance_weight".format(self.display_name)
             mask = context.get_signal("mask")
-            context.add_summary(tf.summary.scalar(label, masked_mean(importance_weights, mask)))
+            context.add_recorded_value(label, masked_mean(importance_weights, mask))
 
             return importance_weights
         elif key == 'rho':
@@ -162,7 +159,7 @@ class Policy(AgentHead):
 
             label = "{}-mean_rho_c_{}".format(self.display_name, c)
             mask = context.get_signal("mask")
-            context.add_summary(tf.summary.scalar(label, masked_mean(rho, mask)))
+            context.add_recorded_value(label, masked_mean(rho, mask))
 
             return rho
         else:

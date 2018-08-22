@@ -29,7 +29,7 @@ class PolicyGradient(ObjectiveFunctionTerm):
 
             label = "{}-mean_importance_weight".format(self.name)
             mask = context.get_signal("mask")
-            context.add_summary(tf.summary.scalar(label, masked_mean(importance_weights, mask)))
+            context.add_recorded_value(label, masked_mean(importance_weights, mask))
 
             return importance_weights
         elif signal_key == "rho":
@@ -46,7 +46,7 @@ class PolicyGradient(ObjectiveFunctionTerm):
 
             label = "{}-mean_rho_c_{}".format(self.name, c)
             mask = context.get_signal("mask")
-            context.add_summary(tf.summary.scalar(label, masked_mean(rho, mask)))
+            context.add_recorded_value(label, masked_mean(rho, mask))
 
             return rho
 
@@ -82,7 +82,7 @@ class PolicyGradient(ObjectiveFunctionTerm):
         objective = masked_mean(adv_times_ratio, mask)
 
         label = "{}-policy_gradient_objective".format(self.policy.display_name)
-        context.add_summary(tf.summary.scalar(label, objective))
+        context.add_recorded_value(label, objective)
 
         return objective
 
@@ -121,7 +121,7 @@ class PolicyEntropyBonus(ObjectiveFunctionTerm):
         objective = masked_mean(entropy, mask)
 
         label = "{}-entropy".format(self.policy.display_name)
-        context.add_summary(tf.summary.scalar(label, objective))
+        context.add_recorded_value(label, objective)
 
         return objective
 
@@ -156,15 +156,6 @@ class PolicyEvaluation_State(ObjectiveFunctionTerm):
         mask = context.get_signal('mask')
         weights = context.get_signal('weights')
 
-        if context.truncated_rollouts:
-            # When using truncated rollouts, there is no way to get a data-based
-            # estimate of the value of the final state, so there is no
-            # point in training on it.
-            td_error = td_error[:-1, ...]
-            squared_td_error = squared_td_error[:-1, ...]
-            mask = mask[:-1, ...]
-            weights = weights[:-1, ...]
-
         if self.use_weights:
             td_error *= weights
             squared_td_error *= weights
@@ -172,12 +163,12 @@ class PolicyEvaluation_State(ObjectiveFunctionTerm):
         mean_td_error = masked_mean(td_error, mask)
 
         label = "{}-opt-mean_abs_td_error".format(self.value_function.display_name)
-        context.add_summary(tf.summary.scalar(label, tf.abs(mean_td_error)))
+        context.add_recorded_value(label, tf.abs(mean_td_error))
 
         mean_squared_td_error = masked_mean(squared_td_error, mask)
 
         label = "{}-opt-mean_squared_td_error".format(self.value_function.display_name)
-        context.add_summary(tf.summary.scalar(label, mean_squared_td_error))
+        context.add_recorded_value(label, mean_squared_td_error)
 
         return -mean_squared_td_error
 
@@ -228,7 +219,7 @@ class ValueFunctionRegularization(ObjectiveFunctionTerm):
         mean_kl_divergence = tf.reduce_mean((prev_values - values)**2 / (2 * variance))
 
         label = "{}-mean_kl_divergence".format(self.value_function.display_name)
-        context.add_summary(tf.summary.scalar(label, mean_kl_divergence))
+        context.add_recorded_value(label, mean_kl_divergence)
 
         return -mean_kl_divergence
 
@@ -298,22 +289,22 @@ class ConstrainedPolicyEvaluation_State(ObjectiveFunctionTerm):
 
             mean_divergence = masked_mean(tf.reduce_mean(divergence, axis=-1, keepdims=True), mask)
             label = "{}-opt-mean_ve_divergence".format(self.value_function.display_name)
-            context.add_summary(tf.summary.scalar(label, mean_divergence))
+            context.add_recorded_value(label, mean_divergence)
 
             objective = masked_mean(tf.reduce_mean(objective, axis=-1, keepdims=True), mask)
             label = "{}-opt-ve_direct_objective".format(self.value_function.display_name)
-            context.add_summary(tf.summary.scalar(label, objective))
+            context.add_recorded_value(label, objective)
 
             td_error = context.get_signal("td_error", self)
             squared_td_error = context.get_signal("squared_td_error", self)
 
             mean_td_error = masked_mean(td_error, mask)
             label = "{}-opt-mean_abs_td_error".format(self.value_function.display_name)
-            context.add_summary(tf.summary.scalar(label, tf.abs(mean_td_error)))
+            context.add_recorded_value(label, tf.abs(mean_td_error))
 
             mean_squared_td_error = masked_mean(squared_td_error, mask)
             label = "{}-opt-mean_squared_td_error".format(self.value_function.display_name)
-            context.add_summary(tf.summary.scalar(label, mean_squared_td_error))
+            context.add_recorded_value(label, mean_squared_td_error)
 
             return objective
 
@@ -357,31 +348,31 @@ class ConstrainedPolicyEvaluation_State(ObjectiveFunctionTerm):
 
             mean_ratio = masked_mean(tf.reduce_mean(ratio, axis=-1, keepdims=True), mask)
             label = "{}-opt-mean_ve_ratio".format(self.value_function.display_name)
-            context.add_summary(tf.summary.scalar(label, mean_ratio))
+            context.add_recorded_value(label, mean_ratio)
 
             if clipped_ratio is not None:
                 mean_clipped_ratio = masked_mean(tf.reduce_mean(clipped_ratio, axis=-1, keepdims=True), mask)
                 label = "{}-opt-mean_ve_clipped_ratio".format(self.value_function.display_name)
-                context.add_summary(tf.summary.scalar(label, mean_clipped_ratio))
+                context.add_recorded_value(label, mean_clipped_ratio)
 
             mean_advantage = masked_mean(tf.reduce_mean(prev_advantage, axis=-1, keepdims=True), mask)
             label = "{}-opt-mean_ve_advantage".format(self.value_function.display_name)
-            context.add_summary(tf.summary.scalar(label, mean_advantage))
+            context.add_recorded_value(label, mean_advantage)
 
             objective = masked_mean(tf.reduce_mean(adv_times_ratio, axis=-1, keepdims=True), mask)
             label = "{}-opt-ve_objective".format(self.value_function.display_name)
-            context.add_summary(tf.summary.scalar(label, objective))
+            context.add_recorded_value(label, objective)
 
             td_error = context.get_signal("td_error", self)
             squared_td_error = context.get_signal("squared_td_error", self)
 
             mean_td_error = masked_mean(td_error, mask)
             label = "{}-opt-mean_abs_td_error".format(self.value_function.display_name)
-            context.add_summary(tf.summary.scalar(label, tf.abs(mean_td_error)))
+            context.add_recorded_value(label, tf.abs(mean_td_error))
 
             mean_squared_td_error = masked_mean(squared_td_error, mask)
             label = "{}-opt-mean_squared_td_error".format(self.value_function.display_name)
-            context.add_summary(tf.summary.scalar(label, mean_squared_td_error))
+            context.add_recorded_value(label, mean_squared_td_error)
 
             return objective
 
@@ -454,6 +445,6 @@ class DifferentiableLoss(ObjectiveFunctionTerm):
         objective = -masked_mean(loss, mask)
 
         label = "{}-differentiable_objective".format(self.policy.display_name)
-        context.add_summary(tf.summary.scalar(label, objective))
+        context.add_recorded_value(label, objective)
 
         return objective
