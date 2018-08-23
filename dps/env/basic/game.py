@@ -12,9 +12,8 @@ import copy
 
 import dps
 from dps import cfg
-from dps.rl.policy import Policy, ProductDist, SigmoidNormal
 from dps.utils import square_subplots, generate_perlin_noise_2d, Config, Param, Parameterized
-from dps.utils.tf import FeedforwardCell, MLP, ScopedFunction, RenderHook
+from dps.utils.tf import RenderHook
 from dps.env.env import BatchGymEnv
 
 
@@ -203,6 +202,55 @@ def _test_liang_barsky(*args, ref_answer=NoAnswer):
 #     _test_liang_barsky(1, 2, 1, 2, 1.5, 1.5, 3, 3, ref_answer=(0, 1/3))
 
 
+class Rectangle(object):
+    def __init__(self, bottom, top, left, right):
+        self.bottom = bottom
+        self.top = top
+        self.left = left
+        self.right = right
+
+    def collision(self, y0, x0, y1, x1):
+        return liang_barsky(self.bottom, self.top, self.left, self.right, y0, x0, y1, x1)
+
+
+class Ellipse(object):
+    def __init__(self, cy, cx, y_radius, x_radius):
+        self.cy = cy
+        self.cx = cx
+        self.y_radius_2 = y_radius**2
+        self.x_radius_2 = x_radius**2
+
+    def collision(self, y0, x0, y1, x1):
+        y0 -= self.cy
+        y1 -= self.cy
+        x0 -= self.cx
+        x1 -= self.cx
+
+        a = (y1 - y0)**2 / self.y_radius_2 + (x1 - x0)**2 / self.x_radius_2
+        b = 2 * ((y1 - y0) * y0 / self.y_radius_2 + (x1 - x0) * x0 / self.x_radius_2)
+        c = y0**2 / self.y_radius_2 + x0**2 / self.x_radius_2 - 1
+
+        disc = b**2 - 4 * a * c
+        if disc <= 0:
+            return None
+
+        sqrt_disc = np.sqrt(disc)
+        t1 = (-b - sqrt_disc) / (2*a)
+        t2 = (-b + sqrt_disc) / (2*a)
+
+        if t2 * t1 < 0:  # start inside
+            t1 = 0
+        else:  # start outside
+            if t1 < 0:  # Line segment points away from circle
+                return None
+            if t1 > 1:  # Line segment doesn't go far enough
+                return None
+
+        t2 = min(1, t2)
+
+        return (t1, t2)
+
+
 class ObjectGame(Parameterized, gym.Env):
     """
 
@@ -248,7 +296,7 @@ class ObjectGame(Parameterized, gym.Env):
             self.observation_space = gym.spaces.Box(0, 1, shape=(*self.image_shape, 3), dtype=np.float32)
         else:
             self.observation_space = gym.spaces.Box(
-                0, 1, shape=(self.max_entities, 4 + self.entity_feature_dim), dtype=np.float32)
+                0, 1, shape=(self.max_entities, 5 + self.entity_feature_dim), dtype=np.float32)
 
         self.seed()
         self.reset()
@@ -298,7 +346,7 @@ class ObjectGame(Parameterized, gym.Env):
 
     def get_entities(self):
         height, width = self.image_shape
-        representation = np.zeros((self.max_entities, self.entity_feature_dim + 4))
+        representation = np.zeros((self.max_entities, 5 + self.entity_feature_dim))
 
         i = 0
         for entity in self.entities:
@@ -308,8 +356,7 @@ class ObjectGame(Parameterized, gym.Env):
             features = self.get_entity_features(entity)
 
             representation[i, :] = (
-                (entity.top/height, entity.left/width, entity.h/height, entity.w/width,) +
-                tuple(features)
+                (1.0, entity.top/height, entity.left/width, entity.h, entity.w,) + tuple(features)
             )
 
             i += 1
@@ -325,19 +372,21 @@ class ObjectGame(Parameterized, gym.Env):
         for other in self.entities:
             y, x = other.center
 
-            # top, bottom, left, right
-            obstacles.append((other, (y - h / 2, y + h / 2, x - w / 2, x + w / 2)))
+            shape = Ellipse(y, x, h/2, w/2)
+
+            # obstacles.append((other, (y - h / 2, y + h / 2, x - w / 2, x + w / 2)))
+            obstacles.append((other, shape))
 
         # walls
-        obstacles.append(("top", (-np.inf, np.ceil(entity.h / 2), -np.inf, np.inf)))
-        obstacles.append(("bottom", (self.image_shape[0] - np.ceil(entity.h)/2, np.inf, -np.inf, np.inf)))
-        obstacles.append(("left", (-np.inf, np.inf, -np.inf, np.ceil(entity.w)/2)))
-        obstacles.append(("right", (-np.inf, np.inf, self.image_shape[1] - np.ceil(entity.w)/2, np.inf)))
+        obstacles.append(("top", Rectangle(-np.inf, np.ceil(entity.h / 2), -np.inf, np.inf)))
+        obstacles.append(("bottom", Rectangle(self.image_shape[0] - np.ceil(entity.h)/2, np.inf, -np.inf, np.inf)))
+        obstacles.append(("left", Rectangle(-np.inf, np.inf, -np.inf, np.ceil(entity.w)/2)))
+        obstacles.append(("right", Rectangle(-np.inf, np.inf, self.image_shape[1] - np.ceil(entity.w)/2, np.inf)))
 
         y, x = entity.y, entity.x
 
         collisions = []
-        for other, (top, bottom, left, right) in obstacles:
+        for other, shape in obstacles:
             if entity is other:
                 continue
 
@@ -345,7 +394,8 @@ class ObjectGame(Parameterized, gym.Env):
             if not alive:
                 continue
 
-            collision = liang_barsky(top, bottom, left, right, y, x, y + y_step, x + x_step)
+            collision = shape.collision(y, x, y + y_step, x + x_step)
+            # collision = liang_barsky(top, bottom, left, right, y, x, y + y_step, x + x_step)
 
             if collision is not None:
                 collisions.append((collision, other))
@@ -670,87 +720,16 @@ def build_env():
     return BatchGymEnv(gym_env=gym_env)
 
 
-class Backbone(ScopedFunction):
-    backbone = None
-    mlp = None
-
-    def _call(self, inp, output_size, is_training):
-        if self.backbone is None:
-            self.backbone = Backbone()
-
-        if self.mlp is None:
-            self.mlp = MLP([100, 100])
-
-        outp = self.backbone(inp, 0, is_training)
-        outp = self.mlp(outp, output_size, is_training)
-        return outp
-
-
-def build_attentional_relation_network(output_size, name):
-    from dps.utils.tf import AttentionalRelationNetwork
-    ff = AttentionalRelationNetwork(scope="collection_controller")
-    return FeedforwardCell(ff, output_size, name=name)
-
-
-def build_object_network_controller(output_size, name):
-    from dps.utils.tf import ObjectNetwork
-    ff = ObjectNetwork(scope="collection_controller")
-    return FeedforwardCell(ff, output_size, name=name)
-
-
-def build_relation_network_controller(output_size, name):
-    from dps.utils.tf import RelationNetwork
-    ff = RelationNetwork(scope="collection_controller")
-    return FeedforwardCell(ff, output_size, name=name)
-
-
-def build_policy(env, **kwargs):
-    action_selection = ProductDist(
-        SigmoidNormal(-1, 1, explore=True),
-        SigmoidNormal(-1, 1, explore=True),
-        SigmoidNormal(0, 1, explore=True),)
-    return Policy(action_selection, env.obs_shape, **kwargs)
-
-
 entity_size = (5, 5)
 
 config = Config(
     env_name="collection_game",
 
     build_env=build_env,
-
-    # build_controller=build_relation_network_controller,
-    # build_relation_network_f=lambda scope: MLP([100, 100], scope=scope),
-    # build_relation_network_g=lambda scope: MLP([256, 256, 256], scope=scope),
-    # f_dim=256,
-    # symmetric_op="max",
-
-    # build_controller=build_object_network_controller,
-    # build_object_network_f=lambda scope: MLP([100, 100], scope=scope),
-    # build_object_network_g=lambda scope: MLP([256, 256, 256], scope=scope),
-    # f_dim=512,
-    # symmetric_op="max",
-
-    build_controller=build_attentional_relation_network,
-    build_arn_network=lambda scope: MLP([100, 100], scope=scope),
-    build_arn_object_network=lambda scope: MLP([100, 100, 100], scope=scope),
-    build_arn_output_network=lambda scope: MLP([100, 100, 100], scope=scope),
-
-    n_heads=1,
-    n_repeats=1,
-    d=128,
-    symmetric_op="max",
-    layer_norm=True,
-
-    build_policy=build_policy,
-    exploration_schedule=1.0,
-    val_exploration_schedule=0.01,
-    n_controller_units=64,
-
     T=20,
     max_episode_length=20,
 
-    n_val=100,
+    entropy_weight=0.0,
     batch_size=16,
     render_hook=Collection_RenderHook(N=16),
     render_step=1000,
@@ -774,6 +753,9 @@ config = Config(
     step_size=5,
     corner=None,
     grid=False,
+
+    explore=False,
+    discrete_actions=False,
 )
 
 

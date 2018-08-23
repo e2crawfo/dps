@@ -507,16 +507,8 @@ class Categorical(TensorFlowSelection):
 
     @staticmethod
     def _build_categorical_dist(*args, probs=None, **kwargs):
-        """ Build a non-one-hot categorical distribution.
-
-        Do this to avoid using tf_dists.OneHotCategorical even if `one_hot` is True,
-        because it doesn't work in tf versions <= 1.0.0.
-
-        """
-        if tf.__version__ < "1.1":
-            return tf_dists.Categorical(*args, p=probs, **kwargs)
-        else:
-            return tf_dists.Categorical(*args, probs=probs, **kwargs)
+        """ Build a non-one-hot categorical distribution. """
+        return tf_dists.Categorical(*args, probs=probs, **kwargs)
 
 
 class FixedCategorical(Categorical):

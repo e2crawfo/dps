@@ -53,6 +53,8 @@ def apply_mask_and_group_at_front(data, mask):
                     [ 0,  0,  0]]])
 
     """
+    mask = tf.cast(mask, tf.bool)
+
     batch_size = tf.shape(data)[0]
 
     if len(mask.shape) == len(data.shape):
@@ -86,7 +88,7 @@ def apply_mask_and_group_at_front(data, mask):
 
     # zero out the extra elements we've gathered
     result *= tf.cast(seq_mask, result.dtype)[:, :, None]
-    return result, n_on
+    return result, n_on, seq_mask
 
 
 def tf_inspect_cl():
@@ -717,21 +719,91 @@ class ConvNet(ScopedFunction):
         return volume
 
 
-class AttentionalRelationNetwork(ScopedFunction):
-    """ Implements one of the "attention blocks" from "Relational Deep Reinforcement Learning". """
-    query_network = None
-    key_network = None
-    value_network = None
-    object_network = None
-    output_network = None
+def pool_objects(op, objects, mask):
+    batch_size = tf.shape(objects)[0]
+    n_objects = tf.reduce_prod(tf.shape(objects)[1:-1])
+    obj_dim = int(objects.shape[-1])
 
-    n_heads = Param()
+    mask = tf.reshape(mask, (batch_size, n_objects, 1))
+
+    if op == "concat" or op is None:
+        objects *= tf.to_float(mask)
+        pooled_objects = tf.reshape(objects, (batch_size, n_objects*obj_dim))
+    elif op == "sum":
+        objects *= tf.to_float(mask)
+        pooled_objects = tf.reduce_sum(objects, axis=1, keepdims=False)
+    elif op == "max":
+        mask = tf.tile(tf.cast(mask, tf.bool), (1, 1, obj_dim))
+        objects = tf.where(mask, objects, -np.inf * tf.ones_like(objects))
+        pooled_objects = tf.reduce_max(objects, axis=1, keepdims=False)
+    else:
+        raise Exception("Unknown symmetric op for ObjectNetwork: {}. "
+                        "Valid values are: None, concat, mean, max.".format(op))
+    return pooled_objects
+
+
+class ObjectNetwork(ScopedFunction):
     n_repeats = Param()
     d = Param()
     symmetric_op = Param()
     layer_norm = Param()
+    use_mask = Param(help="If True, extract mask from objects by taking first element.")
+
+    input_network = None
+    object_network = None
+    output_network = None
+
+    def process_objects(self, batch_size, n_objects, objects, is_training):
+        if self.object_network is None:
+            self.object_network = dps.cfg.build_on_object_network(scope="object_network")
+
+        for i in range(self.n_repeats):
+            prev_objects = objects
+            objects = self.object_network(prev_objects, self.d, is_training)
+            objects += prev_objects
+
+            if self.layer_norm:
+                objects = tf.contrib.layers.layer_norm(objects, self.d)
+
+        return objects
 
     def _call(self, inp, output_size, is_training):
+        if self.input_network is None:
+            self.input_network = dps.cfg.build_on_input_network(scope="input_network")
+        if self.output_network is None:
+            self.output_network = dps.cfg.build_on_output_network(scope="output_network")
+
+        if self.use_mask:
+            final_dim = int(inp.shape[-1])
+            mask, inp = tf.split(inp, (1, final_dim-1), axis=-1)
+            inp, _, mask = apply_mask_and_group_at_front(inp, mask)
+        else:
+            mask = tf.ones_like(inp[..., 0])
+
+        batch_size = tf.shape(inp)[0]
+        n_objects = tf.reduce_prod(tf.shape(inp)[1:-1])
+        obj_dim = int(inp.shape[-1])
+
+        inp = tf.reshape(inp, (batch_size*n_objects, obj_dim))
+        objects = self.input_network(inp, self.d, is_training)
+
+        objects = self.process_objects(batch_size, n_objects, objects, is_training)
+
+        objects = tf.reshape(objects, (batch_size, n_objects, self.d))
+        mask = tf.reshape(mask, (batch_size, n_objects))
+        pooled_objects = pool_objects(self.symmetric_op, objects, mask)
+        return self.output_network(pooled_objects, output_size, is_training)
+
+
+class AttentionalRelationNetwork(ObjectNetwork):
+    """ Implements one of the "attention blocks" from "Relational Deep Reinforcement Learning". """
+    n_heads = Param()
+
+    query_network = None
+    key_network = None
+    value_network = None
+
+    def process_objects(self, batch_size, n_objects, objects, is_training):
         if self.query_network is None:
             self.query_network = dps.cfg.build_arn_network(scope="query_network")
         if self.key_network is None:
@@ -740,14 +812,6 @@ class AttentionalRelationNetwork(ScopedFunction):
             self.value_network = dps.cfg.build_arn_network(scope="value_network")
         if self.object_network is None:
             self.object_network = dps.cfg.build_arn_object_network(scope="object_network")
-        if self.output_network is None:
-            self.output_network = dps.cfg.build_arn_output_network(scope="output_network")
-
-        batch_size = tf.shape(inp)[0]
-        spatial_shape = inp.shape[1:-1]
-        n_objects = int(np.prod(spatial_shape))
-        obj_dim = int(inp.shape[-1])
-        objects = tf.reshape(inp, (batch_size*n_objects, obj_dim))
 
         for i in range(self.n_repeats):
             a = []
@@ -777,68 +841,17 @@ class AttentionalRelationNetwork(ScopedFunction):
             a = tf.reshape(a, (batch_size * n_objects, self.n_heads * self.d))
 
             prev_objects = objects
-            objects = self.object_network(a, obj_dim, is_training)
+            objects = self.object_network(a, self.d, is_training)
             objects += prev_objects
 
             if self.layer_norm:
-                objects = tf.contrib.layers.layer_norm(objects, obj_dim)
+                objects = tf.contrib.layers.layer_norm(objects, self.d)
 
-        objects = tf.reshape(objects, (batch_size, n_objects, obj_dim))
-
-        if self.symmetric_op == "concat" or self.symmetric_op is None:
-            pooled_objects = tf.reshape(objects, (batch_size, n_objects*self.f_dim))
-        elif self.symmetric_op == "mean":
-            pooled_objects = tf.reduce_mean(objects, axis=1, keepdims=False)
-        elif self.symmetric_op == "max":
-            pooled_objects = tf.reduce_max(objects, axis=1, keepdims=False)
-        else:
-            raise Exception("Unknown symmetric op for ObjectNetwork: {}. "
-                            "Valid values are: None, concat, mean, max.".format(self.symmetric_op))
-
-        return self.output_network(pooled_objects, output_size, is_training)
-
-
-class ObjectNetwork(ScopedFunction):
-    """ Process each object using a network f, pool the outputs, and process the result with a network g. """
-    f = None
-    g = None
-
-    f_dim = Param()
-    symmetric_op = Param()
-
-    def _call(self, inp, output_size, is_training):
-        # Assumes objects range of all but the first and last dimensions
-        batch_size = tf.shape(inp)[0]
-        spatial_shape = inp.shape[1:-1]
-        n_objects = int(np.prod(spatial_shape))
-        obj_dim = int(inp.shape[-1])
-        inp = tf.reshape(inp, (batch_size, n_objects, obj_dim))
-
-        if self.f is None:
-            self.f = dps.cfg.build_object_network_f(scope="object_network_f")
-
-        if self.g is None:
-            self.g = dps.cfg.build_object_network_g(scope="object_network_g")
-
-        f_inputs = tf.reshape(inp, (batch_size * n_objects, obj_dim))
-
-        f_output = self.f(f_inputs, self.f_dim, is_training)
-        f_output = tf.reshape(f_output, (batch_size, n_objects, self.f_dim))
-
-        if self.symmetric_op == "concat" or self.symmetric_op is None:
-            g_input = tf.reshape(f_output, (batch_size, n_objects*self.f_dim))
-        elif self.symmetric_op == "mean":
-            g_input = tf.reduce_mean(f_output, axis=1, keepdims=False)
-        elif self.symmetric_op == "max":
-            g_input = tf.reduce_max(f_output, axis=1, keepdims=False)
-        else:
-            raise Exception("Unknown symmetric op for ObjectNetwork: {}. "
-                            "Valid values are: None, concat, mean, max.".format(self.symmetric_op))
-
-        return self.g(g_input, output_size, is_training)
+        return objects
 
 
 class RelationNetwork(ScopedFunction):
+    """ TODO: make this inherit from ObjectNetwork. """
     f = None
     g = None
 

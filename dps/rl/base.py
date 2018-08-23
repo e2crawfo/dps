@@ -211,53 +211,7 @@ class RLContext(Parameterized):
 
         self.add_recorded_values(reward_per_ep=self._signals['reward_per_ep'])
 
-        self._signals['train_n_episodes'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
-        self._signals['train_cumulative_reward'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
-        self._signals['train_reward_per_ep_avg'] = (
-            self._signals['train_cumulative_reward'] / self._signals['train_n_episodes'])
-
-        self._signals['off_policy_n_episodes'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
-        self._signals['off_policy_cumulative_reward'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
-        self._signals['off_policy_reward_per_ep_avg'] = (
-            self._signals['off_policy_cumulative_reward'] / self._signals['off_policy_n_episodes'])
-
-        self._signals['val_n_episodes'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
-        self._signals['val_cumulative_reward'] = tf.Variable(0.0, trainable=False, dtype=tf.float32)
-        self._signals['val_reward_per_ep_avg'] = (
-            self._signals['val_cumulative_reward'] / self._signals['val_n_episodes'])
-
-        mode = self._signals['mode'] = tf.placeholder(tf.string, ())
-
-        self.update_stats_op = tf.case(
-            [
-                (tf.equal(mode, 'train'), lambda: tf.group(
-                    tf.assign_add(self._signals['train_n_episodes'], self._signals['batch_size_float']),
-                    tf.assign_add(self._signals['train_cumulative_reward'], tf.reduce_sum(self._signals['rewards']))
-                )),
-                (tf.equal(mode, 'off_policy'), lambda: tf.group(
-                    tf.assign_add(self._signals['off_policy_n_episodes'], self._signals['batch_size_float']),
-                    tf.assign_add(self._signals['off_policy_cumulative_reward'], tf.reduce_sum(self._signals['rewards']))
-                )),
-                (tf.equal(mode, 'val'), lambda: tf.group(
-                    tf.assign_add(self._signals['val_n_episodes'], self._signals['batch_size_float']),
-                    tf.assign_add(self._signals['val_cumulative_reward'], tf.reduce_sum(self._signals['rewards']))
-                )),
-            ],
-            default=lambda: tf.group(tf.ones((), dtype=tf.float32), tf.ones((), dtype=tf.float32)),
-            exclusive=True
-        )
-
-        self._signals['reward_per_ep_avg'] = tf.case(
-            [
-                (tf.equal(mode, 'train'), lambda: self._signals['train_reward_per_ep_avg']),
-                (tf.equal(mode, 'off_policy'), lambda: self._signals['off_policy_reward_per_ep_avg']),
-                (tf.equal(mode, 'val'), lambda: self._signals['val_reward_per_ep_avg']),
-            ],
-            default=lambda: tf.zeros_like(self._signals['train_reward_per_ep_avg']),
-            exclusive=True
-        )
-
-        self.add_recorded_values(reward_per_ep_avg=self._signals['reward_per_ep_avg'])
+        self._signals['mode'] = tf.placeholder(tf.string, ())
 
         self._signals['weights'] = tf.placeholder(
             tf.float32, shape=(cfg.T, None, 1), name="_weights")
@@ -353,7 +307,6 @@ class RLContext(Parameterized):
         sess = tf.get_default_session()
         feed_dict = self.make_feed_dict(rollouts, mode, weights)
         self.set_mode(mode)
-        sess.run(self.update_stats_op, feed_dict=feed_dict)
 
         for obj in self.rl_objects:
             if do_update:

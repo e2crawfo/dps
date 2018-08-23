@@ -10,6 +10,8 @@ from dps.env.basic import game
 from dps.env.env import BatchGymEnv
 from dps.utils import Param, square_subplots
 from dps.train import Hook
+from dps.utils.tf import FeedforwardCell, MLP, ScopedFunction
+from dps.rl.policy import Policy, ProductDist, SigmoidNormal, EpsilonSoftmax
 
 
 class CollectBase(game.ObjectGame):
@@ -17,6 +19,8 @@ class CollectBase(game.ObjectGame):
     collectable_specs = Param()
     obstacles_specs = Param()
     step_size = Param()
+    time_reward = Param()
+    discrete_actions = Param()
 
     def __init__(self, **kwargs):
         self.agent_spec = copy.deepcopy(dict(self.agent_spec))
@@ -37,24 +41,36 @@ class CollectBase(game.ObjectGame):
         for i, es in enumerate(self.entity_specs):
             es['idx'] = i
 
+        if self.discrete_actions:
+            action_space = gym.spaces.MultiDiscrete([8, 3])
+        else:
+            action_space = gym.spaces.Box(low=np.array([-1, -1, 0]), high=np.array([1, 1, 1]), dtype=np.float32)
+
         super(CollectBase, self).__init__(
-            action_space=gym.spaces.Box(low=np.array([-1, -1, 0]), high=np.array([1, 1, 1]), dtype=np.float32),
+            action_space=action_space,
             reward_range=(-10, 10),
-            entity_feature_dim=len(self.entity_specs)+1,
+            entity_feature_dim=len(self.entity_specs),
             **kwargs)
 
     def move_entities(self, action):
-        y, x, magnitude = action
-        y = np.clip(y, -1, 1)
-        x = np.clip(x, -1, 1)
-        magnitude = np.clip(magnitude, 0, 1)
-
-        norm = np.sqrt(x**2 + y**2)
-        if norm > 1e-6:
-            y = self.step_size * magnitude * y / norm
-            x = self.step_size * magnitude * x / norm
+        if self.discrete_actions:
+            angle_idx, magnitude_idx = action
+            angle = angle_idx * 2 * np.pi / 8
+            magnitude = [0.1, 0.5, 1.0][int(magnitude_idx)]
+            y = self.step_size * magnitude * np.sin(angle)
+            x = self.step_size * magnitude * np.cos(angle)
         else:
-            y = x = 0
+            y, x, magnitude = action
+            y = np.clip(y, -1, 1)
+            x = np.clip(x, -1, 1)
+            magnitude = np.clip(magnitude, 0, 1)
+
+            norm = np.sqrt(x**2 + y**2)
+            if norm > 1e-6:
+                y = self.step_size * magnitude * y / norm
+                x = self.step_size * magnitude * x / norm
+            else:
+                y = x = 0
 
         return self._move_entity(self.entities[0], y, x)
 
@@ -64,15 +80,21 @@ class CollectBase(game.ObjectGame):
             return (False, True, 0)
         else:
             if other.collectable:
-                return (True, False, 0)
+                if self.time_reward:
+                    return (True, False, 0)
+                else:
+                    return (True, False, 1/self.n_collectables)
             else:
                 return (False, True, 0)
 
     def get_entity_features(self, entity):
-        return [int(entity.idx == i) for i in range(len(self.entity_specs) + 1)]
+        return [int(entity.idx == i) for i in range(len(self.entity_specs))]
 
     def compute_reward(self):
-        return sum([-1 for entity in self.entities if entity.collectable and entity.alive]) / (self.n_collectables * cfg.T)
+        if self.time_reward:
+            return sum([-1 for entity in self.entities if entity.collectable and entity.alive]) / (self.n_collectables * cfg.T)
+        else:
+            return 0.0
 
 
 class CollectA(CollectBase):
@@ -177,7 +199,8 @@ class RolloutsHook(Hook):
         self.env_class = env_class
         self.env_kwargs = env_kwargs or {}
         kwarg_string = "_".join("{}={}".format(k, v) for k, v in self.env_kwargs.items())
-        self.name = env_class.__name__ + ("_" + kwarg_string if kwarg_string else "")
+        name = env_class.__name__ + ("_" + kwarg_string if kwarg_string else "")
+        self.name = name.replace(" ", "_")
         self.plot_step = plot_step
         super(RolloutsHook, self).__init__(**kwargs)
 
@@ -262,8 +285,9 @@ entity_specs[0]['noise_res'] = noise_res
 
 hook_step = 1000
 
+# env config
 config = game.config.copy(
-    env_name="collect_A",
+    env_name="collect",
 
     n_collectables=5,
     n_obstacles=5,
@@ -271,8 +295,6 @@ config = game.config.copy(
     collectable_specs=collectable_specs,
     obstacles_specs=obstacles_specs,
     build_env=build_env,
-    exploration_schedule="Poly(1.0, 0.1, 20000)",
-    val_exploration_schedule=None,
     image_shape=(48, 48), background_colour="white", max_overlap=0.25, step_size=14,
     hooks=[
         RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectB, env_kwargs=dict(n_dirs=4)),
@@ -280,10 +302,109 @@ config = game.config.copy(
         RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectB, env_kwargs=dict(n_dirs=6)),
         RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectB, env_kwargs=dict(n_dirs=7)),
         RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectB, env_kwargs=dict(n_dirs=8)),
+
         RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectC, env_kwargs=dict(n_collectables=5)),
         RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectC, env_kwargs=dict(n_collectables=10)),
+
+        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(n_collectables=6, n_obstacles=6)),
+        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(n_collectables=7, n_obstacles=7)),
+        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(n_collectables=8, n_obstacles=8)),
+        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(n_collectables=9, n_obstacles=9)),
+        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(n_collectables=10, n_obstacles=10)),
+
+        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(image_shape=(72, 72), n_collectables=5, n_obstacles=5)),
+        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(image_shape=(72, 72), n_collectables=6, n_obstacles=6)),
+        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(image_shape=(72, 72), n_collectables=7, n_obstacles=7)),
+        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(image_shape=(72, 72), n_collectables=8, n_obstacles=8)),
+        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(image_shape=(72, 72), n_collectables=9, n_obstacles=9)),
+        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(image_shape=(72, 72), n_collectables=10, n_obstacles=10)),
+
     ],
     angle_sep=np.pi/16,
+
+    discrete_actions=True,
+    time_reward=False,
+    eval_step=1000,
+    display_step=1000,
+
+)
+
+
+class Backbone(ScopedFunction):
+    backbone = None
+    mlp = None
+
+    def _call(self, inp, output_size, is_training):
+        if self.backbone is None:
+            self.backbone = Backbone()
+
+        if self.mlp is None:
+            self.mlp = MLP([100, 100])
+
+        outp = self.backbone(inp, 0, is_training)
+        outp = self.mlp(outp, output_size, is_training)
+        return outp
+
+
+def build_attentional_relation_network(output_size, name):
+    from dps.utils.tf import AttentionalRelationNetwork
+    ff = AttentionalRelationNetwork(n_repeats=2, scope="collection_controller")
+    return FeedforwardCell(ff, output_size, name=name)
+
+
+def build_object_network_controller(output_size, name):
+    from dps.utils.tf import ObjectNetwork
+    ff = ObjectNetwork(n_repeats=1, scope="collection_controller")
+    return FeedforwardCell(ff, output_size, name=name)
+
+
+def build_controller(output_size, name):
+    if cfg.controller_type == "arn":
+        return build_attentional_relation_network(output_size, name)
+    elif cfg.controller_type == "obj":
+        return build_object_network_controller(output_size, name)
+    else:
+        raise Exception("Unknown controller_type: {}".format(cfg.controller_type))
+
+
+def build_policy(env, **kwargs):
+    if cfg.discrete_actions:
+        action_selection = ProductDist(
+            EpsilonSoftmax(8, one_hot=False),
+            EpsilonSoftmax(3, one_hot=False),
+        )
+    else:
+        action_selection = ProductDist(
+            SigmoidNormal(-1, 1, explore=cfg.explore),
+            SigmoidNormal(-1, 1, explore=cfg.explore),
+            SigmoidNormal(0, 1, explore=cfg.explore),)
+    return Policy(action_selection, env.obs_shape, **kwargs)
+
+
+# alg config
+config.update(
+    build_controller=build_controller,
+    controller_type="obj",
+    d=256,
+    layer_norm=True,
+    symmetric_op="max",
+    use_mask=True,
+
+    # For obj
+    build_on_input_network=lambda scope: MLP([128, 128], scope=scope),
+    build_on_object_network=lambda scope: MLP([128, 128], scope=scope),
+    build_on_output_network=lambda scope: MLP([128, 128, 128], scope=scope),
+
+    # For arn
+    build_arn_network=lambda scope: MLP([128, 128], scope=scope),
+    build_arn_object_network=lambda scope: MLP([128, 128], scope=scope),
+    n_heads=1,
+
+    exploration_schedule=0.1,
+    # exploration_schedule="Poly(1.0, 0.1, 20000)",
+    val_exploration_schedule=0.01,
+
+    build_policy=build_policy,
 )
 
 
