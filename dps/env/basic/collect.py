@@ -11,7 +11,7 @@ from dps.env.env import BatchGymEnv
 from dps.utils import Param, square_subplots
 from dps.train import Hook
 from dps.utils.tf import FeedforwardCell, MLP, ScopedFunction
-from dps.rl.policy import Policy, ProductDist, SigmoidNormal, EpsilonSoftmax
+from dps.rl.policy import Policy, ProductDist, SigmoidNormal, Softmax
 
 
 class CollectBase(game.ObjectGame):
@@ -370,8 +370,7 @@ def build_controller(output_size, name):
 def build_policy(env, **kwargs):
     if cfg.discrete_actions:
         action_selection = ProductDist(
-            EpsilonSoftmax(8, one_hot=False),
-            EpsilonSoftmax(3, one_hot=False),
+            Softmax(8, one_hot=False), Softmax(3, one_hot=False),
         )
     else:
         action_selection = ProductDist(
@@ -400,9 +399,8 @@ config.update(
     build_arn_object_network=lambda scope: MLP([128, 128], scope=scope),
     n_heads=1,
 
-    exploration_schedule=0.1,
-    # exploration_schedule="Poly(1.0, 0.1, 20000)",
-    val_exploration_schedule=0.01,
+    exploration_schedule=1.0,
+    val_exploration_schedule=0.1,
 
     build_policy=build_policy,
 )
