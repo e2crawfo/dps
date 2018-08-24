@@ -26,9 +26,11 @@ class RolloutCallback(object):
 
             height, width = self.dataset.image_shape
 
+            import pdb; pdb.set_trace()
+
             annotations = [
                 [0, top * height, top * height + h, left * width, left * width + w]
-                for _, top, left, h, w, *_ in entities]
+                for alive, top, left, h, w, *_ in entities if bool(alive)]
 
             self.dataset._write_example(image=image, annotations=annotations, label=0)
             self.n_kept += 1
