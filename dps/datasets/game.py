@@ -27,8 +27,8 @@ class RolloutCallback(object):
             height, width = self.dataset.image_shape
 
             annotations = [
-                [0, top * height, top * height + h * height, left * width, left * width + w * width]
-                for top, left, h, w, *_ in entities]
+                [0, top * height, top * height + h, left * width, left * width + w]
+                for _, top, left, h, w, *_ in entities]
 
             self.dataset._write_example(image=image, annotations=annotations, label=0)
             self.n_kept += 1
