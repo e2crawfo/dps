@@ -149,7 +149,8 @@ class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
                     log_probs=log_prob_ta.stack(),
                     entropy=entropy_ta.stack(),
                     utils=util_ta.stack(),
-                    policy_states=tf.concat([policy_state_ta.stack(), final_policy_state[None, ...]], axis=0)
+                    policy_states=policy_state_ta.stack(),
+                    # policy_states=tf.concat([policy_state_ta.stack(), final_policy_state[None, ...]], axis=0)
                 )
 
                 assert len(self.info_shapes) == len(info_tas)
@@ -173,6 +174,7 @@ class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
         policy.set_mode(mode)
         self.set_mode(mode, n_rollouts)
 
+        T = 0 if T is None else T
         feed_dict = {self.n_rollouts: n_rollouts, self.T: T, self.mode: mode}
 
         if exploration is not None:
@@ -255,7 +257,8 @@ class BatchGymEnv(Env):
             self._action_shape = (1,)
             self.n_actions = self.gym_env.action_space.n
         else:
-            self._action_shape = self.gym_env.action_space.shape
+            action_shape = self.gym_env.action_space.shape
+            self._action_shape = action_shape or (1,)
 
         self._obs = np.zeros((0,)+self.obs_shape)
         self._done = np.ones((0, 1)).astype('bool')
@@ -305,10 +308,11 @@ class BatchGymEnv(Env):
         info = defaultdict(list)
         assert len(actions) == self._n_rollouts
 
+        actions = np.array(actions).astype(self.gym_env.action_space.dtype).reshape((-1, *self.gym_env.action_space.shape))
+
         for idx, (a, env) in enumerate(zip(actions, self._active_envs)):
             if self.done[idx, 0]:
                 rewards.append(0.0)
-                info.append({})
             else:
                 o, r, d, i = env.step(a)
                 self.obs[idx, ...] = o

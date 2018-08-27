@@ -188,7 +188,7 @@ class RLContext(Parameterized):
             tf.float32, shape=(cfg.T, None, 1), name="_done")
 
         self._signals['all_obs'] = tf.placeholder(
-            tf.float32, shape=(cfg.T+1, None) + self.obs_shape, name="_all_obs")
+            tf.float32, shape=(cfg.T+1 if cfg.T is not None else None, None) + self.obs_shape, name="_all_obs")
 
         # observations that we learn about
         self._signals['obs'] = tf.identity(self._signals['all_obs'][:-1, ...], name="_obs")
@@ -237,6 +237,15 @@ class RLContext(Parameterized):
         for obj in self.rl_objects:
             obj.build_core_signals(self)
 
+    @staticmethod
+    def at_least_3d(array):
+        array = np.array(array)
+        if array.ndim < 2:
+            raise Exception("Array has shape {}".format(array.shape))
+        if array.ndim == 2:
+            array = array[..., None]
+        return array
+
     def make_feed_dict(self, rollouts, mode, weights=None):
         if weights is None:
             weights = np.ones((rollouts.T, rollouts.batch_size, 1))
@@ -244,20 +253,20 @@ class RLContext(Parameterized):
             weights = np.tile(weights.reshape(1, -1, 1), (rollouts.T, 1, 1))
 
         feed_dict = {
-            self._signals['done']: rollouts['done'],
-            self._signals['mask']: (1-shift_fill(rollouts['done'], 1)).astype('f'),
-            self._signals['all_obs']: rollouts.o,
-            self._signals['actions']: rollouts.a,
-            self._signals['rewards']: rollouts.r,
-            self._signals['weights']: weights,
-            self._signals['mu_log_probs']: rollouts.log_probs,
+            self._signals['done']: self.at_least_3d(rollouts['done']),
+            self._signals['mask']: self.at_least_3d((1-shift_fill(rollouts['done'], 1)).astype('f')),
+            self._signals['all_obs']: self.at_least_3d(rollouts.o),
+            self._signals['actions']: self.at_least_3d(rollouts.a),
+            self._signals['rewards']: self.at_least_3d(rollouts.r),
+            self._signals['weights']: self.at_least_3d(weights),
+            self._signals['mu_log_probs']: self.at_least_3d(rollouts.log_probs),
             self._signals['mode']: mode,
         }
 
         if hasattr(rollouts, 'utils'):
             # utils are not always stored in the rollouts as they can occupy a lot of memory
             feed_dict.update({
-                self._signals['mu_utils']: rollouts.utils,
+                self._signals['mu_utils']: self.at_least_3d(rollouts.utils),
                 self._signals['mu_exploration']: rollouts.get_static('exploration')
             })
 
