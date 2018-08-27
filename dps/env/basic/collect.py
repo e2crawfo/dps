@@ -382,15 +382,19 @@ def build_policy(env, **kwargs):
 config.update(
     build_controller=build_controller,
     controller_type="obj",
-    d=256,
+    d=128,
+    # d=256,
     layer_norm=True,
     symmetric_op="max",
     use_mask=True,
 
     # For obj
-    build_on_input_network=lambda scope: MLP([128, 128], scope=scope),
-    build_on_object_network=lambda scope: MLP([128, 128], scope=scope),
-    build_on_output_network=lambda scope: MLP([128, 128, 128], scope=scope),
+    # build_on_input_network=lambda scope: MLP([128, 128], scope=scope),
+    # build_on_object_network=lambda scope: MLP([128, 128], scope=scope),
+    # build_on_output_network=lambda scope: MLP([128, 128, 128], scope=scope),
+    build_on_input_network=lambda scope: MLP([128], scope=scope),
+    build_on_object_network=lambda scope: MLP([128], scope=scope),
+    build_on_output_network=lambda scope: MLP([128, 128], scope=scope),
 
     # For arn
     build_arn_network=lambda scope: MLP([128, 128], scope=scope),
@@ -398,7 +402,7 @@ config.update(
     n_heads=1,
 
     exploration_schedule=1.0,
-    val_exploration_schedule=0.1,
+    val_exploration_schedule=1.0,
 
     build_policy=build_policy,
 )

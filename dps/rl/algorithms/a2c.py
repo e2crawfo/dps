@@ -129,7 +129,6 @@ actor_critic_config = config.copy(
 ppo_config = config.copy(
     exp_name="PPO",
     opt_steps_per_update=10,
-    sub_batch_size=2,
     epsilon=0.2,
     value_weight=0.0,
 )

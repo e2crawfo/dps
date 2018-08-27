@@ -1205,6 +1205,8 @@ class FeedforwardCell(ScopedCell):
         The size of the output, passed as the second argument when calling ``output``.
 
     """
+    ignore_state = True
+
     def __init__(self, ff, output_size, name="feedforward_cell"):
         self.ff = ff
         self._output_size = output_size

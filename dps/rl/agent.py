@@ -102,13 +102,23 @@ class Agent(RLObject):
                 # Using a tensorflow while loop makes some things impossible, such as
                 # second order differentiation.
 
-                state = self.controller.zero_state(batch_size, tf.float32)
+                if getattr(self.controller, "ignore_state", False):
+                    dummy_state = self.controller.zero_state(T*batch_size, tf.float32)
 
-                utils = []
-                for t in range(T):
-                    u, state = self.controller(obs[t, ...], state)
-                    utils.append(u)
-                utils = tf.stack(utils)
+                    new_shape = tf.concat([[-1], tf.shape(obs)[2:]], axis=0)
+                    reshaped_obs = tf.reshape(obs, new_shape)
+
+                    utils, _ = self.controller(reshaped_obs, dummy_state)
+                    new_shape = tf.concat([[T, batch_size], tf.shape(utils)[1:]], axis=0)
+                    utils = tf.reshape(utils, new_shape)
+                else:
+                    state = self.controller.zero_state(batch_size, tf.float32)
+
+                    utils = []
+                    for t in range(T):
+                        u, state = self.controller(obs[t, ...], state)
+                        utils.append(u)
+                    utils = tf.stack(utils)
 
             return utils
         else:
