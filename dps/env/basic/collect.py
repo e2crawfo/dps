@@ -202,7 +202,7 @@ class RolloutsHook(Hook):
         name = env_class.__name__ + ("_" + kwarg_string if kwarg_string else "")
         self.name = name.replace(" ", "_")
         self.plot_step = plot_step
-        super(RolloutsHook, self).__init__(**kwargs)
+        super(RolloutsHook, self).__init__(final=True, **kwargs)
 
     def start_stage(self, training_loop, stage_idx):
         gym_env = self.env_class(**self.env_kwargs)
@@ -237,7 +237,7 @@ class RolloutsHook(Hook):
 
         plt.close(fig)
 
-    def step(self, training_loop, updater, step_idx):
+    def step(self, training_loop, updater, step_idx=None):
         n_rollouts = cfg.n_val_rollouts
         batch_size = cfg.batch_size
         record = defaultdict(float)
@@ -253,7 +253,7 @@ class RolloutsHook(Hook):
                     key = "{}-reward_per_ep".format(self.name)
                     record[key] += _batch_size * rollouts.rewards.sum(0).mean()
 
-            if it == 0 and self.plot_step and step_idx % self.plot_step == 0:
+            if it == 0 and self.plot_step and (step_idx is None or step_idx % self.plot_step == 0):
                 self.plot(updater, rollouts)
 
         return dict(val={k: v / n_rollouts for k, v in record.items()})
@@ -318,7 +318,6 @@ config = game.config.copy(
         RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(image_shape=(72, 72), n_collectables=8, n_obstacles=8)),
         RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(image_shape=(72, 72), n_collectables=9, n_obstacles=9)),
         RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(image_shape=(72, 72), n_collectables=10, n_obstacles=10)),
-
     ],
     angle_sep=np.pi/16,
 
@@ -370,8 +369,7 @@ def build_controller(output_size, name):
 def build_policy(env, **kwargs):
     if cfg.discrete_actions:
         action_selection = ProductDist(
-            Softmax(8, one_hot=False), Softmax(3, one_hot=False),
-        )
+            Softmax(8, one_hot=False), Softmax(3, one_hot=False))
     else:
         action_selection = ProductDist(
             SigmoidNormal(-1, 1, explore=cfg.explore),

@@ -512,6 +512,16 @@ class TrainingLoop(object):
                             updater.restore(sess, best_path)
 
                             test_record = updater.evaluate(cfg.batch_size, mode="test")
+
+                            for hook in cfg.hooks:
+                                if hook.call_per_timestep and hook.final:
+                                    hook_record = hook.step(self, updater)
+
+                                    if hook_record:
+                                        assert len(hook_record) == 1
+                                        for k, d in dict(hook_record).items():
+                                            test_record.update(d)
+
                             self.data.record_values_for_stage(
                                 **{'_test_' + k: v for k, v in test_record.items()})
 
@@ -525,7 +535,7 @@ class TrainingLoop(object):
                             traceback.print_exc()
 
                     else:
-                        print("\n" + "-" * 10 + " Skipping final rendering " + "-" * 10)
+                        print("\n" + "-" * 10 + " Skipping final testing/rendering " + "-" * 10)
 
                     # --------------- Finish up the stage -------------------
 
@@ -1061,21 +1071,26 @@ class Hook(object):
         Hook is called every n steps throughout training.
     initial: bool
         If True, this hook is called on the first step of a stage.
+    final: bool
+        If True, this hook is called at the end of stage, after loading
+        the best hypothesis.
 
     """
-    def __init__(self, n=None, initial=False):
+    def __init__(self, n=None, initial=False, final=False):
         self.n = n
         self.initial = initial
+        self.final = final
 
     @property
     def call_per_timestep(self):
         return bool(self.n)
 
     def _attrs(self):
-        return "n initial".split()
+        return "n initial final".split()
 
     def __str__(self):
-        attr_string = ", ".join("{}={}".format(k, getattr(self, k)) for k in self._attrs())
+        attr_string = ", ".join(
+            "{}={}".format(k, getattr(self, k)) for k in self._attrs())
         return("{}({})".format(self.__class__.__name__, attr_string))
 
     def __repr__(self):
