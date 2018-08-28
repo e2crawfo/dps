@@ -348,8 +348,10 @@ class ObjectGame(Parameterized, gym.Env):
         height, width = self.image_shape
         representation = np.zeros((self.max_entities, 5 + self.entity_feature_dim))
 
+        entities = np.random.permutation(self.entities)
+
         i = 0
-        for entity in self.entities:
+        for entity in entities:
             if not entity.alive:
                 continue
 
@@ -468,7 +470,7 @@ class ObjectGame(Parameterized, gym.Env):
         return [seed]
 
 
-def sample_entities(image_shape, patch_shapes, max_overlap=None, size_std=None):
+def sample_entities(image_shape, patch_shapes, max_overlap=None, size_std=None, masks=None):
     if len(patch_shapes) == 0:
         return []
 
@@ -493,20 +495,27 @@ def sample_entities(image_shape, patch_shapes, max_overlap=None, size_std=None):
 
             rect = Entity(position=position, shape=(m, n))
 
-            if max_overlap is None:
-                rects.append(rect)
-                break
-            else:
-                violation = False
-                for r in rects:
-                    min_area = min(rect.area, r.area)
-                    if rect.overlap_area(r) / min_area > max_overlap:
-                        violation = True
-                        break
+            mask_valid = True
+            if masks is not None:
+                mask_idx_y = int(masks[i].shape[0] * rect.center[0] / image_shape[0])
+                mask_idx_x = int(masks[i].shape[1] * rect.center[1] / image_shape[1])
+                mask_valid = masks[i][mask_idx_y, mask_idx_x] > 0.5
 
-                if not violation:
+            if mask_valid:
+                if max_overlap is None:
                     rects.append(rect)
                     break
+                else:
+                    violation = False
+                    for r in rects:
+                        min_area = min(rect.area, r.area)
+                        if rect.overlap_area(r) / min_area > max_overlap:
+                            violation = True
+                            break
+
+                    if not violation:
+                        rects.append(rect)
+                        break
 
             n_tries += 1
 

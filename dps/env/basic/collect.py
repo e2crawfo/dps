@@ -17,7 +17,7 @@ from dps.rl.policy import Policy, ProductDist, SigmoidNormal, Softmax
 class CollectBase(game.ObjectGame):
     agent_spec = Param()
     collectable_specs = Param()
-    obstacles_specs = Param()
+    obstacle_specs = Param()
     step_size = Param()
     time_reward = Param()
     discrete_actions = Param()
@@ -31,12 +31,12 @@ class CollectBase(game.ObjectGame):
         for spec in self.collectable_specs:
             spec['collectable'] = True
 
-        self.obstacles_specs = copy.deepcopy(list(self.obstacles_specs))
-        self.obstacles_specs = [dict(os) for os in self.obstacles_specs]
-        for spec in self.obstacles_specs:
+        self.obstacle_specs = copy.deepcopy(list(self.obstacle_specs))
+        self.obstacle_specs = [dict(os) for os in self.obstacle_specs]
+        for spec in self.obstacle_specs:
             spec['collectable'] = False
 
-        self.entity_specs = [self.agent_spec] + self.collectable_specs + self.obstacles_specs
+        self.entity_specs = [self.agent_spec] + self.collectable_specs + self.obstacle_specs
 
         for i, es in enumerate(self.entity_specs):
             es['idx'] = i
@@ -112,8 +112,8 @@ class CollectA(CollectBase):
 
     def setup_field(self):
         collectable_specs = list(np.random.choice(self.collectable_specs, size=self.n_collectables, replace=True))
-        obstacles_specs = list(np.random.choice(self.obstacles_specs, size=self.n_obstacles, replace=True))
-        specs = [self.agent_spec] + collectable_specs + obstacles_specs
+        obstacle_specs = list(np.random.choice(self.obstacle_specs, size=self.n_obstacles, replace=True))
+        specs = [self.agent_spec] + collectable_specs + obstacle_specs
         shapes = [spec['shape'] for spec in specs]
 
         rectangles = game.sample_entities(self.image_shape, shapes, self.max_overlap)
@@ -131,6 +131,8 @@ def build_env():
 
 
 class CollectB(CollectBase):
+    """ Objects placed in a circle concentric with the image, and only one collectable. """
+
     angle_sep = Param()
     n_dirs = Param()
     max_entities = None
@@ -157,8 +159,8 @@ class CollectB(CollectBase):
                 centers.append((y, x))
 
         collectable_spec = np.random.choice(self.collectable_specs)
-        obstacles_specs = list(np.random.choice(self.obstacles_specs, size=2*self.n_dirs-1, replace=True))
-        object_specs = np.random.permutation([collectable_spec] + obstacles_specs)
+        obstacle_specs = list(np.random.choice(self.obstacle_specs, size=2*self.n_dirs-1, replace=True))
+        object_specs = np.random.permutation([collectable_spec] + obstacle_specs)
 
         agent = game.Entity(**self.agent_spec)
         agent.center = center
@@ -172,6 +174,8 @@ class CollectB(CollectBase):
 
 
 class CollectC(CollectBase):
+    """ No obstacles. """
+
     max_overlap = Param()
     n_collectables = Param()
     max_entities = None
@@ -186,6 +190,97 @@ class CollectC(CollectBase):
         shapes = [spec['shape'] for spec in specs]
 
         rectangles = game.sample_entities(self.image_shape, shapes, self.max_overlap)
+        entities = [game.Entity(**spec) for spec in specs]
+        for rect, entity in zip(rectangles, entities):
+            entity.top = rect.top
+            entity.left = rect.left
+
+        return entities
+
+
+def create_maze(shape):
+    # Random Maze Generator using Depth-first Search
+    # http://en.wikipedia.org/wiki/Maze_generation_algorithm
+    # FB - 20121214
+    my, mx = shape
+    maze = np.zeros(shape)
+    dirs = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+
+    # start the maze from a random cell
+    stack = [(np.random.randint(0, mx), np.random.randint(0, my))]
+
+    while len(stack) > 0:
+        (cy, cx) = stack[-1]
+        maze[cy, cx] = 1
+
+        # find a new cell to add
+        nlst = []  # list of available neighbors
+        for i, (dy, dx) in enumerate(dirs):
+            ny = cy + dy
+            nx = cx + dx
+
+            if ny >= 0 and ny < my and nx >= 0 and nx < mx:
+                if maze[ny, nx] == 0:
+                    # of occupied neighbors must be 1
+                    ctr = 0
+                    for _dy, _dx in dirs:
+                        ex = nx + _dx
+                        ey = ny + _dy
+
+                        if ex >= 0 and ex < mx and ey >= 0 and ey < my:
+                            if maze[ey, ex] == 1:
+                                ctr += 1
+
+                    if ctr == 1:
+                        nlst.append(i)
+
+        # if 1 or more neighbors available then randomly select one and move
+        if len(nlst) > 0:
+            ir = np.random.choice(nlst)
+            dy, dx = dirs[ir]
+            cy += dy
+            cx += dx
+            stack.append((cy, cx))
+        else:
+            stack.pop()
+
+    return maze
+
+
+class CollectD(CollectBase):
+    """ Same as CollectA, but obstacles are arranged into a maze. """
+    n_collectables = Param()
+    n_obstacles = Param()
+    max_overlap = Param()
+
+    max_entities = None
+
+    def __init__(self, **kwargs):
+        self.max_entities = 1 + self.n_collectables + self.n_obstacles
+        assert self.n_collectables > 0
+
+        super(CollectD, self).__init__(**kwargs)
+
+    def setup_field(self):
+        agent_shape = self.agent_spec['shape']
+        maze_shape = (
+            int(np.ceil(self.image_shape[0] / agent_shape[0])),
+            int(np.ceil(self.image_shape[1] / agent_shape[1])))
+
+        maze = create_maze(maze_shape)
+
+        collectable_specs = list(np.random.choice(self.collectable_specs, size=self.n_collectables, replace=True))
+        obstacle_specs = list(np.random.choice(self.obstacle_specs, size=self.n_obstacles, replace=True))
+        specs = [self.agent_spec] + collectable_specs + obstacle_specs
+        shapes = [spec['shape'] for spec in specs]
+
+        maze = maze[None, :, :]
+        masks = np.concatenate(
+            [np.tile(1-maze, (self.n_collectables+1, 1, 1)),
+             np.tile(maze, (self.n_obstacles, 1, 1))],
+            axis=0)
+
+        rectangles = game.sample_entities(self.image_shape, shapes, self.max_overlap, masks=masks)
         entities = [game.Entity(**spec) for spec in specs]
         for rect, entity in zip(rectangles, entities):
             entity.top = rect.top
@@ -259,31 +354,29 @@ class RolloutsHook(Hook):
         return dict(val={k: v / n_rollouts for k, v in record.items()})
 
 
-agent_size = (10, 10)
-entity_size = (10, 10)
-noise_res = None
-# colors = "black"
 colors = "red green blue"
 
-agent_spec = dict(appearance="star", color=colors)  # color="black")
+agent_spec = dict(appearance="star", color="black", z=100, shape=(10, 10))
+
+entity_size = (10, 10)
+noise_res = getattr(cfg, 'noise_res', None)
 
 collectable_specs = [dict(appearance="x", color=colors)]
 
-obstacles_specs = [
+obstacle_specs = [
     dict(appearance="circle", color=colors),
     dict(appearance="ud_triangle", color=colors),
     dict(appearance="triangle", color=colors),
     dict(appearance="plus", color=colors),
     dict(appearance="diamond", color=colors),
 ]
-entity_specs = [agent_spec] + collectable_specs + obstacles_specs
 
-for es in entity_specs:
+for es in collectable_specs + obstacle_specs:
     es.update(shape=entity_size, noise_res=noise_res)
-entity_specs[0]['shape'] = agent_size
-entity_specs[0]['noise_res'] = noise_res
+
 
 hook_step = 1000
+hook_kwargs = dict(n=hook_step, plot_step=hook_step, initial=True)
 
 # env config
 config = game.config.copy(
@@ -291,33 +384,35 @@ config = game.config.copy(
 
     n_collectables=5,
     n_obstacles=5,
+
     agent_spec=agent_spec,
     collectable_specs=collectable_specs,
-    obstacles_specs=obstacles_specs,
+    obstacle_specs=obstacle_specs,
+
     build_env=build_env,
     image_shape=(48, 48), background_colour="white", max_overlap=0.25, step_size=14,
     hooks=[
-        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectB, env_kwargs=dict(n_dirs=4)),
-        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectB, env_kwargs=dict(n_dirs=5)),
-        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectB, env_kwargs=dict(n_dirs=6)),
-        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectB, env_kwargs=dict(n_dirs=7)),
-        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectB, env_kwargs=dict(n_dirs=8)),
+        RolloutsHook(env_class=CollectB, env_kwargs=dict(n_dirs=4), **hook_kwargs),
+        RolloutsHook(env_class=CollectB, env_kwargs=dict(n_dirs=5), **hook_kwargs),
+        RolloutsHook(env_class=CollectB, env_kwargs=dict(n_dirs=6), **hook_kwargs),
+        RolloutsHook(env_class=CollectB, env_kwargs=dict(n_dirs=7), **hook_kwargs),
+        RolloutsHook(env_class=CollectB, env_kwargs=dict(n_dirs=8), **hook_kwargs),
 
-        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectC, env_kwargs=dict(n_collectables=5)),
-        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectC, env_kwargs=dict(n_collectables=10)),
+        RolloutsHook(env_class=CollectC, env_kwargs=dict(n_collectables=5), **hook_kwargs),
+        RolloutsHook(env_class=CollectC, env_kwargs=dict(n_collectables=10), **hook_kwargs),
 
-        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(n_collectables=6, n_obstacles=6)),
-        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(n_collectables=7, n_obstacles=7)),
-        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(n_collectables=8, n_obstacles=8)),
-        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(n_collectables=9, n_obstacles=9)),
-        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(n_collectables=10, n_obstacles=10)),
+        RolloutsHook(env_class=CollectA, env_kwargs=dict(n_collectables=6, n_obstacles=6), **hook_kwargs),
+        RolloutsHook(env_class=CollectA, env_kwargs=dict(n_collectables=7, n_obstacles=7), **hook_kwargs),
+        RolloutsHook(env_class=CollectA, env_kwargs=dict(n_collectables=8, n_obstacles=8), **hook_kwargs),
+        RolloutsHook(env_class=CollectA, env_kwargs=dict(n_collectables=9, n_obstacles=9), **hook_kwargs),
+        RolloutsHook(env_class=CollectA, env_kwargs=dict(n_collectables=10, n_obstacles=10), **hook_kwargs),
 
-        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(image_shape=(72, 72), n_collectables=5, n_obstacles=5)),
-        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(image_shape=(72, 72), n_collectables=6, n_obstacles=6)),
-        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(image_shape=(72, 72), n_collectables=7, n_obstacles=7)),
-        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(image_shape=(72, 72), n_collectables=8, n_obstacles=8)),
-        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(image_shape=(72, 72), n_collectables=9, n_obstacles=9)),
-        RolloutsHook(n=hook_step, plot_step=hook_step, initial=True, env_class=CollectA, env_kwargs=dict(image_shape=(72, 72), n_collectables=10, n_obstacles=10)),
+        RolloutsHook(env_class=CollectA, env_kwargs=dict(image_shape=(72, 72), n_collectables=5, n_obstacles=5), **hook_kwargs),
+        RolloutsHook(env_class=CollectA, env_kwargs=dict(image_shape=(72, 72), n_collectables=6, n_obstacles=6), **hook_kwargs),
+        RolloutsHook(env_class=CollectA, env_kwargs=dict(image_shape=(72, 72), n_collectables=7, n_obstacles=7), **hook_kwargs),
+        RolloutsHook(env_class=CollectA, env_kwargs=dict(image_shape=(72, 72), n_collectables=8, n_obstacles=8), **hook_kwargs),
+        RolloutsHook(env_class=CollectA, env_kwargs=dict(image_shape=(72, 72), n_collectables=9, n_obstacles=9), **hook_kwargs),
+        RolloutsHook(env_class=CollectA, env_kwargs=dict(image_shape=(72, 72), n_collectables=10, n_obstacles=10), **hook_kwargs),
     ],
     angle_sep=np.pi/16,
 
