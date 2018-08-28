@@ -758,13 +758,7 @@ class PatchesDataset(ImageDataset):
 
             # --- sample and populate patches ---
 
-            patches, patch_labels, image_label = self._sample_patches()
-            patch_shapes = np.array([img.shape for img in patches])
-
-            locs = self._sample_patch_locations(
-                patch_shapes,
-                max_overlap=self.max_overlap,
-                size_std=self.patch_size_std)
+            locs, patches, patch_labels, image_label = self._sample_image()
 
             draw_offset = self.draw_offset
 
@@ -871,6 +865,16 @@ class PatchesDataset(ImageDataset):
                 new_labels.append((label, top, bottom, left, right))
 
         return new_labels
+
+    def _sample_image(self):
+        patches, patch_labels, image_label = self._sample_patches()
+        patch_shapes = np.array([img.shape for img in patches])
+
+        locs = self._sample_patch_locations(
+            patch_shapes,
+            max_overlap=self.max_overlap,
+            size_std=self.patch_size_std)
+        return locs, patches, patch_labels, image_label
 
     def _sample_patches(self):
         raise Exception("AbstractMethod")
