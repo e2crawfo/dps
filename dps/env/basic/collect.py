@@ -1,7 +1,7 @@
 import numpy as np
 import gym
 import copy
-from matplotlib import pyplot as plt
+import matplotlib.pyplot as plt
 from matplotlib import animation
 from collections import defaultdict
 
@@ -299,7 +299,7 @@ class RolloutsHook(Hook):
         self.plot_step = plot_step
         super(RolloutsHook, self).__init__(final=True, **kwargs)
 
-    def start_stage(self, training_loop, stage_idx):
+    def start_stage(self, training_loop, updater, stage_idx):
         gym_env = self.env_class(**self.env_kwargs)
         self.env = BatchGymEnv(gym_env=gym_env)
 

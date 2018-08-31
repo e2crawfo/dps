@@ -172,7 +172,7 @@ class DifferentiableUpdater(Updater):
 class DataManager(Parameterized):
     shuffle_buffer_size = Param(1000)
 
-    def __init__(self, train_dataset, val_dataset, test_dataset, batch_size, **kwargs):
+    def __init__(self, train_dataset=None, val_dataset=None, test_dataset=None, batch_size=1, **kwargs):
         self.train_dataset = train_dataset
         self.val_dataset = val_dataset
         self.test_dataset = test_dataset
@@ -180,50 +180,63 @@ class DataManager(Parameterized):
         self.batch_size = batch_size
 
     def build_graph(self):
-        # --- train ---
-
-        train_dataset = tf.data.TFRecordDataset(self.train_dataset.filename)
-
-        shuffle_and_repeat = tf.contrib.data.shuffle_and_repeat(self.shuffle_buffer_size)
-        train_dataset = (train_dataset.apply(shuffle_and_repeat)
-                                      .batch(self.batch_size)
-                                      .map(self.train_dataset.parse_example_batch)
-                                      .prefetch(10))
-
-        self.train_iterator = train_dataset.make_one_shot_iterator()
-
         sess = tf.get_default_session()
-        self.train_handle = sess.run(self.train_iterator.string_handle())
+
+        datasets = []
+
+        # --- train ---
+        if self.train_dataset is not None:
+            train_dataset = tf.data.TFRecordDataset(self.train_dataset.filename)
+
+            shuffle_and_repeat = tf.contrib.data.shuffle_and_repeat(self.shuffle_buffer_size)
+            train_dataset = (train_dataset.apply(shuffle_and_repeat)
+                                          .batch(self.batch_size)
+                                          .map(self.train_dataset.parse_example_batch)
+                                          .prefetch(10))
+
+            datasets.append(train_dataset)
+
+            self.train_iterator = train_dataset.make_one_shot_iterator()
+
+            self.train_handle = sess.run(self.train_iterator.string_handle())
 
         # --- val --
 
-        val_dataset = tf.data.TFRecordDataset(self.val_dataset.filename)
+        if self.val_dataset is not None:
+            val_dataset = tf.data.TFRecordDataset(self.val_dataset.filename)
 
-        val_dataset = (val_dataset.batch(self.batch_size)
-                                  .map(self.val_dataset.parse_example_batch)
-                                  .prefetch(10))
+            val_dataset = (val_dataset.batch(self.batch_size)
+                                      .map(self.val_dataset.parse_example_batch)
+                                      .prefetch(10))
 
-        self.val_iterator = val_dataset.make_initializable_iterator()
+            datasets.append(val_dataset)
 
-        self.val_handle = sess.run(self.val_iterator.string_handle())
+            self.val_iterator = val_dataset.make_initializable_iterator()
+
+            self.val_handle = sess.run(self.val_iterator.string_handle())
 
         # --- test --
 
-        test_dataset = tf.data.TFRecordDataset(self.test_dataset.filename)
+        if self.test_dataset is not None:
+            test_dataset = tf.data.TFRecordDataset(self.test_dataset.filename)
 
-        test_dataset = (test_dataset.batch(self.batch_size)
-                                    .map(self.test_dataset.parse_example_batch)
-                                    .prefetch(10))
+            test_dataset = (test_dataset.batch(self.batch_size)
+                                        .map(self.test_dataset.parse_example_batch)
+                                        .prefetch(10))
+            datasets.append(test_dataset)
 
-        self.test_iterator = test_dataset.make_initializable_iterator()
+            self.test_iterator = test_dataset.make_initializable_iterator()
 
-        self.test_handle = sess.run(self.test_iterator.string_handle())
+            self.test_handle = sess.run(self.test_iterator.string_handle())
+
+        assert datasets, "Must supply at least one of train_dataset, val_dataset, test_dataset"
+        dataset = datasets[0]
 
         # --- outputs ---
 
         self.handle = tf.placeholder(tf.string, shape=())
         self.iterator = tf.data.Iterator.from_string_handle(
-            self.handle, train_dataset.output_types, train_dataset.output_shapes)
+            self.handle, dataset.output_types, dataset.output_shapes)
         self.is_training = tf.placeholder(tf.bool, shape=())
 
     def do_train(self):

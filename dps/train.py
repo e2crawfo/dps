@@ -291,10 +291,6 @@ class TrainingLoop(object):
                 if callable(stage_prepare_func):
                     stage_prepare_func()  # Modify the stage config in arbitrary ways before starting stage
 
-                for hook in cfg.hooks:
-                    assert isinstance(hook, Hook)
-                    hook.start_stage(self, stage_idx)
-
                 # Configure and create session and graph for stage.
                 session_config = tf.ConfigProto()
                 session_config.intra_op_parallelism_threads = cfg.get('intra_op_parallelism_threads', 0)
@@ -433,6 +429,10 @@ class TrainingLoop(object):
                 tf.train.get_or_create_global_step()
                 sess.run(uninitialized_variables_initializer())
                 sess.run(tf.assert_variables_initialized())
+
+                for hook in cfg.hooks:
+                    assert isinstance(hook, Hook)
+                    hook.start_stage(self, updater, stage_idx)
 
                 threshold_reached = False
                 reason = None
@@ -1096,7 +1096,7 @@ class Hook(object):
     def __repr__(self):
         return str(self)
 
-    def start_stage(self, training_loop, stage_idx):
+    def start_stage(self, training_loop, updater, stage_idx):
         """ Called at the beginning of every stage. """
         pass
 
@@ -1136,7 +1136,7 @@ class ScheduleHook(Hook):
     def _attr_value_for_fragment(self):
         raise Exception("NotImplemented")
 
-    def start_stage(self, training_loop, stage_idx):
+    def start_stage(self, training_loop, updater, stage_idx):
         if stage_idx == 0:
             self.final_orig_stage = len(training_loop.curriculum) - 1
 

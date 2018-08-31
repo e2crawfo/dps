@@ -42,7 +42,7 @@ def apply_mask_and_group_at_front(data, mask):
                    [[1, 0],
                     [0, 0]]])
 
-        >> result, _ = apply_mask_and_group_at_front(data, mask)
+        >> result, _, _ = apply_mask_and_group_at_front(data, mask)
         >> tf.Session.run(result)
             array([[[ 0,  1,  2],
                     [ 3,  4,  5],
@@ -737,7 +737,7 @@ def pool_objects(op, objects, mask):
         objects = tf.where(mask, objects, -np.inf * tf.ones_like(objects))
         pooled_objects = tf.reduce_max(objects, axis=1, keepdims=False)
     else:
-        raise Exception("Unknown symmetric op for ObjectNetwork: {}. "
+        raise Exception("Unknown symmetric op: {}. "
                         "Valid values are: None, concat, mean, max.".format(op))
     return pooled_objects
 
