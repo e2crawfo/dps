@@ -716,9 +716,9 @@ class TrainingLoop(object):
 
             # --------------- Perform an update -------------------
 
-            update_start_time = time.time()
-
             if cfg.do_train:
+                update_start_time = time.time()
+
                 _old_n_experiences = updater.n_experiences
 
                 update_record = updater.update(cfg.batch_size)
@@ -729,7 +729,14 @@ class TrainingLoop(object):
                 n_experiences_delta = updater.n_experiences - _old_n_experiences
                 self.n_global_experiences += n_experiences_delta
 
-            update_duration = time.time() - update_start_time
+                update_duration = time.time() - update_start_time
+
+                total_train_time += update_duration
+                time_per_example = total_train_time / updater.n_experiences
+                time_per_update = total_train_time / updater.n_updates
+
+                total_hooks_time += hooks_duration
+                time_per_hook = total_hooks_time / updater.n_updates
 
             # --------------- Store data -------------------
 
@@ -741,13 +748,6 @@ class TrainingLoop(object):
                 stage_idx, local_step, global_step,
                 updater.n_experiences, self.n_global_experiences,
                 **records)
-
-            total_train_time += update_duration
-            time_per_example = total_train_time / updater.n_experiences
-            time_per_update = total_train_time / updater.n_updates
-
-            total_hooks_time += hooks_duration
-            time_per_hook = total_hooks_time / updater.n_updates
 
             self.data.record_values_for_stage(
                 time_per_example=time_per_example,
