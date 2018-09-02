@@ -92,7 +92,7 @@ class DummyUpdater(Updater):
         return dict(train={})
 
     def _evaluate(self, batch_size, mode):
-        return {}, b''
+        return dict()
 
     def save(self, session, filename):
         return ''
