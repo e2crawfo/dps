@@ -3,11 +3,10 @@ import imageio
 import os
 from skimage.transform import resize
 import itertools
-import matplotlib as mpl
 
 import dps
 from dps.datasets.base import PatchesDataset
-from dps.utils import Param, generate_perlin_noise_2d
+from dps.utils import Param
 
 
 class ShapesDataset(PatchesDataset):
@@ -201,6 +200,7 @@ class SetThreeAttr(PatchesDataset):
 
 if __name__ == "__main__":
     import tensorflow as tf
+
     # dset = RandomShapesDataset(
     #     n_examples=20, shapes="circle", colours="black blue", background_colours="white",
     #     min_shapes=2, max_shapes=4, image_shape=(48, 48), patch_shape=(14, 14), max_overlap=98)
@@ -218,14 +218,17 @@ if __name__ == "__main__":
     #     n_distractor_shapes=None, image_shape=(48, 48), patch_shape=(14, 14), max_overlap=98)
 
     dset = SetThreeAttr(
-        n_examples=16, background_colours="white",
+        n_examples=16,
+        background_colours="cyan magenta yellow",
         colours="red green blue",
         shapes="circle square diamond",
         digits="simple1 simple2 simple3",
         digit_colour="black",
         n_cards=7,
         set_size=3,
-        image_shape=(48, 48), patch_shape=(14, 14), max_overlap=98)
+        image_shape=(48, 48),
+        patch_shape=(14, 14),
+        max_overlap=14*14/3)
 
     sess = tf.Session()
     with sess.as_default():
