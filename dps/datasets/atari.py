@@ -144,6 +144,8 @@ class ReinforcementLearningDataset(ImageDataset):
     store_next_o = Param(True)
     depth = 3
 
+    _n_examples = 0
+
     def _write_example(self, **kwargs):
         image = None
 
@@ -159,9 +161,9 @@ class ReinforcementLearningDataset(ImageDataset):
                 image = np.concatenate([image, kwargs['next_o']], axis=2)
 
         if self.postprocessing == "tile":
-            images, _ = self._tile_postprocess(image, [])
+            images, _, _ = self._tile_postprocess(image, [])
         elif self.postprocessing == "random":
-            images, _ = self._random_postprocess(image, [])
+            images, _, _ = self._random_postprocess(image, [])
         else:
             images = [image]
 
@@ -210,13 +212,22 @@ class ReinforcementLearningDataset(ImageDataset):
     def _callback(self, o, a, r):
         episode_length = len(o)
 
-        if self.max_samples_per_ep is not None:
-            indices = np.random.choice(episode_length - self.history_length, size=self.max_samples_per_ep, replace=False)
-            indices += self.history_length
-        else:
+        if self.max_samples_per_ep is None:
             indices = np.arange(self.history_length, episode_length)
+        else:
+            n_indices = episode_length - self.history_length
+            if n_indices <= self.max_samples_per_ep:
+                indices = np.arange(n_indices)
+            else:
+                indices = np.random.choice(n_indices, size=self.max_samples_per_ep, replace=False)
+
+            indices += self.history_length
 
         for idx in indices:
+            if self._n_examples % 100 == 0:
+                print("Processing example {}".format(self._n_examples))
+
+            _o, _a, _r, _next_o = None, None, None, None
             if self.store_o:
                 _o = list(o[idx-self.history_length:idx])
                 _o = np.concatenate(_o, axis=2)
@@ -231,11 +242,12 @@ class ReinforcementLearningDataset(ImageDataset):
                 _next_o = o[idx]
 
             self._write_example(o=_o, a=_a, r=_r, next_o=_next_o)
+            self._n_examples += 1
 
     def visualize(self):
         N = 16
         dset = tf.data.TFRecordDataset(self.filename)
-        dset = dset.batch(N).map(self.parse_example_batch)
+        dset = dset.shuffle(1000).batch(N).map(self.parse_example_batch)
 
         iterator = dset.make_one_shot_iterator()
 
@@ -372,6 +384,8 @@ class StaticAtariDataset(ReinforcementLearningDataset):
     game = Param(aliases="atari_game")
     image_shape = Param(None)
     after_warp = Param(False)
+    episode_range = Param()
+
     _obs_shape = None
 
     action_dim = 1
@@ -381,29 +395,33 @@ class StaticAtariDataset(ReinforcementLearningDataset):
     @property
     def obs_shape(self):
         if self._obs_shape is None:
-            if self.after_warp:
-                self._obs_shape = (84, 84, 1)
+            if self.postprocessing:
+                self._obs_shape = (*self.tile_shape, 3)
             else:
-                two_fifty = ("Amidar WizardOfWor DoubleDunk Centipede Tennis BankHeist Skiing "
-                             "Carnival Pooyan AirRaid Assault Tutankham Gopher VideoPinball".split())
-                if "JourneyEscape" in self.game:
-                    self._obs_shape = (230, 160, 3)
-                elif any(g in self.game for g in two_fifty):
-                    self._obs_shape = (250, 160, 3)
+                if self.after_warp:
+                    self._obs_shape = (84, 84, 1)
                 else:
-                    self._obs_shape = (210, 160, 3)
+                    two_fifty = ("Amidar WizardOfWor DoubleDunk Centipede Tennis BankHeist Skiing "
+                                 "Carnival Pooyan AirRaid Assault Tutankham Gopher VideoPinball".split())
+                    if "JourneyEscape" in self.game:
+                        self._obs_shape = (230, 160, 3)
+                    elif any(g in self.game for g in two_fifty):
+                        self._obs_shape = (250, 160, 3)
+                    else:
+                        self._obs_shape = (210, 160, 3)
         return self._obs_shape
 
     def _make(self):
         directory = os.path.join(cfg.data_dir, "atari_data")
         dirs = os.listdir(directory)
-        starts_with = "atari_data_env={}.datetime=".format(self.game)
+        game_full_name = "{}NoFrameskip-v4".format(self.game)
+        starts_with = "atari_data_env={}.datetime=".format(game_full_name)
         dirs = [d for d in dirs if d.startswith(starts_with)]
         assert dirs
 
         directory = os.path.join(directory, sorted(dirs)[-1])
         directory = os.path.join(directory, ("after" if self.after_warp else "before") + "_warp_recording")
-        scan_recorded_traces(directory, self._callback, self.max_episodes)
+        scan_recorded_traces(directory, self._callback, self.max_episodes, self.episode_range)
 
 
 if __name__ == "__main__":
@@ -421,13 +439,17 @@ if __name__ == "__main__":
     parser.add_argument("game")
     args, _ = parser.parse_known_args()
 
-    game = "{}NoFrameskip-v4".format(args.game)
     dset = StaticAtariDataset(
-        game=game, history_length=2, max_episodes=3, max_samples_per_ep=18,
-        after_warp=False, store_next_o=True)
-
-    # xo_dir = "/media/data/Dropbox/projects/PyDSRL/train"
-    # # xo_dir = "/media/data/Dropbox/projects/PyDSRL/log"
+        game=args.game, history_length=1,
+        # max_episodes=6,
+        max_samples_per_ep=100, after_warp=False,
+        episode_range=(-1, None),
+        store_o=True,
+        store_r=False,
+        store_a=False,
+        store_next_o=False,
+        stopping_criteria="loss_reconstruction,min",
+    )
 
     # dset = RewardClassificationDataset(
     #     rl_data_location=xo_dir, image_shape=(100, 100),
