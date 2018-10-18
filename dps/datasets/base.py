@@ -124,19 +124,69 @@ class ArrayFeature(Feature):
         self.dtype = dtype
 
     def get_write_features(self, array):
+        array = np.array(array).astype(self.dtype)
         assert array.shape == self.shape
-        array = array.astype(self.dtype)
 
         return {self.name: _bytes_feature(array)}
 
     def get_read_features(self):
         return {self.name: tf.FixedLenFeature((), dtype=tf.string)}
 
-    def process_batch(self, data):
-        array_data = tf.decode_raw(data[self.name], tf.as_dtype(self.dtype))
-        array_data = tf.reshape(array_data, (-1,) + self.shape)
+    def process_batch(self, records):
+        data = tf.decode_raw(records[self.name], tf.as_dtype(self.dtype))
+        return tf.reshape(data, (-1,) + self.shape)
 
-        return array_data
+
+class VariableShapeArrayFeature(Feature):
+    def __init__(self, name, shape):
+        self.name = name
+        self.shape = shape
+        self.ndim = len(shape)
+
+    def get_write_features(self, data):
+        return {
+            self.name + "/shape": _int64_feature(list(data.shape), is_list=True),
+            self.name + "/data": _float_feature(list(data.flatten()), is_list=True),
+        }
+
+    def get_read_features(self):
+        return {
+            self.name + "/shape": tf.FixedLenFeature((self.ndim,), dtype=tf.int64),
+            self.name + "/data": tf.VarLenFeature(dtype=tf.float32),
+        }
+
+    def process_batch(self, records):
+        data = records[self.name + '/data']
+        data = tf.sparse_tensor_to_dense(data, default_value=0)
+        shapes = tf.cast(records[self.name + '/shape'], tf.int32)
+        max_shape = tf.cast(tf.reduce_max(shapes, axis=0), tf.int32)
+
+        max_shape_static = []
+        for i in range(self.ndim):
+            s = self.shape[i]
+            max_shape_static.append(s if s >= 0 else max_shape[i])
+        max_shape_static = tuple(max_shape_static)
+
+        def map_fn(inp):
+            data, shape = inp
+            size = tf.reduce_prod(shape)
+            data = data[:size]
+            data = tf.reshape(data, shape)
+            mask = tf.ones_like(data, dtype=tf.bool)
+
+            pad_amount = tf.stack([tf.zeros_like(max_shape), max_shape - shape], axis=0)
+            pad_amount = tf.transpose(pad_amount)
+
+            data = tf.pad(data, pad_amount)
+            data = tf.reshape(data, max_shape_static)
+
+            mask = tf.pad(mask, pad_amount)
+            mask = tf.reshape(mask, max_shape_static)
+
+            return data, mask
+
+        data, mask = tf.map_fn(map_fn, (data, shapes), dtype=(tf.float32, tf.bool))
+        return dict(data=data, shapes=shapes, mask=mask)
 
 
 class ImageFeature(ArrayFeature):
@@ -147,8 +197,8 @@ class ImageFeature(ArrayFeature):
         self.shape = shape
         self.dtype = np.uint8
 
-    def process_batch(self, data):
-        images = super(ImageFeature, self).process_batch(data)
+    def process_batch(self, records):
+        images = super(ImageFeature, self).process_batch(records)
         images = tf.image.convert_image_dtype(images, tf.float32)
         return images
 
@@ -165,8 +215,8 @@ class IntegerFeature(Feature):
     def get_read_features(self):
         return {self.name: tf.FixedLenFeature((), dtype=tf.int64)}
 
-    def process_batch(self, data):
-        integer = tf.cast(data[self.name], tf.int32)
+    def process_batch(self, records):
+        integer = tf.cast(records[self.name], tf.int32)
         if self.maximum is not None:
             integer = tf.one_hot(integer, self.maximum)
         return integer
@@ -194,11 +244,11 @@ class NestedListFeature(Feature):
             self.name + "/data": tf.VarLenFeature(dtype=tf.float32),
         }
 
-    def process_batch(self, data):
-        n_sublists = tf.cast(data[self.name + "/n_sublists"], tf.int32)
+    def process_batch(self, records):
+        n_sublists = tf.cast(records[self.name + "/n_sublists"], tf.int32)
         max_n_sublists = tf.reduce_max(n_sublists)
 
-        list_data = data[self.name + '/data']
+        list_data = records[self.name + '/data']
         batch_size = tf.shape(list_data)[0]
         data = tf.sparse_tensor_to_dense(list_data, default_value=0)
         data = tf.reshape(data, (batch_size, max_n_sublists, self.sublist_length))
@@ -230,8 +280,12 @@ class Dataset(Parameterized):
         self.filename = os.path.join(directory, str(param_hash))
         cfg_filename = self.filename + ".cfg"
 
+        no_cache = os.getenv("DPS_NO_CACHE")
+        if no_cache:
+            print("Skipping dataset cache as DPS_NO_CACHE is set (value is {}).".format(no_cache))
+
         # We require cfg_filename to exist as it marks that dataset creation completed successfully.
-        if not os.path.exists(self.filename) or not os.path.exists(cfg_filename):
+        if no_cache or not os.path.exists(self.filename) or not os.path.exists(cfg_filename):
 
             # Start fresh
             try:
@@ -292,13 +346,9 @@ class Dataset(Parameterized):
             features.update(f.get_read_features())
         data = tf.parse_example(example_proto, features=features)
 
-        result = []
+        result = {}
         for f in self.features:
-            r = f.process_batch(data)
-            if isinstance(r, (tuple, list)):
-                result.extend(r)
-            else:
-                result.append(r)
+            result[f.name] = f.process_batch(data)
         return result
 
     @property
