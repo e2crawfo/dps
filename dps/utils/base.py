@@ -879,42 +879,49 @@ class Parameterized(object):
     def __str__(self):
         return "{}(\n{}\n)".format(self.__class__.__name__, pformat(self.param_values()))
 
+    def _get_param_value(self, name, param, kwargs):
+        aliases = list([name] + param.aliases)
+
+        # Check kwargs
+        for alias in aliases:
+            value = kwargs.get(alias, NotSupplied)
+            if value is not NotSupplied:
+                return value
+
+        # Check cfg with class name label
+        for cls in self.__class__.__mro__:
+            for alias in aliases:
+                key = cls.__name__ + ":" + alias
+                value = getattr(dps.cfg, key, NotSupplied)
+                if value is not NotSupplied:
+                    return value
+
+        # Check cfg
+        for alias in aliases:
+            value = getattr(dps.cfg, alias, NotSupplied)
+            if value is not NotSupplied:
+                return value
+
+        # Try the default value
+        if value is NotSupplied:
+            if param.default is not NotSupplied:
+                return param.default
+            else:
+                raise AttributeError(
+                    "Could not find value for parameter `{}` for class `{}` "
+                    "in either kwargs or config, and no default was provided.".format(
+                        name, self.__class__.__name__))
+
     def _resolve_params(self, **kwargs):
         if not self._resolved:
             param_names = self.param_names()
             for name in param_names:
                 param = getattr(self.__class__, name)
-
-                aliases = list([name] + param.aliases)
-
-                value = NotSupplied
-
-                # Check kwargs
-                for alias in aliases:
-                    if value is not NotSupplied:
-                        break
-                    value = kwargs.get(alias, NotSupplied)
-
-                # Check cfg
-                for alias in aliases:
-                    if value is not NotSupplied:
-                        break
-                    value = getattr(dps.cfg, alias, NotSupplied)
-
-                # Try the default value
-                if value is NotSupplied:
-                    if param.default is not NotSupplied:
-                        value = param.default
-                    else:
-                        raise AttributeError(
-                            "Could not find value for parameter `{}` for class `{}` "
-                            "in either kwargs or config, and no default was provided.".format(
-                                name, self.__class__.__name__))
-
+                value = self._get_param_value(name, param, kwargs)
                 if param.type is not None:
                     value = param.type(value)
-
                 setattr(self, name, value)
+
             self._resolved = True
 
     @classmethod
