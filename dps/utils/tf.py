@@ -13,10 +13,30 @@ import tensorflow as tf
 from tensorflow.python.ops import random_ops
 from tensorflow.python.framework import ops
 from tensorflow.contrib.slim import fully_connected
+from tensorflow.python.util import nest
 
 import dps
-from dps.utils.base import _bool, popleft, Parameterized, Param
+from dps.utils.base import _bool, popleft, Parameterized, Param, Config
 from dps.utils.inspect_checkpoint import get_tensors_from_checkpoint_file  # noqa: F401
+
+
+def tf_shape(tensor):
+    """ Returns a tuple whose length is equal to the length of `tensor.shape`. Static shape is
+        used where possible, and dynamic shape is used everywhere else.
+
+    """
+    static_shape = tensor.shape
+    dynamic_shape = tf.unstack(tf.shape(tensor))
+
+    shape = []
+
+    for d, s in zip(dynamic_shape, static_shape):
+        if s is None or s.value is None:
+            shape.append(d)
+        else:
+            shape.append(int(s))
+
+    return tuple(shape)
 
 
 def apply_mask_and_group_at_front(data, mask):
@@ -172,6 +192,14 @@ def tf_normal_kl(q_mean, q_std, p_mean, p_std):
 def tf_mean_sum(t):
     """ Average over batch dimension, sum over all other dimensions """
     return tf.reduce_mean(tf.reduce_sum(tf.layers.flatten(t), axis=1))
+
+
+def tf_atleast_nd(array, n):
+    diff = n - len(array.shape)
+    if diff > 0:
+        s = (Ellipsis,) + (None,) * diff
+        array = array[s]
+    return array
 
 
 def resize_image_with_crop_or_pad(img, target_height, target_width):
@@ -689,6 +717,16 @@ class ConvNet(ScopedFunction):
             if output_shape is not None:
                 batch_size = tf.shape(volume)[0]
                 volume = tf.reshape(volume, (batch_size, *output_shape))
+        elif kind == 'global_pool':  # a global spatial pooling layer
+            pool_kind = layer_spec.get('pool_kind', 'mean')
+            keepdims = layer_spec.get('keepdims', False)
+
+            if pool_kind == "max":
+                volume = tf.reduce_max(volume, axis=(1, 2), keepdims=keepdims)
+            elif pool_kind == "mean":
+                volume = tf.reduce_mean(volume, axis=(1, 2), keepdims=keepdims)
+            elif pool_kind == "sum":
+                volume = tf.reduce_sum(volume, axis=(1, 2), keepdims=keepdims)
 
         layer_string = ', '.join("{}={}".format(k, v) for k, v in sorted(layer_spec.items()))
         output_shape = tuple(int(i) for i in volume.shape[1:])
@@ -700,7 +738,7 @@ class ConvNet(ScopedFunction):
         volume = inp
         self.volumes = [volume]
 
-        print("Predicted output shape is: {}".format(self.predict_output_shape(inp.shape[1:3], self.layout)))
+        # print("Predicted output shape is: {}".format(self.predict_output_shape(inp.shape[1:3], self.layout)))
 
         for i, layer_spec in enumerate(self.layout):
             volume = self._apply_layer(volume, layer_spec, i, i == len(self.layout) - 1, is_training)
@@ -1149,7 +1187,7 @@ class NullCell(ScopedCell):
 
 
 class CompositeCell(ScopedCell):
-    """ A wrapper around a cell that adds an additional transformation of the output.
+    """ A wrapper around a cell that adds a additional transformations to the input and output.
 
     Parameters
     ----------
@@ -1654,9 +1692,9 @@ class RenderHook(object):
 
         feed_dict = updater.data_manager.do_val()
 
-        to_fetch = {
-            k: updater.network._tensors[k][:self.N]
-            for k in fetches}
+        tensor_config = Config(updater.tensors)
+        to_fetch = {k: tensor_config[k] for k in fetches}
+        to_fetch = nest.map_structure(lambda s: s[:self.N], to_fetch)
 
         sess = tf.get_default_session()
         fetched = sess.run(to_fetch, feed_dict=feed_dict)
