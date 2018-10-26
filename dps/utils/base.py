@@ -32,6 +32,17 @@ import clify
 import dps
 
 
+def header(message, n, char, nl=True):
+    assert isinstance(char, str)
+    banner = char * n
+    newline = "\n" if nl else ""
+    return "{}{} {} {}{}".format(newline, banner, message.strip(), banner, newline)
+
+
+def print_header(message, n, char, nl=True):
+    print(header(message, n, char, nl))
+
+
 def generate_perlin_noise_2d(shape, res, normalize=False):
     """ each dim of shape must be divisible by corresponding dim of res
 

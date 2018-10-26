@@ -341,12 +341,15 @@ class TrainingLoop(object):
 
                 print("\nBuilding env...\n")
 
-                # Optionally build env
+                # Maybe build env
                 if stage_idx == 0 or not cfg.preserve_env:
                     if getattr(self, 'env', None):
                         self.env.close()
 
                     self.env = cfg.build_env()
+
+                if hasattr(self.env, "print_memory_footprint"):
+                    self.env.print_memory_footprint()
 
                 print("\nDone building env.\n")
 
@@ -361,7 +364,7 @@ class TrainingLoop(object):
 
                 walk_variable_scopes(max_depth=3)
 
-                # Optionally initialize network weights.
+                # Maybe initialize network weights.
                 # Let a *path_specification* be one of three things:
                 #     1. An integer specifying a stage to load the best hypothesis from.
                 #     2. A string of format: "stage_idx,kind" where `stage_idx` specifies a stage to load from
@@ -491,7 +494,7 @@ class TrainingLoop(object):
                     final_path = updater.save(tf.get_default_session(), final_path)
                     self.data.record_values_for_stage(final_path=final_path)
 
-                    # --------------- Optionally render performance of best hypothesis -------------------
+                    # --------------- Maybe render performance of best hypothesis -------------------
 
                     do_final_testing = (
                         not reason == "Time limit exceeded" and

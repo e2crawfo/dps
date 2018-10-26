@@ -185,8 +185,15 @@ class DataManager(Parameterized):
         datasets = []
 
         # --- train ---
+
         if self.train_dataset is not None:
             train_dataset = tf.data.TFRecordDataset(self.train_dataset.filename)
+
+            train_eval_dataset = (train_dataset.batch(self.batch_size)
+                                               .map(self.val_dataset.parse_example_batch)
+                                               .prefetch(10))
+            self.train_eval_iterator = train_eval_dataset.make_initializable_iterator()
+            self.train_eval_handle = sess.run(self.train_eval_iterator.string_handle())
 
             shuffle_and_repeat = tf.contrib.data.shuffle_and_repeat(self.shuffle_buffer_size)
             train_dataset = (train_dataset.apply(shuffle_and_repeat)
@@ -197,7 +204,6 @@ class DataManager(Parameterized):
             datasets.append(train_dataset)
 
             self.train_iterator = train_dataset.make_one_shot_iterator()
-
             self.train_handle = sess.run(self.train_iterator.string_handle())
 
         # --- val --
@@ -212,7 +218,6 @@ class DataManager(Parameterized):
             datasets.append(val_dataset)
 
             self.val_iterator = val_dataset.make_initializable_iterator()
-
             self.val_handle = sess.run(self.val_iterator.string_handle())
 
         # --- test --
@@ -226,7 +231,6 @@ class DataManager(Parameterized):
             datasets.append(test_dataset)
 
             self.test_iterator = test_dataset.make_initializable_iterator()
-
             self.test_handle = sess.run(self.test_iterator.string_handle())
 
         assert datasets, "Must supply at least one of train_dataset, val_dataset, test_dataset"
@@ -241,6 +245,12 @@ class DataManager(Parameterized):
 
     def do_train(self):
         return {self.handle: self.train_handle, self.is_training: True}
+
+    def do_train_eval(self):
+        """ Rendering performance of model on data from training set. """
+        sess = tf.get_default_session()
+        sess.run(self.train_eval_iterator.initializer)
+        return {self.handle: self.train_eval_handle, self.is_training: False}
 
     def do_val(self):
         sess = tf.get_default_session()

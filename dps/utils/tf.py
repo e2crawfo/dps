@@ -20,6 +20,17 @@ from dps.utils.base import _bool, popleft, Parameterized, Param, Config
 from dps.utils.inspect_checkpoint import get_tensors_from_checkpoint_file  # noqa: F401
 
 
+def tf_tensor_shape(shape):
+    _tuple = []
+    for i in shape:
+        try:
+            i = int(i)
+        except (ValueError, TypeError):
+            i = None
+        _tuple.append(i)
+    return tf.TensorShape(_tuple)
+
+
 def tf_shape(tensor):
     """ Returns a tuple whose length is equal to the length of `tensor.shape`. Static shape is
         used where possible, and dynamic shape is used everywhere else.
@@ -464,7 +475,7 @@ class MLP(ScopedFunction):
     def __init__(self, n_units=None, scope=None, **fc_kwargs):
         self.n_units = n_units or []
         self.fc_kwargs = fc_kwargs
-        super(MLP, self).__init__(scope)
+        super().__init__(scope)
 
     def _call(self, inp, output_size, is_training):
         inp = tf.layers.flatten(inp)
@@ -1684,13 +1695,16 @@ class RenderHook(object):
 
         ax.imshow(frame, vmin=0.0, vmax=1.0, **kwargs)
 
+    def get_feed_dict(self, updater):
+        return updater.data_manager.do_val()
+
     def _fetch(self, updater):
         fetches = self.fetches
 
         if isinstance(fetches, str):
             fetches = fetches.split()
 
-        feed_dict = updater.data_manager.do_val()
+        feed_dict = self.get_feed_dict(updater)
 
         tensor_config = Config(updater.tensors)
         to_fetch = {k: tensor_config[k] for k in fetches}
