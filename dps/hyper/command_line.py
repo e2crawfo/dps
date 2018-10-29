@@ -13,7 +13,7 @@ import clify
 from dps.utils import Config, process_path, confidence_interval, standard_error
 from dps.parallel.command_line import SubCommand, parallel_cl
 from dps.hyper import HyperSearch
-from dps.hyper.submit_job import DEFAULT_HOST_POOL, submit_job, ParallelSession
+from dps.hyper.parallel_session import DEFAULT_HOST_POOL, submit_job, ParallelSession
 
 
 def _print_config_cmd(path):

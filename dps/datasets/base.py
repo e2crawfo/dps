@@ -26,7 +26,9 @@ class RawDataset(Parameterized):
         start = time.time()
         print("Trying to find dataset in cache...")
 
-        directory = os.path.join(cfg.data_dir, "cached_datasets", self.__class__.__name__)
+        directory = kwargs.get(
+            "data_dir",
+            os.path.join(cfg.data_dir, "cached_datasets", self.__class__.__name__))
         os.makedirs(directory, exist_ok=True)
 
         params = self.param_values()
@@ -256,6 +258,16 @@ class NestedListFeature(Feature):
 
 
 class Dataset(Parameterized):
+    """ A parameterized dataset.
+
+    Constructs a filename for caching by hashing a dictionary containing the parameter values (sorted by key).
+
+    If `data_dir` is in kwargs, then look for (and save) the cache file inside `data_dir`.
+    Otherwise, looks inside cfg.data_dir/cached_datasets/self.__class__.__name__.
+
+    If `no_make` is in kwargs and is True, than raise an exception if dataset not found in cache.
+
+    """
     n_examples = Param(None)
     seed = Param(None)
 
@@ -267,7 +279,9 @@ class Dataset(Parameterized):
         start = time.time()
         print("Trying to find dataset in cache...")
 
-        directory = os.path.join(cfg.data_dir, "cached_datasets", self.__class__.__name__)
+        directory = kwargs.get(
+            "data_dir",
+            os.path.join(cfg.data_dir, "cached_datasets", self.__class__.__name__))
         os.makedirs(directory, exist_ok=True)
 
         params = self.param_values()
@@ -286,6 +300,9 @@ class Dataset(Parameterized):
 
         # We require cfg_filename to exist as it marks that dataset creation completed successfully.
         if no_cache or not os.path.exists(self.filename) or not os.path.exists(cfg_filename):
+
+            if kwargs.get("no_make", False):
+                raise Exception("`no_make` is True, but dataset was not found in cache.")
 
             # Start fresh
             try:

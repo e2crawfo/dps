@@ -890,7 +890,8 @@ class Parameterized(object):
     def __str__(self):
         return "{}(\n{}\n)".format(self.__class__.__name__, pformat(self.param_values()))
 
-    def _get_param_value(self, name, param, kwargs):
+    @classmethod
+    def _get_param_value(cls, name, param, kwargs):
         aliases = list([name] + param.aliases)
 
         # Check kwargs
@@ -900,9 +901,9 @@ class Parameterized(object):
                 return value
 
         # Check cfg with class name label
-        for cls in self.__class__.__mro__:
+        for _cls in cls.__mro__:
             for alias in aliases:
-                key = cls.__name__ + ":" + alias
+                key = _cls.__name__ + ":" + alias
                 value = getattr(dps.cfg, key, NotSupplied)
                 if value is not NotSupplied:
                     return value
@@ -921,19 +922,25 @@ class Parameterized(object):
                 raise AttributeError(
                     "Could not find value for parameter `{}` for class `{}` "
                     "in either kwargs or config, and no default was provided.".format(
-                        name, self.__class__.__name__))
+                        name, cls.__name__))
 
     def _resolve_params(self, **kwargs):
         if not self._resolved:
-            param_names = self.param_names()
-            for name in param_names:
-                param = getattr(self.__class__, name)
-                value = self._get_param_value(name, param, kwargs)
-                if param.type is not None:
-                    value = param.type(value)
-                setattr(self, name, value)
-
+            for k, v in self._capture_param_values(**kwargs).items():
+                setattr(self, k, v)
             self._resolved = True
+
+    @classmethod
+    def _capture_param_values(cls, **kwargs):
+        """ Return the params that would be created if an object of the current class were constructed in the current context with the given kwargs. """
+        param_values = dict()
+        for name in cls.param_names():
+            param = getattr(cls, name)
+            value = cls._get_param_value(name, param, kwargs)
+            if param.type is not None:
+                value = param.type(value)
+            param_values[name] = value
+        return param_values
 
     @classmethod
     def param_names(cls):

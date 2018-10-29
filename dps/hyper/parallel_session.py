@@ -85,6 +85,8 @@ class ParallelSession(object):
         If True, GPUs will be requested by as part of the job, but will not be used at run time.
     ssh_options: string
         String of options to pass to ssh.
+    loud_output: bool
+        Whether to capture stdout for the main execution command.
 
     """
     def __init__(
@@ -92,7 +94,7 @@ class ParallelSession(object):
             pmem=None, wall_time="1hour", cleanup_time="1min", slack_time="1min", add_date=True, dry_run=0,
             parallel_exe=None, kind="parallel", host_pool=None, load_avg_threshold=8., min_hosts=None,
             max_hosts=1, env_vars=None, output_to_files=True, n_retries=0, gpu_set="", copy_venv="",
-            step_time_limit=None, ignore_gpu=False, ssh_options=None):
+            step_time_limit=None, ignore_gpu=False, ssh_options=None, loud_output=True):
 
         args = locals().copy()
         del args['self']
@@ -161,6 +163,7 @@ class ParallelSession(object):
 
         ro_job = ReadOnlyJob(input_zip)
         indices_to_run = sorted([op.idx for op in ro_job.ready_incomplete_ops(sort=False)])
+        del ro_job
         n_jobs_to_run = len(indices_to_run)
         if n_jobs_to_run == 0:
             print("All jobs are finished! Exiting.")
@@ -423,9 +426,9 @@ class ParallelSession(object):
 
             progress_bar = None
             if progress:
-                widgets=['[', progressbar.Timer(), '] ',
-                         '(', progressbar.ETA(), ') ',
-                         progressbar.Bar()]
+                widgets = ['[', progressbar.Timer(), '] ',
+                           '(', progressbar.ETA(), ') ',
+                           progressbar.Bar()]
                 _max_value = max_seconds or progressbar.UnknownLength
                 progress_bar = progressbar.ProgressBar(
                     widgets=widgets, max_value=_max_value, redirect_stdout=True)
@@ -539,7 +542,7 @@ class ParallelSession(object):
         self.execute_command(
             command, frmt=False, robust=True,
             max_seconds=self.parallel_seconds_per_step, progress=not self.hpc,
-            output='loud')
+            output='loud' if self.loud_output else None)
 
     def _checkpoint(self, i):
         print("Fetching results of step {} at: ".format(i))
@@ -575,12 +578,17 @@ class ParallelSession(object):
 
         self.execute_command("zip -rq results {archive_root}", robust=True)
 
-        from dps.hyper import HyperSearch
-        search = HyperSearch('.')
-
-        with redirect_stream('stdout', 'results.txt', tee=False):
-            search.print_summary(print_config=False, verbose=False)
-        print(search.job.summary(verbose=False))
+        try:
+            from dps.hyper import HyperSearch
+            search = HyperSearch('.')
+            with redirect_stream('stdout', 'results.txt', tee=False):
+                search.print_summary(print_config=False, verbose=False)
+            print(search.job.summary(verbose=False))
+        except Exception:
+            job_path = 'results.zip' if os.path.exists('results.zip') else 'orig.zip'
+            assert os.path.exists(job_path)
+            job = ReadOnlyJob(job_path)
+            print(job.summary(verbose=False))
 
     def get_slurm_var(self, var_name):
         parallel_command = "printenv | grep {}".format(var_name)

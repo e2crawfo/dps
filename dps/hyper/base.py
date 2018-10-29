@@ -21,7 +21,7 @@ from dps.config import DEFAULT_CONFIG
 from dps.utils import gen_seed, Config, ExperimentStore, edit_text, NumpySeed
 from dps.parallel import Job, ReadOnlyJob
 from dps.train import FrozenTrainingLoopData
-from dps.hyper.submit_job import submit_job, ParallelSession
+from dps.hyper.parallel_session import submit_job, ParallelSession
 
 
 class HyperSearch(object):
