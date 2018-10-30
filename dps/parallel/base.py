@@ -305,7 +305,7 @@ class Job(ReadOnlyJob):
         if force_unique and exists:
             raise Exception("Object with kind {} and key {} already exists, but `force_unique` is True.")
 
-        self.objects.save_object(kind, key, obj, recurse=True)
+        self.objects.save_object(kind, key, obj, recurse=recurse)
 
     def reserve_key(self, kind, key, force_unique=True):
         exists = self.objects.object_exists(kind, key)

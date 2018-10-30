@@ -279,7 +279,7 @@ class FileSystemObjectStore(ObjectStore):
                              "but an object {} already exists at that location."
                              "".format(obj, kind, key, self.load_object(kind, key)))
 
-        wrapped.add_fragment(obj)
+        wrapped.add_fragment(obj, recurse=recurse)
 
     def delete_object(self, kind, key):
         wrapped = self._wrap_object(kind, key)
