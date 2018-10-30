@@ -96,7 +96,8 @@ class ParallelSession(object):
             pmem=None, wall_time="1hour", cleanup_time="1min", slack_time="1min", add_date=True, dry_run=0,
             parallel_exe=None, kind="parallel", host_pool=None, load_avg_threshold=8., min_hosts=None,
             max_hosts=1, env_vars=None, output_to_files=True, n_retries=0, gpu_set="", copy_venv="",
-            python_startup=False, step_time_limit=None, ignore_gpu=False, ssh_options=None, loud_output=True):
+            python_startup=False, step_time_limit=None, ignore_gpu=False, ssh_options=None, loud_output=True,
+            rsync_verbosity=0):
 
         args = locals().copy()
         del args['self']
@@ -162,6 +163,8 @@ class ParallelSession(object):
 
         env.update({e: str(v) for e, v in env_vars.items()})
         env_vars = ' '.join('--env ' + k for k in env_vars)
+
+        rsync_verbosity = "" if not rsync_verbosity else "-" + "v" * rsync_verbosity
 
         ro_job = ReadOnlyJob(input_zip)
         indices_to_run = sorted([op.idx for op in ro_job.ready_incomplete_ops(sort=False)])
@@ -354,7 +357,7 @@ class ParallelSession(object):
                             command = "cp {input_zip_abs} {local_scratch}".format(**self.__dict__)
                         else:
                             command = (
-                                "rsync -av --timeout=300 -e \"ssh {ssh_options}\" "
+                                "rsync -a {rsync_verbosity} --timeout=300 -e \"ssh {ssh_options}\" "
                                 "{input_zip_abs} {host}:{local_scratch}".format(host=host, **self.__dict__)
                             )
                         self.execute_command(command, frmt=False, robust=False)
@@ -377,7 +380,7 @@ class ParallelSession(object):
 
         n_procs = ppn * len(hosts)
 
-        print("\nProceeding with {} usable hosts, translates into {} procs total"
+        print("\nProceeding with {} usable hosts, translates into {} procs total "
               "(max_procs: {}, max_hosts: {}).".format(
                   len(hosts), n_procs, max_procs, max_hosts))
 
@@ -389,13 +392,19 @@ class ParallelSession(object):
     def execute_command(
             self, command, frmt=True, shell=True, max_seconds=None,
             progress=False, robust=False, output=None):
-        """ Uses `subprocess` to execute `command`.
+        """ Uses `subprocess` to execute `command`. Has a few added bells and whistles.
 
         if command returns non-zero exit status:
             if robust:
                 returns as normal
             else:
                 raise CalledProcessError
+
+        Parameters
+        ----------
+        command: str
+            The command to execute.
+
 
         Returns
         -------
@@ -565,7 +574,7 @@ class ParallelSession(object):
                 self.execute_command(command, robust=True)
             else:
                 command = (
-                    "rsync -avvz --timeout=300 -e \"ssh {ssh_options}\" "
+                    "rsync -az {rsync_verbosity} --timeout=300 -e \"ssh {ssh_options}\" "
                     "{host}:{local_scratch}/experiments/ ./experiments".format(
                         host=host, **self.__dict__)
                 )
@@ -575,7 +584,7 @@ class ParallelSession(object):
                 self.ssh_execute(command, host, robust=True, output="loud")
 
                 command = (
-                    "rsync -avvz --timeout=300 -e \"ssh {ssh_options}\" "
+                    "rsync -az {rsync_verbosity} --timeout=300 -e \"ssh {ssh_options}\" "
                     "{host}:{local_scratch}/{archive_root} .".format(
                         host=host, **self.__dict__)
                 )

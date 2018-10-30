@@ -128,7 +128,7 @@ class ArrayFeature(Feature):
 
     def get_write_features(self, array):
         array = np.array(array).astype(self.dtype)
-        assert array.shape == self.shape
+        assert array.shape == self.shape, "{} vs {}".format(array.shape, self.shape)
 
         return {self.name: _bytes_feature(array)}
 

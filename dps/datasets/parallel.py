@@ -1,4 +1,3 @@
-import numpy as np
 import os
 import subprocess
 import inspect
@@ -71,9 +70,7 @@ def make_dataset_in_parallel(run_kwargs, dataset_cls, param_values=None):
         seed = gen_seed()
 
     n_examples = param_values["n_examples"]
-    n_shards = run_kwargs["n_shards"]
-
-    n_examples_per_proc = int(np.ceil(n_examples / n_shards))
+    n_examples_per_shard = run_kwargs["n_examples_per_shard"]
 
     es = ExperimentStore(cfg.build_experiments_dir, prefix="build_{}".format(dataset_cls.__name__))
 
@@ -96,12 +93,14 @@ def make_dataset_in_parallel(run_kwargs, dataset_cls, param_values=None):
 
     with NumpySeed(seed):
         inputs = []
-        for idx in range(n_shards):
+        idx = 0
+        while n_examples_remaining:
             seed = gen_seed()
-            cur_n_examples = min(n_examples_remaining, n_examples_per_proc)
+            cur_n_examples = min(n_examples_remaining, n_examples_per_shard)
             n_examples_remaining -= cur_n_examples
 
             inputs.append((idx, seed, cur_n_examples))
+            idx += 1
 
         job.map(_BuildDataset(dataset_cls, param_values), inputs)
         job.save_object('metadata', 'param_values', param_values)
@@ -111,8 +110,9 @@ def make_dataset_in_parallel(run_kwargs, dataset_cls, param_values=None):
     print("Zipped {} as {}.".format(exp_dir.path, archive_path))
 
     run_kwargs = run_kwargs.copy()
-    if 'n_shards' in run_kwargs:
-        del run_kwargs['n_shards']
+
+    del run_kwargs['n_examples_per_shard']
+
     run_kwargs.update(
         archive_path=archive_path, name=name, kind="parallel",
         parallel_exe=cfg.parallel_exe)
