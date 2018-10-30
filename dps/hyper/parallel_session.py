@@ -77,6 +77,8 @@ class ParallelSession(object):
         Comma-separated list of indices of gpus to use.
     copy_venv: bool
         If True, copy the virtualenv from the launching environment and use it to run the simulation.
+    python_startup: bool
+        If True, source script located at "$HOME/python_startup.sh" before running step command.
     step_time_limit: str
         String specifying time limit for each step. If not supplied, a time limit is inferred
         automatically based on wall_time and number of steps (giving each step an equal amount
@@ -94,7 +96,7 @@ class ParallelSession(object):
             pmem=None, wall_time="1hour", cleanup_time="1min", slack_time="1min", add_date=True, dry_run=0,
             parallel_exe=None, kind="parallel", host_pool=None, load_avg_threshold=8., min_hosts=None,
             max_hosts=1, env_vars=None, output_to_files=True, n_retries=0, gpu_set="", copy_venv="",
-            step_time_limit=None, ignore_gpu=False, ssh_options=None, loud_output=True):
+            python_startup=False, step_time_limit=None, ignore_gpu=False, ssh_options=None, loud_output=True):
 
         args = locals().copy()
         del args['self']
@@ -520,8 +522,9 @@ class ParallelSession(object):
                            parallel_command=parallel_command))
         else:
             workon = "workon {launch_venv} && " if (self.copy_venv and self.launch_venv) else ""
+            python_startup = "source \$HOME/python_startup.sh && " if self.python_startup else ""
             parallel_command = (
-                # "source \$HOME/python_startup.sh  && " +
+                python_startup +
                 workon +
                 "cd {local_scratch} && "
                 "dps-hyper run {archive_root} {pattern} {{}} --max-time {python_seconds_per_step} "
