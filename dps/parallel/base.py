@@ -392,6 +392,8 @@ class Job(ReadOnlyJob):
             Only ops whose indices are in this set will be executed.
 
         """
+        print("=" * 20 + " Entered Job.run " + "=" * 20)
+
         if indices is not None:
             try:
                 indices = list(indices)

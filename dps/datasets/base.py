@@ -16,6 +16,7 @@ from dps.datasets import (
     load_emnist, load_omniglot, omniglot_classes,
     load_backgrounds, background_names
 )
+from dps.datasets.parallel import make_dataset_in_parallel
 
 
 class RawDataset(Parameterized):
@@ -267,6 +268,9 @@ class Dataset(Parameterized):
 
     If `no_make` is in kwargs and is True, than raise an exception if dataset not found in cache.
 
+    If `run_kwargs` is in kwargs, the corresponding value should be a dictionary of arguments which will be used to run the dataset
+    creation in parallel.
+
     """
     n_examples = Param(None)
     seed = Param(None)
@@ -316,25 +320,30 @@ class Dataset(Parameterized):
 
             print("File for dataset not found, creating...")
 
-            self._writer = tf.python_io.TFRecordWriter(self.filename)
-            try:
-                with NumpySeed(self.seed):
-                    self._make()
-                self._writer.close()
-                print("Done creating dataset.")
-            except BaseException:
-                self._writer.close()
-
+            run_kwargs = kwargs.get('run_kwargs', None)
+            if run_kwargs is not None:
+                # Create the dataset in parallel and write it to the cache.
+                make_dataset_in_parallel(run_kwargs, self.__class__, params)
+            else:
+                self._writer = tf.python_io.TFRecordWriter(self.filename)
                 try:
-                    os.remove(self.filename)
-                except FileNotFoundError:
-                    pass
-                try:
-                    os.remove(cfg_filename)
-                except FileNotFoundError:
-                    pass
+                    with NumpySeed(self.seed):
+                        self._make()
+                    self._writer.close()
+                    print("Done creating dataset.")
+                except BaseException:
+                    self._writer.close()
 
-                raise
+                    try:
+                        os.remove(self.filename)
+                    except FileNotFoundError:
+                        pass
+                    try:
+                        os.remove(cfg_filename)
+                    except FileNotFoundError:
+                        pass
+
+                    raise
 
             with open(cfg_filename, 'w') as f:
                 f.write(pprint.pformat(params))

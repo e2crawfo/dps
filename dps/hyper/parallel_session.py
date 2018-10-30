@@ -521,6 +521,7 @@ class ParallelSession(object):
         else:
             workon = "workon {launch_venv} && " if (self.copy_venv and self.launch_venv) else ""
             parallel_command = (
+                # "source \$HOME/python_startup.sh  && " +
                 workon +
                 "cd {local_scratch} && "
                 "dps-hyper run {archive_root} {pattern} {{}} --max-time {python_seconds_per_step} "
@@ -531,7 +532,8 @@ class ParallelSession(object):
             command = (
                 '{parallel_exe} --timeout {parallel_seconds_per_step} --no-notice -j{ppn} \\\n'
                 '    --joblog {job_path}/job_log.txt {node_file} \\\n'
-                '    --env PATH --env LD_LIBRARY_PATH {env_vars} -v \\\n'
+                '    {env_vars} -v \\\n'
+                # '    --env PATH --env LD_LIBRARY_PATH {env_vars} -v \\\n'
                 '    "' + parallel_command + '" \\\n'
                 '    ::: {indices}'
             )
