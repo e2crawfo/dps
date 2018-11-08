@@ -32,6 +32,55 @@ import clify
 import dps
 
 
+def create_maze(shape):
+    # Random Maze Generator using Depth-first Search
+    # http://en.wikipedia.org/wiki/Maze_generation_algorithm
+    # FB - 20121214
+    my, mx = shape
+    maze = np.zeros(shape)
+    dirs = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+
+    # start the maze from a random cell
+    stack = [(np.random.randint(0, mx), np.random.randint(0, my))]
+
+    while len(stack) > 0:
+        (cy, cx) = stack[-1]
+        maze[cy, cx] = 1
+
+        # find a new cell to add
+        nlst = []  # list of available neighbors
+        for i, (dy, dx) in enumerate(dirs):
+            ny = cy + dy
+            nx = cx + dx
+
+            if ny >= 0 and ny < my and nx >= 0 and nx < mx:
+                if maze[ny, nx] == 0:
+                    # of occupied neighbors must be 1
+                    ctr = 0
+                    for _dy, _dx in dirs:
+                        ex = nx + _dx
+                        ey = ny + _dy
+
+                        if ex >= 0 and ex < mx and ey >= 0 and ey < my:
+                            if maze[ey, ex] == 1:
+                                ctr += 1
+
+                    if ctr == 1:
+                        nlst.append(i)
+
+        # if 1 or more neighbors available then randomly select one and move
+        if len(nlst) > 0:
+            ir = np.random.choice(nlst)
+            dy, dx = dirs[ir]
+            cy += dy
+            cx += dx
+            stack.append((cy, cx))
+        else:
+            stack.pop()
+
+    return maze
+
+
 def header(message, n, char, nl=True):
     assert isinstance(char, str)
     banner = char * n
