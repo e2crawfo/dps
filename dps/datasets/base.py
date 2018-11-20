@@ -375,7 +375,13 @@ class Dataset(Parameterized):
         result = {}
         for f in self.features:
             result[f.name] = f.process_batch(data)
+
+        result = self.parse_example_batch_postprocess(result)
+
         return result
+
+    def parse_example_batch_postprocess(self, data):
+        return data
 
     @property
     def iterator(self):
