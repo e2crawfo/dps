@@ -462,9 +462,9 @@ class TrainingLoop(object):
                         raise Exception("NotImplemented") from e
 
                 except Exception as e:
+                    reason = "Exception occurred ({})".format(repr(e))
                     if cfg.robust:
                         traceback.print_exc()
-                        reason = "Exception occurred ({})".format(repr(e))
                     else:
                         raise
 
@@ -497,7 +497,8 @@ class TrainingLoop(object):
                     # --------------- Maybe render performance of best hypothesis -------------------
 
                     do_final_testing = (
-                        not reason == "Time limit exceeded" and
+                        "Exception occurred" not in reason and
+                        reason != "Time limit exceeded" and
                         'best_path' in self.data.current_stage_record)
 
                     if do_final_testing:
@@ -642,7 +643,6 @@ class TrainingLoop(object):
 
             hooks_duration = time.time() - hooks_start
 
-            # Possibly render
             if render and cfg.render_hook is not None:
                 print("Rendering...")
                 cfg.render_hook(updater)

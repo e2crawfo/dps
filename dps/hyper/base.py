@@ -12,13 +12,15 @@ from collections import namedtuple, defaultdict
 from tabulate import tabulate
 from pprint import pprint, pformat
 import traceback
+import argparse
 
 import clify
 
 import dps
 from dps import cfg
 from dps.config import DEFAULT_CONFIG
-from dps.utils import gen_seed, Config, ExperimentStore, edit_text, NumpySeed
+from dps.utils import gen_seed, Config, ExperimentStore, edit_text, NumpySeed, pdb_postmortem
+from dps.train import training_loop
 from dps.parallel import Job, ReadOnlyJob
 from dps.train import FrozenTrainingLoopData
 from dps.hyper.parallel_session import submit_job, ParallelSession
@@ -619,3 +621,66 @@ def build_and_submit(
         parallel_session = submit_job(**run_kwargs)
 
         return parallel_session
+
+
+def sanitize(s):
+    return s.replace('_', '-')
+
+
+def run_experiment(name, config, readme, distributions=None, durations=None, name_variables=None, env_config=None):
+
+    name = sanitize(name)
+    durations = durations or {}
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("duration", choices=list(durations.keys()) + ["local"], default="local", nargs="?")
+    parser.add_argument('--pdb', action='store_true', help="If supplied, enter post-mortem debugging on error.")
+
+    args, _ = parser.parse_known_args()
+
+    _config = DEFAULT_CONFIG.copy()
+
+    env_config = env_config or {}
+    _config.update(env_config)
+
+    alg_name = config.get("alg_name", "")
+
+    _config.update(config)
+    _config.update_from_command_line()
+
+    if "env_name" in _config:
+        _config.env_name = "{}_env={}".format(name, sanitize(_config.env_name))
+
+    if args.duration == "local":
+        _config.exp_name = "alg={}".format(alg_name)
+        with _config:
+            if args.pdb:
+                with pdb_postmortem():
+                    return training_loop()
+            else:
+                return training_loop()
+    else:
+        run_kwargs = Config(
+            kind="slurm",
+            pmem=5000,
+            ignore_gpu=False,
+        )
+
+        duration_args = durations[args.duration]
+
+        if 'config' in duration_args:
+            _config.update(duration_args['config'])
+            del duration_args['config']
+
+        run_kwargs.update(durations[args.duration])
+        run_kwargs.update_from_command_line()
+
+    if name_variables is not None:
+        name_variables_str = "_".join(
+            "{}={}".format(sanitize(str(k)), sanitize(str(getattr(_config, k))))
+            for k in name_variables.split(","))
+        _config.env_name = "{}_{}".format(_config.env_name, name_variables_str)
+
+    exp_name = "{}_alg={}_duration={}".format(_config.env_name, alg_name, args.duration)
+
+    build_and_submit(name=exp_name, config=_config, distributions=distributions, **run_kwargs)
