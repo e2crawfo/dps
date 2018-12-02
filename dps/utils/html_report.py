@@ -1,12 +1,16 @@
 import dominate
+import matplotlib.pyplot as plt
+from matplotlib import animation
 from dominate import tags
 from scipy.misc import imsave as sp_imsave
 from skimage import img_as_int
-
+from bs4 import BeautifulSoup
 import os
 from io import BytesIO
-from base64 import b64encode
+from base64 import b64encode, b64decode
 import datetime
+import imageio
+import matplotlib.image as mpimg
 
 
 def format_dict(d):
@@ -26,7 +30,7 @@ def format_dict(d):
 
 
 class HTMLReport(object):
-    def __init__(self, path, images_per_row=2, default_image_width=400):
+    def __init__(self, path, images_per_row=1000, default_image_width=400):
         self.path = path
         title = datetime.datetime.today().strftime(
             "Report %Y-%m-%d_%H-%M-%S_{}".format(os.uname()[1])
@@ -105,3 +109,62 @@ class HTMLReport(object):
 
     def __exit__(self, type_, value, tb):
         self.save()
+
+
+def parse_report(filename, max_frames=None, take_every=None):
+
+    with open(filename, 'r') as f:
+        soup = BeautifulSoup(f)
+
+        rows = soup.find_all('table')
+
+        take_every = take_every or 1
+        timesteps = range(0, len(rows), take_every)
+        rows = [rows[t] for t in timesteps]
+        max_frames = max_frames or len(rows)
+        rows = rows[:max_frames]
+        timesteps = timesteps[:max_frames]
+
+        n_images = len(rows[0].find_all('td'))
+
+        for i in range(n_images):
+            title = None
+            images = []
+            for row in rows:
+                td = row.find_all('td')[i]
+                if title is None:
+                    p = td.find_all('p')[1]
+                    title = p.text.split('\n')[-1]
+                    print(title)
+
+                img_tag = td.find_all('img')[0]
+                _, data = img_tag.attrs['src'].split(',')
+                io = BytesIO(b64decode(data))
+                img = mpimg.imread(io, format='png')
+                images.append(img)
+
+            save_video(title, images, timesteps)
+
+
+def save_video(title, images, timesteps=None):
+    timesteps = timesteps or range(len(images))
+    fig, ax = plt.subplots(1, 1, figsize=(5, 5))
+    plt.subplots_adjust(top=1, bottom=0, left=0, right=1)
+    ax.set_aspect("equal")
+    ax.set_axis_off()
+    image = ax.imshow(images[0])
+    timestep_text = ax.text(
+        0.01, 0.01, '', horizontalalignment='left', verticalalignment='bottom', transform=ax.transAxes)
+
+    def animate(t):
+        plt.show()
+        image.set_data(images[t])
+        timestep_text.set_text("t={}".format(timesteps[t]))
+
+    anim = animation.FuncAnimation(fig, animate, frames=len(images), interval=100)
+
+    gif_filename = title.replace(' ', '_') + '.gif'
+    print(gif_filename)
+    anim.save(gif_filename, writer='imagemagick')
+
+    plt.close(fig)
