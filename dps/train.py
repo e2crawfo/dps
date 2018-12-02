@@ -26,6 +26,7 @@ from dps.utils.tf import (
     restart_tensorboard, uninitialized_variables_initializer,
     trainable_variables, walk_variable_scopes
 )
+from dps.mpi_train import MPI_MasterContext
 
 
 def training_loop(exp_name='', start_time=None):
@@ -238,6 +239,8 @@ class TrainingLoop(object):
                 self.time_remaining, verbose=True,
                 timeout_callback=lambda limiter: print("Training run exceeded its time limit."))
 
+            self.mpi_context = MPI_MasterContext(cfg.get('n_procs', 1), exp_dir)
+
             try:
                 with limiter:
                     self._run()
@@ -291,6 +294,8 @@ class TrainingLoop(object):
                 if callable(stage_prepare_func):
                     stage_prepare_func()  # Modify the stage config in arbitrary ways before starting stage
 
+                self.mpi_context.start_stage()
+
                 # Configure and create session and graph for stage.
                 session_config = tf.ConfigProto()
                 session_config.intra_op_parallelism_threads = cfg.get('intra_op_parallelism_threads', 0)
@@ -319,7 +324,6 @@ class TrainingLoop(object):
                 print("\nAvailable devices: ")
                 from tensorflow.python.client import device_lib
                 print(device_lib.list_local_devices())
-                print("\n")
 
                 if not cfg.use_gpu:
                     print("Not using GPU.")
@@ -331,7 +335,7 @@ class TrainingLoop(object):
 
                 # Set the seed for the stage. Notice we generate a new tf seed for each stage.
                 tf_seed = gen_seed()
-                print("Setting tensorflow seed to generated seed: {}".format(tf_seed))
+                print("Setting tensorflow seed to generated seed: {}\n".format(tf_seed))
                 tf.set_random_seed(tf_seed)
 
                 # Set limit on CPU RAM for the stage
@@ -339,7 +343,7 @@ class TrainingLoop(object):
                 if cpu_ram_limit_mb is not None:
                     stack.enter_context(memory_limit(cfg.cpu_ram_limit_mb))
 
-                print("\nBuilding env...\n")
+                print("Building env...\n")
 
                 # Maybe build env
                 if stage_idx == 0 or not cfg.preserve_env:
@@ -352,15 +356,18 @@ class TrainingLoop(object):
                     self.env.print_memory_footprint()
 
                 print("\nDone building env.\n")
+                print("Building updater...\n")
 
-                # Build updater
-                updater = cfg.get_updater(self.env)
+                if cfg.n_procs > 1:
+                    updater = cfg.get_updater(self.env, mpi_context=self.mpi_context)
+                else:
+                    updater = cfg.get_updater(self.env)
+
                 updater.stage_idx = stage_idx
                 updater.exp_dir = self.exp_dir
 
-                print("\nBuilding network...\n")
                 updater.build_graph()
-                print("\nDone building network.\n")
+                print("\nDone building updater.\n")
 
                 walk_variable_scopes(max_depth=3)
 

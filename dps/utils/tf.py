@@ -12,7 +12,6 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow.python.ops import random_ops
 from tensorflow.python.framework import ops
-from tensorflow.contrib.slim import fully_connected
 from tensorflow.python.util import nest
 
 import dps
@@ -478,6 +477,7 @@ class MLP(ScopedFunction):
         super().__init__(scope)
 
     def _call(self, inp, output_size, is_training):
+        from tensorflow.contrib.slim import fully_connected
         inp = tf.layers.flatten(inp)
 
         hidden = inp
@@ -511,6 +511,7 @@ class LeNet(ScopedFunction):
         super(LeNet, self).__init__(scope)
 
     def _call(self, images, output_size, is_training):
+        from tensorflow.contrib.slim import fully_connected
         if len(images.shape) <= 1:
             raise Exception()
 
@@ -590,7 +591,8 @@ class ConvNet(ScopedFunction):
             filters (required, int)
             kernel_size (required, int or pair of ints)
             strides (defaults to 1, int or pair of ints)
-            pool (defaults to False, bool, whether to apply 2x2 pooling with stride 2, pooling is never done on final layer)
+            pool (defaults to False, bool, whether to apply 2x2 pooling with stride 2,
+                  pooling is never done on final layer)
 
         Uses 'padding' == valid.
 
@@ -678,6 +680,7 @@ class ConvNet(ScopedFunction):
 
     @staticmethod
     def _apply_layer(volume, layer_spec, idx, is_final, is_training):
+        from tensorflow.contrib.slim import fully_connected
         kind = layer_spec.get('kind', 'conv')
 
         if kind == 'conv':

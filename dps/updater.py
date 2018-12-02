@@ -8,9 +8,10 @@ from dps.utils.tf import build_gradient_train_op, trainable_variables, get_sched
 
 
 class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
-    def __init__(self, env, scope=None, **kwargs):
+    def __init__(self, env, scope=None, mpi_context=None, **kwargs):
         self.scope = scope
         self.env = env
+        self.mpi_context = mpi_context
         self._n_experiences = 0
         self._n_updates = 0
 

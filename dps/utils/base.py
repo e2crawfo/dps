@@ -546,8 +546,7 @@ class ExperimentStore(object):
         if update_latest:
             make_symlink(filename, os.path.join(self.path, 'latest'))
 
-        return ExperimentDirectory(
-            os.path.join(self.path, filename), store=self, force_fresh=force_fresh)
+        return ExperimentDirectory(os.path.join(self.path, filename), force_fresh=force_fresh)
 
     def __str__(self):
         return "ExperimentStore({})".format(self.path)
@@ -561,7 +560,7 @@ class ExperimentStore(object):
             path = os.path.join(self.path, kind)
 
         latest = os.readlink(os.path.join(path, 'latest'))
-        return ExperimentDirectory(latest, store=self)
+        return ExperimentDirectory(latest)
 
     def get_latest_results(self, filename='results'):
         exp_dir = self.get_latest_exp_dir()
@@ -588,10 +587,9 @@ def _checked_makedirs(directory, force_fresh):
 
 class ExperimentDirectory(object):
     """ Wraps a directory storing data related to an experiment. """
-    def __init__(self, path, store=None, force_fresh=False):
+    def __init__(self, path, force_fresh=False):
         self.path = path
         _checked_makedirs(path, force_fresh)
-        self.store = store
 
     def path_for(self, *path, is_dir=False):
         """ Get a path for a file, creating necessary subdirs. """
