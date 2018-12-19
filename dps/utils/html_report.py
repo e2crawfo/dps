@@ -111,12 +111,12 @@ class HTMLReport(object):
         self.save()
 
 
-def parse_report(filename, max_frames=None, take_every=None):
+def parse_report(filename, max_frames=None, take_every=None, first_row=0):
 
     with open(filename, 'r') as f:
         soup = BeautifulSoup(f)
 
-        rows = soup.find_all('table')
+        rows = soup.find_all('table')[first_row:]
 
         take_every = take_every or 1
         timesteps = range(0, len(rows), take_every)
