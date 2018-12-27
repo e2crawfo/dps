@@ -179,7 +179,7 @@ def walk_variable_scopes(max_depth=None):
                 trainable[name_so_far] += n_variables
             name_so_far += "/"
 
-    table = ["scope trainable fixed total".split()]
+    table = ["scope n_trainable n_fixed total".split()]
     for scope in sorted(fixed, reverse=True):
         depth = sum(c == "/" for c in scope) + 1
 
@@ -192,6 +192,7 @@ def walk_variable_scopes(max_depth=None):
             _fmt(fixed[scope]),
             _fmt(trainable[scope] + fixed[scope])])
 
+    print("TensorFlow variable scopes (down to maximum depth of {}):".format(max_depth))
     print(tabulate(table, headers="firstrow", tablefmt="fancy_grid"))
 
 
@@ -1709,7 +1710,12 @@ class RenderHook(object):
 
         feed_dict = self.get_feed_dict(updater)
 
-        tensor_config = Config(updater.tensors)
+        try:
+            tensors = updater.tensors
+        except AttributeError:
+            tensors = updater._tensors
+
+        tensor_config = Config(tensors)
         to_fetch = {k: tensor_config[k] for k in fetches}
         to_fetch = nest.map_structure(lambda s: s[:self.N], to_fetch)
 

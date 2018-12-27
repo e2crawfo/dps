@@ -131,7 +131,7 @@ class TrainingLoop(object):
     """ A training loop.
 
     The behaviour of the training loop depends on the context stack that is active when it is
-    run (i.e. `run` method is called), not when it is created.
+    run (i.e. `run` method is called), not the one that is active when it is created.
 
     Parameters
     ----------
@@ -223,7 +223,6 @@ class TrainingLoop(object):
         frozen_data = None
 
         with ExitStack() as stack:
-            # Tee stdout and stderr to files
             stack.enter_context(redirect_stream('stdout', self.data.path_for('stdout'), tee=cfg.tee))
             stack.enter_context(redirect_stream('stderr', self.data.path_for('stderr'), tee=cfg.tee))
 

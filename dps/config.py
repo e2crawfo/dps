@@ -53,6 +53,7 @@ DEFAULT_CONFIG = Config(
     readme="",
     hooks=[],
     overwrite_plots=True,
+    n_procs=1,
 )
 
 
