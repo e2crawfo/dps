@@ -41,8 +41,8 @@ class _BuildDataset(object):
             cfg.update_from_command_line()
             print(cfg)
 
-            es = ExperimentStore(cfg.log_dir)
-            exp_dir = es.new_experiment("", seed, add_date=1, force_fresh=1, update_latest=False)
+            experiment_store = ExperimentStore(os.path.join(cfg.local_experiments_dir, cfg.env_name))
+            exp_dir = experiment_store.new_experiment("", seed, add_date=1, force_fresh=1, update_latest=False)
             params["data_dir"] = exp_dir.path
 
             print(params)
@@ -72,15 +72,15 @@ def make_dataset_in_parallel(run_kwargs, dataset_cls, param_values=None):
     n_examples = param_values["n_examples"]
     n_examples_per_shard = run_kwargs["n_examples_per_shard"]
 
-    es = ExperimentStore(cfg.build_experiments_dir, prefix="build_{}".format(dataset_cls.__name__))
+    experiment_store = ExperimentStore(
+        cfg.parallel_experiments_build_dir, prefix="build_{}".format(dataset_cls.__name__))
 
     count = 0
     name = "attempt=0"
     has_built = False
     while not has_built:
         try:
-            exp_dir = es.new_experiment(
-                name, seed, add_date=True, force_fresh=True)
+            exp_dir = experiment_store.new_experiment(name, seed, add_date=True, force_fresh=True)
             has_built = True
         except FileExistsError:
             count += 1

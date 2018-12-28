@@ -33,7 +33,6 @@ class Config(SystemConfig):
     noise_schedule = None
 
     show_plots = False
-    save_plots = False
     verbose = False
     display_step = 1000
     eval_step = 100

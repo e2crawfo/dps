@@ -5,14 +5,7 @@ except ImportError:
     from ez_setup import use_setuptools
     setuptools = use_setuptools()
 
-from os.path import dirname, realpath
 from setuptools import find_packages, setup  # noqa: F811
-
-
-def _read_requirements_file():
-    req_file_path = '%s/requirements.txt' % dirname(realpath(__file__))
-    with open(req_file_path) as f:
-        return [line.strip() for line in f if not line.startswith('git+')]
 
 
 setup(
@@ -22,7 +15,7 @@ setup(
     version='0.1',
     packages=find_packages(),
     setup_requires=['numpy>=1.7'],
-    install_requires=_read_requirements_file(),
+    install_requires=[],
     entry_points={
         'console_scripts': ['dps-hyper=dps.hyper.command_line:dps_hyper_cl',
                             'dps-run=dps.run:run',

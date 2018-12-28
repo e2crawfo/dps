@@ -15,6 +15,7 @@ from tensorflow.python.framework import ops
 from tensorflow.python.util import nest
 
 import dps
+from dps import cfg
 from dps.utils.base import _bool, popleft, Parameterized, Param, Config
 from dps.utils.inspect_checkpoint import get_tensors_from_checkpoint_file  # noqa: F401
 
@@ -418,7 +419,7 @@ class ScopedFunction(Parameterized):
         name_params = sorted(name_params or [])
         self.param_hash = get_param_hash(train_config, name_params)
 
-        self.directory = directory or dps.cfg.log_dir
+        self.directory = directory or os.path.join(cfg.local_experiments_dir, cfg.env_name)
 
         self.param_dict = OrderedDict((key, train_config[key]) for key in name_params)
 

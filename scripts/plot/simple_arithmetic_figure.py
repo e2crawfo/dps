@@ -21,7 +21,6 @@ config.update({
     'start_loc': (0, 0),
     'shape': (3, 3),
     'show_plots': True,
-    'save_plots': True,
     'mnist': 1,
     'mpl_backend': 'TkAgg',
     'n_controller_units': 128,

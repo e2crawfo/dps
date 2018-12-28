@@ -611,7 +611,7 @@ def build_and_submit(
                 prefix="dps_readme_", editor="vim", initial_text="README.md: \n")
 
         archive_path = build_search(
-            cfg.build_experiments_dir, name, distributions, config,
+            cfg.parallel_experiments_build_dir, name, distributions, config,
             add_date=1, _zip=True, do_local_test=do_local_test,
             n_param_settings=n_param_settings, n_repeats=n_repeats, readme=readme)
 

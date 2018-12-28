@@ -9,6 +9,7 @@ import zipfile
 import struct
 from array import array
 
+from dps import cfg
 from dps.datasets.load import _validate_emnist
 from dps.utils import image_to_string, cd, process_path
 from dps.datasets.load import convert_emnist_and_store
@@ -33,7 +34,10 @@ def download_backgrounds(data_dir):
             subprocess.run(command, check=True)
 
 
-emnist_url = 'http://www.itl.nist.gov/iaui/vip/cs_links/EMNIST/gzip.zip'
+# NIST link seems not to work anymore...
+# emnist_url = 'http://www.itl.nist.gov/iaui/vip/cs_links/EMNIST/gzip.zip'
+
+emnist_url = 'https://cloudstor.aarnet.edu.au/plus/index.php/s/54h3OuGJhFLwAlQ/download'
 
 
 template = 'emnist-byclass-{}-{}-idx{}-ubyte.gz'
@@ -63,7 +67,7 @@ def download_emnist(data_dir):
     with cd(emnist_raw_dir):
         if not os.path.exists('gzip.zip'):
             print("Downloading...")
-            command = "wget {} --no-check-certificate".format(emnist_url).split()
+            command = "wget --output-document=gzip.zip {}".format(emnist_url).split()
             subprocess.run(command, check=True)
         else:
             print("Found existing copy of gzip.zip, not downloading.")
@@ -129,7 +133,7 @@ def process_emnist(data_dir, quiet):
     """
     with cd(data_dir):
         if _validate_emnist('emnist'):
-            print("EMNIST data seems to be present already, exiting.")
+            print("EMNIST data seems to be present already.")
             return
         else:
             try:
@@ -248,7 +252,7 @@ def process_omniglot(data_dir, quiet):
         omniglot_dir = process_path(os.path.join(data_dir, 'omniglot'))
 
         if _validate_omniglot(omniglot_dir):
-            print("Omniglot data seems to be present already, exiting.")
+            print("Omniglot data seems to be present already.")
             return
         else:
             try:
@@ -283,7 +287,7 @@ def process_omniglot(data_dir, quiet):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('kind', type=str, choices=['emnist', 'omniglot', 'backgrounds'])
-    parser.add_argument('path', type=str)
+    parser.add_argument('--path', type=str, default=cfg.data_dir)
     parser.add_argument('-q', action='count', default=0)
     parser.add_argument(
         '--shape', default="", type=str,
@@ -294,11 +298,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.kind == 'emnist':
+        process_emnist(args.path, args.q)
         if args.shape:
             shape = tuple(int(i) for i in args.shape.split(','))
             convert_emnist_and_store(args.path, shape)
-        else:
-            process_emnist(args.path, args.q)
     elif args.kind == 'omniglot':
         process_omniglot(args.path, args.q)
     elif args.kind == 'backgrounds':

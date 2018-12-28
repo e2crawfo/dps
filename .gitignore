@@ -3,6 +3,7 @@ animation.mp4
 good/
 *nohup.out
 .ipython
+dps/config.ini
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

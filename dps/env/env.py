@@ -222,7 +222,7 @@ class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
         return rollouts
 
     def visualize(self, render_rollouts=None, **rollout_kwargs):
-        if cfg.show_plots or cfg.save_plots:
+        if cfg.show_plots:
             self.do_slow_rollouts(render_mode="human", **rollout_kwargs)
 
 

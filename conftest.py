@@ -9,7 +9,6 @@ logging.getLogger('PIL').setLevel(logging.WARNING)
 def pytest_addoption(parser):
     parser.addoption("--max-steps", default=None, help="Maximum number of steps to run.")
     parser.addoption("--show-plots", action='store_true', help="Display any graphs that are created.")
-    parser.addoption("--save-plots", action='store_true', help="Save any graphs that are created.")
     parser.addoption("--skip-slow", action="store_true", help="Skip slow tests.")
     parser.addoption("--skip-fast", action="store_true", help="Skip fast tests.")
     parser.addoption(
@@ -51,11 +50,6 @@ def show_plots(request):
 
 
 @pytest.fixture
-def save_plots(request):
-    return request.config.getoption("--save-plots")
-
-
-@pytest.fixture
 def verbose(request):
     return request.config.getoption("verbose")
 
@@ -75,7 +69,6 @@ def test_config(request):
         inter_op_parallelism_threads=1,
         use_gpu=False,
         show_plots=request.config.getoption("--show-plots"),
-        save_plots=request.config.getoption("--save-plots"),
         render_step=0,
         readme="testing",
     )

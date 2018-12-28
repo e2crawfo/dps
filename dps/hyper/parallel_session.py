@@ -761,7 +761,7 @@ def submit_job(
     run_kwargs['dry_run'] = False
 
     session = ParallelSession(
-        name, archive_path, 'map', cfg.run_experiments_dir, **run_kwargs)
+        name, archive_path, 'map', cfg.parallel_experiments_run_dir, **run_kwargs)
 
     job_path = session.job_path
 

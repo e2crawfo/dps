@@ -23,7 +23,6 @@ from functools import wraps
 import inspect
 import hashlib
 import configparser
-import socket
 from zipfile import ZipFile
 import importlib
 import json
@@ -587,12 +586,13 @@ def _checked_makedirs(directory, force_fresh):
 
 class ExperimentDirectory(object):
     """ Wraps a directory storing data related to an experiment. """
+
     def __init__(self, path, force_fresh=False):
         self.path = path
         _checked_makedirs(path, force_fresh)
 
     def path_for(self, *path, is_dir=False):
-        """ Get a path for a file, creating necessary subdirs. """
+        """ Get path for a file, creating necessary subdirs. """
         path = os.path.join(*path)
         if is_dir:
             filename = ""
@@ -1446,38 +1446,69 @@ class SystemConfig(Config):
 
 def _load_system_config(key=None):
     _config = configparser.ConfigParser()
-    location = os.path.dirname(dps.__file__)
-    _config.read(os.path.join(location, 'config.ini'))
+    dps_loc = os.path.dirname(dps.__file__)
 
-    if not key:
-        key = socket.gethostname()
+    config_loc = os.path.join(dps_loc, 'config.ini')
+    print("Loading system config from {}.".format(config_loc))
+    try:
+        _config.read_file(open(config_loc, 'r'))
+    except FileNotFoundError:
+        print("Creating config at {}...".format(config_loc))
+        scratch_dir = input("Enter a location to create a scratch directory for dps (for saving experiment "
+                            "results, cached datasets, etc.). Leave blank to accept the default of '~/dps_data'.\n")
+        scratch_dir = scratch_dir or "~/dps_data"
 
-    if 'travis' in key:
-        key = 'travis'
+        template_loc = os.path.join(dps_loc, 'config_template.ini')
+        with open(template_loc, "r") as f:
+            template = f.read()
 
-    if key not in _config:
-        key = 'DEFAULT'
+        config = template.format(scratch_dir=scratch_dir)
 
-    # Load default configuration from a file
+        with open(config_loc, "w") as f:
+            f.write(config)
+        _config.read_file(open(config_loc, 'r'))
+
+    key = "config"
+
     config = Config(
-        hostname=socket.gethostname(),
+        scratch_dir=process_path(_config.get(key, 'scratch_dir')),
+
+        data_dir=_config.get(key, 'data_dir', fallback=None),
+        model_dir=_config.get(key, 'model_dir', fallback=None),
+        local_experiments_dir=_config.get(key, 'local_experiments_dir', fallback=None),
+        parallel_experiments_build_dir=_config.get(key, 'parallel_experiments_build_dir', fallback=None),
+        parallel_experiments_run_dir=_config.get(key, 'parallel_experiments_run_dir', fallback=None),
+
+        update_latest=_config.getboolean(key, 'update_latest'),
+        show_plots=_config.getboolean(key, 'show_plots'),
         start_tensorboard=_config.getboolean(key, 'start_tensorboard'),
         reload_interval=_config.getint(key, 'reload_interval'),
-        update_latest=_config.getboolean(key, 'update_latest'),
-        data_dir=process_path(_config.get(key, 'data_dir')),
-        model_dir=process_path(_config.get(key, 'model_dir')),
-        build_experiments_dir=process_path(_config.get(key, 'build_experiments_dir')),
-        run_experiments_dir=process_path(_config.get(key, 'run_experiments_dir')),
-        log_root=process_path(_config.get(key, 'log_root')),
-        show_plots=_config.getboolean(key, 'show_plots'),
-        save_plots=_config.getboolean(key, 'save_plots'),
-        use_gpu=_config.getboolean(key, 'use_gpu'),
         tbport=_config.getint(key, 'tbport'),
         verbose=_config.getboolean(key, 'verbose'),
+
+        use_gpu=_config.getboolean(key, 'use_gpu'),
         per_process_gpu_memory_fraction=_config.getfloat(key, 'per_process_gpu_memory_fraction'),
         gpu_allow_growth=_config.getboolean(key, 'gpu_allow_growth'),
         parallel_exe=process_path(_config.get(key, 'parallel_exe')),
     )
+
+    def fixup_dir(name):
+        attr_name = name + "_dir"
+        dir_name = getattr(config, attr_name)
+        if dir_name is None:
+            dir_name = os.path.join(config.scratch_dir, name)
+        dir_name = process_path(dir_name)
+        setattr(config, attr_name, dir_name)
+        os.makedirs(dir_name, exist_ok=True)
+
+    fixup_dir("data")
+    fixup_dir("model")
+    fixup_dir("local_experiments")
+    fixup_dir("parallel_experiments_build")
+    fixup_dir("parallel_experiments_run")
+
+    print("The directory {} will be used as a scratch space "
+          "(saving results, datasets, etc.).".format(config.scratch_dir))
 
     return config
 
@@ -1619,10 +1650,6 @@ class ConfigStack(dict, metaclass=Singleton):
                 value = str(value)
             _config[key] = value
         return _config
-
-    @property
-    def log_dir(self):
-        return os.path.join(self.log_root, self.env_name)
 
     def update_from_command_line(self):
         cl_args = clify.wrap_object(self).parse()

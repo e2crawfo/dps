@@ -132,10 +132,6 @@ Operator(
             inputs = [store.load_object('data', ik) for ik in self.inp_keys]
             func = store.load_object('function', self.func_key)
 
-            for inp in inputs:
-                if hasattr(inp, 'log_dir'):
-                    inp.log_dir = str(store.directory)
-
             if self.pass_store:
                 inputs.insert(0, store)
 

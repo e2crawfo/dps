@@ -58,8 +58,7 @@ class EarlyStopHook(object):
 
         if self.patience > 0:
             self._early_stopped = (
-                self._early_stopped or
-                (step - self._best_step > self.patience))
+                self._early_stopped or (step - self._best_step > self.patience))
         return new_best, self._early_stopped
 
     @property
@@ -201,8 +200,8 @@ class TrainingLoop(object):
             cfg.seed = gen_seed()
 
         # Create a directory to store the results of the training session.
-        es = ExperimentStore(cfg.log_dir)
-        exp_dir = es.new_experiment(
+        self.experiment_store = ExperimentStore(os.path.join(cfg.local_experiments_dir, cfg.env_name))
+        exp_dir = self.experiment_store.new_experiment(
             self.exp_name, cfg.seed, add_date=1, force_fresh=1, update_latest=cfg.update_latest)
         self.exp_dir = exp_dir
         cfg.path = exp_dir.path
@@ -273,7 +272,7 @@ class TrainingLoop(object):
             print("\n")
 
             if cfg.start_tensorboard:
-                restart_tensorboard(cfg.log_dir, cfg.tbport, cfg.reload_interval)
+                restart_tensorboard(self.experiment_store.path, cfg.tbport, cfg.reload_interval)
 
             stage_config = self.curriculum_remaining.pop(0)
             stage_config = Config(stage_config)

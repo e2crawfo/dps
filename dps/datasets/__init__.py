@@ -5,5 +5,4 @@ from .base import (
     VisualArithmeticDataset, GridArithmeticDataset,
     EmnistObjectDetectionDataset, GridEmnistObjectDetectionDataset,
 )
-from .atari import StaticAtariDataset, ReinforcementLearningDataset
 from .game import GameDataset
