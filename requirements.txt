@@ -5,7 +5,6 @@ gym==0.9.5
 -e git+https://github.com/e2crawfo/gym-recording.git@master#egg=gym_recording
 iso8601
 imageio
-kmodes
 matplotlib
 numpy>=1.7
 pandas
