@@ -9,8 +9,8 @@ import os
 from io import BytesIO
 from base64 import b64encode, b64decode
 import datetime
-import imageio
 import matplotlib.image as mpimg
+import argparse
 
 
 def format_dict(d):
@@ -111,7 +111,33 @@ class HTMLReport(object):
         self.save()
 
 
-def parse_report(filename, max_frames=None, take_every=None, first_row=0):
+def save_video(title, images, timesteps, output_dir):
+    timesteps = timesteps or range(len(images))
+    fig, ax = plt.subplots(1, 1, figsize=(5, 5))
+    plt.subplots_adjust(top=1, bottom=0, left=0, right=1)
+    ax.set_aspect("equal")
+    ax.set_axis_off()
+    image = ax.imshow(images[0])
+    timestep_text = ax.text(
+        0.01, 0.01, '', horizontalalignment='left', verticalalignment='bottom', transform=ax.transAxes)
+
+    def animate(t):
+        plt.show()
+        image.set_data(images[t])
+        timestep_text.set_text("t={}".format(timesteps[t]))
+
+    anim = animation.FuncAnimation(fig, animate, frames=len(images), interval=100)
+
+    gif_filename = os.path.join(output_dir, title.replace(' ', '_') + '.gif')
+    print("Saving video {} to {}.".format(title, gif_filename))
+    anim.save(gif_filename, writer='imagemagick')
+
+    plt.close(fig)
+
+
+def report_to_videos(filename, output_dir, max_frames=None, take_every=None, first_row=0):
+
+    os.makedirs(output_dir, exist_ok=True)
 
     with open(filename, 'r') as f:
         soup = BeautifulSoup(f)
@@ -143,28 +169,16 @@ def parse_report(filename, max_frames=None, take_every=None, first_row=0):
                 img = mpimg.imread(io, format='png')
                 images.append(img)
 
-            save_video(title, images, timesteps)
+            save_video(title, images, timesteps, output_dir)
 
 
-def save_video(title, images, timesteps=None):
-    timesteps = timesteps or range(len(images))
-    fig, ax = plt.subplots(1, 1, figsize=(5, 5))
-    plt.subplots_adjust(top=1, bottom=0, left=0, right=1)
-    ax.set_aspect("equal")
-    ax.set_axis_off()
-    image = ax.imshow(images[0])
-    timestep_text = ax.text(
-        0.01, 0.01, '', horizontalalignment='left', verticalalignment='bottom', transform=ax.transAxes)
+def report_to_videos_cl():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('report')
+    parser.add_argument('output_dir')
+    parser.add_argument('--max-frames', type=int, default=None)
+    parser.add_argument('--take-every', type=int, default=None)
+    parser.add_argument('--first-row', type=int, default=None)
+    args = parser.parse_args()
 
-    def animate(t):
-        plt.show()
-        image.set_data(images[t])
-        timestep_text.set_text("t={}".format(timesteps[t]))
-
-    anim = animation.FuncAnimation(fig, animate, frames=len(images), interval=100)
-
-    gif_filename = title.replace(' ', '_') + '.gif'
-    print(gif_filename)
-    anim.save(gif_filename, writer='imagemagick')
-
-    plt.close(fig)
+    report_to_videos(args.report, args.output_dir, args.max_frames, args.take_every, args.first_row)

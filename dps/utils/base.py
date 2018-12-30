@@ -225,7 +225,7 @@ def view_readme_cl():
 
 
 def view_readme(path, max_depth):
-    """ View readme files in a diretory of experiments, sorted by the time at
+    """ View readme files in a directory of experiments, sorted by the time at
         which the experiment began execution.
 
     """
