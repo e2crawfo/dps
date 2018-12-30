@@ -67,7 +67,7 @@ class HTMLReport(object):
         sio.close()
         return encoded
 
-    def add_image(self, im, txt='', width=None, font_pct=100):
+    def add_image(self, im, title, txt='', width=None, font_pct=100):
         if width is None:
             width = self.default_image_width
         if self.t is None or self.row_image_count >= self.images_per_row:
@@ -83,7 +83,7 @@ class HTMLReport(object):
                     )
                     tags.br()
                     tags.p(
-                        txt,
+                        "{}\n{}".format(title, txt),
                         style='width:{}px; word-wrap: break-word; white-space: pre-wrap; font-size: {}%;'.format(
                             width,
                             font_pct
@@ -96,9 +96,9 @@ class HTMLReport(object):
         self.t = None
         self.row_image_count = 0
 
-    def add_images(self, ims, txts, width=256):
-        for im, txt in zip(ims, txts):
-            self.add_image(im, txt, width)
+    def add_images(self, ims, titles, txts, width=256):
+        for im, title, txt in zip(ims, titles, txts):
+            self.add_image(im, title, txt, width)
 
     def save(self):
         with open(self.path, 'w') as f:
@@ -161,7 +161,6 @@ def report_to_videos(filename, output_dir, max_frames=None, take_every=None, fir
                 if title is None:
                     p = td.find_all('p')[1]
                     title = p.text.split('\n')[-1]
-                    print(title)
 
                 img_tag = td.find_all('img')[0]
                 _, data = img_tag.attrs['src'].split(',')
