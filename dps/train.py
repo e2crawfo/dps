@@ -20,11 +20,10 @@ from dps import cfg
 from dps.utils import (
     gen_seed, time_limit, Alarm, memory_usage, gpu_memory_usage, ExperimentStore,
     ExperimentDirectory, nvidia_smi, memory_limit, Config, ClearConfig, redirect_stream,
-    NumpySeed, make_symlink
+    NumpySeed, make_symlink, restart_tensorboard
 )
 from dps.utils.tf import (
-    restart_tensorboard, uninitialized_variables_initializer,
-    trainable_variables, walk_variable_scopes
+    uninitialized_variables_initializer, trainable_variables, walk_variable_scopes
 )
 from dps.mpi_train import MPI_MasterContext
 
@@ -929,7 +928,7 @@ class _TrainingLoopData(FrozenTrainingLoopData):
         self.stage_idx = stage_idx
         self.summary_writers = {}
 
-    def end_stage(self, local_step):
+    def end_stage(self, local_step=None):
         self.dump_data(local_step)
         for writer in self.summary_writers.values():
             writer.close()
@@ -960,7 +959,7 @@ class _TrainingLoopData(FrozenTrainingLoopData):
             if not record:
                 continue
 
-            if cfg.store_step_data:
+            if getattr(cfg, 'store_step_data', True):
                 record = record.copy()
                 record.update(
                     stage_idx=stage_idx,
@@ -971,12 +970,15 @@ class _TrainingLoopData(FrozenTrainingLoopData):
 
                 self.data[mode].append(record)
 
-            # Build a summary using the Summary protocol buffer
-            # See https://stackoverflow.com/questions/37902705/how-to-manually-create-a-tf-summary
-            summary_values = [tf.Summary.Value(tag="all/"+k, simple_value=float(v)) for k, v in record.items()]
-            summary = tf.Summary(value=summary_values)
-            writer = self._get_summary_writer(mode)
-            writer.add_summary(summary, n_global_experiences)
+            self.store_summary(mode, record, n_global_experiences)
+
+    def store_summary(self, mode, record, n_global_experiences):
+        # Build a summary using the Summary protocol buffer
+        # See https://stackoverflow.com/questions/37902705/how-to-manually-create-a-tf-summary
+        summary_values = [tf.Summary.Value(tag="all/"+k, simple_value=float(v)) for k, v in record.items()]
+        summary = tf.Summary(value=summary_values)
+        writer = self._get_summary_writer(mode)
+        writer.add_summary(summary, n_global_experiences)
 
     def _get_summary_writer(self, mode):
         if mode not in self.summary_writers:
@@ -1034,7 +1036,7 @@ class _TrainingLoopData(FrozenTrainingLoopData):
 
         print(tabulate(table, headers=headers, tablefmt="psql"))
 
-    def summarize(self, *steps):
+    def summarize(self):
         """ Summarize the training data.
 
         Parameters

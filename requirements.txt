@@ -1,6 +1,7 @@
 bs4
 -e git+https://github.com/e2crawfo/clify.git@master#egg=clify
 dill==0.2.6
+dominate
 future
 gym==0.9.5
 -e git+https://github.com/e2crawfo/gym-recording.git@master#egg=gym_recording

@@ -17,7 +17,7 @@ import sys
 import shutil
 import pandas as pd
 import errno
-from tempfile import NamedTemporaryFile
+import tempfile
 import dill
 from functools import wraps
 import inspect
@@ -26,6 +26,9 @@ import configparser
 from zipfile import ZipFile
 import importlib
 import json
+import gc
+import scipy
+import matplotlib.pyplot as plt
 
 import clify
 import dps
@@ -89,6 +92,15 @@ def header(message, n, char, nl=True):
 
 def print_header(message, n, char, nl=True):
     print(header(message, n, char, nl))
+
+
+def exactly_2d(x, return_leading_shape=False):
+    leading_shape = x.shape[:-1]
+
+    if return_leading_shape:
+        return leading_shape, x.reshape(-1, x.shape[-1])
+    else:
+        return x.reshape(-1, x.shape[-1])
 
 
 def generate_perlin_noise_2d(shape, res, normalize=False):
@@ -649,10 +661,10 @@ def edit_text(prefix=None, editor="vim", initial_text=None):
     if editor != "vim":
         raise Exception("NotImplemented")
 
-    with NamedTemporaryFile(mode='w',
-                            prefix='',
-                            suffix='.md',
-                            delete=False) as temp_file:
+    with tempfile.NamedTemporaryFile(mode='w',
+                                     prefix='',
+                                     suffix='.md',
+                                     delete=False) as temp_file:
         pass
 
     try:
@@ -688,6 +700,11 @@ class Tee(object):
     def flush(self):
         for s in self.streams:
             s.flush()
+
+    def fileno(self):
+        for s in self.streams:
+            if hasattr(s, "fileno"):
+                return s.fileno()
 
 
 @contextmanager
@@ -837,6 +854,17 @@ def char_map(value):
     return ascii_art_chars[bin_id]
 
 
+def plt_to_img():
+    with tempfile.TemporaryFile() as fp:
+        plt.savefig(fp, format='png', bbox_inches='tight')
+        fp.seek(0)
+        img = scipy.misc.imread(fp)
+    plt.close('all')
+    gc.collect()
+
+    return img
+
+
 def image_to_string(array):
     """ Convert an image stored as an array to an ascii art string """
     if array.ndim == 3:
@@ -920,6 +948,22 @@ class Param(object):
 
 
 class Parameterized(object):
+    """ An object that can have `Param` class attributes. These class attributes will be
+        turned into instance attributes at instance creation time. To set a value for the instance
+        attributes, we perform the following checks (the first value that is found is used):
+
+        1. check the kwargs passed into class constructor for a value with key "<param-name>"
+        2. check dps.cfg for values with name "<class-name>:<param-name>". `class-name` can be
+           the class the the object is part of, or any base class, but more derived/specific classes
+           will be checked first (more specifically, we iterate through classes in order of the MRO).
+        3. check dps.cfg for values with name "<param-name>"
+        4. fallback on the param's default value, if one was supplied.
+
+        If no value is found by this point, an AttributeError is raised.
+
+        Parameters should be not be altered throughout the lifetime of the class instance.
+
+    """
     _resolved = False
 
     def __new__(cls, *args, **kwargs):
@@ -979,7 +1023,8 @@ class Parameterized(object):
 
     @classmethod
     def _capture_param_values(cls, **kwargs):
-        """ Return the params that would be created if an object of the current class were constructed in the current context with the given kwargs. """
+        """ Return the params that would be created if an object of the
+            current class were constructed in the current context with the given kwargs. """
         param_values = dict()
         for name in cls.param_names():
             param = getattr(cls, name)
@@ -1002,7 +1047,7 @@ class Parameterized(object):
 
     def param_values(self):
         if not self._resolved:
-            raise Exception("Cannot supply `param_values` as parameters have not yet been resolved.")
+            raise Exception("Parameters have not yet been resolved.")
         return {n: getattr(self, n) for n in self.param_names()}
 
     def __deepcopy__(self, memo):
@@ -1019,15 +1064,18 @@ def du(path):
     return subprocess.check_output(['du', '-sh', str(path)]).split()[0].decode('utf-8')
 
 
-class pdb_postmortem(object):
+class pdb_postmortem:
+    def __init__(self, do_it=True):
+        self.do_it = do_it
+
     def __enter__(self):
         pass
 
     def __exit__(self, type_, value, tb):
-        if type_:
+        if self.do_it and type_:
             traceback.print_exc()
             pdb.post_mortem(tb)
-        return True
+            return True
 
 
 def camel_to_snake(name):
@@ -1179,7 +1227,7 @@ class KeywordMapping(object):
         self._names = names
 
     def __getitem__(self, subname):
-        if subname is "_":
+        if subname == "_":
             return True
 
         for name in self._names:
@@ -1448,7 +1496,9 @@ def _load_system_config(key=None):
     _config = configparser.ConfigParser()
     dps_loc = os.path.dirname(dps.__file__)
 
-    config_loc = os.path.join(dps_loc, 'config.ini')
+    config_dir = os.path.join(os.getenv("HOME"), ".config")
+    config_loc = os.path.join(config_dir, "dps_config.ini")
+
     print("Loading system config from {}.".format(config_loc))
     try:
         _config.read_file(open(config_loc, 'r'))
@@ -1654,3 +1704,59 @@ class ConfigStack(dict, metaclass=Singleton):
     def update_from_command_line(self):
         cl_args = clify.wrap_object(self).parse()
         self.update(cl_args)
+
+
+def restart_tensorboard(logdir, port=6006, reload_interval=120):
+    sp = subprocess
+    print("Killing old tensorboard process...")
+    try:
+        command = "fuser {}/tcp -k".format(port)
+        sp.run(command.split(), stdout=sp.DEVNULL, stderr=sp.DEVNULL)
+    except sp.CalledProcessError as e:
+        print("Killing tensorboard failed:")
+        print(e.output)
+    print("Restarting tensorboard process...")
+    command = "tensorboard --logdir={} --port={} --reload_interval={}".format(logdir, port, reload_interval)
+    print(command)
+    sp.Popen(command.split(), stdout=sp.DEVNULL, stderr=sp.DEVNULL)
+    print("Done restarting tensorboard.\n")
+
+
+def map_structure(func, *args, is_leaf):
+    if is_leaf(args[0]):
+        return func(*args)
+    else:
+        if isinstance(args[0], dict):
+            arg_keys = [a.keys() for a in args]
+            assert all(keys == arg_keys[0] for keys in arg_keys), (
+                "Arguments do not have same structure: {}.".format(arg_keys))
+
+            new_dict = {
+                k: map_structure(func, *[a[k] for a in args], is_leaf=is_leaf)
+                for k in args[0]}
+            return type(args[0])(new_dict)
+        else:
+            arg_lens = [len(a) for a in args]
+            assert all(np.array(arg_lens) == arg_lens[0]), (
+                "Arguments do not have same structure: {} ".format(arg_lens))
+
+            new_list = [map_structure(func, *[a[i] for a in args], is_leaf=is_leaf)
+                        for i in range(arg_lens[0])]
+            return type(args[0])(new_list)
+
+
+def test_map_structure():
+    a = dict(a=[1, 2], b=3)
+    b = dict(a=[3, 4], b=10)
+
+    result = map_structure(lambda x, y: x + y, a, b, is_leaf=lambda x: isinstance(x, int))
+    assert tuple(result["a"]) == (4, 6)
+    assert result["b"] == 13
+
+    result = map_structure(lambda *x: None, a, is_leaf=lambda x: isinstance(x, int))
+    assert tuple(result["a"]) == (None, None)
+    assert result["b"] is None
+
+    result = map_structure(lambda *x: None, a, b, is_leaf=lambda x: isinstance(x, int))
+    assert tuple(result["a"]) == (None, None)
+    assert result["b"] is None

@@ -1,5 +1,6 @@
 -e git+https://github.com/e2crawfo/clify.git@d236061#egg=clify
 dill==0.2.6
+dominate=2.3.5
 future==0.16.0
 gym==0.9.5
 -e git+https://github.com/e2crawfo/gym-recording.git@master#egg=gym_recording

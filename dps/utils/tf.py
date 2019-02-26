@@ -1,4 +1,3 @@
-import subprocess as sp
 import numpy as np
 from collections import deque, OrderedDict, defaultdict
 import os
@@ -1291,21 +1290,6 @@ def print_variables(collection, scope):
         print("\n")
         print(v.name)
         print(sess.run(v))
-
-
-def restart_tensorboard(logdir, port=6006, reload_interval=120):
-    print("Killing old tensorboard process...")
-    try:
-        command = "fuser {}/tcp -k".format(port)
-        sp.run(command.split(), stdout=sp.DEVNULL, stderr=sp.DEVNULL)
-    except sp.CalledProcessError as e:
-        print("Killing tensorboard failed:")
-        print(e.output)
-    print("Restarting tensorboard process...")
-    command = "tensorboard --logdir={} --port={} --reload_interval={}".format(logdir, port, reload_interval)
-    print(command)
-    sp.Popen(command.split(), stdout=sp.DEVNULL, stderr=sp.DEVNULL)
-    print("Done restarting tensorboard.\n")
 
 
 def add_scaled_noise_to_gradients(grads_and_vars, gradient_noise_scale):
