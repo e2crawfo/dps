@@ -432,7 +432,6 @@ class _RunTrainingLoop(object):
         config.update(new)
         config.update(
             start_tensorboard=False,
-            update_latest=False,
             show_plots=False,
         )
 
@@ -602,7 +601,6 @@ def build_and_submit(
 
         config = config.copy(
             start_tensorboard=False,
-            update_latest=False,
             show_plots=False,
         )
 

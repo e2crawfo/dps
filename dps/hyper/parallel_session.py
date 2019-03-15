@@ -212,9 +212,6 @@ class ParallelSession(object):
 
         self.print_time_limits()
 
-        # Create convenience `latest` symlinks
-        make_symlink(job_path, os.path.join(scratch, 'latest'))
-
     def get_load_avg(self, host):
         return_code, stdout, stderr = self.ssh_execute("uptime", host, robust=True)
         print(stdout)

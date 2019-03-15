@@ -2,8 +2,8 @@ import dominate
 import matplotlib.pyplot as plt
 from matplotlib import animation
 from dominate import tags
-from scipy.misc import imsave as sp_imsave
-from skimage import img_as_int
+import imageio
+from skimage import img_as_ubyte
 from bs4 import BeautifulSoup
 import os
 from io import BytesIO
@@ -30,7 +30,7 @@ def format_dict(d):
 
 
 class HTMLReport(object):
-    def __init__(self, path, images_per_row=1000, default_image_width=400):
+    def __init__(self, path, images_per_row=1000, default_image_width=400, default_image_height=None):
         self.path = path
         title = datetime.datetime.today().strftime(
             "Report %Y-%m-%d_%H-%M-%S_{}".format(os.uname()[1])
@@ -38,6 +38,7 @@ class HTMLReport(object):
         self.doc = dominate.document(title=title)
         self.images_per_row = images_per_row
         self.default_image_width = default_image_width
+        self.default_image_height = default_image_height
         self.t = None
         self.row_image_count = 0
 
@@ -60,16 +61,18 @@ class HTMLReport(object):
 
     def _encode_image(self, img_arr):
         """Save the image array as PNG and then encode with base64 for embedding"""
-        img_arr = img_as_int(img_arr)
+        img_arr = img_as_ubyte(img_arr)
         sio = BytesIO()
-        sp_imsave(sio, img_arr, 'png')
+        imageio.imwrite(sio, img_arr, 'png')
         encoded = b64encode(sio.getvalue()).decode()
         sio.close()
         return encoded
 
-    def add_image(self, im, title, txt='', width=None, font_pct=100):
+    def add_image(self, im, title, txt='', width=None, height=None, font_pct=100):
         if width is None:
             width = self.default_image_width
+        if height is None:
+            height = self.default_image_height
         if self.t is None or self.row_image_count >= self.images_per_row:
             self._add_table()
         with self.t:
@@ -77,8 +80,12 @@ class HTMLReport(object):
             # with td(style="word-wrap: break-word;", halign="center", valign="top"):
             with tags.td(halign="center", valign="top"):
                 with tags.p():
+                    if height is not None:
+                        img_style="width:{}px; height:{}px".format(width, height)
+                    else:
+                        img_style="width:{}px;".format(width)
                     tags.img(
-                        style="width:%dpx" % width,
+                        style=img_style,
                         src=r'data:image/png;base64,' + self._encode_image(im)
                     )
                     tags.br()

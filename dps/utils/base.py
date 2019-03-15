@@ -15,7 +15,6 @@ import psutil
 import resource
 import sys
 import shutil
-import pandas as pd
 import errno
 import tempfile
 import dill
@@ -27,8 +26,8 @@ from zipfile import ZipFile
 import importlib
 import json
 import gc
-import scipy
 import matplotlib.pyplot as plt
+import imageio
 
 import clify
 import dps
@@ -565,18 +564,6 @@ class ExperimentStore(object):
     def __repr__(self):
         return str(self)
 
-    def get_latest_experiment(self, kind=None):
-        path = self.path
-        if kind is not None:
-            path = os.path.join(self.path, kind)
-
-        latest = os.readlink(os.path.join(path, 'latest'))
-        return ExperimentDirectory(latest)
-
-    def get_latest_results(self, filename='results'):
-        exp_dir = self.get_latest_exp_dir()
-        return pd.read_csv(exp_dir.path_for(filename))
-
     def experiment_finished(self, exp_dir, success):
         dest_name = 'complete' if success else 'incomplete'
         dest_path = os.path.join(self.path, dest_name)
@@ -842,7 +829,7 @@ def memory_usage(physical=False):
 
 # Character used for ascii art, sorted in order of increasing sparsity
 ascii_art_chars = \
-    "$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\|()1{}[]?-_+~<>i!lI;:,\"^`'. "
+    "$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/|()1{}[]?-_+~<>i!lI;:,\"^`'. "
 
 
 def char_map(value):
@@ -858,7 +845,7 @@ def plt_to_img():
     with tempfile.TemporaryFile() as fp:
         plt.savefig(fp, format='png', bbox_inches='tight')
         fp.seek(0)
-        img = scipy.misc.imread(fp)
+        img = imageio.imread(fp)
     plt.close('all')
     gc.collect()
 
@@ -1469,8 +1456,8 @@ class Config(dict, MutableMapping):
         nested_update(self, _d)
         nested_update(self, kwargs)
 
-    def update_from_command_line(self):
-        cl_args = clify.wrap_object(self).parse()
+    def update_from_command_line(self, strict=True):
+        cl_args = clify.wrap_object(self, strict=strict).parse()
         self.update(cl_args)
 
     def freeze(self, remove_callable=False):
@@ -1499,7 +1486,7 @@ def _load_system_config(key=None):
     config_dir = os.path.join(os.getenv("HOME"), ".config")
     config_loc = os.path.join(config_dir, "dps_config.ini")
 
-    print("Loading system config from {}.".format(config_loc))
+    # print("Loading system config from {}.".format(config_loc))
     try:
         _config.read_file(open(config_loc, 'r'))
     except FileNotFoundError:
@@ -1529,7 +1516,6 @@ def _load_system_config(key=None):
         parallel_experiments_build_dir=_config.get(key, 'parallel_experiments_build_dir', fallback=None),
         parallel_experiments_run_dir=_config.get(key, 'parallel_experiments_run_dir', fallback=None),
 
-        update_latest=_config.getboolean(key, 'update_latest'),
         show_plots=_config.getboolean(key, 'show_plots'),
         start_tensorboard=_config.getboolean(key, 'start_tensorboard'),
         reload_interval=_config.getint(key, 'reload_interval'),
@@ -1557,8 +1543,8 @@ def _load_system_config(key=None):
     fixup_dir("parallel_experiments_build")
     fixup_dir("parallel_experiments_run")
 
-    print("The directory {} will be used as a scratch space "
-          "(saving results, datasets, etc.).".format(config.scratch_dir))
+    # print("The directory {} will be used as a scratch space "
+    #       "(saving results, datasets, etc.).".format(config.scratch_dir))
 
     return config
 
@@ -1701,8 +1687,8 @@ class ConfigStack(dict, metaclass=Singleton):
             _config[key] = value
         return _config
 
-    def update_from_command_line(self):
-        cl_args = clify.wrap_object(self).parse()
+    def update_from_command_line(self, strict=True):
+        cl_args = clify.wrap_object(self, strict=strict).parse()
         self.update(cl_args)
 
 

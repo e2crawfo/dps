@@ -201,12 +201,9 @@ class TrainingLoop(object):
         # Create a directory to store the results of the training session.
         self.experiment_store = ExperimentStore(os.path.join(cfg.local_experiments_dir, cfg.env_name))
         exp_dir = self.experiment_store.new_experiment(
-            self.exp_name, cfg.seed, add_date=1, force_fresh=1, update_latest=cfg.update_latest)
+            self.exp_name, cfg.seed, add_date=1, force_fresh=1, update_latest=False)
         self.exp_dir = exp_dir
         cfg.path = exp_dir.path
-
-        if cfg.update_latest:
-            make_symlink(exp_dir.path, os.path.join(os.getenv("HOME"), "dps-latest-experiment"))
 
         breaker = "-" * 40
         header = "{}\nREADME.md - {}\n{}\n\n\n".format(breaker, os.path.basename(exp_dir.path), breaker)
@@ -970,9 +967,9 @@ class _TrainingLoopData(FrozenTrainingLoopData):
 
                 self.data[mode].append(record)
 
-            self.store_summary(mode, record, n_global_experiences)
+            self.store_scalar_summaries(mode, record, n_global_experiences)
 
-    def store_summary(self, mode, record, n_global_experiences):
+    def store_scalar_summaries(self, mode, record, n_global_experiences):
         # Build a summary using the Summary protocol buffer
         # See https://stackoverflow.com/questions/37902705/how-to-manually-create-a-tf-summary
         summary_values = [tf.Summary.Value(tag="all/"+k, simple_value=float(v)) for k, v in record.items()]
