@@ -649,7 +649,10 @@ class ImageDataset(Dataset):
 
     def visualize(self, n=4):
         batch_size = n
-        images, annotations, n_annotations, label = self.sample(n)
+        sample = self.sample(n)
+        images = sample["image"]
+        annotations, n_annotations = sample["annotations"]
+        label = sample["label"]
 
         fig, axes = plt.subplots(1, batch_size)
         for i in range(batch_size):
@@ -671,7 +674,9 @@ class ImageDataset(Dataset):
 
         sess = tf.get_default_session()
 
-        return sess.run(iterator.get_next())
+        _sample = sess.run(iterator.get_next())
+
+        return _sample
 
 
 class Rectangle(object):

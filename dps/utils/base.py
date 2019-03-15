@@ -1237,6 +1237,8 @@ class SigTerm(Exception):
 
 class NumpySeed(object):
     def __init__(self, seed):
+        if seed < 0:
+            seed = None
         self.seed = seed
         self.state = None
 
@@ -1477,6 +1479,22 @@ class SystemConfig(Config):
             config.update(_d)
         config.update(kwargs)
         super(SystemConfig, self).__init__(**config)
+
+
+def update_scratch_dir(config, new_scratch_dir):
+
+    def fixup_dir(name):
+        attr_name = name + "_dir"
+        dir_name = os.path.join(new_scratch_dir, name)
+        dir_name = process_path(dir_name)
+        setattr(config, attr_name, dir_name)
+        os.makedirs(dir_name, exist_ok=True)
+
+    fixup_dir("data")
+    fixup_dir("model")
+    fixup_dir("local_experiments")
+    fixup_dir("parallel_experiments_build")
+    fixup_dir("parallel_experiments_run")
 
 
 def _load_system_config(key=None):
