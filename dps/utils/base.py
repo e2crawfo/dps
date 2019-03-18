@@ -377,60 +377,60 @@ def _run_cmd(cmd):
     return subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode()
 
 
-class GitSummary(object):
-    def __init__(self, directory):
-        self.directory = directory
-
-    def summarize(self, n_logs=10, diff=False):
-        s = []
-        with cd(self.directory):
-            s.append("*" * 40)
-            s.append("git summary for directory {}\n".format(self.directory))
-
-            s.append("log:\n")
-            log = _run_cmd('git log -n {}'.format(n_logs))
-            s.append(log)
-
-            s.append("\nstatus:\n")
-            status = _run_cmd('git status --porcelain')
-            s.append(status)
-
-            s.append("\ndiff:\n")
-            if diff:
-                diff = _run_cmd('git diff HEAD')
-                s.append(diff)
-            else:
-                s.append("<ommitted>")
-
-            s.append("\nEnd of git summary for directory {}".format(self.directory))
-            s.append("*" * 40 + "\n")
-        return '\n'.join(s)
-
-    def freeze(self):
-        pass
-
-
-def find_git_packages():
+def find_git_directories():
     all_packages = pip_freeze()
     all_packages = all_packages.split('\n')
-
     git_packages = [p.split('=')[-1] for p in all_packages if p.startswith('-e git+')]
 
-    vc_packages = []
-
+    version_controlled_dirs = set()
     for p in git_packages:
         package = importlib.import_module(p)
-        directory = os.path.dirname(os.path.dirname(package.__file__))
-        git_dir = os.path.join(directory, '.git')
+        directory = os.path.dirname(package.__file__)
 
-        if os.path.isdir(git_dir):
-            vc_packages.append(package)
-    return vc_packages
+        # Check whether any ancestor directory contains a .git directory
+        while directory:
+            git_dir = os.path.join(directory, '.git')
+            if os.path.isdir(git_dir):
+                version_controlled_dirs.add(directory)
+                break
+            directory = os.path.dirname(directory)
+
+    return sorted(version_controlled_dirs)
 
 
-def module_git_summary(module, **kwargs):
-    module_dir = os.path.dirname(module.__file__)
-    return GitSummary(module_dir)
+def summarize_git_repo(directory, n_logs=10, diff=False):
+    s = []
+    with cd(directory):
+        s.append("*" * 40)
+        s.append("git summary for directory {}\n".format(directory))
+
+        s.append("log:\n")
+        log = _run_cmd('git log -n {}'.format(n_logs))
+        s.append(log)
+
+        s.append("\nstatus:\n")
+        status = _run_cmd('git status --porcelain')
+        s.append(status)
+
+        s.append("\ndiff:\n")
+        if diff:
+            diff = _run_cmd('git diff HEAD')
+            s.append(diff)
+        else:
+            s.append("<ommitted>")
+
+        s.append("\nEnd of git summary for directory {}".format(directory))
+        s.append("*" * 40 + "\n")
+    return '\n'.join(s)
+
+
+def summarize_git_repos(**summary_kwargs):
+    s = []
+    git_dirs = find_git_directories()
+    for git_dir in git_dirs:
+        git_summary = summarize_git_repo(git_dir, **summary_kwargs)
+        s.append(git_summary)
+    return '\n'.join(s)
 
 
 def pip_freeze(**kwargs):
@@ -608,10 +608,7 @@ class ExperimentDirectory(object):
 
     def record_environment(self, config=None, dill_recurse=False, git_diff=True):
         with open(self.path_for('context/git_summary.txt'), 'w') as f:
-            git_packages = find_git_packages()
-            for module in git_packages:
-                git_summary = module_git_summary(module)
-                f.write(git_summary.summarize(diff=git_diff))
+            f.write(summarize_git_repos(diff=git_diff))
 
         uname_path = self.path_for("context/uname.txt")
         subprocess.run("uname -a > {}".format(uname_path), shell=True)
