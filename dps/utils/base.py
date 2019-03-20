@@ -21,7 +21,6 @@ import dill
 from functools import wraps
 import inspect
 import hashlib
-import configparser
 from zipfile import ZipFile
 import importlib
 import json
@@ -307,6 +306,7 @@ def zip_root(zipfile):
 def get_param_hash(d, name_params=None):
     if not name_params:
         name_params = d.keys()
+
     param_str = []
     for name in sorted(name_params):
         value = d[name]
@@ -1494,62 +1494,68 @@ def update_scratch_dir(config, new_scratch_dir):
     fixup_dir("parallel_experiments_run")
 
 
+config_template = """
+from dps.utils import Config
+config = Config(
+    start_tensorboard=True,
+    tbport=6006,
+    reload_interval=10,
+    show_plots=False,
+    verbose=False,
+    use_gpu=False,
+    per_process_gpu_memory_fraction=0,
+    gpu_allow_growth=True,
+    parallel_exe="$HOME/.local/bin/parallel",
+    scratch_dir="{scratch_dir}",
+    slurm_preamble='''
+export OMP_NUM_THREADS=1
+module purge
+module load python/3.6.3
+module load scipy-stack
+source "$VIRTUALENVWRAPPER_BIN"/virtualenvwrapper.sh
+workon her_curriculum''',
+    ssh_hosts=(
+        ["ecrawf6@lab1-{{}}.cs.mcgill.ca".format(i+1) for i in range(16)]
+        + ["ecrawf6@lab2-{{}}.cs.mcgill.ca".format(i+1) for i in range(51)]
+        + ["ecrawf6@cs-{{}}.cs.mcgill.ca".format(i+1) for i in range(32)]
+    ),
+    ssh_options=(
+        "-oPasswordAuthentication=no "
+        "-oStrictHostKeyChecking=no "
+        "-oConnectTimeout=5 "
+        "-oServerAliveInterval=2"
+    ),
+)
+"""
+
+
 def _load_system_config(key=None):
-    _config = configparser.ConfigParser()
-    dps_loc = os.path.dirname(dps.__file__)
-
     config_dir = os.path.join(os.getenv("HOME"), ".config")
-    config_loc = os.path.join(config_dir, "dps_config.ini")
+    config_loc = os.path.join(config_dir, "dps_config.py")
 
-    # print("Loading system config from {}.".format(config_loc))
-    try:
-        _config.read_file(open(config_loc, 'r'))
-    except FileNotFoundError:
+    if not os.path.exists(config_loc):
         print("Creating config at {}...".format(config_loc))
         scratch_dir = input("Enter a location to create a scratch directory for dps (for saving experiment "
                             "results, cached datasets, etc.). Leave blank to accept the default of '~/dps_data'.\n")
         scratch_dir = scratch_dir or "~/dps_data"
 
-        template_loc = os.path.join(dps_loc, 'config_template.ini')
-        with open(template_loc, "r") as f:
-            template = f.read()
-
-        config = template.format(scratch_dir=scratch_dir)
+        config = config_template.format(scratch_dir=scratch_dir)
 
         with open(config_loc, "w") as f:
             f.write(config)
-        _config.read_file(open(config_loc, 'r'))
 
-    key = "config"
+    config_module_spec = importlib.util.spec_from_file_location("dps_config", config_loc)
+    config_module = config_module_spec.loader.load_module()
 
-    config = Config(
-        scratch_dir=process_path(_config.get(key, 'scratch_dir')),
-
-        data_dir=_config.get(key, 'data_dir', fallback=None),
-        model_dir=_config.get(key, 'model_dir', fallback=None),
-        local_experiments_dir=_config.get(key, 'local_experiments_dir', fallback=None),
-        parallel_experiments_build_dir=_config.get(key, 'parallel_experiments_build_dir', fallback=None),
-        parallel_experiments_run_dir=_config.get(key, 'parallel_experiments_run_dir', fallback=None),
-
-        show_plots=_config.getboolean(key, 'show_plots'),
-        start_tensorboard=_config.getboolean(key, 'start_tensorboard'),
-        reload_interval=_config.getint(key, 'reload_interval'),
-        tbport=_config.getint(key, 'tbport'),
-        verbose=_config.getboolean(key, 'verbose'),
-
-        use_gpu=_config.getboolean(key, 'use_gpu'),
-        per_process_gpu_memory_fraction=_config.getfloat(key, 'per_process_gpu_memory_fraction'),
-        gpu_allow_growth=_config.getboolean(key, 'gpu_allow_growth'),
-        parallel_exe=process_path(_config.get(key, 'parallel_exe')),
-    )
+    config = config_module.config
 
     def fixup_dir(name):
         attr_name = name + "_dir"
-        dir_name = getattr(config, attr_name)
+        dir_name = getattr(config, attr_name, None)
         if dir_name is None:
             dir_name = os.path.join(config.scratch_dir, name)
-        dir_name = process_path(dir_name)
-        setattr(config, attr_name, dir_name)
+            dir_name = process_path(dir_name)
+            setattr(config, attr_name, dir_name)
         os.makedirs(dir_name, exist_ok=True)
 
     fixup_dir("data")
@@ -1557,9 +1563,6 @@ def _load_system_config(key=None):
     fixup_dir("local_experiments")
     fixup_dir("parallel_experiments_build")
     fixup_dir("parallel_experiments_run")
-
-    # print("The directory {} will be used as a scratch space "
-    #       "(saving results, datasets, etc.).".format(config.scratch_dir))
 
     return config
 

@@ -560,7 +560,7 @@ class ParallelSession(object):
         print(datetime.datetime.now())
 
         for i, host in enumerate(self.hosts):
-            if host is ':':
+            if host == ':':
                 command = "mv {local_scratch}/experiments/* ./experiments"
                 self.execute_command(command, robust=True)
 

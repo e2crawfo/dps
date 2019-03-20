@@ -626,7 +626,6 @@ def sanitize(s):
 
 
 def run_experiment(name, config, readme, distributions=None, durations=None, name_variables=None, env_config=None):
-
     name = sanitize(name)
     durations = durations or {}
 
