@@ -1479,7 +1479,6 @@ class SystemConfig(Config):
 
 
 def update_scratch_dir(config, new_scratch_dir):
-
     def fixup_dir(name):
         attr_name = name + "_dir"
         dir_name = os.path.join(new_scratch_dir, name)
@@ -1530,14 +1529,17 @@ workon her_curriculum''',
 
 
 def _load_system_config(key=None):
-    config_dir = os.path.join(os.getenv("HOME"), ".config")
+    home = os.getenv("HOME")
+    config_dir = os.path.join(home, ".config")
     config_loc = os.path.join(config_dir, "dps_config.py")
 
     if not os.path.exists(config_loc):
         print("Creating config at {}...".format(config_loc))
-        scratch_dir = input("Enter a location to create a scratch directory for dps (for saving experiment "
-                            "results, cached datasets, etc.). Leave blank to accept the default of '~/dps_data'.\n")
-        scratch_dir = scratch_dir or "~/dps_data"
+        default_scratch_dir = os.path.join(home, "dps_data")
+        scratch_dir = input("Enter a location to create a scratch directory for dps "
+                            "(for saving experiment results, cached datasets, etc.). "
+                            "Leave blank to accept the default of '{}'.\n".format(default_scratch_dir))
+        scratch_dir = process_path(scratch_dir) or default_scratch_dir
 
         config = config_template.format(scratch_dir=scratch_dir)
 
