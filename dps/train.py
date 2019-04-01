@@ -649,6 +649,20 @@ class TrainingLoop(object):
                 cfg.render_hook(updater)
                 print("Done rendering.")
 
+            if display:
+                self.data.summarize_current_stage(
+                    local_step, global_step, updater.n_experiences, self.n_global_experiences)
+                print("\nMy PID: {}\n".format(os.getpid()))
+                print("Physical memory use: {}mb".format(memory_usage(physical=True)))
+                print("Virtual memory use: {}mb".format(memory_usage(physical=False)))
+
+                print("Avg time per update: {}s".format(time_per_update))
+                print("Avg time per eval: {}s".format(time_per_eval))
+                print("Avg time for hooks: {}s".format(time_per_hook))
+
+                if cfg.use_gpu:
+                    print(nvidia_smi())
+
             # --------------- Possibly evaluate -------------------
 
             if evaluate:
@@ -656,24 +670,13 @@ class TrainingLoop(object):
                 val_record = updater.evaluate(cfg.batch_size, mode="val")
                 eval_duration = time.time() - eval_start_time
 
+                val_record["duration"] = eval_duration
+
                 n_eval += 1
                 total_eval_time += eval_duration
                 time_per_eval = total_eval_time / n_eval
 
                 data_to_store.append(("val", val_record))
-
-                if display:
-                    self.data.summarize_current_stage(
-                        local_step, global_step, updater.n_experiences, self.n_global_experiences)
-                    print("\nMy PID: {}\n".format(os.getpid()))
-                    print("Physical memory use: {}mb".format(memory_usage(physical=True)))
-                    print("Virtual memory use: {}mb".format(memory_usage(physical=False)))
-                    print("Avg time per update: {}s".format(time_per_update))
-                    print("Avg time per eval: {}s".format(time_per_eval))
-                    print("Avg time for hooks: {}s".format(time_per_hook))
-
-                    if cfg.use_gpu:
-                        print(nvidia_smi())
 
                 if self.stopping_criteria_name not in val_record:
                     print("Stopping criteria {} not in record returned "
@@ -726,14 +729,13 @@ class TrainingLoop(object):
                 _old_n_experiences = updater.n_experiences
 
                 update_record = updater.update(cfg.batch_size)
+                update_duration = time.time() - update_start_time
+                update_record["train"]["duration"] = update_duration
 
-                if evaluate:
-                    data_to_store.extend(dict(update_record).items())
+                data_to_store.extend(dict(update_record).items())
 
                 n_experiences_delta = updater.n_experiences - _old_n_experiences
                 self.n_global_experiences += n_experiences_delta
-
-                update_duration = time.time() - update_start_time
 
                 total_train_time += update_duration
                 time_per_example = total_train_time / updater.n_experiences

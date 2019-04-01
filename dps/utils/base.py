@@ -26,10 +26,99 @@ import importlib
 import json
 import gc
 import matplotlib.pyplot as plt
+from matplotlib import animation
 import imageio
 
 import clify
 import dps
+
+
+def video_stack(video):
+    """ Take an ndarray with shape (*batch_shape, n_frames, H, W, D) representing a video
+        and stack the frames together as different channel dimensions, resulting
+        in an ndarray with shape (*batch_shape, H, W, D*n_frames) """
+    video = np.array(video)
+    *batch_shape, n_frames, H, W, D = video.shape
+    perm = tuple(range(len(batch_shape))) + tuple(np.array([1, 2, 0, 3]) + len(batch_shape))
+    return np.transpose(video, perm).reshape(*batch_shape, H, W, n_frames*D)
+
+
+def video_unstack(stacked_video, n_frames):
+    """ Inverse of the function `video_stack`. """
+    stacked_video = np.array(stacked_video)
+    *batch_shape, H, W, _D = stacked_video.shape
+    D = int(_D / n_frames)
+    assert D * n_frames == _D
+
+    video = stacked_video.reshape(*batch_shape, H, W, n_frames, D)
+
+    perm = tuple(range(len(batch_shape))) + tuple(np.array([2, 0, 1, 3]) + len(batch_shape))
+    return np.transpose(video, perm)
+
+
+def liang_barsky(bottom, top, left, right, y0, x0, y1, x1):
+    """ Compute the intersection between a rectangle and a line segment.
+
+        rect is sepcified by (bottom, top, left, right)
+        line segment specified by (y0, x0), (y1, x1)
+
+        If no intersection, returns None.
+
+        Otherwise, returns (r, s) where (y0, x0) + r * (y1 - y0, x1 - x0) is the location of the "ingoing"
+        intersection, and (y0, x0) + s * (y1 - y0, x1 - x0) is the location of the "outgoing" intersection.
+        It will always hold that 0 <= r <= s <= 1. If the line segment starts inside the rectangle then r = 0;
+        and if it stops inside the rectangle then s = 1.
+
+    """
+    assert bottom < top
+    assert left < right
+
+    dx = x1 - x0
+    dy = y1 - y0
+
+    checks = ((-dx, -(left - x0)),
+              (dx, right - x0),
+              (-dy, -(bottom - y0)),
+              (dy, top - y0))
+
+    out_in = [0]
+    in_out = [1]
+
+    for p, q in checks:
+        if p == 0 and q < 0:
+            return None
+
+        if p != 0:
+            target_list = out_in if p < 0 else in_out
+            target_list.append(q / p)
+
+    _out_in = max(out_in)
+    _in_out = min(in_out)
+
+    if _out_in < _in_out:
+        return _out_in, _in_out
+    else:
+        return None
+
+
+# NoAnswer = object()
+# def _test_liang_barsky(*args, ref_answer=NoAnswer):
+#     answer = liang_barsky(*args)
+#     print("{}: {}".format(args, answer))
+#
+#     if ref_answer is not NoAnswer:
+#         assert answer == ref_answer
+# if __name__ == "__main__":
+#     _test_liang_barsky(1, 2, 1, 2, 1.5, 0.5, 1.5, 2.5, ref_answer=(1/4, 3/4))
+#     _test_liang_barsky(1, 2, 1, 2, 1.5, 0.5, 1.5, .99, ref_answer=None)
+#     _test_liang_barsky(1, 2, 1, 2, 1.5, 0.5, 1.5, 1, ref_answer=None)
+#     _test_liang_barsky(1, 2, 1, 2, 1.5, 0.5, 1.5, 1.01, ref_answer=(0.5 / 0.51, 1))
+#     _test_liang_barsky(1, 2, 1, 2, 1.5, 0.5, -1.5, -2.5, ref_answer=None)
+#     _test_liang_barsky(1, 2, 1, 2, 2.5, 0.5, 2.5, 2.5, ref_answer=None)
+#     _test_liang_barsky(1, 2, 1, 2, 0.5, 2.5, 2.5, 2.5, ref_answer=None)
+#     _test_liang_barsky(1, 2, 1, 2, 0, 0, 2, 2, ref_answer=(0.5, 1))
+#     _test_liang_barsky(1, 2, 1, 2, 0, .99, 2, 2.99, ref_answer=(0.5, 0.505))
+#     _test_liang_barsky(1, 2, 1, 2, 1.5, 1.5, 3, 3, ref_answer=(0, 1/3))
 
 
 def create_maze(shape):
@@ -158,11 +247,50 @@ def prime_factors(n):
     return factors
 
 
-def square_subplots(N, **kwargs):
+def animate(images, *other_images, labels=None, interval=500, path=None, **kwargs):
+    """ Assumes `images` has shape (batch_size, n_frames, H, W, D) """
+
+    all_images = [images, *other_images]
+    n_image_sets = len(all_images)
+    B, T = images.shape[:2]
+    fig, _axes = square_subplots(B, n_repeats=n_image_sets, repeat_horizontal=True)
+    axes = _axes.reshape(-1, n_image_sets)
+
+    plots = np.zeros((B, n_image_sets), dtype=np.object)
+
+    for i in range(B):
+        for j in range(n_image_sets):
+            ax = axes[i, j]
+            ax.set_axis_off()
+
+            if labels is not None:
+                ax.set_title("label={}".format(labels[i]))
+
+            plots[i, j] = ax.imshow(np.squeeze(all_images[j][i, 0]))
+
+    plt.subplots_adjust(top=0.95, bottom=0, left=0, right=1, wspace=0.1, hspace=0.1)
+
+    def func(t):
+        for i in range(B):
+            for j in range(n_image_sets):
+                plots[i, j].set_array(np.squeeze(all_images[j][i, t]))
+
+    anim = animation.FuncAnimation(fig, func, frames=T, interval=interval)
+
+    if path is not None:
+        anim.save(path, writer='imagemagick')
+
+    return fig, _axes, anim
+
+
+def square_subplots(N, n_repeats=1, repeat_horizontal=True, **kwargs):
     sqrt_N = int(np.ceil(np.sqrt(N)))
     m = int(np.ceil(N / sqrt_N))
     import matplotlib.pyplot as plt
-    fig, axes = plt.subplots(m, sqrt_N, **kwargs)
+    if repeat_horizontal:
+        fig, axes = plt.subplots(m, sqrt_N*n_repeats, **kwargs)
+    else:
+        fig, axes = plt.subplots(m*n_repeats, sqrt_N, **kwargs)
     return fig, axes
 
 

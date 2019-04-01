@@ -625,7 +625,7 @@ def sanitize(s):
     return s.replace('_', '-')
 
 
-def run_experiment(name, config, readme, distributions=None, durations=None, name_variables=None, env_config=None):
+def run_experiment(name, config, readme, distributions=None, durations=None, name_variables=None):
     name = sanitize(name)
     durations = durations or {}
 
@@ -637,13 +637,10 @@ def run_experiment(name, config, readme, distributions=None, durations=None, nam
 
     _config = DEFAULT_CONFIG.copy()
 
-    env_config = env_config or {}
-    _config.update(env_config)
-
-    alg_name = config.get("alg_name", "")
-
     _config.update(config)
     _config.update_from_command_line()
+
+    alg_name = config.get("alg_name", "")
 
     if "env_name" in _config:
         _config.env_name = "{}_env={}".format(name, sanitize(_config.env_name))
@@ -656,21 +653,21 @@ def run_experiment(name, config, readme, distributions=None, durations=None, nam
                     return training_loop()
             else:
                 return training_loop()
-    else:
-        run_kwargs = Config(
-            kind="slurm",
-            pmem=5000,
-            ignore_gpu=False,
-        )
 
-        duration_args = durations[args.duration]
+    run_kwargs = Config(
+        kind="slurm",
+        pmem=5000,
+        ignore_gpu=False,
+    )
 
-        if 'config' in duration_args:
-            _config.update(duration_args['config'])
-            del duration_args['config']
+    duration_args = durations[args.duration]
 
-        run_kwargs.update(durations[args.duration])
-        run_kwargs.update_from_command_line()
+    if 'config' in duration_args:
+        _config.update(duration_args['config'])
+        del duration_args['config']
+
+    run_kwargs.update(durations[args.duration])
+    run_kwargs.update_from_command_line()
 
     if name_variables is not None:
         name_variables_str = "_".join(

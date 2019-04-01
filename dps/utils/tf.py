@@ -1202,7 +1202,7 @@ class NullCell(ScopedCell):
 
 
 class CompositeCell(ScopedCell):
-    """ A wrapper around a cell that adds a additional transformations to the input and output.
+    """ A wrapper around a cell that adds additional transformations to the input and output.
 
     Parameters
     ----------
@@ -1709,18 +1709,25 @@ class RenderHook(object):
 
         return fetched
 
+    def path_for(self, name, updater, ext="pdf"):
+        local_step = (
+            np.inf if dps.cfg.overwrite_plots else "{:0>10}".format(updater.n_updates))
+
+        return updater.exp_dir.path_for(
+            'plots', name,
+            'stage={:0>4}_local_step={}.{}'.format(updater.stage_idx, local_step, ext))
+
     def savefig(self, name, fig, updater, is_dir=True):
         if is_dir:
-            local_step = np.inf if dps.cfg.overwrite_plots else "{:0>10}".format(updater.n_updates)
-            path = updater.exp_dir.path_for(
-                'plots', name,
-                'stage={:0>4}_local_step={}.pdf'.format(updater.stage_idx, local_step))
+            path = self.path_for(name, updater)
             fig.savefig(path)
             plt.close(fig)
 
             shutil.copyfile(
                 path,
-                os.path.join(os.path.dirname(path), 'latest_stage{:0>4}.pdf'.format(updater.stage_idx)))
+                os.path.join(
+                    os.path.dirname(path),
+                    'latest_stage{:0>4}.pdf'.format(updater.stage_idx)))
         else:
             path = updater.exp_dir.path_for('plots', name + ".pdf")
             fig.savefig(path)

@@ -11,7 +11,7 @@ import abc
 from itertools import zip_longest
 
 from dps import cfg
-from dps.utils import image_to_string, Param, Parameterized, get_param_hash, NumpySeed
+from dps.utils import Param, Parameterized, get_param_hash, NumpySeed, animate
 from dps.datasets import (
     load_emnist, load_omniglot, omniglot_classes,
     load_backgrounds, background_names
@@ -70,7 +70,10 @@ class RawDataset(Parameterized):
         else:
             print("Found.")
 
-        print("Took {} seconds.\n".format(time.time() - start))
+        print("Took {} seconds.".format(time.time() - start))
+        print("Features for dataset: ")
+        pprint.pprint(self.features)
+        print()
 
     def _make(self):
         """ Write data to `self.directory`. """
@@ -88,6 +91,15 @@ class Feature(metaclass=abc.ABCMeta):
     """
     def __init__(self, name):
         self.name = name
+
+    def __repr__(self):
+        return "<{} - {}>".format(
+            self.__class__.__name__,
+            ", ".join("{}={}".format(k, v) for k, v in self.__dict__.items())
+        )
+
+    def __str__(self):
+        return repr(self)
 
     @abc.abstractmethod
     def get_write_features(self, array):
@@ -147,6 +159,7 @@ class VariableShapeArrayFeature(Feature):
         self.ndim = len(shape)
 
     def get_write_features(self, data):
+        data = np.array(data)
         return {
             self.name + "/shape": _int64_feature(list(data.shape), is_list=True),
             self.name + "/data": _float_feature(list(data.flatten()), is_list=True),
@@ -164,11 +177,7 @@ class VariableShapeArrayFeature(Feature):
         shapes = tf.cast(records[self.name + '/shape'], tf.int32)
         max_shape = tf.cast(tf.reduce_max(shapes, axis=0), tf.int32)
 
-        max_shape_static = []
-        for i in range(self.ndim):
-            s = self.shape[i]
-            max_shape_static.append(s if s >= 0 else max_shape[i])
-        max_shape_static = tuple(max_shape_static)
+        max_shape_static = tuple(s if s >= 0 else ms for s, ms in zip(self.shape, tf.unstack(max_shape)))
 
         def map_fn(inp):
             data, shape = inp
@@ -193,8 +202,11 @@ class VariableShapeArrayFeature(Feature):
 
 
 class ImageFeature(ArrayFeature):
-    """ Stores images on disk as uint8, converts them to float32 at runtime. """
+    """ Stores images on disk as uint8, converts them to float32 at runtime.
 
+    Can also be used for video, use a shape with 4 entries, first entry being the number of frames.
+
+    """
     def __init__(self, name, shape):
         self.name = name
         self.shape = shape
@@ -226,7 +238,7 @@ class IntegerFeature(Feature):
 
 
 class NestedListFeature(Feature):
-    def __init__(self, name, sublist_length=5):
+    def __init__(self, name, sublist_length):
         self.name = name
         self.sublist_length = sublist_length
 
@@ -268,8 +280,8 @@ class Dataset(Parameterized):
 
     If `no_make` is in kwargs and is True, than raise an exception if dataset not found in cache.
 
-    If `run_kwargs` is in kwargs, the corresponding value should be a dictionary of arguments which will be used to run the dataset
-    creation in parallel.
+    If `run_kwargs` is in kwargs, the corresponding value should be a dictionary of arguments which
+    will be used to run the dataset creation in parallel.
 
     """
     n_examples = Param(None)
@@ -350,7 +362,10 @@ class Dataset(Parameterized):
         else:
             print("Found.")
 
-        print("Took {} seconds.\n".format(time.time() - start))
+        print("Took {} seconds.".format(time.time() - start))
+        print("Features for dataset: ")
+        pprint.pprint(self.features)
+        print()
 
     def _make(self):
         raise Exception("AbstractMethod.")
@@ -452,9 +467,9 @@ class EmnistDataset(ImageClassificationDataset):
     example_range = Param(None)
 
     class_pool = ''.join(
-        [str(i) for i in range(10)] +
-        [chr(i + ord('A')) for i in range(26)] +
-        [chr(i + ord('a')) for i in range(26)]
+        [str(i) for i in range(10)]
+        + [chr(i + ord('A')) for i in range(26)]
+        + [chr(i + ord('a')) for i in range(26)]
     )
 
     @staticmethod
@@ -511,13 +526,15 @@ class ImageDataset(Dataset):
     postprocessing = Param("")
     tile_shape = Param(None)
     n_samples_per_image = Param(1)
+    n_frames = Param(0)
 
     @property
     def obs_shape(self):
+        leading_shape = (self.n_frames,) if self.n_frames > 0 else ()
         if self.postprocessing:
-            return self.tile_shape + (self.depth,)
+            return leading_shape + self.tile_shape + (self.depth,)
         else:
-            return self.image_shape + (self.depth,)
+            return leading_shape + self.image_shape + (self.depth,)
 
     def _write_single_example(self, **kwargs):
         return Dataset._write_example(self, **kwargs)
@@ -527,6 +544,9 @@ class ImageDataset(Dataset):
         annotation = kwargs.get("annotations", [])
         label = kwargs.get("label", None)
         background = kwargs.get("background", None)
+
+        if self.postprocessing and self.n_frames > 0:
+            raise Exception("NotImplemented")
 
         if self.postprocessing == "tile":
             images, annotations, backgrounds = self._tile_postprocess(image, annotation, background=background)
@@ -648,22 +668,18 @@ class ImageDataset(Dataset):
         return new_images, new_annotations, new_backgrounds
 
     def visualize(self, n=4):
-        batch_size = n
         sample = self.sample(n)
         images = sample["image"]
-        annotations, n_annotations = sample["annotations"]
-        label = sample["label"]
+        # annotations, annotations_shape, annotations_mask = sample["annotations"]
+        labels = sample["label"]
 
-        fig, axes = plt.subplots(1, batch_size)
-        for i in range(batch_size):
-            ax = axes[i]
-            ax.set_axis_off()
+        if self.n_frames == 0:
+            images = images[:, None]
 
-            ax.imshow(np.squeeze(images[i]))
-            ax.set_title("label={}".format(label[i]))
+        fig, *_ = animate(images, labels=labels)
 
-        plt.subplots_adjust(top=0.95, bottom=0, left=0, right=1, wspace=0.1, hspace=0.1)
         plt.show()
+        plt.close(fig)
 
     def sample(self, n=4):
         batch_size = n
@@ -680,14 +696,32 @@ class ImageDataset(Dataset):
 
 
 class Rectangle(object):
-    def __init__(self, y, x, h, w):
-        self.top = y
-        self.bottom = y+h
-        self.left = x
-        self.right = x+w
+    def __init__(self, top, left, h, w, v=None):
+        self.top = top
+        self.left = left
 
         self.h = h
         self.w = w
+
+        self.v = v or np.zeros(2)
+
+    @property
+    def bottom(self):
+        return self.top + self.h
+
+    @property
+    def right(self):
+        return self.left + self.w
+
+    def move(self, movement):
+        self.top += movement[0]
+        self.left += movement[1]
+
+    def __repr__(self):
+        return str(self)
+
+    def __str__(self):
+        return "Rectangle({}:{}, {}:{})".format(self.top, self.bottom, self.left, self.right)
 
     def intersects(self, r2):
         return self.overlap_area(r2) > 0
@@ -708,12 +742,52 @@ class Rectangle(object):
             self.left + (self.right - self.left) / 2.
         )
 
-    def __str__(self):
-        return "Rectangle({}:{}, {}:{})".format(self.top, self.bottom, self.left, self.right)
+    def update(self, shape):
+        """
+        For each of the 4 corners, create a line segment imposed by the movement.
+        Find the earliest "time" in the movement that one of the corners intersects one of the walls.
+        (If there is no such intersection, we're done)
+        move all corners based on that time point (so the object is against one of the walls),
+        and flip the velocity vector appropriately.
+        Then repeat this for the "remainder" of the movement.
+
+        Return the new position and new velocity.
+
+        Could use 2 opposing corners instead of 4.
+        Actually we only have to use the corner that is in the direction of the movement.
+
+        And the direction of the movement determines which two walls can be intersected.
+
+        """
+        velocity = self.v.copy()
+        while True:
+            if velocity[0] > 0:
+                v_distance_to_wall = shape[0] - self.bottom
+            else:
+                v_distance_to_wall = self.top
+            v_t = v_distance_to_wall / np.abs(velocity[0])
+
+            if velocity[1] > 0:
+                h_distance_to_wall = shape[1] - self.right
+            else:
+                h_distance_to_wall = self.left
+            h_t = h_distance_to_wall / np.abs(velocity[1])
+
+            if v_t > 1 and h_t > 1:
+                self.move(velocity)
+                break
+            elif v_t < h_t:
+                self.move(v_t * velocity)
+                velocity = (1 - v_t) * np.array([-velocity[0], velocity[1]])
+            else:
+                self.move(h_t * velocity)
+                velocity = (1 - h_t) * np.array([velocity[0], -velocity[1]])
+
+        self.v = velocity * np.linalg.norm(self.v) / np.linalg.norm(velocity)
 
 
 class PatchesDataset(ImageDataset):
-    max_overlap = Param(10)
+    max_overlap = Param()
     draw_shape = Param(None)
     draw_offset = Param((0, 0))
     patch_size_std = Param(None)
@@ -730,18 +804,18 @@ class PatchesDataset(ImageDataset):
     background_colours = Param("")
     max_attempts = Param(10000)
     colours = Param('red green blue')
-
     one_hot = Param(True)
-    plot_every = Param(None)
+    patch_speed = Param(10, help="In pixels per frame.")
 
     _features = None
 
     @property
     def features(self):
         if self._features is None:
+            annotation_shape = (self.n_frames, -1, 6) if self.n_frames > 0 else (-1, 6)
             self._features = [
                 ImageFeature("image", self.obs_shape),
-                NestedListFeature("annotations", 5),
+                VariableShapeArrayFeature("annotations", annotation_shape),
                 IntegerFeature("label", self.n_classes if self.one_hot else None)]
 
         return self._features
@@ -755,6 +829,16 @@ class PatchesDataset(ImageDataset):
         return 3 if self.colours else 1
 
     def _make(self):
+        """
+        To handle both images and videos:
+
+        * for each example, sample patch locations as well as velocities
+        *    want to make it so they they don't have to return velocities. can use *rest
+        *    in case velocities not return, use a velocity of 0.
+        * go through all frames for the example, using an identical process to render each frame
+        * if n_frames == 0, remove the frame dimension, so they really are just images.
+        * assume a fixed background for the entire video, for now.
+        """
         if self.n_examples == 0:
             return np.zeros((0,) + self.image_shape).astype('uint8'), np.zeros((0, 1)).astype('i')
 
@@ -834,14 +918,14 @@ class PatchesDataset(ImageDataset):
                 if self.backgrounds_sample_every:
                     top = np.random.randint(background.shape[0] - draw_shape[0] + 1)
                     left = np.random.randint(background.shape[1] - draw_shape[1] + 1)
-                    image = background[top:top+draw_shape[0], left:left+draw_shape[1], ...] + 0
+                    base_image = background[top:top+draw_shape[0], left:left+draw_shape[1], ...] + 0
                 else:
-                    image = background + 0
+                    base_image = background + 0
             elif background_colours:
                 color = background_colours[np.random.randint(len(background_colours))]
-                image = color * np.ones(draw_shape, 'uint8')
+                base_image = color * np.ones(draw_shape, 'uint8')
             else:
-                image = np.zeros(draw_shape, 'uint8')
+                base_image = np.zeros(draw_shape, 'uint8')
 
             # --- sample and populate patches ---
 
@@ -849,80 +933,87 @@ class PatchesDataset(ImageDataset):
 
             draw_offset = self.draw_offset
 
-            for patch, loc in zip(patches, locs):
-                if patch.shape[:2] != (loc.h, loc.w):
-                    patch = resize(patch, (loc.h, loc.w), mode='edge', preserve_range=True)
+            images = []
+            annotations = []
+            for frame in range(max(self.n_frames, 1)):
+                image = base_image.copy()
 
-                intensity = patch[:, :, :-1]
-                alpha = patch[:, :, -1:].astype('f') / 255.
-
-                current = image[loc.top:loc.bottom, loc.left:loc.right, ...]
-                image[loc.top:loc.bottom, loc.left:loc.right, ...] = np.uint8(alpha * intensity + (1 - alpha) * current)
-
-            # --- add distractors ---
-
-            if self.n_distractors_per_image > 0:
-                distractor_patches = self._sample_distractors()
-                distractor_shapes = [img.shape for img in distractor_patches]
-                distractor_locs = self._sample_patch_locations(distractor_shapes)
-
-                for patch, loc in zip(distractor_patches, distractor_locs):
+                for patch, loc in zip(patches, locs):
                     if patch.shape[:2] != (loc.h, loc.w):
                         patch = resize(patch, (loc.h, loc.w), mode='edge', preserve_range=True)
 
-                    intensity = patch[:, :, :-1]
-                    alpha = patch[:, :, -1:].astype('f') / 255.
+                    top = int(np.clip(loc.top, 0, image.shape[0]))
+                    bottom = int(np.clip(loc.bottom, 0, image.shape[0]))
+                    left = int(np.clip(loc.left, 0, image.shape[1]))
+                    right = int(np.clip(loc.right, 0, image.shape[1]))
 
-                    current = image[loc.top:loc.bottom, loc.left:loc.right, ...]
-                    image[loc.top:loc.bottom, loc.left:loc.right, ...] = np.uint8(alpha * intensity + (1 - alpha) * current)
+                    patch_top = top - int(loc.top)
+                    patch_bottom = bottom - int(loc.top)
+                    patch_left = left - int(loc.left)
+                    patch_right = right - int(loc.left)
 
-            # --- possibly crop entire image ---
+                    intensity = patch[patch_top:patch_bottom, patch_left:patch_right, :-1]
+                    alpha = patch[patch_top:patch_bottom, patch_left:patch_right, -1:].astype('f') / 255.
 
-            if self.draw_shape != self.image_shape or draw_offset != (0, 0):
-                image_shape = self.image_shape
-                if self.depth is not None:
-                    image_shape = image_shape + (self.depth,)
+                    current = image[top:bottom, left:right, ...]
+                    image[top:bottom, left:right, ...] = np.uint8(alpha * intensity + (1 - alpha) * current)
 
-                draw_top = np.maximum(-draw_offset[0], 0)
-                draw_left = np.maximum(-draw_offset[1], 0)
+                # --- add distractors ---
 
-                draw_bottom = np.minimum(-draw_offset[0] + self.image_shape[0], self.draw_shape[0])
-                draw_right = np.minimum(-draw_offset[1] + self.image_shape[1], self.draw_shape[1])
+                if self.n_distractors_per_image > 0:
+                    distractor_patches = self._sample_distractors()
+                    distractor_shapes = [img.shape for img in distractor_patches]
+                    distractor_locs = self._sample_patch_locations(distractor_shapes)
 
-                image_top = np.maximum(draw_offset[0], 0)
-                image_left = np.maximum(draw_offset[1], 0)
+                    for patch, loc in zip(distractor_patches, distractor_locs):
+                        if patch.shape[:2] != (loc.h, loc.w):
+                            patch = resize(patch, (loc.h, loc.w), mode='edge', preserve_range=True)
 
-                image_bottom = np.minimum(draw_offset[0] + self.draw_shape[0], self.image_shape[0])
-                image_right = np.minimum(draw_offset[1] + self.draw_shape[1], self.image_shape[1])
+                        intensity = patch[:, :, :-1]
+                        alpha = patch[:, :, -1:].astype('f') / 255.
 
-                _image = np.zeros(image_shape, 'uint8')
-                _image[image_top:image_bottom, image_left:image_right, ...] = \
-                    image[draw_top:draw_bottom, draw_left:draw_right, ...]
+                        current = image[loc.top:loc.bottom, loc.left:loc.right, ...]
+                        image[loc.top:loc.bottom, loc.left:loc.right, ...] = (
+                            np.uint8(alpha * intensity + (1 - alpha) * current))
 
-                image = _image
+                # --- possibly crop entire image ---
 
-            annotations = self._get_annotations(draw_offset, patches, locs, patch_labels)
+                if self.draw_shape != self.image_shape or draw_offset != (0, 0):
+                    image_shape = self.image_shape
+                    if self.depth is not None:
+                        image_shape = image_shape + (self.depth,)
 
-            self._write_example(image=image, annotations=annotations, label=image_label)
+                    draw_top = np.maximum(-draw_offset[0], 0)
+                    draw_left = np.maximum(-draw_offset[1], 0)
 
-            if self.plot_every is not None and j % self.plot_every == 0:
-                print(image_label)
-                print(image_to_string(image))
-                print("\n")
-                plt.imshow(image)
-                ax = plt.gca()
+                    draw_bottom = np.minimum(-draw_offset[0] + self.image_shape[0], self.draw_shape[0])
+                    draw_right = np.minimum(-draw_offset[1] + self.image_shape[1], self.draw_shape[1])
 
-                for cls, top, bottom, left, right in annotations:
-                    width = right - left
-                    height = bottom - top
+                    image_top = np.maximum(draw_offset[0], 0)
+                    image_left = np.maximum(draw_offset[1], 0)
 
-                    rect = mpl.patches.Rectangle(
-                        (left, top), width, height, linewidth=1,
-                        edgecolor='white', facecolor='none')
+                    image_bottom = np.minimum(draw_offset[0] + self.draw_shape[0], self.image_shape[0])
+                    image_right = np.minimum(draw_offset[1] + self.draw_shape[1], self.image_shape[1])
 
-                    ax.add_patch(rect)
+                    _image = np.zeros(image_shape, 'uint8')
+                    _image[image_top:image_bottom, image_left:image_right, ...] = \
+                        image[draw_top:draw_bottom, draw_left:draw_right, ...]
 
-                plt.show()
+                    image = _image
+
+                _annotations = self._get_annotations(draw_offset, patches, locs, patch_labels)
+
+                images.append(image)
+                annotations.append(_annotations)
+
+                for loc in locs:
+                    loc.update(image.shape)
+
+            if self.n_frames == 0:
+                images = images[0]
+                annotations = annotations[0]
+
+            self._write_example(image=images, annotations=annotations, label=image_label)
 
     def _get_annotations(self, draw_offset, patches, locs, labels):
         new_labels = []
@@ -946,10 +1037,9 @@ class PatchesDataset(ImageDataset):
             left = np.clip(left, 0, self.image_shape[1])
             right = np.clip(right, 0, self.image_shape[1])
 
-            invalid = (bottom - top < 1e-6) or (right - left < 1e-6)
+            valid = not ((bottom - top < 1e-6) or (right - left < 1e-6))
 
-            if not invalid:
-                new_labels.append((label, top, bottom, left, right))
+            new_labels.append((valid, label, top, bottom, left, right))
 
         return new_labels
 
@@ -961,6 +1051,14 @@ class PatchesDataset(ImageDataset):
             patch_shapes,
             max_overlap=self.max_overlap,
             size_std=self.patch_size_std)
+
+        velocity = np.random.randn(len(locs), 2)
+        velocity /= np.maximum(np.linalg.norm(velocity, keepdims=True), 1e-6)
+        velocity *= self.patch_speed
+
+        for loc, v in zip(locs, velocity):
+            loc.v = v
+
         return locs, patches, patch_labels, image_label
 
     def _sample_patches(self):
@@ -1224,9 +1322,9 @@ class EmnistObjectDetectionDataset(PatchesDataset):
     min_chars = Param(2)
     max_chars = Param(3)
     characters = Param(
-        [str(i) for i in range(10)] +
-        [chr(i + ord('A')) for i in range(26)] +
-        [chr(i + ord('a')) for i in range(26)]
+        [str(i) for i in range(10)]
+        + [chr(i + ord('A')) for i in range(26)]
+        + [chr(i + ord('a')) for i in range(26)]
     )
 
     patch_shape = Param((14, 14))
@@ -1291,8 +1389,8 @@ class GridEmnistObjectDetectionDataset(EmnistObjectDetectionDataset, GridPatches
 if __name__ == "__main__":
     dset = VisualArithmeticDataset(
         n_examples=18, reductions="sum", largest_digit=28,
-        min_digits=2, max_digits=3, image_shape=(24, 24),
-        max_overlap=98, colours="white blue")
+        min_digits=9, max_digits=9, image_shape=(48, 48),
+        max_overlap=98, colours="white blue", n_frames=10)
 
     sess = tf.Session()
     with sess.as_default():
