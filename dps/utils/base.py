@@ -28,9 +28,22 @@ import gc
 import matplotlib.pyplot as plt
 from matplotlib import animation
 import imageio
+from skimage.transform import resize
 
 import clify
 import dps
+
+
+def resize_image(img, shape, mode=None, preserve_range=True, anti_aliasing=None):
+    if anti_aliasing is None:
+        anti_aliasing = any(ns < s for ns, s in zip(shape, img.shape))
+
+    if mode is None:
+        mode = 'reflect' if anti_aliasing else 'edge'
+
+    return resize(
+        img, shape, mode=mode, preserve_range=preserve_range,
+        anti_aliasing=anti_aliasing)
 
 
 def video_stack(video):
@@ -247,13 +260,20 @@ def prime_factors(n):
     return factors
 
 
-def animate(images, *other_images, labels=None, interval=500, path=None, **kwargs):
+def animate(
+        images, *other_images, labels=None, interval=500,
+        path=None, square_grid=True, **kwargs):
     """ Assumes `images` has shape (batch_size, n_frames, H, W, D) """
 
     all_images = [images, *other_images]
     n_image_sets = len(all_images)
     B, T = images.shape[:2]
-    fig, _axes = square_subplots(B, n_repeats=n_image_sets, repeat_horizontal=True)
+
+    if square_grid:
+        fig, _axes = square_subplots(B, n_repeats=n_image_sets, repeat_horizontal=True)
+    else:
+        fig, axes = plt.subplots(B, n_image_sets)
+
     axes = _axes.reshape(-1, n_image_sets)
 
     plots = np.zeros((B, n_image_sets), dtype=np.object)
@@ -1065,15 +1085,16 @@ class Parameterized(object):
         attributes, we perform the following checks (the first value that is found is used):
 
         1. check the kwargs passed into class constructor for a value with key "<param-name>"
-        2. check dps.cfg for values with name "<class-name>:<param-name>". `class-name` can be
-           the class the the object is part of, or any base class, but more derived/specific classes
-           will be checked first (more specifically, we iterate through classes in order of the MRO).
+        2. check dps.cfg for values with keys of the form "<class-name>:<param-name>". `class-name`
+           can be the class of the object or any base class thereof. More derived/specific classes
+           will be checked first (specifically, we iterate through classes in order of the MRO).
         3. check dps.cfg for values with name "<param-name>"
         4. fallback on the param's default value, if one was supplied.
 
         If no value is found by this point, an AttributeError is raised.
 
-        Parameters should be not be altered throughout the lifetime of the class instance.
+        Parameters should be not be altered throughout the lifetime of the class instance, though
+        this is currently not enforced.
 
     """
     _resolved = False

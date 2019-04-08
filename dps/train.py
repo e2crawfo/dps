@@ -20,7 +20,7 @@ from dps import cfg
 from dps.utils import (
     gen_seed, time_limit, Alarm, memory_usage, gpu_memory_usage, ExperimentStore,
     ExperimentDirectory, nvidia_smi, memory_limit, Config, ClearConfig, redirect_stream,
-    NumpySeed, make_symlink, restart_tensorboard
+    NumpySeed, restart_tensorboard, pdb_postmortem
 )
 from dps.utils.tf import (
     uninitialized_variables_initializer, trainable_variables, walk_variable_scopes
@@ -218,6 +218,11 @@ class TrainingLoop(object):
         frozen_data = None
 
         with ExitStack() as stack:
+            if cfg.pdb:
+                stack.enter_context(pdb_postmortem())
+                print("`pdb` is turned on, so forcing setting robust=False")
+                cfg.robust = False
+
             stack.enter_context(redirect_stream('stdout', self.data.path_for('stdout'), tee=cfg.tee))
             stack.enter_context(redirect_stream('stderr', self.data.path_for('stderr'), tee=cfg.tee))
 
@@ -352,16 +357,20 @@ class TrainingLoop(object):
                 print("\nDone building env.\n")
                 print("Building updater...\n")
 
-                if cfg.n_procs > 1:
-                    updater = cfg.get_updater(self.env, mpi_context=self.mpi_context)
-                else:
-                    updater = cfg.get_updater(self.env)
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.simplefilter('once')
 
-                updater.stage_idx = stage_idx
-                updater.exp_dir = self.exp_dir
+                    if cfg.n_procs > 1:
+                        updater = cfg.get_updater(self.env, mpi_context=self.mpi_context)
+                    else:
+                        updater = cfg.get_updater(self.env)
 
-                updater.build_graph()
-                print("\nDone building updater.\n")
+                    updater.stage_idx = stage_idx
+                    updater.exp_dir = self.exp_dir
+
+                    updater.build_graph()
+                    print("\nDone building updater.\n")
 
                 walk_variable_scopes(max_depth=3)
 
@@ -498,9 +507,9 @@ class TrainingLoop(object):
                     # --------------- Maybe render performance of best hypothesis -------------------
 
                     do_final_testing = (
-                        "Exception occurred" not in reason and
-                        reason != "Time limit exceeded" and
-                        'best_path' in self.data.current_stage_record)
+                        "Exception occurred" not in reason
+                        and reason != "Time limit exceeded"
+                        and 'best_path' in self.data.current_stage_record)
 
                     if do_final_testing:
                         try:
@@ -621,9 +630,9 @@ class TrainingLoop(object):
 
             evaluate = (local_step % cfg.eval_step) == 0
             display = (local_step % cfg.display_step) == 0
-            render = (cfg.render_step > 0 and
-                      (local_step % cfg.render_step) == 0 and
-                      local_step > 0)
+            render = (cfg.render_step > 0
+                      and (local_step % cfg.render_step) == 0
+                      and (local_step > 0 or cfg.render_first))
 
             data_to_store = []
 

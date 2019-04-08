@@ -18,6 +18,7 @@ DEFAULT_CONFIG = Config(
     preserve_env=False,
     power_through=True,  # Whether to complete the entire curriculum, even if threshold not reached.
     robust=True,
+    pdb=False,
 
     patience=np.inf,
 
@@ -41,6 +42,7 @@ DEFAULT_CONFIG = Config(
     max_experiences=np.inf,
 
     render_hook=None,
+    render_first=False,
 
     stopping_criteria="",
 

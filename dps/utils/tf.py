@@ -772,6 +772,75 @@ class ConvNet(ScopedFunction):
         return volume
 
 
+class GridConvNet(ConvNet):
+    def __init__(self, layers, n_grid_dims=2, scope=None, **kwargs):
+        self.layers = layers
+        self.n_grid_dims = n_grid_dims
+        self.volumes = []
+        super(ConvNet, self).__init__(scope)
+
+    @staticmethod
+    def compute_receptive_field(ndim, layers):
+        j = np.array((1,)*ndim)
+        r = np.array((1,)*ndim)
+        receptive_fields = []
+
+        for layer in layers:
+            kernel_size = np.array(layer['kernel_size'])
+            stride = np.array(layer['strides'])
+            r = r + (kernel_size-1) * j
+            j = j * stride
+            receptive_fields.append(dict(size=r, translation=j))
+        return receptive_fields
+
+    def _call(self, inp, final_n_channels, is_training):
+        volume = inp
+        self.volumes = [volume]
+
+        receptive_fields = self.compute_receptive_field(len(inp.shape)-2, self.layers)
+        print("Receptive fields for {} (GridConvNet)".format(self.name))
+        pprint.pprint(receptive_fields)
+
+        grid_cell_size = receptive_fields[-1]["translation"][:self.n_grid_dims]
+        rf_size = receptive_fields[-1]["size"][:self.n_grid_dims]
+        pre_padding = np.floor(rf_size / 2 - grid_cell_size / 2).astype('i')
+        image_shape = np.array([int(i) for i in inp.shape[1:self.n_grid_dims+1]])
+        n_grid_cells = np.ceil(image_shape / grid_cell_size).astype('i')
+        required_image_size = rf_size + (n_grid_cells-1) * grid_cell_size
+        post_padding = required_image_size - image_shape - pre_padding
+
+        print("{} (GridConvNet):".format(self.name))
+        print("rf_size: {}".format(rf_size))
+        print("grid_cell_size: {}".format(grid_cell_size))
+        print("n_grid_cells: {}".format(n_grid_cells))
+        print("pre_padding: {}".format(pre_padding))
+        print("post_padding: {}".format(post_padding))
+        print("required_image_size: {}".format(required_image_size))
+
+        padding = (
+            [[0, 0]]
+            + list(zip(pre_padding, post_padding))
+            + [[0, 0]] * (len(inp.shape) - 1 - self.n_grid_dims)
+        )
+
+        volume = tf.pad(inp, padding, mode="CONSTANT")
+
+        for i, layer in enumerate(self.layers):
+            padding_type = layer.get('padding', 'VALID')
+            if padding_type != 'VALID':
+                raise Exception("Layer {} trying to use padding type {} in GridConvNet.".format(i, padding_type))
+
+            final = i == len(self.layers) - 1
+
+            if final and final_n_channels is not None:
+                layer['filters'] = final_n_channels
+
+            volume = self._apply_layer(volume, layer, i, final, is_training)
+            self.volumes.append(volume)
+
+        return volume, n_grid_cells, grid_cell_size
+
+
 def pool_objects(op, objects, mask):
     batch_size = tf.shape(objects)[0]
     n_objects = tf.reduce_prod(tf.shape(objects)[1:-1])

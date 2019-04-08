@@ -1,5 +1,4 @@
 import numpy as np
-from skimage.transform import resize
 import os
 import tensorflow as tf
 import matplotlib as mpl
@@ -11,7 +10,7 @@ import abc
 from itertools import zip_longest
 
 from dps import cfg
-from dps.utils import Param, Parameterized, get_param_hash, NumpySeed, animate
+from dps.utils import Param, Parameterized, get_param_hash, NumpySeed, animate, resize_image
 from dps.datasets import (
     load_emnist, load_omniglot, omniglot_classes,
     load_backgrounds, background_names
@@ -940,7 +939,7 @@ class PatchesDataset(ImageDataset):
 
                 for patch, loc in zip(patches, locs):
                     if patch.shape[:2] != (loc.h, loc.w):
-                        patch = resize(patch, (loc.h, loc.w), mode='edge', preserve_range=True)
+                        patch = resize_image(patch, (loc.h, loc.w))
 
                     top = int(np.clip(loc.top, 0, image.shape[0]))
                     bottom = int(np.clip(loc.bottom, 0, image.shape[0]))
@@ -967,7 +966,8 @@ class PatchesDataset(ImageDataset):
 
                     for patch, loc in zip(distractor_patches, distractor_locs):
                         if patch.shape[:2] != (loc.h, loc.w):
-                            patch = resize(patch, (loc.h, loc.w), mode='edge', preserve_range=True)
+                            anti_aliasing = patch.shape[0] < loc.h or patch.shape[1] < loc.w
+                            patch = resize_image(patch, (loc.h, loc.w))
 
                         intensity = patch[:, :, :-1]
                         alpha = patch[:, :, -1:].astype('f') / 255.

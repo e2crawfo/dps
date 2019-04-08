@@ -1,32 +1,28 @@
 import numpy as np
 import imageio
 import os
-from skimage.transform import resize
 import itertools
 
 import dps
 from dps.datasets.base import PatchesDataset
-from dps.utils import Param
+from dps.utils import Param, resize_image
 
 
 class ShapesDataset(PatchesDataset):
     """ Display a specific set of shapes in random positions. """
-    shapes = Param(help="space-separated string of shape specs. Each shape spec is of form color,shape")
+    shape_specs = Param(help="space-separated string of shape specs. Each shape spec is of form colour,shape")
     patch_shape = Param()
 
     n_classes = 1
 
     def _make(self):
-        if isinstance(self.shapes, str):
-            self.shapes = self.shapes.split()
-
         self.patches = {}
-        for spec in self.shapes:
-            colour, shape = spec.split(",")
+        for spec in self.shape_specs:
+            shape, colour = spec.split(",")
 
             f = os.path.join(os.path.dirname(dps.__file__), "shapes", "{}.png".format(shape))
             image = imageio.imread(f)
-            image = resize(image[..., 3], self.patch_shape, mode='edge', preserve_range=True)
+            image = resize_image(image[..., 3], self.patch_shape)
             image = self._colourize(image, colour)
 
             self.patches[spec] = image
@@ -39,16 +35,36 @@ class ShapesDataset(PatchesDataset):
 
 class RandomShapesDataset(ShapesDataset):
     """ Display a random number of random shapes in random positions. """
-    shapes = Param()
     patch_shape = Param()
     min_shapes = Param()
     max_shapes = Param()
+    shapes = Param()
+
+    _shape_specs = None
+
+    @property
+    def shape_specs(self):
+        if self._shape_specs is None:
+            colours = self.colours
+            if isinstance(colours, str):
+                colours = colours.split()
+
+            shapes = self.shapes
+            if isinstance(shapes, str):
+                shapes = shapes.split()
+
+            shape_specs = []
+            for colour in colours:
+                for shape in shapes:
+                    shape_specs.append("{},{}".format(shape, colour))
+            self._shape_specs = shape_specs
+        return self._shape_specs
 
     def _sample_patches(self):
         n_shapes = np.random.randint(self.min_shapes, self.max_shapes+1)
-        shapes = np.random.choice(self.shapes, size=n_shapes)
-        shape_images = [self.pataches[shape] for shape in shapes]
-        return shape_images, [0] * len(shape_images), 0
+        specs = np.random.choice(self.shape_specs, size=n_shapes)
+        patches = [self.patches[spec] for spec in specs]
+        return patches, [0] * len(patches), 0
 
 
 class BlueXAboveRedCircle(ShapesDataset):
@@ -146,7 +162,7 @@ class SetThreeAttr(PatchesDataset):
 
             f = os.path.join(os.path.dirname(dps.__file__), "shapes", "{}.png".format(shape))
             image = imageio.imread(f)
-            image = resize(image[..., 3], self.patch_shape, mode='edge', preserve_range=True)
+            image = resize_image(image[..., 3], self.patch_shape)
             image = self._colourize(image, colour)
 
             shape_colour = image[:, :, :3]
@@ -154,7 +170,7 @@ class SetThreeAttr(PatchesDataset):
 
             f = os.path.join(os.path.dirname(dps.__file__), "digits", "{}.png".format(digit))
             digit_image = imageio.imread(f)
-            digit_image = resize(digit_image[..., 3], self.patch_shape, mode='edge', preserve_range=True)
+            digit_image = resize_image(digit_image[..., 3], self.patch_shape)
             digit_image = self._colourize(digit_image, self.digit_colour)
 
             digit_colour = digit_image[:, :, :3]
@@ -201,9 +217,11 @@ class SetThreeAttr(PatchesDataset):
 if __name__ == "__main__":
     import tensorflow as tf
 
-    # dset = RandomShapesDataset(
-    #     n_examples=20, shapes="circle", colours="black blue", background_colours="white",
-    #     min_shapes=2, max_shapes=4, image_shape=(48, 48), patch_shape=(14, 14), max_overlap=98)
+    dset = RandomShapesDataset(
+        n_examples=20, shapes="circle diamond star x plus", colours="red green blue cyan magenta yellow",
+        background_colours="black", min_shapes=5, max_shapes=10, image_shape=(96, 96), patch_shape=(21, 21),
+        max_overlap=98, n_frames=10, patch_size_std=0.4, patch_speed=19, backgrounds="all")
+
     # shapes = "green,circle blue,circle orange,circle teal,circle red,circle black,circle"
     # dset = ShapesDataset(
     #     n_examples=20, background_colours="white", shapes=shapes,
@@ -217,18 +235,18 @@ if __name__ == "__main__":
     #     n_examples=21, background_colours="white", distractor_shapes=specs,
     #     n_distractor_shapes=None, image_shape=(48, 48), patch_shape=(14, 14), max_overlap=98)
 
-    dset = SetThreeAttr(
-        n_examples=16,
-        background_colours="cyan magenta yellow",
-        colours="red green blue",
-        shapes="circle square diamond",
-        digits="simple1 simple2 simple3",
-        digit_colour="black",
-        n_cards=7,
-        set_size=3,
-        image_shape=(48, 48),
-        patch_shape=(14, 14),
-        max_overlap=14*14/3)
+    # dset = SetThreeAttr(
+    #     n_examples=16,
+    #     background_colours="cyan magenta yellow",
+    #     colours="red green blue",
+    #     shapes="circle square diamond",
+    #     digits="simple1 simple2 simple3",
+    #     digit_colour="black",
+    #     n_cards=7,
+    #     set_size=3,
+    #     image_shape=(48, 48),
+    #     patch_shape=(14, 14),
+    #     max_overlap=14*14/3)
 
     sess = tf.Session()
     with sess.as_default():

@@ -19,7 +19,7 @@ import clify
 import dps
 from dps import cfg
 from dps.config import DEFAULT_CONFIG
-from dps.utils import gen_seed, Config, ExperimentStore, edit_text, NumpySeed, pdb_postmortem
+from dps.utils import gen_seed, Config, ExperimentStore, edit_text, NumpySeed
 from dps.train import training_loop
 from dps.parallel import Job, ReadOnlyJob
 from dps.train import FrozenTrainingLoopData
@@ -625,34 +625,50 @@ def sanitize(s):
     return s.replace('_', '-')
 
 
-def run_experiment(name, config, readme, distributions=None, durations=None, name_variables=None):
+def run_experiment(
+        name, base_config, readme, distributions=None, durations=None,
+        name_variables=None, alg_configs=None, env_configs=None, late_config=None):
+
     name = sanitize(name)
     durations = durations or {}
 
     parser = argparse.ArgumentParser()
+    if env_configs is not None:
+        parser.add_argument('env')
+    if alg_configs is not None:
+        parser.add_argument('alg')
     parser.add_argument("duration", choices=list(durations.keys()) + ["local"], default="local", nargs="?")
-    parser.add_argument('--pdb', action='store_true', help="If supplied, enter post-mortem debugging on error.")
 
     args, _ = parser.parse_known_args()
 
-    _config = DEFAULT_CONFIG.copy()
+    config = DEFAULT_CONFIG.copy()
 
-    _config.update(config)
-    _config.update_from_command_line()
+    config.update(base_config)
 
-    alg_name = config.get("alg_name", "")
+    if env_configs is not None:
+        env_config = env_configs[args.env]
+        config.update(env_config)
 
-    if "env_name" in _config:
-        _config.env_name = "{}_env={}".format(name, sanitize(_config.env_name))
+    if alg_configs is not None:
+        alg_config = alg_configs[args.alg]
+        config.update(alg_config)
+
+    if late_config is not None:
+        config.update(late_config)
+
+    config.update_from_command_line()
+
+    env_name = sanitize(config.get('env_name', ''))
+    if name:
+        config.env_name = "{}_env={}".format(name, env_name)
+    else:
+        config.env_name = "env={}".format(env_name)
+    alg_name = sanitize(config.get("alg_name", ""))
 
     if args.duration == "local":
-        _config.exp_name = "alg={}".format(alg_name)
-        with _config:
-            if args.pdb:
-                with pdb_postmortem():
-                    return training_loop()
-            else:
-                return training_loop()
+        config.exp_name = "alg={}".format(alg_name)
+        with config:
+            return training_loop()
 
     run_kwargs = Config(
         kind="slurm",
@@ -663,7 +679,7 @@ def run_experiment(name, config, readme, distributions=None, durations=None, nam
     duration_args = durations[args.duration]
 
     if 'config' in duration_args:
-        _config.update(duration_args['config'])
+        config.update(duration_args['config'])
         del duration_args['config']
 
     run_kwargs.update(durations[args.duration])
@@ -671,10 +687,10 @@ def run_experiment(name, config, readme, distributions=None, durations=None, nam
 
     if name_variables is not None:
         name_variables_str = "_".join(
-            "{}={}".format(sanitize(str(k)), sanitize(str(getattr(_config, k))))
+            "{}={}".format(sanitize(str(k)), sanitize(str(getattr(config, k))))
             for k in name_variables.split(","))
-        _config.env_name = "{}_{}".format(_config.env_name, name_variables_str)
+        config.env_name = "{}_{}".format(config.env_name, name_variables_str)
 
-    exp_name = "{}_alg={}_duration={}".format(_config.env_name, alg_name, args.duration)
+    exp_name = "{}_alg={}_duration={}".format(config.env_name, alg_name, args.duration)
 
-    build_and_submit(name=exp_name, config=_config, distributions=distributions, **run_kwargs)
+    build_and_submit(name=exp_name, config=config, distributions=distributions, **run_kwargs)

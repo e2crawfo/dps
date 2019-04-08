@@ -1,19 +1,22 @@
 import dill
 import gzip
 import imageio
-from skimage.transform import resize
 import numpy as np
 import os
 import shutil
 import warnings
 
 from dps import cfg
-from dps.utils import image_to_string
+from dps.utils import image_to_string, resize_image
 
 
 def background_names():
     backgrounds_dir = os.path.join(cfg.data_dir, 'backgrounds')
-    return sorted(f.split()[0] for f in os.listdir(backgrounds_dir))
+    return sorted(
+        f.split('.')[0]
+        for f in os.listdir(backgrounds_dir)
+        if f.endswith('.png') or f.endswith('.jpg')
+    )
 
 
 def load_backgrounds(background_names, shape=None):
@@ -31,7 +34,7 @@ def load_backgrounds(background_names, shape=None):
             b = imageio.imread(f)
 
         if shape is not None and b.shape != shape:
-            b = resize(b, shape, mode='edge', preserve_range=True)
+            b = resize_image(b, shape)
             b = np.uint8(b)
 
         backgrounds.append(b)
@@ -40,9 +43,9 @@ def load_backgrounds(background_names, shape=None):
 
 def emnist_classes():
     return (
-        [str(i) for i in range(10)] +
-        [chr(i + ord('A')) for i in range(26)] +
-        [chr(i + ord('a')) for i in range(26)]
+        [str(i) for i in range(10)]
+        + [chr(i + ord('A')) for i in range(26)]
+        + [chr(i + ord('a')) for i in range(26)]
     )
 
 
@@ -73,9 +76,9 @@ def convert_emnist_and_store(path, new_image_shape):
     os.mkdir(new_dir)
 
     classes = ''.join(
-        [str(i) for i in range(10)] +
-        [chr(i + ord('A')) for i in range(26)] +
-        [chr(i + ord('a')) for i in range(26)]
+        [str(i) for i in range(10)]
+        + [chr(i + ord('A')) for i in range(26)]
+        + [chr(i + ord('a')) for i in range(26)]
     )
 
     for i, cls in enumerate(sorted(classes)):
@@ -84,7 +87,7 @@ def convert_emnist_and_store(path, new_image_shape):
 
             new_x = []
             for img in _x:
-                img = resize(img, new_image_shape, mode='edge')
+                img = resize_image(img, new_image_shape, preserve_range=False)
                 new_x.append(img)
 
             print(cls)
@@ -223,7 +226,7 @@ def load_emnist(
                 "consider creating and storing the resized dataset.".format(x.shape[0])
             )
 
-        x = [resize(img, shape, mode='edge', preserve_range=True) for img in x]
+        x = [resize_image(img, shape) for img in x]
         x = np.uint8(x)
 
     return x, y, class_map
@@ -299,7 +302,7 @@ def load_omniglot(
             _x = 255. - _x
 
             if shape:
-                _x = resize(_x, shape, mode='edge', preserve_range=True)
+                _x = resize_image(_x, shape)
 
             x.append(_x)
             y.append(i)

@@ -6,13 +6,12 @@ from matplotlib.colors import to_rgb
 from matplotlib import animation
 import os
 import imageio
-from skimage.transform import resize
 import warnings
 import copy
 
 import dps
 from dps import cfg
-from dps.utils import square_subplots, generate_perlin_noise_2d, Config, Param, Parameterized
+from dps.utils import square_subplots, generate_perlin_noise_2d, Config, Param, Parameterized, resize_image
 from dps.utils.tf import RenderHook
 from dps.env.env import BatchGymEnv
 
@@ -60,7 +59,7 @@ class Entity(object):
             f = os.path.join(os.path.dirname(dps.__file__), "shapes", "{}.png".format(self.appearance))
             mask = imageio.imread(f)
             mask = mask[:, :, 3:]
-            mask = resize(mask, (self.h, self.w), mode='edge', preserve_range=True)
+            mask = resize_image(mask, (self.h, self.w))
             mask = Entity.masks[key] = mask / 255.
 
         noise_res = getattr(self, "noise_res", None)

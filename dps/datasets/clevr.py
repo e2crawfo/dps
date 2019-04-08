@@ -4,14 +4,13 @@ import tensorflow as tf
 import imageio
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from skimage.transform import resize
 import json
 from itertools import product
 import collections
 
 from dps import cfg
 from dps.datasets.base import ImageDataset, ImageFeature, NestedListFeature, IntegerFeature
-from dps.utils import Param
+from dps.utils import Param, resize_image
 
 
 class ClevrDataset(ImageDataset):
@@ -59,7 +58,7 @@ class ClevrDataset(ImageDataset):
             if k % 100 == 0:
                 print("Processing files {}".format(k))
             image = imageio.imread(os.path.join(f))
-            image = resize(image[:, :, :3], shape, mode='edge', preserve_range=True)
+            image = resize_image(image[:, :, :3], shape)
 
             if mean is None:
                 mean = image
@@ -77,7 +76,7 @@ class ClevrDataset(ImageDataset):
             if k % 100 == 0:
                 print("Processing files {}".format(k))
             image = imageio.imread(os.path.join(f))
-            image = resize(image[:, :, :3], shape, mode='edge', preserve_range=True)
+            image = resize_image(image[:, :, :3], shape)
 
             if counters is None:
                 counters = np.array([collections.Counter() for i in range(image.shape[0] * image.shape[1])])
@@ -115,7 +114,7 @@ class ClevrDataset(ImageDataset):
 
         for f in files[:10]:
             image = imageio.imread(os.path.join(f))
-            image = resize(image[:, :, :3], shape, mode='edge', preserve_range=True)
+            image = resize_image(image[:, :, :3], shape)
             data.extend(list(image.reshape(-1, 3)))
 
         data = np.random.permutation(data)[:10000]
@@ -133,7 +132,7 @@ class ClevrDataset(ImageDataset):
         print("Counting...")
         for f in files:
             image = imageio.imread(os.path.join(f))
-            image = resize(image[:, :, :3], shape, mode='edge', preserve_range=True)
+            image = resize_image(image[:, :, :3], shape)
 
             if counters is None:
                 counters = np.array([collections.Counter() for i in range(image.shape[0] * image.shape[1])])
@@ -196,7 +195,7 @@ class ClevrDataset(ImageDataset):
             image = image[..., :3]  # Get rid of alpha channel.
 
             if image.shape[:2] != self.image_shape:
-                image = resize(image, self.image_shape, mode='edge', preserve_range=True)
+                image = resize_image(image, self.image_shape)
 
             if self.has_annotations:
                 idx = self.get_idx_from_filename(f)
