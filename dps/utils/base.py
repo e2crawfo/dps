@@ -1093,8 +1093,8 @@ class Parameterized(object):
 
         If no value is found by this point, an AttributeError is raised.
 
-        Parameters should be not be altered throughout the lifetime of the class instance, though
-        this is currently not enforced.
+        A note on deep copies: at instance creation time, we store values for all the parameters.
+        Deep copies are created by creating a new object using those creation-time parameter values.
 
     """
     _resolved = False
@@ -1104,7 +1104,9 @@ class Parameterized(object):
         obj._resolve_params(**kwargs)
 
         # Stored for copying purposes, to get parameter as they are before __init__ is called.
-        obj._resolved_params = obj.param_values()
+        obj._params_at_creation_time = obj.param_values()
+
+        print("New instance of parameterized class {} with args:\n{}".format(cls, pformat(obj._params_at_creation_time)))
 
         return obj
 
@@ -1185,7 +1187,7 @@ class Parameterized(object):
 
     def __deepcopy__(self, memo):
         cls = self.__class__
-        kwargs = self._resolved_params
+        kwargs = self._params_at_creation_time
         result = cls.__new__(cls, **kwargs)
         result.__init__(**kwargs)
         memo[id(self)] = result

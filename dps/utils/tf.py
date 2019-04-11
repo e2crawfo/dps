@@ -9,6 +9,7 @@ import shutil
 import matplotlib.pyplot as plt
 
 import tensorflow as tf
+from tensorflow.nn import dynamic_rnn, bidirectional_dynamic_rnn
 from tensorflow.python.ops import random_ops
 from tensorflow.python.framework import ops
 from tensorflow.python.util import nest
@@ -328,6 +329,10 @@ class ScopedFunction(Parameterized):
         False up until the end of the first time that this instance of ScopedFunction is called.
 
     """
+    fixed_values = Param(None)
+    fixed_weights = Param("")
+    no_gradient = Param("")
+
     def __init__(self, scope=None, **kwargs):
         if scope is None:
             scope = self.__class__.__name__
@@ -346,6 +351,14 @@ class ScopedFunction(Parameterized):
         self.was_loaded = None
         self.do_pretraining = False
         self.fixed_variables = False
+
+        self.fixed_values = self.fixed_values or {}
+
+        if isinstance(self.fixed_weights, str):
+            self.fixed_weights = self.fixed_weights.split()
+
+        if isinstance(self.no_gradient, str):
+            self.no_gradient = self.no_gradient.split()
 
     def trainable_variables(self, for_opt):
         return trainable_variables(self.scope, for_opt)
@@ -512,7 +525,6 @@ class LeNet(ScopedFunction):
         super(LeNet, self).__init__(scope)
 
     def _call(self, images, output_size, is_training):
-        from tensorflow.contrib.slim import fully_connected
         if len(images.shape) <= 1:
             raise Exception()
 
@@ -586,7 +598,7 @@ class ConvNet(ScopedFunction):
     """
     Parameters
     ----------
-    layout: list of dict
+    layers: list of dict
         Each entry supplies parameters for a layer of the network. Valid argument names are:
             kind
             filters (required, int)
@@ -607,9 +619,8 @@ class ConvNet(ScopedFunction):
         softmax=tf.nn.softmax
     )
 
-    def __init__(self, layout, check_output_shape=False, scope=None, **kwargs):
-        self.layout = layout
-        self.check_output_shape = check_output_shape
+    def __init__(self, layers, scope=None, **kwargs):
+        self.layers = layers
         self.volumes = []
         super(ConvNet, self).__init__(scope)
 
@@ -627,10 +638,10 @@ class ConvNet(ScopedFunction):
         return out_dim
 
     @staticmethod
-    def predict_output_shape(input_shape, layout):
+    def predict_output_shape(input_shape, layers):
         """ Get spatial shape of the output given a spatial shape of the input. """
         shape = [int(i) for i in input_shape]
-        for layer in layout:
+        for layer in layers:
             kernel_size = layer['kernel_size']
             if isinstance(kernel_size, tuple):
                 f0, f1 = kernel_size
@@ -686,6 +697,8 @@ class ConvNet(ScopedFunction):
 
         if kind == 'conv':
             filters = layer_spec['filters']
+            if filters is None:
+                filters = tf_shape(volume)[-1]
             strides = layer_spec['strides']
             transpose = layer_spec.get('transpose', False)
             kernel_size = layer_spec['kernel_size']
@@ -749,25 +762,18 @@ class ConvNet(ScopedFunction):
 
         return volume
 
-    def _call(self, inp, output_size, is_training):
+    def _call(self, inp, final_n_channels, is_training):
         volume = inp
         self.volumes = [volume]
 
-        # print("Predicted output shape is: {}".format(self.predict_output_shape(inp.shape[1:3], self.layout)))
+        for i, layer in enumerate(self.layers):
+            final = i == len(self.layers) - 1
 
-        for i, layer_spec in enumerate(self.layout):
-            volume = self._apply_layer(volume, layer_spec, i, i == len(self.layout) - 1, is_training)
+            if final and final_n_channels is not None:
+                layer['filters'] = final_n_channels
+
+            volume = self._apply_layer(volume, layer, i, final, is_training)
             self.volumes.append(volume)
-
-        if self.check_output_shape and output_size is not None:
-            actual_shape = tuple(int(i) for i in volume.shape[1:])
-
-            if actual_shape == output_size:
-                print("CCN >>> Shape check passed.")
-            else:
-                raise Exception(
-                    "Shape-checking turned on, and actual shape {} does not "
-                    "match desired shape {}.".format(actual_shape, output_size))
 
         return volume
 
@@ -839,6 +845,50 @@ class GridConvNet(ConvNet):
             self.volumes.append(volume)
 
         return volume, n_grid_cells, grid_cell_size
+
+
+class RecurrentGridConvNet(GridConvNet):
+    """ Operates on video rather than images. """
+    build_cell = Param()
+    bidirectional = Param()
+
+    forward_cell = None
+    backward_cell = None
+
+    def _call(self, inp, final_n_channels, is_training):
+        B, T, *rest = tf_shape(inp)
+        inp = tf.reshape(inp, (B*T, *rest))
+
+        processed, n_grid_cells, grid_cell_size = super()._call(inp, final_n_channels, is_training)
+
+        _, H, W, C = tf_shape(processed)
+        processed = tf.reshape(processed, (T, B, H, W, C))
+
+        processed = tf.transpose(processed, (1, 0, 2, 3, 4))
+        processed = tf.reshape(processed, (T, B*H*W, C))
+
+        if self.forward_cell is None:
+            self.forward_cell = self.build_cell(n_hidden=final_n_channels, scope="forward_cell")
+
+        if self.bidirectional:
+            if self.backward_cell is None:
+                self.backward_cell = self.build_cell(n_hidden=final_n_channels, scope="backward_cell")
+
+            (fw_output, bw_output), final_state = bidirectional_dynamic_rnn(
+                self.forward_cell, self.backward_cell, processed,
+                initial_state_fw=self.forward_cell.zero_state(B*H*W, tf.float32),
+                initial_state_bw=self.backward_cell.zero_state(B*H*W, tf.float32),
+                parallel_iterations=1, swap_memory=False, time_major=True)
+            output = tf.concat([fw_output, bw_output], axis=2)
+
+        else:
+            output, final_state = dynamic_rnn(
+                self.forward_cell, processed, initial_state=self.forward_cell.zero_state(B*H*W, tf.float32),
+                parallel_iterations=1, swap_memory=False, time_major=True)
+
+        output = tf.reshape(output, (T, B, H, W, C))
+        output = tf.transpose(output, (1, 0, 2, 3, 4))
+        return output, n_grid_cells, grid_cell_size
 
 
 def pool_objects(op, objects, mask):
@@ -1121,9 +1171,9 @@ class SalienceMap(ScopedFunction):
 
             new = weight * tf.exp(
                 0.5 * (
-                    0. -
-                    ((yy - mu_y)/std_y)**2 -
-                    ((xx - mu_x)/std_x)**2
+                    0.
+                    - ((yy - mu_y)/std_y)**2
+                    - ((xx - mu_x)/std_x)**2
                 )
             )
 
@@ -1705,9 +1755,21 @@ def build_gradient_train_op(
 
 
 def tf_roll(a, n, axis=0, fill=None, reverse=False):
+    """ n > 0 corresponds to taking the final n elements, and putting them at the start.
+        n < 0 corresponds to taking the first -n elements, and putting them at the end.
+
+        If fill is not None then it should be a value with the same type as `a`.
+        The space that is "vacated" (starting at the beginning of
+        the array if n > 0, starting at the end if n < 0) is filled with the given value
+        instead of a part of the original array.
+
+        fill can also be an array that this broadcastable to the required shape (we just
+        element-wise multiply fill with an array of ones of the appropriate shape).
+
+
+    """
     if reverse:
         a = tf.reverse(a, axis=[axis])
-    assert n > 0
 
     pre_slices = [slice(None) for i in a.shape]
     pre_slices[axis] = slice(None, -n)
@@ -1720,12 +1782,16 @@ def tf_roll(a, n, axis=0, fill=None, reverse=False):
     post = a[post_slices]
 
     if fill is not None:
-        post = fill * tf.ones_like(post, dtype=a.dtype)
+        if n > 0:
+            post = fill * tf.ones_like(post, dtype=a.dtype)
+        else:
+            pre = fill * tf.ones_like(pre, dtype=a.dtype)
 
     r = tf.concat([post, pre], axis=axis)
 
     if reverse:
         r = tf.reverse(r, axis=[axis])
+
     return r
 
 
