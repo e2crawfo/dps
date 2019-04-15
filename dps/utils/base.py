@@ -342,9 +342,13 @@ def _nvidia_smi_parse_processes(s):
     assert header_idx is not None, "Malformed nvidia-smi string:\n{}".format(s)
     assert table_end_idx is not None, "Malformed nvidia-smi string:\n{}".format(s)
 
+    if lines[header_idx+2].startswith('|  No running processes found'):
+        return []
+
     processes = []
 
     for line in lines[header_idx+2:table_end_idx]:
+
         tokens = line.split()
         gpu_idx = int(tokens[1])
         pid = int(tokens[2])
@@ -1620,13 +1624,7 @@ class Config(dict, MutableMapping):
         return _config
 
 
-class SystemConfig(Config):
-    def __init__(self, _d=None, **kwargs):
-        config = _load_system_config()
-        if _d:
-            config.update(_d)
-        config.update(kwargs)
-        super(SystemConfig, self).__init__(**config)
+Config._reserved_keys = dir(Config)
 
 
 def update_scratch_dir(config, new_scratch_dir):
@@ -1645,8 +1643,7 @@ def update_scratch_dir(config, new_scratch_dir):
 
 
 config_template = """
-from dps.utils import Config
-config = Config(
+config = dict(
     start_tensorboard=True,
     tbport=6006,
     reload_interval=10,
@@ -1700,7 +1697,7 @@ def _load_system_config(key=None):
     config_module_spec = importlib.util.spec_from_file_location("dps_config", config_loc)
     config_module = config_module_spec.loader.load_module()
 
-    config = config_module.config
+    config = Config(**config_module.config)
 
     def fixup_dir(name):
         attr_name = name + "_dir"
@@ -1720,11 +1717,16 @@ def _load_system_config(key=None):
     return config
 
 
-class ClearConfig(SystemConfig):
-    pass
+SYSTEM_CONFIG = _load_system_config()
 
 
-Config._reserved_keys = dir(Config)
+class ClearConfig(Config):
+    def __init__(self, _d=None, **kwargs):
+        config = _load_system_config()
+        if _d:
+            config.update(_d)
+        config.update(kwargs)
+        super().__init__(**config)
 
 
 class Singleton(type):
@@ -1752,7 +1754,7 @@ class ConfigStack(dict, metaclass=Singleton):
         self._stack.clear()
         if default is not None:
             if default is NotSupplied:
-                self._stack.append(SystemConfig())
+                self._stack.append(SYSTEM_CONFIG.copy())
             else:
                 self._stack.append(default)
 

@@ -4,7 +4,7 @@ try:
 except ImportError:
     pass
 
-from .utils import ConfigStack, Config, SystemConfig
+from .utils import ConfigStack, Config
 
 cfg = ConfigStack()
 

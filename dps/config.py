@@ -1,11 +1,11 @@
 import numpy as np
 
 from dps import cfg
-from dps.utils import Config
+from dps.utils import SYSTEM_CONFIG
 from dps.rl import rl_render_hook
 
 
-DEFAULT_CONFIG = Config(
+DEFAULT_CONFIG = SYSTEM_CONFIG.copy(
     env_name="default_env",
     exp_name="",
 

@@ -196,7 +196,12 @@ class DataManager(Parameterized):
             self.train_eval_iterator = train_eval_dataset.make_initializable_iterator()
             self.train_eval_handle = sess.run(self.train_eval_iterator.string_handle())
 
-            shuffle_and_repeat = tf.data.experimental.shuffle_and_repeat(self.shuffle_buffer_size)
+            try:
+                shuffle_and_repeat_func = tf.data.experimental.shuffle_and_repeat
+            except AttributeError:
+                shuffle_and_repeat_func = tf.contrib.data.shuffle_and_repeat
+
+            shuffle_and_repeat = shuffle_and_repeat_func(self.shuffle_buffer_size)
             train_dataset = (train_dataset.apply(shuffle_and_repeat)
                                           .batch(self.batch_size)
                                           .map(self.train_dataset.parse_example_batch)

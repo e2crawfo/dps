@@ -9,7 +9,10 @@ import shutil
 import matplotlib.pyplot as plt
 
 import tensorflow as tf
-from tensorflow.nn import dynamic_rnn, bidirectional_dynamic_rnn
+try:
+    from tensorflow.nn import dynamic_rnn, bidirectional_dynamic_rnn
+except Exception:
+    pass
 from tensorflow.python.ops import random_ops
 from tensorflow.python.framework import ops
 from tensorflow.python.util import nest
@@ -879,7 +882,7 @@ class RecurrentGridConvNet(GridConvNet):
                 initial_state_fw=self.forward_cell.zero_state(B*H*W, tf.float32),
                 initial_state_bw=self.backward_cell.zero_state(B*H*W, tf.float32),
                 parallel_iterations=1, swap_memory=False, time_major=True)
-            output = tf.concat([fw_output, bw_output], axis=2)
+            output = (fw_output + bw_output) / 2
 
         else:
             output, final_state = dynamic_rnn(
