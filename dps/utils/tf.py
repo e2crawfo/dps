@@ -287,15 +287,23 @@ def uninitialized_variables_initializer():
     """ init only uninitialized variables - from
         http://stackoverflow.com/questions/35164529/
         in-tensorflow-is-there-any-way-to-just-initialize-uninitialised-variables """
+
+    print("\nStarting variable init.")
     uninitialized_vars = []
     sess = tf.get_default_session()
-    for var in tf.global_variables():
-        try:
-            sess.run(var)
-        except tf.errors.FailedPreconditionError:
-            uninitialized_vars.append(var)
-    uninit_init = tf.variables_initializer(uninitialized_vars)
-    return uninit_init
+    print("Finding uninitialized vars.")
+    import time
+    start = time.time()
+    global_vars = tf.global_variables()
+    is_not_initialized = sess.run([tf.is_variable_initialized(var) for var in global_vars])
+    uninitialized_vars = [v for (v, f) in zip(global_vars, is_not_initialized) if not f]
+
+    print("Took {} seconds".format(time.time() - start))
+    print("Doing the actual initialization for {} vars".format(len(uninitialized_vars)))
+    start = time.time()
+    uninit_init_op = tf.variables_initializer(uninitialized_vars)
+    print("Done, took {} seconds.\n".format(time.time() - start))
+    return uninit_init_op
 
 
 FIXED_COLLECTION = "FIXED_COLLECTION"
@@ -850,8 +858,67 @@ class GridConvNet(ConvNet):
         return volume, n_grid_cells, grid_cell_size
 
 
+class GridTransposeConvNet(GridConvNet):
+    """ Incomplete, particularly figuring out the correct amount of padding..."""
+
+    def _call(self, inp, output_size, is_training):
+        volume = inp
+        self.volumes = [volume]
+
+        reverse_layers = self.layers[::-1]
+
+        *image_shape, final_n_channels = output_size
+
+        receptive_fields = self.compute_receptive_field(len(inp.shape)-2, reverse_layers)
+        print("Inverse receptive fields for {} (GridTransposeConvNet)".format(self.name))
+        pprint.pprint(receptive_fields)
+
+        grid_cell_size = receptive_fields[-1]["translation"][:self.n_grid_dims]
+        rf_size = receptive_fields[-1]["size"][:self.n_grid_dims]
+        pre_padding = np.floor(rf_size / 2 - grid_cell_size / 2).astype('i')
+        image_shape = np.array([int(i) for i in inp.shape[1:self.n_grid_dims+1]])
+        n_grid_cells = np.ceil(image_shape / grid_cell_size).astype('i')
+        required_image_size = rf_size + (n_grid_cells-1) * grid_cell_size
+        post_padding = required_image_size - image_shape - pre_padding
+
+        print("{} (GridTransposeConvNet):".format(self.name))
+        print("rf_size: {}".format(rf_size))
+        print("grid_cell_size: {}".format(grid_cell_size))
+        print("n_grid_cells: {}".format(n_grid_cells))
+        print("pre_padding: {}".format(pre_padding))
+        print("post_padding: {}".format(post_padding))
+        print("required_image_size: {}".format(required_image_size))
+
+        for i, layer in enumerate(self.layers):
+            padding_type = layer.get('padding', 'VALID')
+            if padding_type != 'VALID':
+                raise Exception("Layer {} trying to use padding type {} in GridTransposeConvNet.".format(i, padding_type))
+
+            final = i == len(self.layers) - 1
+
+            if final and final_n_channels is not None:
+                layer['filters'] = final_n_channels
+
+            volume = self._apply_layer(volume, layer, i, final, is_training)
+            self.volumes.append(volume)
+
+        slices = (
+            [slice(None)]
+            + [slice(pre, post) for pre, post in zip(pre_padding, post_padding)]
+            + [slice(None)] * (len(inp.shape) - 1 - self.n_grid_dims)
+        )
+
+        volume = volume[slices]
+
+        return volume, n_grid_cells, grid_cell_size
+
+
 class RecurrentGridConvNet(GridConvNet):
-    """ Operates on video rather than images. """
+    """ Operates on video rather than images. Apply a GridConvNet to each frame independently,
+        and integrate information over time by using a recurrent network, where each spatial location
+        has its own hidden state. The same recurrent network is used to update all spatial locations.
+
+    """
     build_cell = Param()
     bidirectional = Param()
 
