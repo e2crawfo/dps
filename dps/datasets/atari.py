@@ -5,10 +5,11 @@ import os
 import tensorflow as tf
 import matplotlib.pyplot as plt
 from collections import defaultdict
+from pprint import pprint
 
 from dps import cfg
-from dps.datasets import ImageDataset, ArrayFeature, ImageFeature
-from dps.utils import Param
+from dps.datasets import Dataset, ImageDataset, ArrayFeature, ImageFeature
+from dps.utils import Param, resize_image, animate
 
 
 class RandomAgent(object):
@@ -256,28 +257,16 @@ class ReinforcementLearningDataset(ImageDataset):
         o, a, r, next_o = None, None, None, None
         result = sess.run(iterator.get_next())
 
-        idx = 0
+        o = result.get('o', None)
+        a = result.get('a', None)
+        r = result.get('r', None)
+        next_o = result.get('next_o', None)
 
-        batch_size = N
-        if self.store_o:
-            o = result[idx]
-            idx += 1
-            batch_size = o.shape[0]
-
-        if self.store_a:
-            a = result[idx]
-            idx += 1
-            batch_size = a.shape[0]
-
-        if self.store_r:
-            r = result[idx]
-            idx += 1
-            batch_size = r.shape[0]
-
-        if self.store_next_o:
-            next_o = result[idx]
-            idx += 1
-            batch_size = next_o.shape[0]
+        # in case not enough obs were found
+        for data in [o, a, r, next_o]:
+            if data is not None:
+                N = data.shape[0]
+                break
 
         stride = self.obs_shape[2]
 
@@ -288,7 +277,7 @@ class ReinforcementLearningDataset(ImageDataset):
         for ax in axes.flatten():
             ax.set_axis_off()
 
-        for n in range(batch_size):
+        for n in range(N):
             i = int(n / sqrt_N)
             j = int(n % sqrt_N)
 
@@ -380,10 +369,24 @@ class RewardClassificationDataset(ReinforcementLearningDataset):
         return o, a, r
 
 
+def atari_image_shape(game, after_warp):
+    if after_warp:
+        return (84, 84)
+
+    two_fifty = ("Amidar WizardOfWor DoubleDunk Centipede Tennis BankHeist Skiing "
+                 "Carnival Pooyan AirRaid Assault Tutankham Gopher VideoPinball".split())
+
+    if "JourneyEscape" in game:
+        return (230, 160)
+    elif any(g in game for g in two_fifty):
+        return (250, 160)
+    else:
+        return (210, 160)
+
+
 class StaticAtariDataset(ReinforcementLearningDataset):
     game = Param(aliases="atari_game")
-    image_shape = Param(None)
-    after_warp = Param(False)
+    after_warp = Param()
     episode_range = Param()
 
     _obs_shape = None
@@ -395,20 +398,21 @@ class StaticAtariDataset(ReinforcementLearningDataset):
     @property
     def obs_shape(self):
         if self._obs_shape is None:
-            if self.postprocessing:
-                self._obs_shape = (*self.tile_shape, 3)
+
+            if self.image_shape is not None:
+                depth = 1 if self.after_warp else 3
+                self._obs_shape = (*self.image_shape, depth)
             else:
-                if self.after_warp:
-                    self._obs_shape = (84, 84, 1)
+                if self.postprocessing:
+                    image_shape = self.tile_shape
                 else:
-                    two_fifty = ("Amidar WizardOfWor DoubleDunk Centipede Tennis BankHeist Skiing "
-                                 "Carnival Pooyan AirRaid Assault Tutankham Gopher VideoPinball".split())
-                    if "JourneyEscape" in self.game:
-                        self._obs_shape = (230, 160, 3)
-                    elif any(g in self.game for g in two_fifty):
-                        self._obs_shape = (250, 160, 3)
-                    else:
-                        self._obs_shape = (210, 160, 3)
+                    image_shape = atari_image_shape(self.game, self.after_warp)
+
+                if self.after_warp:
+                    self._obs_shape = (*image_shape, 1)
+                else:
+                    self._obs_shape = (*image_shape, 3)
+
         return self._obs_shape
 
     def _make(self):
@@ -416,12 +420,121 @@ class StaticAtariDataset(ReinforcementLearningDataset):
         dirs = os.listdir(directory)
         game_full_name = "{}NoFrameskip-v4".format(self.game)
         starts_with = "atari_data_env={}.datetime=".format(game_full_name)
-        dirs = [d for d in dirs if d.startswith(starts_with)]
-        assert dirs
+        matching_dirs = [d for d in dirs if d.startswith(starts_with)]
+        if not matching_dirs:
+            pprint(sorted(dirs))
+            raise Exception("No data found for game {}".format(self.game))
 
-        directory = os.path.join(directory, sorted(dirs)[-1])
+        directory = os.path.join(directory, sorted(matching_dirs)[-1])
         directory = os.path.join(directory, ("after" if self.after_warp else "before") + "_warp_recording")
         scan_recorded_traces(directory, self._callback, self.max_episodes, self.episode_range)
+
+
+class AtariVideoDataset(Dataset):
+    atari_game = Param()
+    n_frames = Param()
+    image_shape = Param()
+    after_warp = Param()
+    episode_range = Param()
+    max_episodes = Param()
+    max_samples_per_ep = Param()
+    max_examples = Param()
+    frame_skip = Param()
+
+    depth = 3
+    _n_examples = 0
+
+    _obs_shape = None
+
+    @property
+    def obs_shape(self):
+        if self._obs_shape is None:
+            if self.image_shape is None:
+                image_shape = atari_image_shape(self.atari_game, self.after_warp)
+                self._obs_shape = (self.n_frames, *image_shape, self.depth,)
+            else:
+                self._obs_shape = (self.n_frames, *self.image_shape, self.depth,)
+
+        return self._obs_shape
+
+    @property
+    def features(self):
+        if self._features is None:
+            self._features = [
+                ImageFeature("image", self.obs_shape),
+                ArrayFeature("action", (self.n_frames,), np.int32),
+                ArrayFeature("reward", (self.n_frames,), np.float32),
+            ]
+
+        return self._features
+
+    def _per_ep_callback(self, o, a, r):
+        """ process one episode """
+
+        episode_length = len(a)  # o is one step longer than a and r
+
+        frame_size = (self.n_frames - 1) * self.frame_skip + 1
+        max_start_idx = episode_length - frame_size + 1
+
+        if max_start_idx <= self.max_samples_per_ep:
+            indices = np.arange(max_start_idx)
+        else:
+            indices = np.random.choice(max_start_idx, size=self.max_samples_per_ep, replace=False)
+
+        step = self.frame_skip
+
+        for start in indices:
+            if self._n_examples % 100 == 0:
+                print("Processing example {}".format(self._n_examples))
+
+            end = start + frame_size
+
+            _o = np.array(o[start:end:step])
+            _a = np.array(a[start:end:step]).flatten()
+            _r = np.array(r[start:end:step]).flatten()
+            assert len(_o) == self.n_frames
+            assert len(_a) == self.n_frames
+            assert len(_r) == self.n_frames
+
+            if self.image_shape is not None and _o.shape[1:3] != self.image_shape:
+                _o = np.array([resize_image(img, self.image_shape) for img in _o])
+
+            if self.after_warp:
+                _o = np.tile(_o, (1, 1, 1, 3))
+
+            self._write_example(image=_o, action=_a, reward=_r)
+            self._n_examples += 1
+
+            if self._n_examples >= self.max_examples:
+                print("Found maximum of {} examples, done.".format(self._n_examples))
+                return True
+
+    def _make(self):
+        directory = os.path.join(cfg.data_dir, "atari_data")
+        dirs = os.listdir(directory)
+        game_full_name = "{}NoFrameskip-v4".format(self.atari_game)
+        starts_with = "atari_data_env={}.datetime=".format(game_full_name)
+        matching_dirs = [d for d in dirs if d.startswith(starts_with)]
+        if not matching_dirs:
+            pprint(sorted(dirs))
+            raise Exception("No data found for game {}".format(self.atari_game))
+
+        directory = os.path.join(directory, sorted(matching_dirs)[-1])
+        directory = os.path.join(directory, ("after" if self.after_warp else "before") + "_warp_recording")
+        scan_recorded_traces(directory, self._per_ep_callback, self.max_episodes, self.episode_range)
+
+    def visualize(self, n=4):
+        sample = self.sample(n)
+        images = sample["image"]
+        actions = sample["action"]
+        rewards = sample["reward"]
+
+        labels = ["actions={}, rewards={}".format(a, r) for a, r in zip(actions, rewards)]
+
+        fig, *_ = animate(images, labels=labels)
+
+        plt.show()
+        plt.close(fig)
 
 
 if __name__ == "__main__":
@@ -434,28 +547,46 @@ if __name__ == "__main__":
     # dset = AtariAutoencodeDataset(
     #     game=game, policy=None, n_examples=100, samples_per_frame=0, image_shape=(30, 40))
 
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("game")
-    args, _ = parser.parse_known_args()
-
-    dset = StaticAtariDataset(
-        game=args.game, history_length=1,
-        # max_episodes=6,
-        max_samples_per_ep=100, after_warp=False,
-        episode_range=(-1, None),
-        store_o=True,
-        store_r=False,
-        store_a=False,
-        store_next_o=False,
-        stopping_criteria="loss_reconstruction,min",
-    )
+    # dset = StaticAtariDataset(
+    #     game=args.game, history_length=3,
+    #     # max_episodes=6,
+    #     max_samples_per_ep=100,
+    #     after_warp=args.warped,
+    #     # after_warp=False,
+    #     episode_range=(-1, None),
+    #     store_o=True,
+    #     store_r=False,
+    #     store_a=False,
+    #     store_next_o=False,
+    #     stopping_criteria="loss_reconstruction,min",
+    #     image_shape=(105, 80),
+    # )
 
     # dset = RewardClassificationDataset(
     #     rl_data_location=xo_dir, image_shape=(100, 100),
     #     classes=[-2, -1, 0, 1, 2], postprocessing="random",
     #     n_samples_per_image=3, tile_shape=(48, 48))
 
-    sess = tf.Session()
-    with sess.as_default():
-        dset.visualize()
+    from dps.utils import Config
+    config = Config(
+        atari_game="IceHockey",
+        n_frames=4,
+        image_shape=(105, 80),
+        after_warp=False,
+        episode_range=None,
+        # episode_range=(-1, None),
+        max_episodes=100,
+        max_examples=200,
+        max_samples_per_ep=5,
+        frame_skip=1,
+        seed=200,
+        N=16,
+    )
+
+    with config:
+        config.update_from_command_line()
+        dset = AtariVideoDataset()
+
+        sess = tf.Session()
+        with sess.as_default():
+            dset.visualize(cfg.N)

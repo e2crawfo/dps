@@ -279,12 +279,12 @@ def animate(
     plots = np.zeros((B, n_image_sets), dtype=np.object)
 
     for i in range(B):
+        if labels is not None:
+            axes[i, 0].set_title(str(labels[i]))
+
         for j in range(n_image_sets):
             ax = axes[i, j]
             ax.set_axis_off()
-
-            if labels is not None:
-                ax.set_title("label={}".format(labels[i]))
 
             plots[i, j] = ax.imshow(np.squeeze(all_images[j][i, 0]))
 

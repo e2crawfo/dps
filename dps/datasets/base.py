@@ -236,6 +236,21 @@ class IntegerFeature(Feature):
         return integer
 
 
+class FloatFeature(Feature):
+    def __init__(self, name):
+        self.name = name
+
+    def get_write_features(self, f):
+        return {self.name: _float_feature(f)}
+
+    def get_read_features(self):
+        return {self.name: tf.FixedLenFeature((), dtype=tf.float32)}
+
+    def process_batch(self, records):
+        f = tf.cast(records[self.name], tf.float32)
+        return f
+
+
 class NestedListFeature(Feature):
     def __init__(self, name, sublist_length):
         self.name = name
@@ -420,6 +435,19 @@ class Dataset(Parameterized):
         sess = tf.get_default_session()
         result = sess.run(self.get_next)
         return result
+
+    def sample(self, n=4):
+        batch_size = n
+        dset = tf.data.TFRecordDataset(self.filename)
+        dset = dset.batch(batch_size).map(self.parse_example_batch)
+
+        iterator = dset.make_one_shot_iterator()
+
+        sess = tf.get_default_session()
+
+        _sample = sess.run(iterator.get_next())
+
+        return _sample
 
 
 class ImageClassificationDataset(Dataset):
@@ -679,19 +707,6 @@ class ImageDataset(Dataset):
 
         plt.show()
         plt.close(fig)
-
-    def sample(self, n=4):
-        batch_size = n
-        dset = tf.data.TFRecordDataset(self.filename)
-        dset = dset.batch(batch_size).map(self.parse_example_batch)
-
-        iterator = dset.make_one_shot_iterator()
-
-        sess = tf.get_default_session()
-
-        _sample = sess.run(iterator.get_next())
-
-        return _sample
 
 
 class Rectangle(object):
