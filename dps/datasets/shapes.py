@@ -219,7 +219,7 @@ if __name__ == "__main__":
 
     dset = RandomShapesDataset(
         n_examples=20, shapes="circle diamond star x plus", colours="red green blue cyan magenta yellow",
-        background_colours="black", min_shapes=5, max_shapes=10, image_shape=(96, 96), patch_shape=(21, 21),
+        min_shapes=5, max_shapes=10, image_shape=(96, 96), patch_shape=(21, 21),
         max_overlap=98, n_frames=10, patch_size_std=0.4, patch_speed=19, backgrounds="all")
 
     # shapes = "green,circle blue,circle orange,circle teal,circle red,circle black,circle"

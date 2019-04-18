@@ -299,6 +299,7 @@ class TrainingLoop(object):
                 session_config = tf.ConfigProto()
                 session_config.intra_op_parallelism_threads = cfg.get('intra_op_parallelism_threads', 0)
                 session_config.inter_op_parallelism_threads = cfg.get('inter_op_parallelism_threads', 0)
+                session_config.log_device_placement = cfg.get('log_device_placement', 0)
 
                 if cfg.use_gpu:
                     per_process_gpu_memory_fraction = getattr(cfg, 'per_process_gpu_memory_fraction', None)
@@ -659,6 +660,7 @@ class TrainingLoop(object):
                 print("Done rendering.")
 
             if display:
+                print("Displaying...")
                 self.data.summarize_current_stage(
                     local_step, global_step, updater.n_experiences, self.n_global_experiences)
                 print("\nMy PID: {}\n".format(os.getpid()))
@@ -675,9 +677,11 @@ class TrainingLoop(object):
             # --------------- Possibly evaluate -------------------
 
             if evaluate:
+                print("Evaluating...")
                 eval_start_time = time.time()
                 val_record = updater.evaluate(cfg.batch_size, mode="val")
                 eval_duration = time.time() - eval_start_time
+                print("Done evaluating")
 
                 val_record["duration"] = eval_duration
 
@@ -733,13 +737,27 @@ class TrainingLoop(object):
             # --------------- Perform an update -------------------
 
             if cfg.do_train:
+                if local_step % 100 == 0:
+                    print("Running update step {}...".format(local_step))
+
                 update_start_time = time.time()
 
                 _old_n_experiences = updater.n_experiences
 
                 update_record = updater.update(cfg.batch_size)
+
                 update_duration = time.time() - update_start_time
                 update_record["train"]["duration"] = update_duration
+
+                if local_step % 100 == 0:
+                    print("Done update step.")
+
+                if local_step % 100 == 0:
+                    start = time.time()
+                    update_record["train"]["memory_physical_mb"] = memory_usage(physical=True)
+                    update_record["train"]["memory_virtual_mb"] = memory_usage(physical=False)
+                    update_record["train"]["memory_gpu_mb"] = gpu_memory_usage()
+                    print("Memory check duration: {}".format(time.time() - start))
 
                 data_to_store.extend(dict(update_record).items())
 

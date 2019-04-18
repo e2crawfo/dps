@@ -284,14 +284,10 @@ def extract_glimpse_numpy_like(inp, glimpse_shape, glimpse_offsets, name=None, u
 
 
 def uninitialized_variables_initializer():
-    """ init only uninitialized variables - from
-        http://stackoverflow.com/questions/35164529/
-        in-tensorflow-is-there-any-way-to-just-initialize-uninitialised-variables """
-
     print("\nStarting variable init.")
-    uninitialized_vars = []
     sess = tf.get_default_session()
-    print("Finding uninitialized vars.")
+
+    print("\nFinding uninitialized vars...")
     import time
     start = time.time()
     global_vars = tf.global_variables()
@@ -299,10 +295,10 @@ def uninitialized_variables_initializer():
     uninitialized_vars = [v for (v, f) in zip(global_vars, is_not_initialized) if not f]
 
     print("Took {} seconds".format(time.time() - start))
-    print("Doing the actual initialization for {} vars".format(len(uninitialized_vars)))
+    print("\nInitializing {} var arrays...".format(len(uninitialized_vars)))
     start = time.time()
     uninit_init_op = tf.variables_initializer(uninitialized_vars)
-    print("Done, took {} seconds.\n".format(time.time() - start))
+    print("Took {} seconds.".format(time.time() - start))
     return uninit_init_op
 
 
@@ -496,21 +492,23 @@ class IdentityFunction(ScopedFunction):
 
 
 class MLP(ScopedFunction):
-    def __init__(self, n_units=None, scope=None, **fc_kwargs):
-        self.n_units = n_units or []
-        self.fc_kwargs = fc_kwargs
-        super().__init__(scope)
+    n_units = Param(None)
+    fc_kwargs = Param(None)
 
     def _call(self, inp, output_size, is_training):
         from tensorflow.contrib.slim import fully_connected
         inp = tf.layers.flatten(inp)
 
-        hidden = inp
-        for i, nu in enumerate(self.n_units):
-            hidden = fully_connected(hidden, nu, **self.fc_kwargs)
+        n_units = self.n_units or []
+        fc_kwargs = self.fc_kwargs or {}
+        fc_kwargs = fc_kwargs.copy()
 
-        fc_kwargs = self.fc_kwargs.copy()
-        fc_kwargs['activation_fn'] = None
+        hidden = inp
+        for i, nu in enumerate(n_units):
+            hidden = fully_connected(hidden, nu, **fc_kwargs)
+
+        _fc_kwargs = fc_kwargs.copy()
+        _fc_kwargs['activation_fn'] = None
 
         try:
             output_dim = int(np.product([int(i) for i in output_size]))
@@ -519,7 +517,7 @@ class MLP(ScopedFunction):
             output_dim = int(output_size)
             output_shape = (output_dim,)
 
-        hidden = fully_connected(hidden, output_dim, **fc_kwargs)
+        hidden = fully_connected(hidden, output_dim, **_fc_kwargs)
         hidden = tf.reshape(hidden, (tf.shape(inp)[0], *output_shape), name="mlp_out")
         return hidden
 
@@ -1882,12 +1880,18 @@ class RenderHook(object):
             setattr(self, k, v)
 
     def imshow(self, ax, frame, **kwargs):
+        """ If ax already has an image, uses set_array on that image instead of doing imshow.
+            Allows this function to work well with animations. """
+
         if frame.ndim == 3 and frame.shape[2] == 1:
             frame = frame[:, :, 0]
         frame = np.clip(frame, 0.0, 1.0)
         frame = np.where(np.isnan(frame), 0, frame)
 
-        ax.imshow(frame, vmin=0.0, vmax=1.0, **kwargs)
+        if ax.images:
+            ax.images[0].set_array(frame)
+        else:
+            ax.imshow(frame, vmin=0.0, vmax=1.0, **kwargs)
 
     def get_feed_dict(self, updater):
         return updater.data_manager.do_val()

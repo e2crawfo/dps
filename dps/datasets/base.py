@@ -811,9 +811,6 @@ class PatchesDataset(ImageDataset):
         "", help="Can be either be 'all', in which a random background will be selected for "
                  "each constructed image, or a list of strings, giving the names of backgrounds "
                  "to use.")
-    backgrounds_sample_every = Param(
-        False, help="If True, sample a new sub-region of background for each image. Otherwise, "
-                    "sample a small set of regions initially, and use those for all images.")
     backgrounds_resize = Param(False)
     background_colours = Param("")
     max_attempts = Param(10000)
@@ -897,16 +894,6 @@ class PatchesDataset(ImageDataset):
             else:
                 backgrounds = load_backgrounds(backgrounds)
 
-                if not self.backgrounds_sample_every:
-                    _backgrounds = []
-                    for b in backgrounds:
-                        top = np.random.randint(b.shape[0] - draw_shape[0] + 1)
-                        left = np.random.randint(b.shape[1] - draw_shape[1] + 1)
-                        _backgrounds.append(
-                            b[top:top+draw_shape[0], left:left+draw_shape[1], ...] + 0
-                        )
-                    backgrounds = _backgrounds
-
         background_colours = self.background_colours
         if isinstance(self.background_colours, str):
             background_colours = background_colours.split()
@@ -929,15 +916,14 @@ class PatchesDataset(ImageDataset):
             if backgrounds:
                 b_idx = np.random.randint(len(backgrounds))
                 background = backgrounds[b_idx]
-                if self.backgrounds_sample_every:
-                    top = np.random.randint(background.shape[0] - draw_shape[0] + 1)
-                    left = np.random.randint(background.shape[1] - draw_shape[1] + 1)
-                    base_image = background[top:top+draw_shape[0], left:left+draw_shape[1], ...] + 0
-                else:
-                    base_image = background + 0
+                top = np.random.randint(background.shape[0] - draw_shape[0] + 1)
+                left = np.random.randint(background.shape[1] - draw_shape[1] + 1)
+                base_image = background[top:top+draw_shape[0], left:left+draw_shape[1], ...] + 0
+
             elif background_colours:
                 color = background_colours[np.random.randint(len(background_colours))]
                 base_image = color * np.ones(draw_shape, 'uint8')
+
             else:
                 base_image = np.zeros(draw_shape, 'uint8')
 

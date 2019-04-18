@@ -3,6 +3,7 @@ from future.utils import with_metaclass
 
 import tensorflow as tf
 
+from dps import cfg
 from dps.utils import Parameterized, Param
 from dps.utils.tf import build_gradient_train_op, trainable_variables, get_scheduled_values
 
@@ -172,6 +173,10 @@ class DifferentiableUpdater(Updater):
 
 class DataManager(Parameterized):
     shuffle_buffer_size = Param(1000)
+    prefetch_buffer_size_in_batches = Param(10)
+    prefetch_to_device = Param(False)
+
+    train_initialized = False
 
     def __init__(self, train_dataset=None, val_dataset=None, test_dataset=None, batch_size=1, **kwargs):
         self.train_dataset = train_dataset
@@ -190,12 +195,6 @@ class DataManager(Parameterized):
         if self.train_dataset is not None:
             train_dataset = tf.data.TFRecordDataset(self.train_dataset.filename)
 
-            train_eval_dataset = (train_dataset.batch(self.batch_size)
-                                               .map(self.val_dataset.parse_example_batch)
-                                               .prefetch(10))
-            self.train_eval_iterator = train_eval_dataset.make_initializable_iterator()
-            self.train_eval_handle = sess.run(self.train_eval_iterator.string_handle())
-
             try:
                 shuffle_and_repeat_func = tf.data.experimental.shuffle_and_repeat
             except AttributeError:
@@ -204,13 +203,21 @@ class DataManager(Parameterized):
             shuffle_and_repeat = shuffle_and_repeat_func(self.shuffle_buffer_size)
             train_dataset = (train_dataset.apply(shuffle_and_repeat)
                                           .batch(self.batch_size)
-                                          .map(self.train_dataset.parse_example_batch)
-                                          .prefetch(10))
+                                          .map(self.train_dataset.parse_example_batch))
+
+            if self.prefetch_to_device:
+                train_dataset = (train_dataset.apply(tf.data.experimental.copy_to_device('/gpu:0'))
+                                              .prefetch(self.prefetch_buffer_size_in_batches))
+                # prefetch = tf.data.experimental.prefetch_to_device('/gpu:0', self.prefetch_buffer_size_in_batches)
+                # train_dataset = train_dataset.apply(prefetch)
+            else:
+                train_dataset = train_dataset.prefetch(self.prefetch_buffer_size_in_batches)
 
             datasets.append(train_dataset)
 
-            self.train_iterator = train_dataset.make_one_shot_iterator()
-            self.train_handle = sess.run(self.train_iterator.string_handle())
+            # self.train_iterator = train_dataset.make_one_shot_iterator()
+            self.train_iterator = train_dataset.make_initializable_iterator()
+            self.train_handle = sess.run(self.train_iterator.string_handle(name="train_string_handle"))
 
         # --- val --
 
@@ -218,13 +225,21 @@ class DataManager(Parameterized):
             val_dataset = tf.data.TFRecordDataset(self.val_dataset.filename)
 
             val_dataset = (val_dataset.batch(self.batch_size)
-                                      .map(self.val_dataset.parse_example_batch)
-                                      .prefetch(10))
+                                      .map(self.val_dataset.parse_example_batch))
+
+            if self.prefetch_to_device:
+                # Suggested here: https://github.com/tensorflow/tensorflow/issues/18947#issuecomment-407778515
+                val_dataset = (val_dataset.apply(tf.data.experimental.copy_to_device('/gpu:0'))
+                                          .prefetch(self.prefetch_buffer_size_in_batches))
+                # prefetch = tf.data.experimental.prefetch_to_device('/gpu:0', self.prefetch_buffer_size_in_batches)
+                # val_dataset = val_dataset.apply(prefetch)
+            else:
+                val_dataset = val_dataset.prefetch(self.prefetch_buffer_size_in_batches)
 
             datasets.append(val_dataset)
 
             self.val_iterator = val_dataset.make_initializable_iterator()
-            self.val_handle = sess.run(self.val_iterator.string_handle())
+            self.val_handle = sess.run(self.val_iterator.string_handle(name="val_string_handle"))
 
         # --- test --
 
@@ -232,31 +247,53 @@ class DataManager(Parameterized):
             test_dataset = tf.data.TFRecordDataset(self.test_dataset.filename)
 
             test_dataset = (test_dataset.batch(self.batch_size)
-                                        .map(self.test_dataset.parse_example_batch)
-                                        .prefetch(10))
+                                        .map(self.test_dataset.parse_example_batch))
+
+            if self.prefetch_to_device:
+                test_dataset = (test_dataset.apply(tf.data.experimental.copy_to_device('/gpu:0'))
+                                            .prefetch(self.prefetch_buffer_size_in_batches))
+                # prefetch = tf.data.experimental.prefetch_to_device('/gpu:0', self.prefetch_buffer_size_in_batches)
+                # test_dataset = test_dataset.apply(prefetch)
+            else:
+                test_dataset = test_dataset.prefetch(self.prefetch_buffer_size_in_batches)
+
             datasets.append(test_dataset)
 
             self.test_iterator = test_dataset.make_initializable_iterator()
-            self.test_handle = sess.run(self.test_iterator.string_handle())
+            self.test_handle = sess.run(self.test_iterator.string_handle(name="test_string_handle"))
 
         assert datasets, "Must supply at least one of train_dataset, val_dataset, test_dataset"
         dataset = datasets[0]
 
         # --- outputs ---
 
-        self.handle = tf.placeholder(tf.string, shape=())
-        self.iterator = tf.data.Iterator.from_string_handle(
-            self.handle, dataset.output_types, dataset.output_shapes)
-        self.is_training = tf.placeholder(tf.bool, shape=())
+        self.handle = tf.placeholder(tf.string, shape=(), name="dataset_handle")
+
+        if cfg.use_gpu and self.prefetch_to_device:
+            # In tensorflow 1.13 (at least), tf wants to put this op on CPU, not sure why. This results in an error like:
+            #
+            # InvalidArgumentError: Attempted create an iterator on device "/job:localhost/replica:0/task:0/device:CPU:0"
+            #                       from handle defined on device "/job:localhost/replica:0/task:0/device:GPU:0"
+            #
+            # And the error explicitly references IteratorFromStringHandleV2 built here. The reason is that the
+            # resources that are pointed to by self.handle are all on the GPU, but, unless we are explicit,
+            # the iterator created from that handle will be on the CPU, which is apparently not allowed.
+
+            with tf.device("/gpu:0"):
+                self.iterator = tf.data.Iterator.from_string_handle(
+                    self.handle, dataset.output_types, dataset.output_shapes)
+        else:
+            self.iterator = tf.data.Iterator.from_string_handle(
+                self.handle, dataset.output_types, dataset.output_shapes)
+
+        self.is_training = tf.placeholder(tf.bool, shape=(), name="is_training")
 
     def do_train(self):
+        if not self.train_initialized:
+            sess = tf.get_default_session()
+            sess.run(self.train_iterator.initializer)
+            self.train_initialized = True
         return {self.handle: self.train_handle, self.is_training: True}
-
-    def do_train_eval(self):
-        """ Rendering performance of model on data from training set. """
-        sess = tf.get_default_session()
-        sess.run(self.train_eval_iterator.initializer)
-        return {self.handle: self.train_eval_handle, self.is_training: False}
 
     def do_val(self):
         sess = tf.get_default_session()

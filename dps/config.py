@@ -56,6 +56,7 @@ DEFAULT_CONFIG = SYSTEM_CONFIG.copy(
     hooks=[],
     overwrite_plots=True,
     n_procs=1,
+    profile=False,
 )
 
 
