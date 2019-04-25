@@ -29,10 +29,6 @@ class Env(Parameterized, GymEnv, metaclass=abc.ABCMeta):
         self._mode = mode
         self._n_rollouts = n_rollouts
 
-    @property
-    def completion(self):
-        return 0.0
-
     def build_reset(self):
         return tf.py_func(self.reset_wrapper, [], tf.float32, name="{}.reset".format(self.__class__.__name__))
 

@@ -24,10 +24,6 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
     def n_updates(self):
         return self._n_updates
 
-    @property
-    def completion(self):
-        return self.env.completion
-
     def build_graph(self):
         with tf.name_scope(self.scope or self.__class__.__name__) as scope:
             self._scope = scope

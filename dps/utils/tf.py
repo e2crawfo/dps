@@ -1943,8 +1943,8 @@ class RenderHook(object):
         except AttributeError:
             tensors = updater._tensors
 
-        tensor_config = Config(tensors)
-        to_fetch = {k: tensor_config[k] for k in fetches}
+        tensors_config = Config(tensors)
+        to_fetch = {k: tensors_config[k] for k in fetches}
         to_fetch = nest.map_structure(lambda s: s[:self.N], to_fetch)
 
         sess = tf.get_default_session()
