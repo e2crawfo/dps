@@ -9,6 +9,7 @@ iso8601
 imageio
 matplotlib
 numpy>=1.7
+orderedattrdict
 pandas
 progressbar2
 psutil

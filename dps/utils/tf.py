@@ -367,6 +367,10 @@ class ScopedFunction(Parameterized):
         if isinstance(self.no_gradient, str):
             self.no_gradient = self.no_gradient.split()
 
+        print(
+            "\nBuilding {}(name={}) with args:\n{}".format(
+                self.__class__.__name__, self.name, pprint.pformat(self._params_at_creation_time)))
+
     def trainable_variables(self, for_opt):
         return trainable_variables(self.scope, for_opt)
 
@@ -422,6 +426,36 @@ class ScopedFunction(Parameterized):
                     tf.add_to_collection(FIXED_COLLECTION, v)
 
             self.initialized = True
+
+    def maybe_build_subnet(self, network_name, key=None, builder=None, builder_name=None):
+        existing = getattr(self, network_name, None)
+
+        if existing is None:
+            if builder is None:
+                if builder_name is None:
+                    builder_name = "build_" + network_name
+
+                builder = getattr(self, builder_name, None)
+
+                if builder is None:
+                    builder = getattr(cfg, builder_name, None)
+
+                if builder is None:
+                    raise AttributeError(
+                        "No builder with name `{}` found for building subnet `{}`".format(builder_name, network_name))
+
+            network = builder(scope=network_name)
+            setattr(self, network_name, network)
+
+            if key is None:
+                key = network_name
+
+            if key in self.fixed_weights:
+                network.fix_variables()
+
+            return network
+        else:
+            return existing
 
     def set_pretraining_params(self, train_config, name_params=None, directory=None):
         if self.initialized:

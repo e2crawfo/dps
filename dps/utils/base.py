@@ -1110,8 +1110,6 @@ class Parameterized(object):
         # Stored for copying purposes, to get parameter as they are before __init__ is called.
         obj._params_at_creation_time = obj.param_values()
 
-        print("\nBuilding {}(Parameterized) with args:\n{}\n".format(cls.__name__, pformat(obj._params_at_creation_time)))
-
         return obj
 
     def __init__(self, *args, **kwargs):
