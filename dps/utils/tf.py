@@ -23,6 +23,27 @@ from dps.utils.base import _bool, popleft, Parameterized, Param, Config
 from dps.utils.inspect_checkpoint import get_tensors_from_checkpoint_file  # noqa: F401
 
 
+def apply_object_wise(func, signal, output_size, is_training, restore_shape=True, n_trailing_dims=1):
+    """ Treat `signal` as a batch of objects. Apply function `func` separately to each object.
+        The final `n_trailing_dims`-many dimensions are treated as "within-object" dimensions.
+        By default, objects are assumed to be vectors, but this can be changed by increasing
+        `n_trailing_dims`. e.g. n_trailing_dims==2 means each object is a matrix, i.e. the
+        last 2 dimensions  of signal are dimensions of the object.
+
+    """
+    shape = tf_shape(signal)
+    leading_dim = tf.reduce_prod(shape[:-n_trailing_dims])
+    signal = tf.reshape(signal, (leading_dim, *shape[-n_trailing_dims:]))
+    output = func(signal, output_size, is_training)
+
+    if restore_shape:
+        if not isinstance(output_size, tuple):
+            output_size = [output_size]
+        output = tf.reshape(output, (*shape[:-n_trailing_dims], *output_size))
+
+    return output
+
+
 def tf_tensor_shape(shape):
     _tuple = []
     for i in shape:
@@ -39,6 +60,7 @@ def tf_shape(tensor):
         used where possible, and dynamic shape is used everywhere else.
 
     """
+    assert isinstance(tensor, tf.Tensor)
     static_shape = tensor.shape
     dynamic_shape = tf.unstack(tf.shape(tensor))
 
@@ -389,7 +411,7 @@ class ScopedFunction(Parameterized):
 
         with tf.variable_scope(self.scope, reuse=self.initialized):
             if first_call:
-                print("Entering var scope '{}' for first time.".format(self.scope.name))
+                print("\nEntering var scope '{}' for first time.".format(self.scope.name))
 
             outp = self._call(*args, **kwargs)
 
@@ -1928,10 +1950,12 @@ class RenderHook(object):
             ax.imshow(frame, vmin=0.0, vmax=1.0, **kwargs)
 
     def get_feed_dict(self, updater):
-        return updater.data_manager.do_val()
+        is_training = getattr(self, 'is_training', False)
+        return updater.data_manager.do_val(is_training)
 
-    def _fetch(self, updater):
-        fetches = self.fetches
+    def _fetch(self, updater, fetches=None):
+        if fetches is None:
+            fetches = self.fetches
 
         if isinstance(fetches, str):
             fetches = fetches.split()

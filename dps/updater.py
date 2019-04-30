@@ -284,19 +284,19 @@ class DataManager(Parameterized):
 
         self.is_training = tf.placeholder(tf.bool, shape=(), name="is_training")
 
-    def do_train(self):
+    def do_train(self, is_training=True):
         if not self.train_initialized:
             sess = tf.get_default_session()
             sess.run(self.train_iterator.initializer)
             self.train_initialized = True
-        return {self.handle: self.train_handle, self.is_training: True}
+        return {self.handle: self.train_handle, self.is_training: is_training}
 
-    def do_val(self):
+    def do_val(self, is_training=False):
         sess = tf.get_default_session()
         sess.run(self.val_iterator.initializer)
-        return {self.handle: self.val_handle, self.is_training: False}
+        return {self.handle: self.val_handle, self.is_training: is_training}
 
-    def do_test(self):
+    def do_test(self, is_training=False):
         sess = tf.get_default_session()
         sess.run(self.test_iterator.initializer)
-        return {self.handle: self.test_handle, self.is_training: False}
+        return {self.handle: self.test_handle, self.is_training: is_training}

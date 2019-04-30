@@ -18,6 +18,15 @@ from dps.datasets import (
 from dps.datasets.parallel import make_dataset_in_parallel
 
 
+class Environment:
+    @property
+    def obs_shape(self):
+        return self.datasets["train"].obs_shape
+
+    def close(self):
+        pass
+
+
 class RawDataset(Parameterized):
     """ A non-tensorflow dataset, wrapper for data that we might want to cache. """
     seed = Param(None)
