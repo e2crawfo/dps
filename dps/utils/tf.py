@@ -28,7 +28,7 @@ def apply_object_wise(func, signal, output_size, is_training, restore_shape=True
         The final `n_trailing_dims`-many dimensions are treated as "within-object" dimensions.
         By default, objects are assumed to be vectors, but this can be changed by increasing
         `n_trailing_dims`. e.g. n_trailing_dims==2 means each object is a matrix, i.e. the
-        last 2 dimensions  of signal are dimensions of the object.
+        last 2 dimensions of signal are dimensions of the object.
 
     """
     shape = tf_shape(signal)
@@ -828,6 +828,7 @@ class ConvNet(ScopedFunction):
         return volume
 
     def _call(self, inp, final_n_channels, is_training):
+        print("--- Entering CNN(name={}) ---".format(self.name))
         volume = inp
         self.volumes = [volume]
 
@@ -839,6 +840,8 @@ class ConvNet(ScopedFunction):
 
             volume = self._apply_layer(volume, layer, i, final, is_training)
             self.volumes.append(volume)
+
+        print("--- Leaving CNN(name={}) ---".format(self.name))
 
         return volume
 

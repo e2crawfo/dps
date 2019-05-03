@@ -765,7 +765,9 @@ class TrainingLoop(object):
                     update_record["train"]["memory_gpu_mb"] = gpu_memory_usage()
                     print("Memory check duration: {}".format(time.time() - start))
 
-                data_to_store.extend(dict(update_record).items())
+                if evaluate:
+                    # Only store train data as often as we evaluate, otherwise it's just too much data
+                    data_to_store.extend(dict(update_record).items())
 
                 n_experiences_delta = updater.n_experiences - _old_n_experiences
                 self.n_global_experiences += n_experiences_delta
