@@ -15,6 +15,7 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
         self.mpi_context = mpi_context
         self._n_experiences = 0
         self._n_updates = 0
+        self._saver = None
 
     @property
     def n_experiences(self):
@@ -35,6 +36,9 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
             global_step_input = tf.placeholder(tf.int64, ())
             assign_global_step = tf.assign(global_step, global_step_input)
             tf.get_default_session().run(assign_global_step, feed_dict={global_step_input: 0})
+
+            updater_variables = {v.name: v for v in self.trainable_variables(for_opt=False)}
+            self.saver = tf.train.Saver(updater_variables)
 
     @abc.abstractmethod
     def _build_graph(self):
@@ -66,15 +70,11 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
         raise Exception("AbstractMethod")
 
     def save(self, session, filename):
-        updater_variables = {v.name: v for v in self.trainable_variables(for_opt=False)}
-        saver = tf.train.Saver(updater_variables)
-        path = saver.save(tf.get_default_session(), filename)
+        path = self.saver.save(tf.get_default_session(), filename)
         return path
 
     def restore(self, session, path):
-        updater_variables = {v.name: v for v in self.trainable_variables(for_opt=False)}
-        saver = tf.train.Saver(updater_variables)
-        saver.restore(tf.get_default_session(), path)
+        self.saver.restore(tf.get_default_session(), path)
 
 
 class DummyUpdater(Updater):

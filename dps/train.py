@@ -448,6 +448,12 @@ class TrainingLoop(object):
                     assert isinstance(hook, Hook)
                     hook.start_stage(self, updater, stage_idx)
 
+                if cfg.render_step > 0 and cfg.render_hook is not None:
+                    cfg.render_hook.start_stage(self, updater, stage_idx)
+
+                # Prevent memory leaks, no ops can be added to the graph after this point
+                graph.finalize()
+
                 threshold_reached = False
                 reason = None
 
@@ -750,7 +756,7 @@ class TrainingLoop(object):
                 update_record["train"]["duration"] = update_duration
 
                 if local_step % 100 == 0:
-                    print("Done update step.")
+                    print("Done update step, took {} seconds.".format(update_duration))
 
                 if local_step % 100 == 0:
                     start = time.time()

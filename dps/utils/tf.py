@@ -1953,14 +1953,14 @@ class RenderHook(object):
         is_training = getattr(self, 'is_training', False)
         return updater.data_manager.do_val(is_training)
 
-    def _fetch(self, updater, fetches=None):
-        if fetches is None:
-            fetches = self.fetches
+    def build_fetches(self, updater):
+        return self.fetches
+
+    def start_stage(self, training_loop, updater, stage_idx):
+        fetches = self.build_fetches(updater)
 
         if isinstance(fetches, str):
             fetches = fetches.split()
-
-        feed_dict = self.get_feed_dict(updater)
 
         try:
             tensors = updater.tensors
@@ -1969,12 +1969,12 @@ class RenderHook(object):
 
         tensors_config = Config(tensors)
         to_fetch = {k: tensors_config[k] for k in fetches}
-        to_fetch = nest.map_structure(lambda s: s[:self.N], to_fetch)
+        self.to_fetch = nest.map_structure(lambda s: s[:self.N], to_fetch)
 
+    def _fetch(self, updater, fetches=None):
+        feed_dict = self.get_feed_dict(updater)
         sess = tf.get_default_session()
-        fetched = sess.run(to_fetch, feed_dict=feed_dict)
-
-        return fetched
+        return sess.run(self.to_fetch, feed_dict=feed_dict)
 
     def path_for(self, name, updater, ext="pdf"):
         local_step = (
