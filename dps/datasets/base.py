@@ -499,8 +499,8 @@ class EmnistDataset(ImageClassificationDataset):
     python scripts/download.py emnist <desired location>
 
     """
-    balance = Param(False)
-    example_range = Param(None)
+    balance = Param()
+    example_range = Param()
 
     class_pool = ''.join(
         [str(i) for i in range(10)]
@@ -1224,17 +1224,17 @@ class VisualArithmeticDataset(PatchesDataset):
     EMNIST: an extension of MNIST to handwritten letters. Retrieved from http://arxiv.org/abs/1702.05373.
 
     """
-    reductions = Param("A:sum,M:prod")
-    min_digits = Param(2)
-    max_digits = Param(3)
-    digits = Param(list(range(10)))
+    reductions = Param(help="example: 'A:sum,M:prod'")
+    min_digits = Param()
+    max_digits = Param()
+    digits = Param()
 
-    largest_digit = Param(1000, help="All digits larger than this are lumped in with the largest "
-                                     "so there are largest_digit + 1 (for zero) classes.")
+    largest_digit = Param(help="All digits larger than this are lumped in with the largest "
+                               "so there are largest_digit + 1 (for zero) classes.")
 
-    patch_shape = Param((14, 14))
-    n_patch_examples = Param(None)
-    example_range = Param(None)
+    patch_shape = Param()
+    n_patch_examples = Param()
+    example_range = Param()
 
     reductions_dict = {
         "sum": sum,
