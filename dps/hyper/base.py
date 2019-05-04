@@ -436,7 +436,7 @@ class _RunTrainingLoop(object):
         )
 
         with config:
-            cfg.update_from_command_line()
+            cfg.update_from_command_line(strict=False)
 
             from dps.train import training_loop
             result = training_loop(exp_name=exp_name, start_time=start_time)

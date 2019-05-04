@@ -511,7 +511,7 @@ class ParallelSession(object):
             parallel_command = (
                 "cd {local_scratch} && "
                 "dps-hyper run {archive_root} {pattern} {indices} --max-time {python_seconds_per_step} "
-                "--log-root {local_scratch} --env-name experiments --gpu-set={gpu_set} --ppn={ppn} "
+                "--local-experiments-dir {local_scratch} --env-name experiments --gpu-set={gpu_set} --ppn={ppn} "
                 "{_ignore_gpu} {output_to_files}"
             )
 
@@ -534,7 +534,7 @@ class ParallelSession(object):
                 workon +
                 "cd {local_scratch} && "
                 "dps-hyper run {archive_root} {pattern} {{}} --max-time {python_seconds_per_step} "
-                "--log-root {local_scratch} --env-name experiments "
+                "--local-experiments-dir {local_scratch} --env-name experiments "
                 "--idx-in-node={{%}} --gpu-set={gpu_set} --ppn={ppn} {_ignore_gpu} {output_to_files}"
             )
 
