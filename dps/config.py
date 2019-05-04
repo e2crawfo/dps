@@ -43,6 +43,7 @@ DEFAULT_CONFIG = SYSTEM_CONFIG.copy(
 
     render_hook=None,
     render_first=False,
+    render_final=True,
 
     stopping_criteria="",
 

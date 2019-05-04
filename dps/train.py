@@ -15,6 +15,7 @@ import traceback
 import json
 import subprocess
 from tabulate import tabulate
+import warnings
 
 from dps import cfg
 from dps.utils import (
@@ -226,6 +227,9 @@ class TrainingLoop(object):
             stack.enter_context(redirect_stream('stdout', self.data.path_for('stdout'), tee=cfg.tee))
             stack.enter_context(redirect_stream('stderr', self.data.path_for('stderr'), tee=cfg.tee))
 
+            stack.enter_context(warnings.catch_warnings())
+            warnings.simplefilter('once')
+
             print("\n\n" + "=" * 80)
             self.timestamp("Starting training run (name={})".format(self.exp_name))
 
@@ -358,20 +362,16 @@ class TrainingLoop(object):
                 print("\nDone building env.\n")
                 print("Building updater...\n")
 
-                import warnings
-                with warnings.catch_warnings():
-                    warnings.simplefilter('once')
+                if cfg.n_procs > 1:
+                    updater = cfg.get_updater(self.env, mpi_context=self.mpi_context)
+                else:
+                    updater = cfg.get_updater(self.env)
 
-                    if cfg.n_procs > 1:
-                        updater = cfg.get_updater(self.env, mpi_context=self.mpi_context)
-                    else:
-                        updater = cfg.get_updater(self.env)
+                updater.stage_idx = stage_idx
+                updater.exp_dir = self.exp_dir
 
-                    updater.stage_idx = stage_idx
-                    updater.exp_dir = self.exp_dir
-
-                    updater.build_graph()
-                    print("\nDone building updater.\n")
+                updater.build_graph()
+                print("\nDone building updater.\n")
 
                 walk_variable_scopes(max_depth=3)
 
@@ -546,7 +546,7 @@ class TrainingLoop(object):
                             self.data.record_values_for_stage(
                                 **{'_test_' + k: v for k, v in test_record.items()})
 
-                            if cfg.render_step > 0 and cfg.render_hook is not None:
+                            if cfg.render_final and cfg.render_step > 0 and cfg.render_hook is not None:
                                 print("Rendering...")
                                 cfg.render_hook(updater)
                                 print("Done rendering.")
