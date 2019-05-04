@@ -1933,6 +1933,7 @@ def tf_discount_matrix(base, T, n=None):
 
 class RenderHook(object):
     N = 16
+    is_training = False
 
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
@@ -1953,8 +1954,7 @@ class RenderHook(object):
             ax.imshow(frame, vmin=0.0, vmax=1.0, **kwargs)
 
     def get_feed_dict(self, updater):
-        is_training = getattr(self, 'is_training', False)
-        return updater.data_manager.do_val(is_training)
+        return updater.data_manager.do_val(self.is_training)
 
     def build_fetches(self, updater):
         return self.fetches
