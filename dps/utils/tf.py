@@ -44,6 +44,15 @@ def apply_object_wise(func, signal, output_size, is_training, restore_shape=True
     return output
 
 
+def tf_log_factorial(n):
+    return tf.lgamma(tf.cast(n+1, tf.float32))
+
+
+def tf_binomial_coefficient(n, k):
+    log_bc = tf_log_factorial(n) - tf_log_factorial(k) - tf_log_factorial(n-k)
+    return tf.exp(log_bc)
+
+
 def tf_tensor_shape(shape):
     _tuple = []
     for i in shape:
