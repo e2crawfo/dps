@@ -202,7 +202,7 @@ class TrainingLoop(object):
         # Create a directory to store the results of the training session.
         self.experiment_store = ExperimentStore(os.path.join(cfg.local_experiments_dir, cfg.env_name))
         exp_dir = self.experiment_store.new_experiment(
-            self.exp_name, cfg.seed, add_date=1, force_fresh=1, update_latest=False)
+            self.exp_name, cfg.seed, add_date=1, force_fresh=1, update_latest=True)
         self.exp_dir = exp_dir
         cfg.path = exp_dir.path
 
@@ -277,7 +277,16 @@ class TrainingLoop(object):
             print("\n")
 
             if cfg.start_tensorboard:
-                restart_tensorboard(self.experiment_store.path, cfg.tbport, cfg.reload_interval)
+                if cfg.start_tensorboard == "local":
+                    tb_path = self.exp_dir.path
+                else:
+                    try:
+                        n_latest = int(cfg.start_tensorboard)
+                        tb_path = self.experiment_store.isolate_n_latest(n_latest)
+                    except (ValueError, TypeError):
+                        tb_path = self.experiment_store.path
+
+                restart_tensorboard(tb_path, cfg.tbport, cfg.reload_interval)
 
             stage_config = self.curriculum_remaining.pop(0)
             stage_config = Config(stage_config)

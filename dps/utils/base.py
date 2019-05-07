@@ -723,6 +723,26 @@ class ExperimentStore(object):
         shutil.move(exp_dir.path, dest_path)
         exp_dir.path = os.path.join(dest_path, os.path.basename(exp_dir.path))
 
+    def isolate_n_latest(self, n):
+        files = [os.path.join(self.path, f) for f in os.listdir(self.path) if f.startswith(self.prefix)]
+        exp_dirs = [f for f in files if os.path.isdir(f)]
+        exp_dirs_with_mtime = [(os.path.getmtime(d), d) for d in exp_dirs]
+        latest_exp_dirs = [d for _, d in sorted(exp_dirs_with_mtime)[-n:]]
+
+        latest_dir = os.path.join(self.path, 'tensorboard_{}_latest'.format(n))
+
+        try:
+            shutil.rmtree(latest_dir)
+        except FileNotFoundError:
+            pass
+
+        os.makedirs(latest_dir, exist_ok=False)
+
+        for exp_dir in latest_exp_dirs:
+            make_symlink(os.path.join('..', exp_dir), os.path.join(latest_dir, os.path.basename(exp_dir)))
+
+        return latest_dir
+
 
 def _checked_makedirs(directory, force_fresh):
     try:
@@ -878,7 +898,8 @@ def make_filename(main_title, directory='', config_dict=None, add_date=True,
         Keys and values that will be added to the filename. Key/value
         pairs are put into the filename by the alphabetical order of the keys.
     add_date: boolean
-        Whether to append the current date/time to the filename.
+        Whether to add the current date/time to the filename. If true, the date comes right after
+        the main title.
     sep: string
         Separates items in the config dict in the returned filename.
     kvsep: string
@@ -893,6 +914,13 @@ def make_filename(main_title, directory='', config_dict=None, add_date=True,
         directory += '/'
 
     labels = [directory + main_title]
+
+    if add_date:
+        date_time_string = str(datetime.datetime.now()).split('.')[0]
+        for c in ": -":
+            date_time_string = date_time_string.replace(c, '_')
+        labels.append(date_time_string)
+
     key_vals = list(config_dict.items())
     key_vals.sort(key=lambda x: x[0])
 
@@ -904,12 +932,6 @@ def make_filename(main_title, directory='', config_dict=None, add_date=True,
 
         if not str(key) in omit:
             labels.append(kvsep.join([key, value]))
-
-    if add_date:
-        date_time_string = str(datetime.datetime.now()).split('.')[0]
-        for c in ": -":
-            date_time_string = date_time_string.replace(c, '_')
-        labels.append(date_time_string)
 
     file_name = sep.join(labels)
 

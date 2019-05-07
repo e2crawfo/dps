@@ -1816,30 +1816,32 @@ def build_optimizer(spec, learning_rate):
 
     """
     assert isinstance(spec, str)
-    kind, *args = spec.split()
+    kind, *kwargs = spec.split(',')
     kind = kind.lower()
-    args = deque(args)
+    kwargs = [kw.split('=') for kw in kwargs]
+    kwargs = {k.lower(): v for k, v in kwargs}
 
     if kind == "adam":
-        beta1 = float(popleft(args, 0.9))
-        beta2 = float(popleft(args, 0.999))
-        epsilon = float(popleft(args, 1e-08))
-        use_locking = _bool(popleft(args, False))
+        beta1 = float(kwargs.get('beta1', 0.9))
+        beta2 = float(kwargs.get('beta2', 0.999))
+        epsilon = float(kwargs.get('epsilon', 1e-08))
+        use_locking = bool(kwargs.get('use_locking', False))
         opt = tf.train.AdamOptimizer(
             learning_rate, beta1=beta1, beta2=beta2,
             epsilon=epsilon, use_locking=use_locking)
     elif kind == "rmsprop":
-        decay = float(popleft(args, 0.95))
-        momentum = float(popleft(args, 0.95))
-        epsilon = float(popleft(args, 1e-8))
-        use_locking = _bool(popleft(args, False))
-        centered = _bool(popleft(args, False))
+        decay = float(kwargs.get('decay', 0.9))
+        momentum = float(kwargs.get('momentum', 0.0))
+        epsilon = float(kwargs.get('epsilon', 1e-10))
+        use_locking = bool(kwargs.get('use_locking', False))
+        centered = bool(kwargs.get('centered', False))
+
         opt = tf.train.RMSPropOptimizer(
             learning_rate, decay=decay, momentum=momentum,
             epsilon=epsilon, use_locking=use_locking, centered=centered)
     else:
         raise Exception(
-            "No known optimizer with kind `{}` and args `{}`.".format(kind, args))
+            "No known optimizer with kind `{}` and kwargs `{}`.".format(kind, kwargs))
 
     return opt
 
