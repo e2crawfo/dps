@@ -1541,6 +1541,25 @@ class Config(dict, MutableMapping):
             return super(Config, self).__getitem__(key)
 
     def __setitem__(self, key, value):
+        """
+        TODO: there is currently a mismatch of behaviour between __setitem__ and update in the case
+        of nested dictionaries. e.g.
+
+        x = Config(y=dict(a=1))
+        x.update(y=dict(b=1))
+        print(x)
+
+        >>> Config({'y': {'a': 1, 'b': 1}})
+
+        x = Config(y=dict(a=1))
+        x.y=dict(b=1)
+        print(x)
+
+        >>> Config({'y': {'b': 1}})
+
+        update augments the current nested dictionary, __setitem__ replaces it.
+
+        """
         assert isinstance(key, str), "`Config` keys must be strings."
         if ':' in key:
             keys = key.split(':')

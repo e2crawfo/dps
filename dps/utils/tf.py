@@ -1001,7 +1001,7 @@ class RecurrentGridConvNet(GridConvNet):
         processed = tf.reshape(processed, (B, T, H, W, C))
 
         if self.build_cell is None:
-            return processed
+            return processed, n_grid_cells, grid_cell_size
 
         processed = tf.transpose(processed, (1, 0, 2, 3, 4))
         processed = tf.reshape(processed, (T, B*H*W, C))

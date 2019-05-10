@@ -202,7 +202,7 @@ class TrainingLoop(object):
         # Create a directory to store the results of the training session.
         self.experiment_store = ExperimentStore(os.path.join(cfg.local_experiments_dir, cfg.env_name))
         exp_dir = self.experiment_store.new_experiment(
-            self.exp_name, cfg.seed, add_date=1, force_fresh=1, update_latest=True)
+            self.exp_name, cfg.seed, add_date=1, force_fresh=1, update_latest=cfg.update_latest)
         self.exp_dir = exp_dir
         cfg.path = exp_dir.path
 

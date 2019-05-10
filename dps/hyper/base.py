@@ -433,9 +433,11 @@ class _RunTrainingLoop(object):
         config.update(
             start_tensorboard=False,
             show_plots=False,
+            update_latest=False,
         )
 
         with config:
+            # This is used for passing args 'local_experiments_dir', 'env_name', and 'max_time'
             cfg.update_from_command_line(strict=False)
 
             from dps.train import training_loop
@@ -681,6 +683,10 @@ def run_experiment(
     if 'config' in duration_args:
         config.update(duration_args['config'])
         del duration_args['config']
+
+    if 'distributions' in duration_args:
+        distributions = duration_args['distributions']
+        del duration_args['distributions']
 
     run_kwargs.update(durations[args.duration])
     run_kwargs.update_from_command_line()

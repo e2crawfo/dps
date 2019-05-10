@@ -19,6 +19,7 @@ DEFAULT_CONFIG = SYSTEM_CONFIG.copy(
     power_through=True,  # Whether to complete the entire curriculum, even if threshold not reached.
     robust=True,
     pdb=False,
+    update_latest=True,
 
     patience=np.inf,
 
