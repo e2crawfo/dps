@@ -168,6 +168,7 @@ class VariableShapeArrayFeature(Feature):
 
     def get_write_features(self, data):
         data = np.array(data)
+        assert data.ndim == len(self.shape)
         return {
             self.name + "/shape": _int64_feature(list(data.shape), is_list=True),
             self.name + "/data": _float_feature(list(data.flatten()), is_list=True),
@@ -810,6 +811,7 @@ class Rectangle(object):
 
 
 class PatchesDataset(ImageDataset):
+    version = Param(0)
     max_overlap = Param()
     draw_shape = Param(None)
     draw_offset = Param((0, 0))
@@ -832,7 +834,7 @@ class PatchesDataset(ImageDataset):
     @property
     def features(self):
         if self._features is None:
-            annotation_shape = (self.n_frames, -1, 6) if self.n_frames > 0 else (-1, 6)
+            annotation_shape = (self.n_frames, -1, 7) if self.n_frames > 0 else (-1, 7)
             self._features = [
                 ImageFeature("image", self.obs_shape),
                 VariableShapeArrayFeature("annotations", annotation_shape),
@@ -858,6 +860,7 @@ class PatchesDataset(ImageDataset):
         * go through all frames for the example, using an identical process to render each frame
         * if n_frames == 0, remove the frame dimension, so they really are just images.
         * assume a fixed background for the entire video, for now.
+
         """
         if self.n_examples == 0:
             return np.zeros((0,) + self.image_shape).astype('uint8'), np.zeros((0, 1)).astype('i')
@@ -939,6 +942,7 @@ class PatchesDataset(ImageDataset):
             # --- sample and populate patches ---
 
             locs, patches, patch_labels, image_label = self._sample_image()
+            patch_ids = list(range(len(patches)))
 
             draw_offset = self.draw_offset
 
@@ -976,7 +980,6 @@ class PatchesDataset(ImageDataset):
 
                     for patch, loc in zip(distractor_patches, distractor_locs):
                         if patch.shape[:2] != (loc.h, loc.w):
-                            anti_aliasing = patch.shape[0] < loc.h or patch.shape[1] < loc.w
                             patch = resize_image(patch, (loc.h, loc.w))
 
                         intensity = patch[:, :, :-1]
@@ -1011,7 +1014,7 @@ class PatchesDataset(ImageDataset):
 
                     image = _image
 
-                _annotations = self._get_annotations(draw_offset, patches, locs, patch_labels)
+                _annotations = self._get_annotations(draw_offset, patches, locs, patch_labels, patch_ids)
 
                 images.append(image)
                 annotations.append(_annotations)
@@ -1025,9 +1028,12 @@ class PatchesDataset(ImageDataset):
 
             self._write_example(image=images, annotations=annotations, label=image_label)
 
-    def _get_annotations(self, draw_offset, patches, locs, labels):
+    def _get_annotations(self, draw_offset, patches, locs, labels, ids):
+        if len(patches) == 0:
+            return np.zeros((0, 7), dtype='f')
+
         new_labels = []
-        for patch, loc, label in zip(patches, locs, labels):
+        for patch, loc, label, _id in zip(patches, locs, labels, ids):
             nz_y, nz_x = np.nonzero(patch[:, :, -1])
 
             # In draw co-ordinates
@@ -1049,9 +1055,9 @@ class PatchesDataset(ImageDataset):
 
             valid = not ((bottom - top < 1e-6) or (right - left < 1e-6))
 
-            new_labels.append((valid, label, top, bottom, left, right))
+            new_labels.append((valid, label, _id, top, bottom, left, right))
 
-        return new_labels
+        return np.array(new_labels)
 
     def _sample_image(self):
         patches, patch_labels, image_label = self._sample_patches()
@@ -1160,6 +1166,11 @@ class PatchesDataset(ImageDataset):
 
     def _colourize(self, img, colour=None):
         """ Apply a colour to a gray-scale image. """
+
+        if self.depth == 1:
+            # ignore the colour, it should be None anyway
+            alpha = img[:, :, None]
+            return np.concatenate([255. * np.ones_like(alpha), alpha], axis=2).astype(np.uint8)
 
         if isinstance(colour, str):
             colour = mpl.colors.to_rgb(colour)
@@ -1300,6 +1311,9 @@ class VisualArithmeticDataset(PatchesDataset):
 
     def _sample_patches(self):
         n_digits = np.random.randint(self.min_digits, self.max_digits+1)
+
+        if not n_digits:
+            return [], [], 0
 
         indices = [np.random.randint(len(self.digit_reps)) for i in range(n_digits)]
         digits = [self.digit_reps[i] for i in indices]

@@ -20,6 +20,7 @@ DEFAULT_CONFIG = SYSTEM_CONFIG.copy(
     robust=True,
     pdb=False,
     update_latest=True,
+    variable_scope_depth=3,
 
     patience=np.inf,
 

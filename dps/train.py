@@ -382,7 +382,7 @@ class TrainingLoop(object):
                 updater.build_graph()
                 print("\nDone building updater.\n")
 
-                walk_variable_scopes(max_depth=3)
+                walk_variable_scopes(max_depth=cfg.variable_scope_depth)
 
                 # Maybe initialize network weights.
                 # Let a *path_specification* be one of three things:

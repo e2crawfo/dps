@@ -191,6 +191,7 @@ def walk_variable_scopes(max_depth=None):
 
     fixed = defaultdict(int)
     trainable = defaultdict(int)
+    shapes = {}
 
     for v in trainable_variables("", for_opt=False):
         n_variables = int(np.prod(v.get_shape().as_list()))
@@ -201,10 +202,11 @@ def walk_variable_scopes(max_depth=None):
         else:
             fixed[""] += 0
             trainable[""] += n_variables
+        shapes[v.name] = tuple(v.get_shape().as_list())
 
         name_so_far = ""
 
-        for token in v.name.split("/")[:-1]:
+        for token in v.name.split("/"):
             name_so_far += token
             if v in all_fixed:
                 fixed[name_so_far] += n_variables
@@ -214,18 +216,30 @@ def walk_variable_scopes(max_depth=None):
                 trainable[name_so_far] += n_variables
             name_so_far += "/"
 
-    table = ["scope n_trainable n_fixed total".split()]
+    table = ["scope shape n_trainable n_fixed total".split()]
+
+    any_shapes = False
     for scope in sorted(fixed, reverse=True):
         depth = sum(c == "/" for c in scope) + 1
 
         if max_depth is not None and depth > max_depth:
             continue
 
+        if scope in shapes:
+            shape_str = "{}".format(shapes[scope])
+            any_shapes = True
+        else:
+            shape_str = ""
+
         table.append([
             scope,
+            shape_str,
             _fmt(trainable[scope]),
             _fmt(fixed[scope]),
             _fmt(trainable[scope] + fixed[scope])])
+
+    if not any_shapes:
+        table = [row[:1] + row[2:] for row in table]
 
     print("TensorFlow variable scopes (down to maximum depth of {}):".format(max_depth))
     print(tabulate(table, headers="firstrow", tablefmt="fancy_grid"))
@@ -1953,19 +1967,30 @@ class RenderHook(object):
         for k, v in kwargs.items():
             setattr(self, k, v)
 
-    def imshow(self, ax, frame, **kwargs):
+    @staticmethod
+    def remove_rects(ax):
+        for obj in ax.findobj(match=plt.Rectangle):
+            try:
+                obj.remove()
+            except NotImplementedError:
+                pass
+
+    def imshow(self, ax, frame, remove_rects=True, vmin=0.0, vmax=1.0, **kwargs):
         """ If ax already has an image, uses set_array on that image instead of doing imshow.
             Allows this function to work well with animations. """
 
         if frame.ndim == 3 and frame.shape[2] == 1:
             frame = frame[:, :, 0]
-        frame = np.clip(frame, 0.0, 1.0)
+
+        frame = np.clip(frame, vmin, vmax)
         frame = np.where(np.isnan(frame), 0, frame)
 
         if ax.images:
             ax.images[0].set_array(frame)
+            if remove_rects:
+                self.remove_rects(ax)
         else:
-            ax.imshow(frame, vmin=0.0, vmax=1.0, **kwargs)
+            ax.imshow(frame, vmin=vmin, vmax=vmax, **kwargs)
 
     def get_feed_dict(self, updater):
         return updater.data_manager.do_val(self.is_training)
