@@ -641,9 +641,6 @@ class TrainingLoop(object):
             local_step = updater.n_updates
             global_step = self.global_step
 
-            if local_step > 0 and local_step % cfg.checkpoint_step == 0:
-                self.data.dump_data(local_step)
-
             evaluate = (local_step % cfg.eval_step) == 0
             display = (local_step % cfg.display_step) == 0
             render = (cfg.render_step > 0
@@ -810,6 +807,9 @@ class TrainingLoop(object):
                 n_steps=local_step,
                 n_experiences=updater.n_experiences,
             )
+
+            if local_step > 0 and local_step % cfg.checkpoint_step == 0:
+                self.data.dump_data(local_step)
 
             self.global_step += 1
 
