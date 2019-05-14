@@ -650,6 +650,9 @@ class TrainingLoop(object):
                       and (local_step % cfg.render_step) == 0
                       and (local_step > 0 or cfg.render_first))
 
+            if display or render or evaluate or local_step % 100 == 0:
+                print("\n{} Starting step {} {}\n".format("-" * 40, local_step, "-" * 40))
+
             data_to_store = []
 
             # --------------- Run hooks -------------------
@@ -673,21 +676,6 @@ class TrainingLoop(object):
                 print("Rendering...")
                 cfg.render_hook(updater)
                 print("Done rendering.")
-
-            if display:
-                print("Displaying...")
-                self.data.summarize_current_stage(
-                    local_step, global_step, updater.n_experiences, self.n_global_experiences)
-                print("\nMy PID: {}\n".format(os.getpid()))
-                print("Physical memory use: {}mb".format(memory_usage(physical=True)))
-                print("Virtual memory use: {}mb".format(memory_usage(physical=False)))
-
-                print("Avg time per update: {}s".format(time_per_update))
-                print("Avg time per eval: {}s".format(time_per_eval))
-                print("Avg time for hooks: {}s".format(time_per_hook))
-
-                if cfg.use_gpu:
-                    print(nvidia_smi())
 
             # --------------- Possibly evaluate -------------------
 
@@ -748,6 +736,21 @@ class TrainingLoop(object):
                 if threshold_reached:
                     reason = "Stopping criteria threshold reached"
                     break
+
+            if display:
+                print("Displaying...")
+                self.data.summarize_current_stage(
+                    local_step, global_step, updater.n_experiences, self.n_global_experiences)
+                print("\nMy PID: {}\n".format(os.getpid()))
+                print("Physical memory use: {}mb".format(memory_usage(physical=True)))
+                print("Virtual memory use: {}mb".format(memory_usage(physical=False)))
+
+                print("Avg time per update: {}s".format(time_per_update))
+                print("Avg time per eval: {}s".format(time_per_eval))
+                print("Avg time for hooks: {}s".format(time_per_hook))
+
+                if cfg.use_gpu:
+                    print(nvidia_smi())
 
             # --------------- Perform an update -------------------
 
@@ -1047,7 +1050,7 @@ class _TrainingLoopData(FrozenTrainingLoopData):
     def summarize_current_stage(self, local_step, global_step, n_local_experiences, n_global_experiences):
         stage_idx = self.current_stage_record['stage_idx']
 
-        print("\n {} Stage={}, Step(l={}, g={}), Experiences(l={}, g={}) {}\n".format(
+        print("\n {} Summary: Stage={}, Step(l={}, g={}), Experiences(l={}, g={}) {}\n".format(
             "*" * 20, stage_idx, local_step, global_step,
             n_local_experiences, n_global_experiences, "*" * 20))
 
