@@ -13,7 +13,7 @@ from dps import cfg
 from dps.utils import Param, Parameterized, get_param_hash, NumpySeed, animate, resize_image
 from dps.datasets import (
     load_emnist, load_omniglot, omniglot_classes,
-    load_backgrounds, background_names
+    load_backgrounds, background_names, hard_background_names
 )
 from dps.datasets.parallel import make_dataset_in_parallel
 
@@ -820,7 +820,7 @@ class Rectangle(object):
 
 
 class PatchesDataset(ImageDataset):
-    version = Param(0)
+    version = Param(1)
     max_overlap = Param()
     draw_shape = Param(None)
     draw_offset = Param((0, 0))
@@ -830,7 +830,7 @@ class PatchesDataset(ImageDataset):
     backgrounds = Param(
         "", help="Can be either be 'all', in which a random background will be selected for "
                  "each constructed image, or a list of strings, giving the names of backgrounds "
-                 "to use.")
+                 "to use. Can also be 'hard', in which case only the hard backgrounds are used.")
     backgrounds_resize = Param(False)
     background_colours = Param("")
     max_attempts = Param(10000)
@@ -904,6 +904,8 @@ class PatchesDataset(ImageDataset):
 
         if self.backgrounds == "all":
             backgrounds = background_names()
+        elif self.backgrounds == "hard":
+            backgrounds = hard_background_names()
         elif isinstance(self.backgrounds, str):
             backgrounds = self.backgrounds.split()
         else:
@@ -1078,7 +1080,7 @@ class PatchesDataset(ImageDataset):
             size_std=self.patch_size_std)
 
         velocity = np.random.randn(len(locs), 2)
-        velocity /= np.maximum(np.linalg.norm(velocity, keepdims=True), 1e-6)
+        velocity /= np.maximum(np.linalg.norm(velocity, axis=1, keepdims=True), 1e-6)
         velocity *= self.patch_speed
 
         for loc, v in zip(locs, velocity):
