@@ -97,7 +97,7 @@ class ParallelSession(object):
             parallel_exe=None, kind="parallel", host_pool=None, load_avg_threshold=8., min_hosts=None,
             max_hosts=1, env_vars=None, output_to_files=True, n_retries=0, gpu_set="", copy_venv="",
             python_startup=False, step_time_limit=None, ignore_gpu=False, ssh_options=None, loud_output=True,
-            rsync_verbosity=0):
+            rsync_verbosity=0, copy_locally=False):
 
         args = locals().copy()
         del args['self']
@@ -504,6 +504,7 @@ class ParallelSession(object):
             return
 
         _ignore_gpu = "--ignore-gpu" if self.ignore_gpu else ""
+        _copy_locally = "--copy-dataset-to={}".format(self.local_scratch_prefix) if self.copy_locally else ""
 
         indices = ' '.join(str(i) for i in indices_for_step)
 
@@ -512,7 +513,7 @@ class ParallelSession(object):
                 "cd {local_scratch} && "
                 "dps-hyper run {archive_root} {pattern} {indices} --max-time {python_seconds_per_step} "
                 "--local-experiments-dir {local_scratch} --env-name experiments --gpu-set={gpu_set} --ppn={ppn} "
-                "{_ignore_gpu} {output_to_files}"
+                "{_ignore_gpu} {_copy_locally} {output_to_files}"
             )
 
             bind = "--accel-bind=g" if self.gpu_set else ""
@@ -535,7 +536,7 @@ class ParallelSession(object):
                 "cd {local_scratch} && "
                 "dps-hyper run {archive_root} {pattern} {{}} --max-time {python_seconds_per_step} "
                 "--local-experiments-dir {local_scratch} --env-name experiments "
-                "--idx-in-node={{%}} --gpu-set={gpu_set} --ppn={ppn} {_ignore_gpu} {output_to_files}"
+                "--idx-in-node={{%}} --gpu-set={gpu_set} --ppn={ppn} {_ignore_gpu} {_copy_locally} {output_to_files}"
             )
 
             command = (
@@ -548,7 +549,7 @@ class ParallelSession(object):
             )
 
         command = command.format(
-            indices=indices, _ignore_gpu=_ignore_gpu, **self.__dict__)
+            indices=indices, _ignore_gpu=_ignore_gpu, _copy_locally=_copy_locally, **self.__dict__)
 
         self.execute_command(
             command, frmt=False, robust=True,

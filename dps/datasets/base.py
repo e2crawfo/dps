@@ -389,6 +389,15 @@ class Dataset(Parameterized):
         print("Took {} seconds.".format(time.time() - start))
         print("Features for dataset: ")
         pprint.pprint(self.features)
+
+        if cfg.copy_dataset_to:
+            dest = os.path.join(cfg.copy_dataset_to, "{}.{}".format(os.getpid(), os.path.basename(self.filename)))
+            print("Copying dataset to {}...".format(dest))
+            start = time.time()
+            shutil.copy(self.filename, dest)
+            print("Done copy, took {} seconds.".format(time.time() - start))
+            self.filename = dest
+
         print()
 
     def _make(self):

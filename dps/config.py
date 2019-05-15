@@ -60,6 +60,7 @@ DEFAULT_CONFIG = SYSTEM_CONFIG.copy(
     overwrite_plots=True,
     n_procs=1,
     profile=False,
+    copy_dataset_to="",
 )
 
 
