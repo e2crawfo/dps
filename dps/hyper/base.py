@@ -542,14 +542,16 @@ def build_search(
 
 
 def build_and_submit(
-        name, config, distributions, n_param_settings=0, n_repeats=1,
+        name, exp_name, config, distributions, n_param_settings=0, n_repeats=1,
         do_local_test=False, kind="local", readme="", **run_kwargs):
     """ Build a job and submit it. Meant to be called from within a script.
 
     Parameters
     ----------
     name: str
-        Name of the experiment.
+        High-level name of the experiment.
+    exp_name: str
+        Low-level name of the experiment.
     config: Config instance or dict
         Configuration to use as the base config for all jobs.
     distributions: dict
@@ -591,9 +593,6 @@ def build_and_submit(
     config['build_command'] = ' '.join(sys.argv)
     print(config['build_command'])
 
-    with config:
-        cfg.update_from_command_line()
-
     if kind == "local":
         with config:
             from dps.train import training_loop
@@ -610,13 +609,15 @@ def build_and_submit(
             readme = edit_text(
                 prefix="dps_readme_", editor="vim", initial_text="README.md: \n")
 
+        _dir = os.path.join(cfg.parallel_experiments_build_dir, name)
+
         archive_path = build_search(
-            cfg.parallel_experiments_build_dir, name, distributions, config,
+            _dir, exp_name, distributions, config,
             add_date=1, _zip=True, do_local_test=do_local_test,
             n_param_settings=n_param_settings, n_repeats=n_repeats, readme=readme)
 
         run_kwargs.update(
-            archive_path=archive_path, name=name, kind=kind, parallel_exe=cfg.parallel_exe)
+            archive_path=archive_path, name=name, exp_name=exp_name, kind=kind, parallel_exe=cfg.parallel_exe)
 
         parallel_session = submit_job(**run_kwargs)
 
@@ -624,7 +625,7 @@ def build_and_submit(
 
 
 def sanitize(s):
-    return s.replace('_', '-')
+    return str(s).replace('_', '-')
 
 
 def run_experiment(
@@ -658,16 +659,11 @@ def run_experiment(
     if late_config is not None:
         config.update(late_config)
 
-    config.update_from_command_line()
-
     env_name = sanitize(config.get('env_name', ''))
-    if name:
-        config.env_name = "{}_env={}".format(name, env_name)
-    else:
-        config.env_name = "env={}".format(env_name)
     alg_name = sanitize(config.get("alg_name", ""))
 
     if args.duration == "local":
+        config.env_name = "env={}".format(env_name)
         config.exp_name = "alg={}".format(alg_name)
         with config:
             return training_loop()
@@ -689,14 +685,15 @@ def run_experiment(
         del duration_args['distributions']
 
     run_kwargs.update(durations[args.duration])
-    run_kwargs.update_from_command_line()
 
     if name_variables is not None:
         name_variables_str = "_".join(
-            "{}={}".format(sanitize(str(k)), sanitize(str(getattr(config, k))))
+            "{}={}".format(sanitize(k), sanitize(getattr(config, k)))
             for k in name_variables.split(","))
-        config.env_name = "{}_{}".format(config.env_name, name_variables_str)
+        env_name = "{}_{}".format(env_name, name_variables_str)
 
-    exp_name = "{}_alg={}_duration={}".format(config.env_name, alg_name, args.duration)
+    config.env_name = env_name
 
-    build_and_submit(name=exp_name, config=config, distributions=distributions, **run_kwargs)
+    exp_name = "env={}_alg={}_duration={}".format(config.env_name, alg_name, args.duration)
+
+    build_and_submit(name, exp_name, config, distributions=distributions, **run_kwargs)

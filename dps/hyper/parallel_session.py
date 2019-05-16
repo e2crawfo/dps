@@ -743,7 +743,7 @@ class ParallelSession(object):
 
 
 def submit_job(
-        archive_path, name, wall_time="1year", ppn=1, cpp=1, pmem=0,
+        archive_path, name, exp_name, wall_time="1year", ppn=1, cpp=1, pmem=0,
         queue="", kind="local", gpu_set="", project="rpp-bengioy", **run_kwargs):
 
     assert kind in "pbs slurm slurm-local parallel".split()
@@ -758,8 +758,9 @@ def submit_job(
     run_kwargs['env_vars'] = dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1')
     run_kwargs['dry_run'] = False
 
-    session = ParallelSession(
-        name, archive_path, 'map', cfg.parallel_experiments_run_dir, **run_kwargs)
+    scratch = os.path.join(cfg.parallel_experiments_run_dir, name)
+
+    session = ParallelSession(exp_name, archive_path, 'map', scratch=scratch, **run_kwargs)
 
     job_path = session.job_path
 
