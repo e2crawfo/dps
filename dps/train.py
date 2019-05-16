@@ -734,21 +734,6 @@ class TrainingLoop(object):
                     reason = "Stopping criteria threshold reached"
                     break
 
-            if display:
-                print("Displaying...")
-                self.data.summarize_current_stage(
-                    local_step, global_step, updater.n_experiences, self.n_global_experiences)
-                print("\nMy PID: {}\n".format(os.getpid()))
-                print("Physical memory use: {}mb".format(memory_usage(physical=True)))
-                print("Virtual memory use: {}mb".format(memory_usage(physical=False)))
-
-                print("Avg time per update: {}s".format(time_per_update))
-                print("Avg time per eval: {}s".format(time_per_eval))
-                print("Avg time for hooks: {}s".format(time_per_hook))
-
-                if cfg.use_gpu:
-                    print(nvidia_smi())
-
             # --------------- Perform an update -------------------
 
             if cfg.do_train:
@@ -807,6 +792,21 @@ class TrainingLoop(object):
                 n_steps=local_step,
                 n_experiences=updater.n_experiences,
             )
+
+            if display:
+                print("Displaying...")
+                self.data.summarize_current_stage(
+                    local_step, global_step, updater.n_experiences, self.n_global_experiences)
+                print("\nMy PID: {}\n".format(os.getpid()))
+                print("Physical memory use: {}mb".format(memory_usage(physical=True)))
+                print("Virtual memory use: {}mb".format(memory_usage(physical=False)))
+
+                print("Avg time per update: {}s".format(time_per_update))
+                print("Avg time per eval: {}s".format(time_per_eval))
+                print("Avg time for hooks: {}s".format(time_per_hook))
+
+                if cfg.use_gpu:
+                    print(nvidia_smi())
 
             if local_step > 0 and local_step % cfg.checkpoint_step == 0:
                 self.data.dump_data(local_step)
