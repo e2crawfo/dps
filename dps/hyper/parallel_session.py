@@ -129,7 +129,7 @@ class ParallelSession(object):
         # Create directory to run the job from - should be on scratch.
         scratch = os.path.abspath(os.path.expandvars(scratch))
 
-        es = ExperimentStore(scratch, prefix="run_search")
+        es = ExperimentStore(scratch, prefix="run")
 
         job_dir = es.new_experiment(name, 0, add_date=add_date, force_fresh=1)
         job_dir.record_environment()
@@ -743,7 +743,7 @@ class ParallelSession(object):
 
 
 def submit_job(
-        archive_path, name, exp_name, wall_time="1year", ppn=1, cpp=1, pmem=0,
+        archive_path, category, exp_name, wall_time="1year", ppn=1, cpp=1, pmem=0,
         queue="", kind="local", gpu_set="", project="rpp-bengioy", **run_kwargs):
 
     assert kind in "pbs slurm slurm-local parallel".split()
@@ -758,7 +758,7 @@ def submit_job(
     run_kwargs['env_vars'] = dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1')
     run_kwargs['dry_run'] = False
 
-    scratch = os.path.join(cfg.parallel_experiments_run_dir, name)
+    scratch = os.path.join(cfg.parallel_experiments_run_dir, category)
 
     session = ParallelSession(exp_name, archive_path, 'map', scratch=scratch, **run_kwargs)
 
@@ -797,10 +797,10 @@ print(str((end - start).total_seconds()) + " seconds elapsed between start and f
         if queue:
             queue = "-q " + queue
         command = (
-            "qsub -N {name} -d {job_path} -w {job_path} -m abe -M {email} "
+            "qsub -N {exp_name} -d {job_path} -w {job_path} -m abe -M {email} "
             "-A {project} {queue} -V -l {resources} "
             "-j oe output.txt run.py".format(
-                name=name, job_path=job_path, email=email, project=project,
+                exp_name=exp_name, job_path=job_path, email=email, project=project,
                 queue=queue, resources=resources
             )
         )
@@ -821,10 +821,10 @@ print(str((end - start).total_seconds()) + " seconds elapsed between start and f
         if queue:
             queue = "-p " + queue
         command = (
-            "sbatch --job-name {name} -D {job_path} --mail-type=ALL --mail-user=wiricon@gmail.com "
+            "sbatch --job-name {exp_name} -D {job_path} --mail-type=ALL --mail-user=wiricon@gmail.com "
             "-A {project} {queue} --export=ALL {resources} "
             "-o stdout -e stderr run.py".format(
-                name=name, job_path=job_path, email=email, project=project,
+                exp_name=exp_name, job_path=job_path, email=email, project=project,
                 queue=queue, resources=resources
             )
         )

@@ -542,14 +542,15 @@ def build_search(
 
 
 def build_and_submit(
-        name, exp_name, config, distributions, n_param_settings=0, n_repeats=1,
+        category, exp_name, config, distributions, n_param_settings=0, n_repeats=1,
         do_local_test=False, kind="local", readme="", **run_kwargs):
     """ Build a job and submit it. Meant to be called from within a script.
 
     Parameters
     ----------
-    name: str
-        High-level name of the experiment.
+    category: str
+        High-level category of the experiment. Determines the ExperimentStore
+        where the experiment data will be stored.
     exp_name: str
         Low-level name of the experiment.
     config: Config instance or dict
@@ -598,7 +599,7 @@ def build_and_submit(
             from dps.train import training_loop
             return training_loop()
     else:
-        config.name = name
+        config.name = category
 
         config = config.copy(
             start_tensorboard=False,
@@ -609,15 +610,16 @@ def build_and_submit(
             readme = edit_text(
                 prefix="dps_readme_", editor="vim", initial_text="README.md: \n")
 
-        _dir = os.path.join(cfg.parallel_experiments_build_dir, name)
+        scratch = os.path.join(cfg.parallel_experiments_build_dir, category)
 
         archive_path = build_search(
-            _dir, exp_name, distributions, config,
+            scratch, exp_name, distributions, config,
             add_date=1, _zip=True, do_local_test=do_local_test,
             n_param_settings=n_param_settings, n_repeats=n_repeats, readme=readme)
 
         run_kwargs.update(
-            archive_path=archive_path, name=name, exp_name=exp_name, kind=kind, parallel_exe=cfg.parallel_exe)
+            archive_path=archive_path, category=category, exp_name=exp_name,
+            kind=kind, parallel_exe=cfg.parallel_exe)
 
         parallel_session = submit_job(**run_kwargs)
 
