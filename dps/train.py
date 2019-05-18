@@ -457,7 +457,9 @@ class TrainingLoop(object):
                     assert isinstance(hook, Hook)
                     hook.start_stage(self, updater, stage_idx)
 
-                if cfg.render_step > 0 and cfg.render_hook is not None:
+                render_step = cfg.eval_step if cfg.render_step is None else cfg.render_step
+
+                if render_step > 0 and cfg.render_hook is not None:
                     cfg.render_hook.start_stage(self, updater, stage_idx)
 
                 # Prevent memory leaks, no ops can be added to the graph after this point
@@ -555,7 +557,9 @@ class TrainingLoop(object):
                             self.data.record_values_for_stage(
                                 **{'_test_' + k: v for k, v in test_record.items()})
 
-                            if cfg.render_final and cfg.render_step > 0 and cfg.render_hook is not None:
+                            render_step = cfg.eval_step if cfg.render_step is None else cfg.render_step
+
+                            if cfg.render_final and render_step > 0 and cfg.render_hook is not None:
                                 print("Rendering...")
                                 cfg.render_hook(updater)
                                 print("Done rendering.")
@@ -641,10 +645,13 @@ class TrainingLoop(object):
             local_step = updater.n_updates
             global_step = self.global_step
 
+            render_step = cfg.eval_step if cfg.render_step is None else cfg.render_step
+            display_step = cfg.eval_step if cfg.display_step is None else cfg.display_step
+
             evaluate = (local_step % cfg.eval_step) == 0
-            display = (local_step % cfg.display_step) == 0
-            render = (cfg.render_step > 0
-                      and (local_step % cfg.render_step) == 0
+            display = (local_step % display_step) == 0
+            render = (render_step > 0
+                      and (local_step % render_step) == 0
                       and (local_step > 0 or cfg.render_first))
 
             if display or render or evaluate or local_step % 100 == 0:
@@ -671,8 +678,9 @@ class TrainingLoop(object):
 
             if render and cfg.render_hook is not None:
                 print("Rendering...")
+                start = time.time()
                 cfg.render_hook(updater)
-                print("Done rendering.")
+                print("Done rendering, took {} seconds.".format(time.time() - start))
 
             # --------------- Possibly evaluate -------------------
 
@@ -681,7 +689,7 @@ class TrainingLoop(object):
                 eval_start_time = time.time()
                 val_record = updater.evaluate(cfg.batch_size, mode="val")
                 eval_duration = time.time() - eval_start_time
-                print("Done evaluating")
+                print("Done evaluating, took {} seconds.".format(eval_duration))
 
                 val_record["duration"] = eval_duration
 

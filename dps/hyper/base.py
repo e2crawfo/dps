@@ -630,7 +630,8 @@ def sanitize(s):
 
 def run_experiment(
         name, base_config, readme, distributions=None, durations=None,
-        name_variables=None, alg_configs=None, env_configs=None, late_config=None):
+        name_variables=None, alg_configs=None, env_configs=None, late_config=None,
+        check_command_line=False):
 
     name = sanitize(name)
     durations = durations or {}
@@ -658,6 +659,9 @@ def run_experiment(
 
     if late_config is not None:
         config.update(late_config)
+
+    if check_command_line:
+        config.update_from_command_line()
 
     env_name = sanitize(config.get('env_name', ''))
     alg_name = sanitize(config.get("alg_name", ""))
