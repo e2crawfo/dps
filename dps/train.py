@@ -34,7 +34,7 @@ def training_loop(exp_name='', start_time=None):
     return loop.run(start_time)
 
 
-class EarlyStopHook(object):
+class EarlyStopHook:
     def __init__(self, patience, maximize):
         self.patience = patience
         self.maximize = maximize
@@ -517,9 +517,13 @@ class TrainingLoop(object):
                     print("\n" + "-" * 10 + " Optimization complete " + "-" * 10)
                     print("\nReason: {}.\n".format(reason))
 
+                    print("Storing final weights...")
+                    weight_start = time.time()
                     final_path = self.data.path_for('weights/final_for_stage_{}'.format(stage_idx))
                     final_path = cfg.get('save_path', final_path)
                     final_path = updater.save(tf.get_default_session(), final_path)
+                    print("Done saving weights, took {} seconds".format(time.time() - weight_start))
+
                     self.data.record_values_for_stage(final_path=final_path)
 
                     # --------------- Maybe render performance of best hypothesis -------------------
