@@ -2022,9 +2022,11 @@ class RenderHook(object):
         local_step = (
             np.inf if dps.cfg.overwrite_plots else "{:0>10}".format(updater.n_updates))
 
-        return updater.exp_dir.path_for(
-            'plots', name,
-            'stage={:0>4}_local_step={}.{}'.format(updater.stage_idx, local_step, ext))
+        if ext is None:
+            basename = 'stage={:0>4}_local_step={}'.format(updater.stage_idx, local_step)
+        else:
+            basename = 'stage={:0>4}_local_step={}.{}'.format(updater.stage_idx, local_step, ext)
+        return updater.exp_dir.path_for('plots', name, basename)
 
     def savefig(self, name, fig, updater, is_dir=True):
         if is_dir:

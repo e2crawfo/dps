@@ -272,7 +272,7 @@ def animate(
     if square_grid:
         fig, _axes = square_subplots(B, n_repeats=n_image_sets, repeat_horizontal=True)
     else:
-        fig, axes = plt.subplots(B, n_image_sets)
+        fig, _axes = plt.subplots(B, n_image_sets)
 
     axes = _axes.reshape(-1, n_image_sets)
 
@@ -288,7 +288,7 @@ def animate(
 
             plots[i, j] = ax.imshow(np.squeeze(all_images[j][i, 0]))
 
-    plt.subplots_adjust(top=0.95, bottom=0, left=0, right=1, wspace=0.1, hspace=0.1)
+    plt.subplots_adjust(top=0.95, bottom=0.02, left=0.02, right=.98, wspace=0.1, hspace=0.1)
 
     def func(t):
         for i in range(B):
@@ -298,9 +298,10 @@ def animate(
     anim = animation.FuncAnimation(fig, func, frames=T, interval=interval)
 
     if path is not None:
-        anim.save(path, writer='imagemagick')
+        path = path + '.mp4'
+        anim.save(path, writer='ffmpeg', codec='hevc', extra_args=['-preset', 'ultrafast'])
 
-    return fig, _axes, anim
+    return fig, _axes, anim, path
 
 
 def square_subplots(N, n_repeats=1, repeat_horizontal=True, **kwargs):
