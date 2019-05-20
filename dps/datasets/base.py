@@ -837,6 +837,7 @@ class PatchesDataset(ImageDataset):
     colours = Param('red green blue')
     one_hot = Param(True)
     patch_speed = Param(10, help="In pixels per frame.")
+    annotation_scheme = Param("correct")
 
     _features = None
 
@@ -1048,10 +1049,21 @@ class PatchesDataset(ImageDataset):
             nz_y, nz_x = np.nonzero(patch[:, :, -1])
 
             # In draw co-ordinates
-            top = (nz_y.min() / patch.shape[0]) * loc.h + loc.top
-            bottom = (nz_y.max() / patch.shape[0]) * loc.h + loc.top
-            left = (nz_x.min() / patch.shape[1]) * loc.w + loc.left
-            right = (nz_x.max() / patch.shape[1]) * loc.w + loc.left
+
+            if self.annotation_scheme == "correct":
+                top = (nz_y.min() / patch.shape[0]) * int(loc.h) + int(loc.top) - 0.5
+                left = (nz_x.min() / patch.shape[1]) * int(loc.w) + int(loc.left) - 0.5
+                bottom = (nz_y.max() + 1) / patch.shape[0] * int(loc.h) + int(loc.top) - 0.5
+                right = (nz_x.max() + 1) / patch.shape[1] * int(loc.w) + int(loc.left) - 0.5
+
+            elif self.annotation_scheme == "original":
+                top = (nz_y.min() / patch.shape[0]) * loc.h + loc.top
+                left = (nz_x.min() / patch.shape[1]) * loc.w + loc.left
+                bottom = (nz_y.max() / patch.shape[0]) * loc.h + loc.top
+                right = (nz_x.max() / patch.shape[1]) * loc.w + loc.left
+
+            else:
+                raise ValueError("Invalid value for variable `annotation_scheme`: {}.".format(self.annotation_scheme))
 
             # Transform to image co-ordinates
             top = top + draw_offset[0]
