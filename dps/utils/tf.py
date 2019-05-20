@@ -1,5 +1,5 @@
 import numpy as np
-from collections import deque, OrderedDict, defaultdict
+from collections import OrderedDict, defaultdict
 import os
 import hashlib
 import pprint
@@ -19,7 +19,7 @@ from tensorflow.python.util import nest
 
 import dps
 from dps import cfg
-from dps.utils.base import _bool, popleft, Parameterized, Param, Config
+from dps.utils.base import Parameterized, Param, Config
 from dps.utils.inspect_checkpoint import get_tensors_from_checkpoint_file  # noqa: F401
 
 
@@ -42,6 +42,13 @@ def apply_object_wise(func, signal, output_size, is_training, restore_shape=True
         output = tf.reshape(output, (*shape[:-n_trailing_dims], *output_size))
 
     return output
+
+
+def tf_cosine_similarity(a, b, keepdims=False):
+    """ Supports broadcasting. """
+    normalize_a = tf.nn.l2_normalize(a, axis=-1)
+    normalize_b = tf.nn.l2_normalize(b, axis=-1)
+    return tf.reduce_sum(normalize_a * normalize_b, axis=-1, keepdims=keepdims)
 
 
 def tf_log_factorial(n):
@@ -1615,9 +1622,8 @@ def build_scheduled_value(schedule, name=None, global_step=None, dtype=None):
     Parameters
     ----------
     schedule: str
-        String which returns a schedule object when eval-ed. One exception is that
-        constants can be specified by simply supplying the constant value,
-        with no kind string.
+        Either a schedule object, or a string which returns a schedule object when eval-ed.
+        One exception is that constants can be specified by simply supplying the constant value.
     name: str
         Name to use for the output op. Also creates a record in
         `tf.get_default_session().scheduled_values` with this name
@@ -1649,6 +1655,9 @@ def build_scheduled_value(schedule, name=None, global_step=None, dtype=None):
 
 
 def eval_schedule(schedule):
+    if isinstance(schedule, Schedule):
+        return schedule
+
     try:
         schedule = "Constant({})".format(float(schedule))
     except (TypeError, ValueError):
@@ -1671,6 +1680,17 @@ class RepeatSchedule(Schedule):
 
     def build(self, t):
         return self.schedule.build(t % self.period)
+
+
+class LookupSchedule(Schedule):
+    def __init__(self, sequence, delay=1):
+        self.sequence = np.array(sequence)
+        self.delay = delay
+
+    def build(self, t):
+        self.tf_sequence = tf.constant(self.sequence)
+        idx = (t // self.delay) % len(self.sequence)
+        return self.tf_sequence[idx]
 
 
 class Exponential(Schedule):
