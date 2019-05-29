@@ -23,25 +23,35 @@ from dps.utils.base import Parameterized, Param, Config
 from dps.utils.inspect_checkpoint import get_tensors_from_checkpoint_file  # noqa: F401
 
 
-def apply_object_wise(func, signal, output_size, is_training, restore_shape=True, n_trailing_dims=1):
-    """ Treat `signal` as a batch of objects. Apply function `func` separately to each object.
-        The final `n_trailing_dims`-many dimensions are treated as "within-object" dimensions.
-        By default, objects are assumed to be vectors, but this can be changed by increasing
-        `n_trailing_dims`. e.g. n_trailing_dims==2 means each object is a matrix, i.e. the
-        last 2 dimensions of signal are dimensions of the object.
+def apply_object_wise(func, *signals, restore_shape=True, n_trailing_dims=1, **func_kwargs):
+    signal = signals[0]
 
-    """
     shape = tf_shape(signal)
-    leading_dim = tf.reduce_prod(shape[:-n_trailing_dims])
-    signal = tf.reshape(signal, (leading_dim, *shape[-n_trailing_dims:]))
-    output = func(signal, output_size, is_training)
+    n_leading_dims = len(shape) - n_trailing_dims
+    leading_shape = shape[:n_leading_dims]
+    leading_dim = tf.reduce_prod(leading_shape)
+
+    signals = [
+        tf.reshape(s, (leading_dim, *tf_shape(s)[n_leading_dims:]))
+        for s in signals]
+
+    outputs = func(*signals, **func_kwargs)
+
+    try:
+        iter(outputs)
+        outputs = list(outputs)
+        is_iter = True
+    except Exception:
+        outputs = [outputs]
+        is_iter = False
 
     if restore_shape:
-        if not isinstance(output_size, tuple):
-            output_size = [output_size]
-        output = tf.reshape(output, (*shape[:-n_trailing_dims], *output_size))
+        outputs = [tf.reshape(o, (*leading_shape, *tf_shape(o)[1:])) for o in outputs]
 
-    return output
+    if is_iter:
+        return outputs
+    else:
+        return outputs[0]
 
 
 def tf_cosine_similarity(a, b, keepdims=False):
@@ -857,7 +867,9 @@ class ConvNet(ScopedFunction):
 
         return volume
 
-    def _call(self, inp, final_n_channels, is_training):
+    def _call(self, inp, output_size, is_training):
+        final_n_channels = output_size
+
         print("--- Entering CNN(name={}) ---".format(self.name))
         volume = inp
         self.volumes = [volume]
@@ -897,7 +909,8 @@ class GridConvNet(ConvNet):
             receptive_fields.append(dict(size=r, translation=j))
         return receptive_fields
 
-    def _call(self, inp, final_n_channels, is_training):
+    def _call(self, inp, output_size, is_training):
+        final_n_channels = output_size
         volume = inp
         self.volumes = [volume]
 
@@ -1012,7 +1025,8 @@ class RecurrentGridConvNet(GridConvNet):
     forward_cell = None
     backward_cell = None
 
-    def _call(self, inp, final_n_channels, is_training):
+    def _call(self, inp, output_size, is_training):
+        final_n_channels = output_size
         B, T, *rest = tf_shape(inp)
         inp = tf.reshape(inp, (B*T, *rest))
 
