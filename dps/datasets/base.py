@@ -160,6 +160,21 @@ class ArrayFeature(Feature):
         return tf.reshape(data, (-1,) + self.shape)
 
 
+class ImageFeature(ArrayFeature):
+    """ Stores images on disk as uint8, converts them to float32 at runtime.
+
+    Can also be used for video, use a shape with 4 entries, first entry being the number of frames.
+
+    """
+    def __init__(self, name, shape):
+        super().__init__(name, shape, dtype=np.uint8)
+
+    def process_batch(self, records):
+        images = super().process_batch(records)
+        images = tf.image.convert_image_dtype(images, tf.float32)
+        return images
+
+
 class VariableShapeArrayFeature(Feature):
     def __init__(self, name, shape):
         self.name = name
@@ -208,23 +223,6 @@ class VariableShapeArrayFeature(Feature):
 
         data, mask = tf.map_fn(map_fn, (data, shapes), dtype=(tf.float32, tf.bool))
         return dict(data=data, shapes=shapes, mask=mask)
-
-
-class ImageFeature(ArrayFeature):
-    """ Stores images on disk as uint8, converts them to float32 at runtime.
-
-    Can also be used for video, use a shape with 4 entries, first entry being the number of frames.
-
-    """
-    def __init__(self, name, shape):
-        self.name = name
-        self.shape = shape
-        self.dtype = np.uint8
-
-    def process_batch(self, records):
-        images = super(ImageFeature, self).process_batch(records)
-        images = tf.image.convert_image_dtype(images, tf.float32)
-        return images
 
 
 class IntegerFeature(Feature):
@@ -775,48 +773,46 @@ class Rectangle(object):
             self.left + (self.right - self.left) / 2.
         )
 
-    def update(self, shape):
+    def update(self, shape, bounce):
         """
-        For each of the 4 corners, create a line segment imposed by the movement.
-        Find the earliest "time" in the movement that one of the corners intersects one of the walls.
-        (If there is no such intersection, we're done)
-        move all corners based on that time point (so the object is against one of the walls),
-        and flip the velocity vector appropriately.
-        Then repeat this for the "remainder" of the movement.
-
-        Return the new position and new velocity.
-
-        Could use 2 opposing corners instead of 4.
-        Actually we only have to use the corner that is in the direction of the movement.
-
-        And the direction of the movement determines which two walls can be intersected.
+        When bounce==True, do:
+        1. Find the earliest "time" in the movement that the object intersects one of the walls,
+           or, if no such intersection exists, use time=1 (i.e. the full movement).
+        2. Move object based on that time point (so the object is against one of the walls),
+           and flip the velocity vector appropriately.
+        3. Repeat this for the "remainder" of the movement.
 
         """
+        if not bounce:
+            self.move(self.v)
+            return
+
         velocity = self.v.copy()
         while True:
             if velocity[0] > 0:
-                v_distance_to_wall = shape[0] - self.bottom
+                y_distance_to_wall = shape[0] - self.bottom
             else:
-                v_distance_to_wall = self.top
-            v_t = v_distance_to_wall / np.abs(velocity[0])
+                y_distance_to_wall = self.top
+            y_t = y_distance_to_wall / np.abs(velocity[0])
 
             if velocity[1] > 0:
-                h_distance_to_wall = shape[1] - self.right
+                x_distance_to_wall = shape[1] - self.right
             else:
-                h_distance_to_wall = self.left
-            h_t = h_distance_to_wall / np.abs(velocity[1])
+                x_distance_to_wall = self.left
+            x_t = x_distance_to_wall / np.abs(velocity[1])
 
-            if v_t > 1 and h_t > 1:
+            if y_t > 1 and x_t > 1:
                 self.move(velocity)
                 break
-            elif v_t < h_t:
-                self.move(v_t * velocity)
-                velocity = (1 - v_t) * np.array([-velocity[0], velocity[1]])
+            elif y_t < x_t:
+                self.move(y_t * velocity)
+                velocity = (1 - y_t) * np.array([-velocity[0], velocity[1]])
             else:
-                self.move(h_t * velocity)
-                velocity = (1 - h_t) * np.array([velocity[0], -velocity[1]])
+                self.move(x_t * velocity)
+                velocity = (1 - x_t) * np.array([velocity[0], -velocity[1]])
 
-        self.v = velocity * np.linalg.norm(self.v) / np.linalg.norm(velocity)
+        # New velocity has same norm as original velocity but possibly a different direction.
+        self.v = np.linalg.norm(self.v) * (velocity / np.linalg.norm(velocity))
 
 
 class PatchesDataset(ImageDataset):
@@ -838,6 +834,7 @@ class PatchesDataset(ImageDataset):
     one_hot = Param(True)
     patch_speed = Param(10, help="In pixels per frame.")
     annotation_scheme = Param("correct")
+    bounce_patches = Param(True)
 
     _features = None
 
@@ -1032,7 +1029,7 @@ class PatchesDataset(ImageDataset):
                 annotations.append(_annotations)
 
                 for loc in locs:
-                    loc.update(image.shape)
+                    loc.update(image.shape, bounce=self.bounce_patches)
 
             if self.n_frames == 0:
                 images = images[0]
@@ -1063,7 +1060,9 @@ class PatchesDataset(ImageDataset):
                 right = (nz_x.max() / patch.shape[1]) * loc.w + loc.left
 
             else:
-                raise ValueError("Invalid value for variable `annotation_scheme`: {}.".format(self.annotation_scheme))
+                raise ValueError(
+                    "Invalid value for variable `annotation_scheme`: "
+                    "{}.".format(self.annotation_scheme))
 
             # Transform to image co-ordinates
             top = top + draw_offset[0]
@@ -1076,7 +1075,7 @@ class PatchesDataset(ImageDataset):
             left = np.clip(left, 0, self.image_shape[1])
             right = np.clip(right, 0, self.image_shape[1])
 
-            valid = not ((bottom - top < 1e-6) or (right - left < 1e-6))
+            valid = (bottom - top > 1e-6) and (right - left > 1e-6)
 
             new_labels.append((valid, label, _id, top, bottom, left, right))
 
@@ -1220,7 +1219,7 @@ class GridPatchesDataset(PatchesDataset):
         self.cell_shape = (
             self.patch_shape[0] + self.spacing[0],
             self.patch_shape[1] + self.spacing[1])
-        return super(GridPatchesDataset, self)._make()
+        return super()._make()
 
     def _sample_patch_locations(self, patch_shapes, **kwargs):
         n_patches = len(patch_shapes)
@@ -1325,7 +1324,7 @@ class VisualArithmeticDataset(PatchesDataset):
 
         self.digit_reps = list(zip(mnist_x, mnist_y))
 
-        result = super(VisualArithmeticDataset, self)._make()
+        result = super()._make()
 
         del self.digit_reps
         del self.op_reps
@@ -1391,7 +1390,7 @@ class EmnistObjectDetectionDataset(PatchesDataset):
             example_range=self.example_range)
 
         self.char_reps = list(zip(emnist_x, emnist_y))
-        result = super(EmnistObjectDetectionDataset, self)._make()
+        result = super()._make()
         del self.char_reps
 
         return result
