@@ -1717,7 +1717,7 @@ class Exponential(Schedule):
         self.log = log
 
         assert isinstance(self.decay_steps, int)
-        assert self.decay_steps > 1
+        assert self.decay_steps >= 1
         assert 0 <= self.decay_rate <= 1
 
     def build(self, t):
@@ -1745,7 +1745,7 @@ class Polynomial(Schedule):
         self.power = power
 
         assert isinstance(self.decay_steps, int)
-        assert self.decay_steps > 1
+        assert self.decay_steps >= 1
         assert power > 0
 
     def build(self, t):
@@ -1766,7 +1766,7 @@ class Reciprocal(Schedule):
         self.staircase = staircase
 
         assert isinstance(self.decay_steps, int)
-        assert self.decay_steps > 1
+        assert self.decay_steps >= 1
         assert self.gamma > 0
 
     def build(self, t):
