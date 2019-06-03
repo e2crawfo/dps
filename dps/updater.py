@@ -9,6 +9,8 @@ from dps.utils.tf import build_gradient_train_op, trainable_variables, get_sched
 
 
 class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
+    build_saver = True
+
     def __init__(self, env, scope=None, mpi_context=None, **kwargs):
         self.scope = scope
         self.env = env
@@ -37,8 +39,9 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
             assign_global_step = tf.assign(global_step, global_step_input)
             tf.get_default_session().run(assign_global_step, feed_dict={global_step_input: 0})
 
-            updater_variables = {v.name: v for v in self.trainable_variables(for_opt=False)}
-            self.saver = tf.train.Saver(updater_variables)
+            if self.build_saver:
+                updater_variables = {v.name: v for v in self.trainable_variables(for_opt=False)}
+                self.saver = tf.train.Saver(updater_variables)
 
     @abc.abstractmethod
     def _build_graph(self):
@@ -79,6 +82,8 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
 
 class DummyUpdater(Updater):
     """ For when you just want to build datasets. Much faster than most normal updaters. """
+
+    build_saver = False
 
     def trainable_variables(self, for_opt):
         return []
