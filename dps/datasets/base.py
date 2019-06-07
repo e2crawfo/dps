@@ -571,6 +571,22 @@ class ImageDataset(Dataset):
     tile_shape = Param(None)
     n_samples_per_image = Param(1)
     n_frames = Param(0)
+    image_dataset_version = Param(1)
+
+    _features = None
+
+    @property
+    def features(self):
+        if self._features is None:
+            annotation_shape = (self.n_frames, -1, 7) if self.n_frames > 0 else (-1, 7)
+            self._features = [
+                ImageFeature("image", self.obs_shape),
+                VariableShapeArrayFeature("annotations", annotation_shape),
+                IntegerFeature("label", self.n_classes if self.one_hot else None),
+                ArrayFeature("offset", (2,), dtype=np.int32),
+            ]
+
+        return self._features
 
     @property
     def obs_shape(self):
@@ -589,18 +605,18 @@ class ImageDataset(Dataset):
         label = kwargs.get("label", None)
         background = kwargs.get("background", None)
 
-        if self.postprocessing and self.n_frames > 0:
-            raise Exception("NotImplemented")
-
         if self.postprocessing == "tile":
-            images, annotations, backgrounds = self._tile_postprocess(image, annotation, background=background)
-        elif self.postprocessing == "random":
-            images, annotations, backgrounds = self._random_postprocess(image, annotation, background=background)
-        else:
-            images, annotations, backgrounds = [image], [annotation], [background]
+            if self.n_frames > 0:
+                raise Exception("NotImplemented")
 
-        for img, a, bg in zip_longest(images, annotations, backgrounds):
-            self._write_single_example(image=img, annotations=a, label=label, background=bg)
+            images, annotations, backgrounds, offsets = self._tile_postprocess(image, annotation, background=background)
+        elif self.postprocessing == "random":
+            images, annotations, backgrounds, offsets = self._random_postprocess(image, annotation, background=background)
+        else:
+            images, annotations, backgrounds, offsets = [image], [annotation], [background], [(0, 0)]
+
+        for img, a, bg, o in zip_longest(images, annotations, backgrounds, offsets):
+            self._write_single_example(image=img, annotations=a, label=label, background=bg, offset=o)
 
     @staticmethod
     def tile_sample(image, tile_shape):
@@ -672,53 +688,70 @@ class ImageDataset(Dataset):
 
         return new_images, new_annotations, new_backgrounds
 
-    def _random_postprocess(self, image, annotations, background=None):
-        height, width, _ = image.shape
-        new_images = []
+    def _random_postprocess(self, video, annotations, background=None):
+        *_, height, width, _ = video.shape
+
+        if self.n_frames == 0:
+            video = video[None]
+            annotations = [annotations]
+        else:
+            video = video
+
+        n_frames = len(video)
+
+        new_videos = []
         new_annotations = []
         new_backgrounds = []
+        offsets = []
 
         for j in range(self.n_samples_per_image):
             _top = np.random.randint(0, height-self.tile_shape[0]+1)
             _left = np.random.randint(0, width-self.tile_shape[1]+1)
 
-            crop = image[_top:_top+self.tile_shape[0], _left:_left+self.tile_shape[1], ...]
-            new_images.append(crop)
+            offsets.append((_top, _left))
+
+            crop = video[:, _top:_top+self.tile_shape[0], _left:_left+self.tile_shape[1], ...]
+            new_videos.append(crop)
 
             if background is not None:
                 bg_crop = background[_top:_top+self.tile_shape[0], _left:_left+self.tile_shape[1], ...]
                 new_backgrounds.append(bg_crop)
 
-            offset = (_top, _left)
-            _new_annotations = []
-            for l, top, bottom, left, right in annotations:
-                top = top - offset[0]
-                bottom = bottom - offset[0]
-                left = left - offset[1]
-                right = right - offset[1]
+            _new_annotations = [[] for i in range(n_frames)]
 
-                top = np.clip(top, 0, self.tile_shape[0])
-                bottom = np.clip(bottom, 0, self.tile_shape[0])
-                left = np.clip(left, 0, self.tile_shape[1])
-                right = np.clip(right, 0, self.tile_shape[1])
+            for a, na in zip(annotations, _new_annotations):
+                for v, l, _id, top, bottom, left, right in a:
+                    top = top - _top
+                    bottom = bottom - _top
+                    left = left - _left
+                    right = right - _left
 
-                invalid = (bottom - top < 1e-6) or (right - left < 1e-6)
+                    top = np.clip(top, 0, self.tile_shape[0])
+                    bottom = np.clip(bottom, 0, self.tile_shape[0])
+                    left = np.clip(left, 0, self.tile_shape[1])
+                    right = np.clip(right, 0, self.tile_shape[1])
 
-                if not invalid:
-                    _new_annotations.append((l, top, bottom, left, right))
+                    v = v and (bottom - top >= 1e-6) and (right - left >= 1e-6)
+
+                    # We append even if not valid, so that all frames in the video have the same
+                    # number of annotations
+                    na.append((v, l, _id, top, bottom, left, right))
 
             new_annotations.append(_new_annotations)
 
-        return new_images, new_annotations, new_backgrounds
+        return new_videos, new_annotations, new_backgrounds, offsets
 
-    def visualize(self, n=4):
+    def visualize(self, n=9):
         sample = self.sample(n)
         images = sample["image"]
-        # annotations, annotations_shape, annotations_mask = sample["annotations"]
+        annotations, annotations_shape, annotations_mask = sample["annotations"]
         labels = sample["label"]
+        offsets = sample["offset"]
 
         if self.n_frames == 0:
             images = images[:, None]
+
+        labels = ["l={}, o={}".format(el, o) for el, o in zip(labels, offsets)]
 
         fig, *_ = animate(images, labels=labels)
 
@@ -835,19 +868,6 @@ class PatchesDataset(ImageDataset):
     patch_speed = Param(10, help="In pixels per frame.")
     annotation_scheme = Param("correct")
     bounce_patches = Param(True)
-
-    _features = None
-
-    @property
-    def features(self):
-        if self._features is None:
-            annotation_shape = (self.n_frames, -1, 7) if self.n_frames > 0 else (-1, 7)
-            self._features = [
-                ImageFeature("image", self.obs_shape),
-                VariableShapeArrayFeature("annotations", annotation_shape),
-                IntegerFeature("label", self.n_classes if self.one_hot else None)]
-
-        return self._features
 
     @property
     def n_classes(self):
@@ -1035,6 +1055,8 @@ class PatchesDataset(ImageDataset):
                 images = images[0]
                 annotations = annotations[0]
 
+            images = np.array(images)
+
             self._write_example(image=images, annotations=annotations, label=image_label)
 
     def _get_annotations(self, draw_offset, patches, locs, labels, ids):
@@ -1075,7 +1097,7 @@ class PatchesDataset(ImageDataset):
             left = np.clip(left, 0, self.image_shape[1])
             right = np.clip(right, 0, self.image_shape[1])
 
-            valid = (bottom - top > 1e-6) and (right - left > 1e-6)
+            valid = (bottom - top >= 1e-6) and (right - left >= 1e-6)
 
             new_labels.append((valid, label, _id, top, bottom, left, right))
 
@@ -1434,9 +1456,10 @@ class GridEmnistObjectDetectionDataset(EmnistObjectDetectionDataset, GridPatches
 
 if __name__ == "__main__":
     dset = VisualArithmeticDataset(
-        n_examples=18, reductions="sum", largest_digit=28,
-        min_digits=9, max_digits=9, image_shape=(48, 48),
-        max_overlap=98, colours="white blue", n_frames=10)
+        n_examples=18, reductions="sum", largest_digit=28, patch_speed=2, one_hot=False,
+        min_digits=9, max_digits=9, image_shape=(96, 96), tile_shape=(48, 48),
+        postprocessing="random", max_overlap=98, colours="white blue", n_frames=10,
+        digits="0 1".split(), example_range=None, n_patch_examples=None, patch_shape=(14, 14))
 
     sess = tf.Session()
     with sess.as_default():
