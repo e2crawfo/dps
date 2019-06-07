@@ -457,9 +457,7 @@ class TrainingLoop(object):
                     assert isinstance(hook, Hook)
                     hook.start_stage(self, updater, stage_idx)
 
-                render_step = cfg.eval_step if cfg.render_step is None else cfg.render_step
-
-                if render_step > 0 and cfg.render_hook is not None:
+                if cfg.render_hook is not None:
                     cfg.render_hook.start_stage(self, updater, stage_idx)
 
                 # Prevent memory leaks, no ops can be added to the graph after this point
@@ -561,9 +559,7 @@ class TrainingLoop(object):
                             self.data.record_values_for_stage(
                                 **{'_test_' + k: v for k, v in test_record.items()})
 
-                            render_step = cfg.eval_step if cfg.render_step is None else cfg.render_step
-
-                            if cfg.render_final and render_step > 0 and cfg.render_hook is not None:
+                            if cfg.render_final and cfg.render_hook is not None:
                                 print("Rendering...")
                                 cfg.render_hook(updater)
                                 print("Done rendering.")
@@ -649,14 +645,12 @@ class TrainingLoop(object):
             local_step = updater.n_updates
             global_step = self.global_step
 
-            render_step = cfg.eval_step if cfg.render_step is None else cfg.render_step
-            display_step = cfg.eval_step if cfg.display_step is None else cfg.display_step
+            render_step = cfg.eval_step if cfg.render_step <= 0 else cfg.render_step
+            display_step = cfg.eval_step if cfg.display_step <= 0 else cfg.display_step
 
             evaluate = (local_step % cfg.eval_step) == 0
             display = (local_step % display_step) == 0
-            render = (render_step > 0
-                      and (local_step % render_step) == 0
-                      and (local_step > 0 or cfg.render_first))
+            render = (local_step % render_step) == 0 and (local_step > 0 or cfg.render_first)
 
             if display or render or evaluate or local_step % 100 == 0:
                 print("\n{} Starting step {} {}\n".format("-" * 40, local_step, "-" * 40))
