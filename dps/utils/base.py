@@ -1451,6 +1451,128 @@ def nested_update(d, other):
             d[k] = v
 
 
+class HierDict(dict):
+    """ The main special property is that __setitem__ and __getitem__ create nested HierDicts
+        when the keys are strings containing the character `self._sep`. This is similar to Config's
+        behavior, but is intended to be more principled. Functions like `keys`, `values` and `items`
+        only regard the top level of keys. Also, keys can be set and retrieved using attributes.
+
+    """
+    _sep = ":"
+    _reserved_keys = None
+
+    def __init__(self, sep=':'):
+        self._sep = sep
+
+    def flatten(self):
+        return {k: self[k] for k in self._flat_keys()}
+
+    def _flat_keys(self):
+        stack = [iter(dict.items(self))]
+        key_prefix = ''
+
+        while stack:
+            new = next(stack[-1], None)
+            if new is None:
+                stack.pop()
+                key_prefix = key_prefix.rpartition(self._sep)[0]
+                continue
+
+            key, value = new
+            nested_key = key_prefix + self._sep + key
+
+            if isinstance(value, dict) and value:
+                stack.append(iter(value.items()))
+                key_prefix = nested_key
+            else:
+                yield nested_key[1:]
+
+    def __str__(self):
+        s = "{}{}\n".format(self.__class__.__name__, json.dumps(self, sort_keys=True, indent=4, default=str))
+        return s
+
+    def __repr__(self):
+        s = "{}{}\n".format(self.__class__.__name__, json.dumps(self, sort_keys=True, indent=4, default=repr))
+        return s
+
+    def __contains__(self, key):
+        try:
+            self[key]
+        except KeyError:
+            return False
+        else:
+            return True
+
+    def __getitem__(self, key):
+        if isinstance(key, str) and self._sep in key:
+            key, _, rest = key.partition(self._sep)
+            return super().__getitem__(key).__getitem__(rest)
+        else:
+            return super().__getitem__(key)
+
+    def __setitem__(self, key, value):
+        if isinstance(key, str) and self._sep in key:
+            key, _, rest = key.partition(self._sep)
+            try:
+                d = self[key]
+                if not isinstance(d, HierDict):
+                    raise Exception("HierDict about to access object {} with key {}.".format(d, key))
+            except KeyError:
+                d = self[key] = HierDict(self._sep)
+
+            d[rest] = value
+        else:
+            self._validate_key(key)
+            return super().__setitem__(key, value)
+
+    def __delitem__(self, key):
+        if isinstance(key, str) and self._sep in key:
+            key, _, rest = key.partition(self._sep)
+            return super().__getitem__(key).__delitem__(rest)
+        else:
+            return super().__delitem__(key)
+
+    def __getattr__(self, key):
+        if key in HierDict._reserved_keys:
+            return super().__getattr__(key)
+
+        try:
+            return self.__getitem__(key)
+        except KeyError:
+            raise AttributeError("Could not find attribute called `{}`.".format(key))
+
+    def __setattr__(self, key, value):
+        if key in HierDict._reserved_keys:
+            super().__setattr__(key, value)
+            return
+
+        self[key] = value
+
+    def _validate_key(self, key):
+        msg = "Bad key for config: `{}`.".format(key)
+        assert not key.startswith('_'), msg
+        assert key not in HierDict._reserved_keys, msg
+
+    def copy(self, _d=None, **kwargs):
+        """ Copy and update at the same time. """
+        new = copy.deepcopy(self)
+        if _d:
+            new.update(_d)
+        new.update(**kwargs)
+        return new
+
+    def update(self, _d=None, **kwargs):
+        if _d is not None:
+            for k, v in _d.items():
+                self[k] = v
+
+        for k, v in kwargs.items():
+            self[k] = v
+
+
+HierDict._reserved_keys = dir(HierDict)
+
+
 class Config(dict, MutableMapping):
     """ Note: multi-level setting will succeed more often with __setitem__ than __setattr__.
 
@@ -1634,7 +1756,6 @@ class Config(dict, MutableMapping):
 
     def _validate_key(self, key):
         msg = "Bad key for config: `{}`.".format(key)
-        assert isinstance(key, str), msg
         assert not key.startswith('_'), msg
         assert key not in self._reserved_keys, msg
 

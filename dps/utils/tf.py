@@ -19,7 +19,7 @@ from tensorflow.python.util import nest
 
 import dps
 from dps import cfg
-from dps.utils.base import Parameterized, Param, Config
+from dps.utils.base import Parameterized, Param, Config, HierDict
 from dps.utils.inspect_checkpoint import get_tensors_from_checkpoint_file  # noqa: F401
 
 
@@ -1906,7 +1906,8 @@ def masked_mean(array, mask, axis=None, keepdims=False):
 
 def build_gradient_train_op(
         loss, tvars, optimizer_spec, lr_schedule, max_grad_norm=None,
-        noise_schedule=None, global_step=None, record_prefix=None):
+        noise_schedule=None, global_step=None, record_prefix=None,
+        grad_n_record_groups=None):
     """ By default, `global_step` is None, so the global step is not incremented. """
 
     pure_gradients = tf.gradients(loss, tvars)
@@ -1935,10 +1936,57 @@ def build_gradient_train_op(
         train_op = optimizer.apply_gradients(grads_and_vars, global_step=global_step)
 
     pre = record_prefix + "_" if record_prefix else ""
+
     records = {
         pre + 'grad_norm_pure': tf.global_norm(pure_gradients),
         pre + 'grad_norm_processed': tf.global_norm(noisy_gradients),
     }
+
+    if grad_n_record_groups:
+        # Break variables into groups until we have at least `grad_n_record_groups`-many groups,
+        # and then record the RMSE for the gradient with respect to each group of variables.
+        groups = HierDict()
+        for v, g in zip(tvars, pure_gradients):
+            name = v.name.replace('/', ':').replace('-', '_')
+            groups[name] = g
+
+        sep = '/'
+
+        prefix_groups = {'': groups}
+        while len(prefix_groups) < grad_n_record_groups:
+            new_prefix_groups = {}
+
+            expanded = False
+
+            for p, g in prefix_groups.items():
+                if isinstance(g, HierDict):
+                    if len(g) == 1:
+                        new_prefix_groups[p] = next(iter(g.values()))
+                    else:
+                        for k, v in g.items():
+                            if p:
+                                new_prefix_groups[p + sep + k] = v
+                            else:
+                                new_prefix_groups[k] = v
+                    expanded = True
+                else:
+                    assert isinstance(g, tf.Tensor)
+                    new_prefix_groups[p] = g
+
+            prefix_groups = new_prefix_groups
+
+            if not expanded:
+                break
+
+        variable_lists = {
+            p: [g] if isinstance(g, tf.Tensor) else list(g.flatten().values())
+            for p, g in prefix_groups.items()}
+
+        normalized_gradient_norms = {
+            pre + 'normed_subnet_grad/' + p: tf.global_norm(g) / np.sqrt(int(sum(np.prod(v.shape) for v in g)))
+            for p, g in variable_lists.items()}
+
+        records.update(normalized_gradient_norms)
 
     return train_op, records
 
