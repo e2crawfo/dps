@@ -35,9 +35,10 @@ def training_loop(exp_name='', start_time=None):
 
 
 class EarlyStopHook:
-    def __init__(self, patience, maximize):
+    def __init__(self, patience, maximize, start):
         self.patience = patience
         self.maximize = maximize
+        self.start = start
         self.reset()
 
     def _check_trigger(self, sc):
@@ -57,8 +58,13 @@ class EarlyStopHook:
             self._best_record = record.copy()
 
         if self.patience > 0:
-            self._early_stopped = (
-                self._early_stopped or (step - self._best_step > self.patience))
+            stop_current = step - self._best_step > self.patience
+
+            if self.start is not None:
+                stop_current = stop_current and step > self.start
+
+            self._early_stopped = self._early_stopped or stop_current
+
         return new_best, self._early_stopped
 
     @property
@@ -386,8 +392,8 @@ class TrainingLoop(object):
 
                 # Maybe initialize network weights.
                 # Let a *path_specification* be one of three things:
-                #     1. An integer specifying a stage to load the best hypothesis from.
-                #     2. A string of format: "stage_idx,kind" where `stage_idx` specifies a stage to load from
+                #     1. An integer specifying a previous stage to load the best hypothesis from.
+                #     2. A string of format: "stage_idx,kind" where `stage_idx` specifies a previous stage to load from
                 #        and `kind` is either "final" or "best", specifying whether to load final or best
                 #        hypothesis from that stage.
                 #     3. A path on the filesystem that gives a prefix for a tensorflow checkpoint file to load from.
@@ -613,7 +619,8 @@ class TrainingLoop(object):
         else:
             raise Exception("Ambiguous stopping criteria specification: {}".format(stopping_criteria[1]))
 
-        early_stop = EarlyStopHook(patience=cfg.patience, maximize=self.maximize_sc)
+        early_stop = EarlyStopHook(
+            patience=cfg.patience, maximize=self.maximize_sc, start=cfg.get('patience_start', None))
 
         # Start stage
         print("\n" + "-" * 10 + " Training begins " + "-" * 10)
