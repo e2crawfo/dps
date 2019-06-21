@@ -532,6 +532,7 @@ class AtariVideoDataset(Dataset):
         labels = ["actions={}, rewards={}".format(a, r) for a, r in zip(actions, rewards)]
 
         fig, *_ = animate(images, labels=labels)
+        plt.subplots_adjust(top=0.95, bottom=0, left=0, right=1, wspace=0.05, hspace=0.1)
 
         plt.show()
         plt.close(fig)
@@ -570,8 +571,9 @@ if __name__ == "__main__":
     from dps.utils import Config
     config = Config(
         atari_game="IceHockey",
-        n_frames=4,
-        image_shape=(105, 80),
+        n_frames=8,
+        image_shape=None,
+        # image_shape=(105, 80),
         after_warp=False,
         episode_range=None,
         # episode_range=(-1, None),

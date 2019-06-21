@@ -720,7 +720,7 @@ class ImageDataset(Dataset):
             _new_annotations = [[] for i in range(n_frames)]
 
             for a, na in zip(annotations, _new_annotations):
-                for v, l, _id, top, bottom, left, right in a:
+                for valid, label, _id, top, bottom, left, right in a:
                     top = top - _top
                     bottom = bottom - _top
                     left = left - _left
@@ -731,11 +731,11 @@ class ImageDataset(Dataset):
                     left = np.clip(left, 0, self.tile_shape[1])
                     right = np.clip(right, 0, self.tile_shape[1])
 
-                    v = v and (bottom - top >= 1e-6) and (right - left >= 1e-6)
+                    valid = valid and (bottom - top >= 1e-6) and (right - left >= 1e-6)
 
                     # We append even if not valid, so that all frames in the video have the same
                     # number of annotations
-                    na.append((v, l, _id, top, bottom, left, right))
+                    na.append((valid, label, _id, top, bottom, left, right))
 
             new_annotations.append(_new_annotations)
 
@@ -868,6 +868,8 @@ class PatchesDataset(ImageDataset):
     patch_speed = Param(10, help="In pixels per frame.")
     annotation_scheme = Param("correct")
     bounce_patches = Param(True)
+    appearance_prob = Param(1.0)
+    disappearance_prob = Param(0.0)
 
     @property
     def n_classes(self):
@@ -946,6 +948,8 @@ class PatchesDataset(ImageDataset):
             _background_colours.append(color)
         background_colours = _background_colours
 
+        effective_n_frames = max(self.n_frames, 1)
+
         # --- start dataset creation ---
 
         for j in range(int(self.n_examples)):
@@ -973,14 +977,32 @@ class PatchesDataset(ImageDataset):
             locs, patches, patch_labels, image_label = self._sample_image()
             patch_ids = list(range(len(patches)))
 
+            visibility_state = [0] * len(locs)
+
             draw_offset = self.draw_offset
 
             images = []
             annotations = []
-            for frame in range(max(self.n_frames, 1)):
+            for frame in range(effective_n_frames):
                 image = base_image.copy()
 
-                for patch, loc in zip(patches, locs):
+                new_visibility_state = []
+                for v in visibility_state:
+                    advance = False
+                    if v == 0:
+                        advance = np.random.rand() < self.appearance_prob
+                    elif v == 1:
+                        advance = np.random.rand() < self.disappearance_prob
+
+                    v += int(advance)
+                    new_visibility_state.append(v)
+                visibility_state = new_visibility_state
+                visible = np.array(visibility_state) == 1
+
+                for vis, patch, loc in zip(visible, patches, locs):
+                    if not vis:
+                        continue
+
                     if patch.shape[:2] != (loc.h, loc.w):
                         patch = resize_image(patch, (loc.h, loc.w))
 
@@ -1043,7 +1065,7 @@ class PatchesDataset(ImageDataset):
 
                     image = _image
 
-                _annotations = self._get_annotations(draw_offset, patches, locs, patch_labels, patch_ids)
+                _annotations = self._get_annotations(draw_offset, patches, locs, patch_labels, patch_ids, visible)
 
                 images.append(image)
                 annotations.append(_annotations)
@@ -1059,12 +1081,12 @@ class PatchesDataset(ImageDataset):
 
             self._write_example(image=images, annotations=annotations, label=image_label)
 
-    def _get_annotations(self, draw_offset, patches, locs, labels, ids):
+    def _get_annotations(self, draw_offset, patches, locs, labels, ids, visible):
         if len(patches) == 0:
             return np.zeros((0, 7), dtype='f')
 
         new_labels = []
-        for patch, loc, label, _id in zip(patches, locs, labels, ids):
+        for patch, loc, label, _id, vis in zip(patches, locs, labels, ids, visible):
             nz_y, nz_x = np.nonzero(patch[:, :, -1])
 
             # In draw co-ordinates
@@ -1097,7 +1119,7 @@ class PatchesDataset(ImageDataset):
             left = np.clip(left, 0, self.image_shape[1])
             right = np.clip(right, 0, self.image_shape[1])
 
-            valid = (bottom - top >= 1e-6) and (right - left >= 1e-6)
+            valid = (bottom - top >= 1e-6) and (right - left >= 1e-6) and vis
 
             new_labels.append((valid, label, _id, top, bottom, left, right))
 
@@ -1457,9 +1479,10 @@ class GridEmnistObjectDetectionDataset(EmnistObjectDetectionDataset, GridPatches
 if __name__ == "__main__":
     dset = VisualArithmeticDataset(
         n_examples=18, reductions="sum", largest_digit=28, patch_speed=2, one_hot=False,
-        min_digits=9, max_digits=9, image_shape=(96, 96), tile_shape=(48, 48),
+        min_digits=9, max_digits=9, image_shape=(96, 96), tile_shape=(96, 96),# tile_shape=(48, 48),
         postprocessing="random", max_overlap=98, colours="white blue", n_frames=10,
-        digits="0 1".split(), example_range=None, n_patch_examples=None, patch_shape=(14, 14))
+        digits="0 1".split(), example_range=None, n_patch_examples=None, patch_shape=(14, 14),
+        appearance_prob=0.5, disappearance_prob=0.0)
 
     sess = tf.Session()
     with sess.as_default():
