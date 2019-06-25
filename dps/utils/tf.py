@@ -871,6 +871,7 @@ class ConvNet(ScopedFunction):
         final_n_channels = output_size
 
         print("--- Entering CNN(name={}) ---".format(self.name))
+
         volume = inp
         self.volumes = [volume]
 
@@ -1879,6 +1880,16 @@ def build_optimizer(spec, learning_rate):
         use_locking = bool(kwargs.get('use_locking', False))
         opt = tf.train.AdamOptimizer(
             learning_rate, beta1=beta1, beta2=beta2,
+            epsilon=epsilon, use_locking=use_locking)
+    elif kind == "weight_decay_adam":
+        decay = float(kwargs.get('decay', 0.0))
+        beta1 = float(kwargs.get('beta1', 0.9))
+        beta2 = float(kwargs.get('beta2', 0.999))
+        epsilon = float(kwargs.get('epsilon', 1e-08))
+        use_locking = bool(kwargs.get('use_locking', False))
+        opt = tf.contrib.opt.AdamWOptimizer(
+            decay, learning_rate,
+            beta1=beta1, beta2=beta2,
             epsilon=epsilon, use_locking=use_locking)
     elif kind == "rmsprop":
         decay = float(kwargs.get('decay', 0.9))
