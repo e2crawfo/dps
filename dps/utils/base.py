@@ -557,29 +557,45 @@ def find_git_directories():
     return sorted(version_controlled_dirs)
 
 
-def summarize_git_repo(directory, n_logs=10, diff=False):
+def summarize_git_repo(directory, n_logs=10, diff=False, terminal=False):
+    if terminal:
+        import colorama as crama
+    else:
+        crama = None
+
     s = []
     with cd(directory):
-        s.append("*" * 40)
-        s.append("git summary for directory {}\n".format(directory))
+        s.append("*" * 80)
 
-        s.append("log:\n")
-        log = _run_cmd('git log -n {}'.format(n_logs))
+        if terminal:
+            s.append("git summary for directory {}{}{}".format(crama.Fore.BLUE, directory, crama.Style.RESET_ALL))
+        else:
+            s.append("git summary for directory {}".format(directory))
+
+        def cmd_string(_cmd):
+            if terminal:
+                return "\n{}{}{}:\n".format(crama.Fore.YELLOW, cmd, crama.Style.RESET_ALL)
+            else:
+                return "\n{}:\n".format(cmd)
+
+        cmd = 'git log -n {} --decorate=short'.format(n_logs)
+        s.append(cmd_string(cmd))
+        log = _run_cmd(cmd).strip('\n')
         s.append(log)
 
-        s.append("\nstatus:\n")
-        status = _run_cmd('git status --porcelain')
+        cmd = 'git status --porcelain'
+        s.append(cmd_string(cmd))
+        status = _run_cmd(cmd).strip('\n')
         s.append(status)
 
-        s.append("\ndiff:\n")
         if diff:
-            diff = _run_cmd('git diff HEAD')
+            cmd = 'git diff HEAD'
+            s.append(cmd_string(cmd))
+            diff = _run_cmd(cmd).strip('\n')
             s.append(diff)
-        else:
-            s.append("<ommitted>")
 
-        s.append("\nEnd of git summary for directory {}".format(directory))
-        s.append("*" * 40 + "\n")
+        s.append('')
+
     return '\n'.join(s)
 
 
@@ -590,6 +606,16 @@ def summarize_git_repos(**summary_kwargs):
         git_summary = summarize_git_repo(git_dir, **summary_kwargs)
         s.append(git_summary)
     return '\n'.join(s)
+
+
+def git_summary_cl():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--n-logs', type=int, default=1)
+    parser.add_argument('--no-diff', action='store_true')
+    args = parser.parse_args()
+
+    print(summarize_git_repos(n_logs=args.n_logs, diff=not args.no_diff, terminal=True))
 
 
 def pip_freeze(**kwargs):

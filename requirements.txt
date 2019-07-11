@@ -1,5 +1,6 @@
 bs4
 -e git+https://github.com/e2crawfo/clify.git@master#egg=clify
+colorama
 dill==0.2.6
 dominate
 future
