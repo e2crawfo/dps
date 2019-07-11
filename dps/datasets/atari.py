@@ -430,7 +430,7 @@ class StaticAtariDataset(ReinforcementLearningDataset):
         scan_recorded_traces(directory, self._callback, self.max_episodes, self.episode_range)
 
 
-class AtariVideoDataset(Dataset):
+class AtariVideoDataset(ImageDataset):
     atari_game = Param()
     n_frames = Param()
     image_shape = Param()
@@ -449,7 +449,9 @@ class AtariVideoDataset(Dataset):
     @property
     def obs_shape(self):
         if self._obs_shape is None:
-            if self.image_shape is None:
+            if self.postprocessing:
+                self._obs_shape = (self.n_frames, *self.tile_shape, self.depth,)
+            elif self.image_shape is None:
                 image_shape = atari_image_shape(self.atari_game, self.after_warp)
                 self._obs_shape = (self.n_frames, *image_shape, self.depth,)
             else:
@@ -464,6 +466,7 @@ class AtariVideoDataset(Dataset):
                 ImageFeature("image", self.obs_shape),
                 ArrayFeature("action", (self.n_frames,), np.int32),
                 ArrayFeature("reward", (self.n_frames,), np.float32),
+                ArrayFeature("offset", (2,), dtype=np.int32),
             ]
 
         return self._features
@@ -522,6 +525,7 @@ class AtariVideoDataset(Dataset):
         directory = os.path.join(directory, sorted(matching_dirs)[-1])
         directory = os.path.join(directory, ("after" if self.after_warp else "before") + "_warp_recording")
         scan_recorded_traces(directory, self._per_ep_callback, self.max_episodes, self.episode_range)
+        print("Ended up with {} examples.".format(self._n_examples))
 
     def visualize(self, n=4):
         sample = self.sample(n)
@@ -570,7 +574,11 @@ if __name__ == "__main__":
 
     from dps.utils import Config
     config = Config(
-        atari_game="IceHockey",
+        # atari_game="DemonAttack",
+        atari_game="SpaceInvaders",
+        # atari_game="KungFuMaster",
+        # atari_game="Centipede",
+        # atari_game="StarGunner",
         n_frames=8,
         image_shape=None,
         # image_shape=(105, 80),
@@ -580,7 +588,8 @@ if __name__ == "__main__":
         max_episodes=100,
         max_examples=200,
         max_samples_per_ep=5,
-        frame_skip=1,
+        frame_skip=2,
+        # frame_skip=1,
         seed=200,
         N=16,
     )

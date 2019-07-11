@@ -602,7 +602,6 @@ class ImageDataset(Dataset):
     def _write_example(self, **kwargs):
         image = kwargs['image']
         annotation = kwargs.get("annotations", [])
-        label = kwargs.get("label", None)
         background = kwargs.get("background", None)
 
         if self.postprocessing == "tile":
@@ -616,7 +615,11 @@ class ImageDataset(Dataset):
             images, annotations, backgrounds, offsets = [image], [annotation], [background], [(0, 0)]
 
         for img, a, bg, o in zip_longest(images, annotations, backgrounds, offsets):
-            self._write_single_example(image=img, annotations=a, label=label, background=bg, offset=o)
+            # Capture any features other than what is referenced here explicitly
+            kwargs = kwargs.copy()
+
+            kwargs.update(image=img, annotations=a, background=bg, offset=o)
+            self._write_single_example(**kwargs)
 
     @staticmethod
     def tile_sample(image, tile_shape):
