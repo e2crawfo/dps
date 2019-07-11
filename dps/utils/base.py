@@ -34,6 +34,12 @@ import clify
 import dps
 
 
+def copy_update(d, **kwargs):
+    new = d.copy()
+    new.update(kwargs)
+    return new
+
+
 def resize_image(img, shape, mode=None, preserve_range=True, anti_aliasing=None):
     if anti_aliasing is None:
         anti_aliasing = any(ns < s for ns, s in zip(shape, img.shape))

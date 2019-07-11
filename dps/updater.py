@@ -207,6 +207,7 @@ class DataManager(Parameterized):
                                           .map(self.train_dataset.parse_example_batch))
 
             if self.prefetch_to_device:
+                # Suggested here: https://github.com/tensorflow/tensorflow/issues/18947#issuecomment-407778515
                 train_dataset = (train_dataset.apply(tf.data.experimental.copy_to_device('/gpu:0'))
                                               .prefetch(self.prefetch_buffer_size_in_batches))
                 # prefetch = tf.data.experimental.prefetch_to_device('/gpu:0', self.prefetch_buffer_size_in_batches)
@@ -232,8 +233,6 @@ class DataManager(Parameterized):
                 # Suggested here: https://github.com/tensorflow/tensorflow/issues/18947#issuecomment-407778515
                 val_dataset = (val_dataset.apply(tf.data.experimental.copy_to_device('/gpu:0'))
                                           .prefetch(self.prefetch_buffer_size_in_batches))
-                # prefetch = tf.data.experimental.prefetch_to_device('/gpu:0', self.prefetch_buffer_size_in_batches)
-                # val_dataset = val_dataset.apply(prefetch)
             else:
                 val_dataset = val_dataset.prefetch(self.prefetch_buffer_size_in_batches)
 
@@ -253,8 +252,6 @@ class DataManager(Parameterized):
             if self.prefetch_to_device:
                 test_dataset = (test_dataset.apply(tf.data.experimental.copy_to_device('/gpu:0'))
                                             .prefetch(self.prefetch_buffer_size_in_batches))
-                # prefetch = tf.data.experimental.prefetch_to_device('/gpu:0', self.prefetch_buffer_size_in_batches)
-                # test_dataset = test_dataset.apply(prefetch)
             else:
                 test_dataset = test_dataset.prefetch(self.prefetch_buffer_size_in_batches)
 
