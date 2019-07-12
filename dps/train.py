@@ -660,7 +660,7 @@ class TrainingLoop(object):
             render = (local_step % render_step) == 0 and (local_step > 0 or cfg.render_first)
 
             if display or render or evaluate or local_step % 100 == 0:
-                print("\n{} Starting step {} {}\n".format("-" * 40, local_step, "-" * 40))
+                print("\n{} Starting step {} {}\n".format("-" * 40, local_step, "-" * 40), flush=True)
 
             data_to_store = []
 
