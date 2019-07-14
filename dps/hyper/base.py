@@ -661,19 +661,19 @@ def run_experiment(
 
     if late_config is not None:
         config.update(late_config)
-
-    if cl_mode is not None:
-        if cl_mode == 'strict':
-            config.update_from_command_line(strict=True)
-        elif cl_mode == 'lax':
-            config.update_from_command_line(strict=False)
-        else:
-            raise Exception("Unknown value for cl_mode: {}".format(cl_mode))
-
     env_name = sanitize(config.get('env_name', ''))
     alg_name = sanitize(config.get("alg_name", ""))
 
     if args.duration == "local":
+
+        if cl_mode is not None:
+            if cl_mode == 'strict':
+                config.update_from_command_line(strict=True)
+            elif cl_mode == 'lax':
+                config.update_from_command_line(strict=False)
+            else:
+                raise Exception("Unknown value for cl_mode: {}".format(cl_mode))
+
         config.env_name = "env={}".format(env_name)
         config.exp_name = "alg={}".format(alg_name)
         with config:
@@ -690,6 +690,14 @@ def run_experiment(
     if 'config' in duration_args:
         config.update(duration_args['config'])
         del duration_args['config']
+
+    if cl_mode is not None:
+        if cl_mode == 'strict':
+            config.update_from_command_line(strict=True)
+        elif cl_mode == 'lax':
+            config.update_from_command_line(strict=False)
+        else:
+            raise Exception("Unknown value for cl_mode: {}".format(cl_mode))
 
     if 'distributions' in duration_args:
         distributions = duration_args['distributions']

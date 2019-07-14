@@ -234,7 +234,9 @@ class TrainingLoop(object):
             stack.enter_context(redirect_stream('stderr', self.data.path_for('stderr'), tee=cfg.tee))
 
             stack.enter_context(warnings.catch_warnings())
-            warnings.simplefilter('once')
+            warnings.simplefilter(cfg.warning_mode)
+
+            tf.logging.set_verbosity(tf.logging.ERROR)
 
             print("\n\n" + "=" * 80)
             self.timestamp("Starting training run (name={})".format(self.exp_name))

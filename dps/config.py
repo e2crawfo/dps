@@ -61,6 +61,7 @@ DEFAULT_CONFIG = SYSTEM_CONFIG.copy(
     n_procs=1,
     profile=False,
     copy_dataset_to="",
+    warning_mode='once',
 )
 
 
