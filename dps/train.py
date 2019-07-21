@@ -405,7 +405,7 @@ class TrainingLoop(object):
                 # variable scope names to path specifications, in which case all variables in each supplied
                 # variable scope name will be loaded from the path_specification paired with that scope name.
                 load_path = cfg.load_path
-                print("\nMaybe loading weights, `load_path`={} ...".format(load_path))
+                print("\nMaybe loading weights, load_path={} ...".format(load_path))
                 if load_path is not None:
                     if isinstance(load_path, str) or isinstance(load_path, int):
                         load_path = {"": load_path}
@@ -427,10 +427,10 @@ class TrainingLoop(object):
 
                         load_stage, kind = None, None
 
-                        if isinstance(path, int):
-                            load_stage = path
+                        try:
+                            load_stage = int(path)
                             kind = "best"
-                        elif isinstance(path, str):
+                        except (TypeError, ValueError):
                             try:
                                 split = path.split(',')
                                 load_stage = int(split[0])
@@ -452,9 +452,10 @@ class TrainingLoop(object):
 
                         path = os.path.realpath(path)
 
-                        saver.restore(tf.get_default_session(), path)
-
                         print("Loading var scope \"{}\" from {}.".format(var_scope, path))
+                        saver.restore(tf.get_default_session(), path)
+                        print("Done.")
+
                 else:
                     print("`load_path` is None, using a fresh set of weights.")
 
