@@ -28,6 +28,8 @@ DEFAULT_CONFIG = SYSTEM_CONFIG.copy(
     display_step=100,
     eval_step=100,
     checkpoint_step=5000,
+    weight_step=5000,
+    overwrite_weights=True,
     store_step_data=True,
 
     n_train=10000,
@@ -49,7 +51,7 @@ DEFAULT_CONFIG = SYSTEM_CONFIG.copy(
 
     stopping_criteria="",
 
-    tee=True,  # If True, output of training run (stdout and stderr) will is written to screen as
+    tee=True,  # If True, output of training run (stdout and stderr) is written to screen as
                # well as a file. If False, only written to the file.
 
     intra_op_parallelism_threads=0,

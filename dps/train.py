@@ -51,7 +51,15 @@ class EarlyStopHook:
             return sc < self._best_stopping_criteria
 
     def check(self, stopping_criteria, step, record):
+        if self.start is not None and step < self.start:
+            # Overwrite `stopping_criteria` if not enough steps have elapsed
+            if self.maximize:
+                stopping_criteria = -np.inf
+            else:
+                stopping_criteria = np.inf
+
         new_best = self._check_trigger(stopping_criteria)
+
         if new_best:
             self._best_stopping_criteria = stopping_criteria
             self._best_step = step
@@ -827,6 +835,26 @@ class TrainingLoop(object):
 
             if local_step > 0 and local_step % cfg.checkpoint_step == 0:
                 self.data.dump_data(local_step)
+
+            if local_step > 0 and local_step % cfg.weight_step == 0:
+                print("Storing checkpoint weights on step (l={}, g={}), "
+                      "constituting (l={}, g={}) experiences, "
+                      "with stopping criteria ({}) of {}.".format(
+                          local_step, global_step,
+                          updater.n_experiences, self.n_global_experiences,
+                          self.stopping_criteria_name, stopping_criteria))
+
+                if cfg.overwrite_weights:
+                    weight_path = self.data.path_for(
+                        'weights/checkpoint_stage_{}'.format(stage_idx))
+                else:
+                    weight_path = self.data.path_for(
+                        'weights/checkpoint_stage_{}_step_{}'.format(stage_idx, local_step))
+
+                weight_start = time.time()
+                weight_path = updater.save(tf.get_default_session(), weight_path)
+
+                print("Done saving weights, took {} seconds".format(time.time() - weight_start))
 
             self.global_step += 1
 
