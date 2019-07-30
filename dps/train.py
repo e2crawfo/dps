@@ -34,6 +34,10 @@ def training_loop(exp_name='', start_time=None):
     return loop.run(start_time)
 
 
+def _print(*args, flush=True, **kwargs):
+    print(*args, **kwargs, flush=flush)
+
+
 class EarlyStopHook:
     def __init__(self, patience, maximize, start):
         self.patience = patience
@@ -175,7 +179,7 @@ class TrainingLoop(object):
     def timestamp(self, message):
         if message:
             message = message + " "
-        print("{}({}, {:.2f}s elapsed, {:.2f}s remaining)".format(
+        _print("{}({}, {:.2f}s elapsed, {:.2f}s remaining)".format(
             message,
             datetime.datetime.now(),
             time.time() - self.start_time,
@@ -245,7 +249,7 @@ class TrainingLoop(object):
         with ExitStack() as stack:
             if cfg.pdb:
                 stack.enter_context(pdb_postmortem())
-                print("`pdb` is turned on, so forcing setting robust=False")
+                _print("`pdb` is turned on, so forcing setting robust=False")
                 cfg.robust = False
 
             stack.enter_context(redirect_stream('stdout', self.data.path_for('stdout'), tee=cfg.tee))
@@ -256,17 +260,17 @@ class TrainingLoop(object):
 
             tf.logging.set_verbosity(tf.logging.ERROR)
 
-            print("\n\n" + "=" * 80)
+            _print("\n\n" + "=" * 80)
             self.timestamp("Starting training run (name={})".format(self.exp_name))
 
-            print("\nDirectory for this training run is {}.".format(exp_dir.path))
+            _print("\nDirectory for this training run is {}.".format(exp_dir.path))
 
             stack.enter_context(NumpySeed(cfg.seed))
-            print("\nSet numpy random seed to {}.\n".format(cfg.seed))
+            _print("\nSet numpy random seed to {}.\n".format(cfg.seed))
 
             limiter = time_limit(
                 self.time_remaining, verbose=True,
-                timeout_callback=lambda limiter: print("Training run exceeded its time limit."))
+                timeout_callback=lambda limiter: _print("Training run exceeded its time limit."))
 
             self.mpi_context = MPI_MasterContext(cfg.get('n_procs', 1), exp_dir)
 
@@ -278,8 +282,8 @@ class TrainingLoop(object):
                 self.data.summarize()
 
                 self.timestamp("Done training run (name={})".format(self.exp_name))
-                print("=" * 80)
-                print("\n\n")
+                _print("=" * 80)
+                _print("\n\n")
 
                 frozen_data = self.data.freeze()
 
@@ -288,7 +292,7 @@ class TrainingLoop(object):
         return frozen_data
 
     def _run(self):
-        print(cfg.to_string())
+        _print(cfg.to_string())
 
         threshold_reached = True
         self.global_step = 0
@@ -305,9 +309,9 @@ class TrainingLoop(object):
             stage_idx = 0
 
         while self.curriculum_remaining:
-            print("\n" + "=" * 50)
+            _print("\n" + "=" * 50)
             self.timestamp("Starting stage {}".format(stage_idx))
-            print("\n")
+            _print("\n")
 
             if cfg.start_tensorboard:
                 if cfg.start_tensorboard == "local":
@@ -330,9 +334,9 @@ class TrainingLoop(object):
 
                 # --------------- Stage set-up -------------------
 
-                print("\n" + "-" * 10 + " Stage set-up " + "-" * 10)
+                _print("\n" + "-" * 10 + " Stage set-up " + "-" * 10)
 
-                print("\nNew config values for this stage are: \n{}\n".format(pformat(stage_config)))
+                _print("\nNew config values for this stage are: \n{}\n".format(pformat(stage_config)))
                 stack.enter_context(stage_config)
 
                 stage_prepare_func = cfg.get("stage_prepare_func", None)
@@ -357,22 +361,22 @@ class TrainingLoop(object):
                         session_config.gpu_options.allow_growth = gpu_allow_growth
 
                 if cfg.use_gpu:
-                    print("Using GPU if available.")
-                    print("Using {}% of GPU memory.".format(
+                    _print("Using GPU if available.")
+                    _print("Using {}% of GPU memory.".format(
                         100 * session_config.gpu_options.per_process_gpu_memory_fraction))
-                    print("Allowing growth of GPU memory: {}".format(session_config.gpu_options.allow_growth))
+                    _print("Allowing growth of GPU memory: {}".format(session_config.gpu_options.allow_growth))
 
                 graph = tf.Graph()
                 sess = tf.Session(graph=graph, config=session_config)
 
                 # This HAS to come after the creation of the session, otherwise
                 # it allocates all GPU memory if using the GPU.
-                print("\nAvailable devices: ")
+                _print("\nAvailable devices: ")
                 from tensorflow.python.client import device_lib
-                print(device_lib.list_local_devices())
+                _print(device_lib.list_local_devices())
 
                 if not cfg.use_gpu:
-                    print("Not using GPU.")
+                    _print("Not using GPU.")
                     stack.enter_context(graph.device("/cpu:0"))
 
                 stack.enter_context(graph.as_default())
@@ -381,7 +385,7 @@ class TrainingLoop(object):
 
                 # Set the seed for the stage. Notice we generate a new tf seed for each stage.
                 tf_seed = gen_seed()
-                print("Setting tensorflow seed to generated seed: {}\n".format(tf_seed))
+                _print("Setting tensorflow seed to generated seed: {}\n".format(tf_seed))
                 tf.set_random_seed(tf_seed)
 
                 # Set limit on CPU RAM for the stage
@@ -389,7 +393,7 @@ class TrainingLoop(object):
                 if cpu_ram_limit_mb is not None:
                     stack.enter_context(memory_limit(cfg.cpu_ram_limit_mb))
 
-                print("Building env...\n")
+                _print("Building env...\n")
 
                 # Maybe build env
                 if stage_idx == 0 or not cfg.preserve_env:
@@ -401,8 +405,8 @@ class TrainingLoop(object):
                 if hasattr(self.env, "print_memory_footprint"):
                     self.env.print_memory_footprint()
 
-                print("\nDone building env.\n")
-                print("Building updater...\n")
+                _print("\nDone building env.\n")
+                _print("Building updater...\n")
 
                 if cfg.n_procs > 1:
                     updater = cfg.get_updater(self.env, mpi_context=self.mpi_context)
@@ -413,7 +417,7 @@ class TrainingLoop(object):
                 updater.exp_dir = self.exp_dir
 
                 updater.build_graph()
-                print("\nDone building updater.\n")
+                _print("\nDone building updater.\n")
 
                 walk_variable_scopes(max_depth=cfg.variable_scope_depth)
 
@@ -430,7 +434,7 @@ class TrainingLoop(object):
                 # variable scope names to path specifications, in which case all variables in each supplied
                 # variable scope name will be loaded from the path_specification paired with that scope name.
                 load_path = cfg.load_path
-                print("\nMaybe loading weights, load_path={} ...".format(load_path))
+                _print("\nMaybe loading weights, load_path={} ...".format(load_path))
                 if load_path is not None:
                     if isinstance(load_path, str) or isinstance(load_path, int):
                         load_path = {"": load_path}
@@ -445,7 +449,7 @@ class TrainingLoop(object):
                     for var_scope, path in items:
                         variables = {v.name: v for v in trainable_variables(var_scope, for_opt=False)}
                         if not variables:
-                            print("No variables to load in scope {}.".format(str(var_scope)))
+                            _print("No variables to load in scope {}.".format(str(var_scope)))
                             continue
 
                         saver = tf.train.Saver(variables)
@@ -466,7 +470,7 @@ class TrainingLoop(object):
 
                         if load_stage is not None:
                             if stage_idx == 0:
-                                print(
+                                _print(
                                     "Not loading var scope \"{}\" from stage {}, "
                                     "currently in stage 0.".format(var_scope, load_stage))
                                 continue
@@ -477,12 +481,12 @@ class TrainingLoop(object):
 
                         path = os.path.realpath(path)
 
-                        print("Loading var scope \"{}\" from {}.".format(var_scope, path))
+                        _print("Loading var scope \"{}\" from {}.".format(var_scope, path))
                         saver.restore(tf.get_default_session(), path)
-                        print("Done.")
+                        _print("Done.")
 
                 else:
-                    print("`load_path` is None, using a fresh set of weights.")
+                    _print("`load_path` is None, using a fresh set of weights.")
 
                 tf_step = tf.train.get_or_create_global_step()
 
@@ -551,15 +555,15 @@ class TrainingLoop(object):
 
                     self.data.record_values_for_stage(reason=reason)
 
-                    print("\n" + "-" * 10 + " Optimization complete " + "-" * 10)
-                    print("\nReason: {}.\n".format(reason))
+                    _print("\n" + "-" * 10 + " Optimization complete " + "-" * 10)
+                    _print("\nReason: {}.\n".format(reason))
 
-                    print("Storing final weights...")
+                    _print("Storing final weights...")
                     weight_start = time.time()
                     final_path = self.data.path_for('weights/final_for_stage_{}'.format(stage_idx))
                     final_path = cfg.get('save_path', final_path)
                     final_path = updater.save(tf.get_default_session(), final_path)
-                    print("Done saving weights, took {} seconds".format(time.time() - weight_start))
+                    _print("Done saving weights, took {} seconds".format(time.time() - weight_start))
 
                     self.data.record_values_for_stage(final_path=final_path)
 
@@ -572,15 +576,15 @@ class TrainingLoop(object):
 
                     if do_final_testing:
                         try:
-                            print("\n" + "-" * 10 + " Final testing/rendering " + "-" * 10)
+                            _print("\n" + "-" * 10 + " Final testing/rendering " + "-" * 10)
 
-                            print("Best hypothesis for this stage was found on "
+                            _print("Best hypothesis for this stage was found on "
                                   "step (l: {best_local_step}, g: {best_global_step}) "
                                   "with stopping criteria ({sc_name}) of {best_stopping_criteria}.".format(
                                       sc_name=self.stopping_criteria_name, **self.data.current_stage_record))
 
                             best_path = self.data.current_stage_record['best_path']
-                            print("Loading best hypothesis for this stage "
+                            _print("Loading best hypothesis for this stage "
                                   "from file {}...".format(best_path))
                             updater.restore(sess, best_path)
 
@@ -599,34 +603,34 @@ class TrainingLoop(object):
                                 **{'_test_' + k: v for k, v in test_record.items()})
 
                             if cfg.render_final and cfg.render_hook is not None:
-                                print("Rendering...")
+                                _print("Rendering...")
                                 cfg.render_hook(updater)
-                                print("Done rendering.")
+                                _print("Done rendering.")
 
                         except BaseException:
-                            print("Exception occurred while performing final testing/rendering: ")
+                            _print("Exception occurred while performing final testing/rendering: ")
                             traceback.print_exc()
 
                     else:
-                        print("\n" + "-" * 10 + " Skipping final testing/rendering " + "-" * 10)
+                        _print("\n" + "-" * 10 + " Skipping final testing/rendering " + "-" * 10)
 
                     # --------------- Finish up the stage -------------------
 
                     self.data.end_stage(updater.n_updates)
 
-                    print("\n" + "-" * 10 + " Running end-of-stage hooks " + "-" * 10 + "\n")
+                    _print("\n" + "-" * 10 + " Running end-of-stage hooks " + "-" * 10 + "\n")
                     for hook in cfg.hooks:
                         hook.end_stage(self, stage_idx)
 
-                    print()
+                    _print()
                     self.timestamp("Done stage {}".format(stage_idx))
-                    print("=" * 50)
+                    _print("=" * 50)
 
                     stage_idx += 1
                     self.curriculum_complete.append(stage_config)
 
                 if not (threshold_reached or cfg.power_through):
-                    print("Failed to reach stopping criteria threshold on stage {} "
+                    _print("Failed to reach stopping criteria threshold on stage {} "
                           "of the curriculum, terminating.".format(stage_idx))
                     break
 
@@ -656,7 +660,7 @@ class TrainingLoop(object):
             patience=cfg.patience, maximize=self.maximize_sc, start=cfg.get('patience_start', None))
 
         # Start stage
-        print("\n" + "-" * 10 + " Training begins " + "-" * 10)
+        _print("\n" + "-" * 10 + " Training begins " + "-" * 10)
         self.timestamp("")
 
         total_hooks_time = 0.0
@@ -695,9 +699,9 @@ class TrainingLoop(object):
             render = (local_step % render_step) == 0 and (local_step > 0 or cfg.render_first)
 
             if display or render or evaluate or local_step % 100 == 0:
-                print("\n{} Starting step {} {}".format("-" * 40, local_step, "-" * 40), flush=True)
+                _print("\n{} Starting step {} {}".format("-" * 40, local_step, "-" * 40), flush=True)
                 self.timestamp("")
-                print("")
+                _print("")
 
             data_to_store = []
 
@@ -719,19 +723,19 @@ class TrainingLoop(object):
             hooks_duration = time.time() - hooks_start
 
             if render and cfg.render_hook is not None:
-                print("Rendering...")
+                _print("Rendering...")
                 start = time.time()
                 cfg.render_hook(updater)
-                print("Done rendering, took {} seconds.".format(time.time() - start))
+                _print("Done rendering, took {} seconds.".format(time.time() - start))
 
             # --------------- Possibly evaluate -------------------
 
             if evaluate:
-                print("Evaluating...")
+                _print("Evaluating...")
                 eval_start_time = time.time()
                 val_record = updater.evaluate(cfg.batch_size, mode="val")
                 eval_duration = time.time() - eval_start_time
-                print("Done evaluating, took {} seconds.".format(eval_duration))
+                _print("Done evaluating, took {} seconds.".format(eval_duration))
 
                 val_record["duration"] = eval_duration
 
@@ -742,14 +746,14 @@ class TrainingLoop(object):
                 data_to_store.append(("val", val_record))
 
                 if self.stopping_criteria_name not in val_record:
-                    print("Stopping criteria {} not in record returned "
+                    _print("Stopping criteria {} not in record returned "
                           "by updater, using 0.0.".format(self.stopping_criteria_name))
 
                 stopping_criteria = val_record.get(self.stopping_criteria_name, 0.0)
                 new_best, stop = early_stop.check(stopping_criteria, local_step, val_record)
 
                 if new_best:
-                    print("Storing new best on step (l={}, g={}), "
+                    _print("Storing new best on step (l={}, g={}), "
                           "constituting (l={}, g={}) experiences, "
                           "with stopping criteria ({}) of {}.".format(
                               local_step, global_step,
@@ -763,7 +767,7 @@ class TrainingLoop(object):
                     weight_start = time.time()
                     best_path = updater.save(tf.get_default_session(), best_path)
 
-                    print("Done saving weights, took {} seconds".format(time.time() - weight_start))
+                    _print("Done saving weights, took {} seconds".format(time.time() - weight_start))
 
                     self.data.record_values_for_stage(
                         best_path=best_path, best_global_step=global_step)
@@ -771,7 +775,7 @@ class TrainingLoop(object):
                         **{'best_' + k: v for k, v in early_stop.best.items()})
 
                 if stop:
-                    print("Early stopping triggered.")
+                    _print("Early stopping triggered.")
                     reason = "Early stopping triggered"
                     break
 
@@ -788,7 +792,7 @@ class TrainingLoop(object):
 
             if cfg.do_train:
                 if local_step % 100 == 0:
-                    print("Running update step {}...".format(local_step))
+                    _print("Running update step {}...".format(local_step))
 
                 update_start_time = time.time()
 
@@ -800,14 +804,14 @@ class TrainingLoop(object):
                 update_record["train"]["duration"] = update_duration
 
                 if local_step % 100 == 0:
-                    print("Done update step, took {} seconds.".format(update_duration))
+                    _print("Done update step, took {} seconds.".format(update_duration))
 
                 if local_step % 100 == 0:
                     start = time.time()
                     update_record["train"]["memory_physical_mb"] = memory_usage(physical=True)
                     update_record["train"]["memory_virtual_mb"] = memory_usage(physical=False)
                     update_record["train"]["memory_gpu_mb"] = gpu_memory_usage()
-                    print("Memory check duration: {}".format(time.time() - start))
+                    _print("Memory check duration: {}".format(time.time() - start))
 
                 if evaluate:
                     # Only store train data as often as we evaluate, otherwise it's just too much data
@@ -844,19 +848,19 @@ class TrainingLoop(object):
             )
 
             if display:
-                print("Displaying...")
+                _print("Displaying...")
                 self.data.summarize_current_stage(
                     local_step, global_step, updater.n_experiences, self.n_global_experiences)
-                print("\nMy PID: {}\n".format(os.getpid()))
-                print("Physical memory use: {}mb".format(memory_usage(physical=True)))
-                print("Virtual memory use: {}mb".format(memory_usage(physical=False)))
+                _print("\nMy PID: {}\n".format(os.getpid()))
+                _print("Physical memory use: {}mb".format(memory_usage(physical=True)))
+                _print("Virtual memory use: {}mb".format(memory_usage(physical=False)))
 
-                print("Avg time per update: {}s".format(time_per_update))
-                print("Avg time per eval: {}s".format(time_per_eval))
-                print("Avg time for hooks: {}s".format(time_per_hook))
+                _print("Avg time per update: {}s".format(time_per_update))
+                _print("Avg time per eval: {}s".format(time_per_eval))
+                _print("Avg time for hooks: {}s".format(time_per_hook))
 
                 if cfg.use_gpu:
-                    print(nvidia_smi())
+                    _print(nvidia_smi())
 
             if local_step > 0 and local_step % cfg.checkpoint_step == 0:
                 self.data.dump_data(local_step)
