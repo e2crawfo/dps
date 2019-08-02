@@ -563,7 +563,7 @@ def find_git_directories():
     return sorted(version_controlled_dirs)
 
 
-def summarize_git_repo(directory, n_logs=10, diff=False, terminal=False):
+def summarize_git_repo(directory, n_logs=10, diff=False, terminal=False, porcelain_status=True):
     if terminal:
         import colorama as crama
     else:
@@ -589,7 +589,8 @@ def summarize_git_repo(directory, n_logs=10, diff=False, terminal=False):
         log = _run_cmd(cmd).strip('\n')
         s.append(log)
 
-        cmd = 'git status --porcelain'
+        cmd = 'git status' + (' --porcelain' if porcelain_status else '')
+
         s.append(cmd_string(cmd))
         status = _run_cmd(cmd).strip('\n')
         s.append(status)
@@ -621,7 +622,7 @@ def git_summary_cl():
     parser.add_argument('--no-diff', action='store_true')
     args = parser.parse_args()
 
-    print(summarize_git_repos(n_logs=args.n_logs, diff=not args.no_diff, terminal=True))
+    print(summarize_git_repos(n_logs=args.n_logs, diff=not args.no_diff, terminal=True, porcelain_status=False))
 
 
 def pip_freeze(**kwargs):
