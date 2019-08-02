@@ -321,6 +321,12 @@ def square_subplots(N, n_repeats=1, repeat_horizontal=True, **kwargs):
     return fig, axes
 
 
+def grid_subplots(h, w, fig_unit_size):
+    fig, axes = plt.subplots(h, w, figsize=(w * fig_unit_size, h * fig_unit_size))
+    axes = np.array(axes).reshape(h, w)  # to fix the inconsistent way axes is return if h==1 or w==1
+    return fig, axes
+
+
 def nvidia_smi(robust=True):
     try:
         p = subprocess.run("nvidia-smi".split(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

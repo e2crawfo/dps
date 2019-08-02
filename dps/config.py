@@ -13,6 +13,13 @@ DEFAULT_CONFIG = SYSTEM_CONFIG.copy(
 
     curriculum=[{}],
 
+    initial_step=0,
+    initial_stage=0,
+
+    # "stage,step" - used outside of any stages, to set initial_stage and initial_step for that stage.
+    # provided for easy access from command line.
+    start_from="0,0",
+
     load_path=-1,  # path or stage to load variables from.
     do_train=True,
     preserve_env=False,

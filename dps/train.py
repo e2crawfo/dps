@@ -210,6 +210,14 @@ class TrainingLoop(object):
 
         self.curriculum = cfg.curriculum + []
 
+        if cfg.start_from is not None:
+            initial_stage, initial_step = cfg.start_from.split(',')
+            initial_stage = int(initial_stage)
+            initial_step = int(initial_step)
+
+            self.curriculum[initial_stage]['initial_step'] = initial_step
+            cfg.initial_stage = initial_stage
+
         if cfg.seed is None or cfg.seed < 0:
             cfg.seed = gen_seed()
 
@@ -286,7 +294,14 @@ class TrainingLoop(object):
         self.curriculum_remaining = self.curriculum + []
         self.curriculum_complete = []
 
-        stage_idx = 0
+        if cfg.initial_stage is not None:
+            if cfg.initial_stage >= 0:
+                stage_idx = cfg.initial_stage
+            else:
+                raise Exception("Initial stage cannot be negative: {}".format(cfg.initial_stage))
+        else:
+            stage_idx = 0
+
         while self.curriculum_remaining:
             print("\n" + "=" * 50)
             self.timestamp("Starting stage {}".format(stage_idx))
@@ -467,7 +482,11 @@ class TrainingLoop(object):
                 else:
                     print("`load_path` is None, using a fresh set of weights.")
 
-                tf.train.get_or_create_global_step()
+                tf_step = tf.train.get_or_create_global_step()
+
+                if cfg.initial_step is not None and cfg.initial_step > 0:
+                    sess.run(tf_step.assign(cfg.initial_step))
+
                 sess.run(uninitialized_variables_initializer())
                 sess.run(tf.assert_variables_initialized())
 
@@ -650,10 +669,14 @@ class TrainingLoop(object):
         time_per_update = 0.0
 
         n_eval = 0
+        if cfg.initial_step is not None and cfg.initial_step > 0:
+            local_step = cfg.initial_step
+        else:
+            local_step = 0
 
         while True:
             # Check whether to keep training
-            if updater.n_updates >= cfg.max_steps:
+            if local_step >= cfg.max_steps:
                 reason = "Maximum number of steps-per-stage reached"
                 break
 
@@ -661,7 +684,6 @@ class TrainingLoop(object):
                 reason = "Maximum number of experiences-per-stage reached"
                 break
 
-            local_step = updater.n_updates
             global_step = self.global_step
 
             render_step = cfg.eval_step if cfg.render_step <= 0 else cfg.render_step
@@ -673,6 +695,7 @@ class TrainingLoop(object):
 
             if display or render or evaluate or local_step % 100 == 0:
                 print("\n{} Starting step {} {}\n".format("-" * 40, local_step, "-" * 40), flush=True)
+                self.timestamp("")
 
             data_to_store = []
 
@@ -793,10 +816,10 @@ class TrainingLoop(object):
 
                 total_train_time += update_duration
                 time_per_example = total_train_time / updater.n_experiences
-                time_per_update = total_train_time / updater.n_updates
+                time_per_update = total_train_time / (local_step + 1)
 
                 total_hooks_time += hooks_duration
-                time_per_hook = total_hooks_time / updater.n_updates
+                time_per_hook = total_hooks_time / (local_step + 1)
 
             # --------------- Store data -------------------
 
@@ -856,6 +879,7 @@ class TrainingLoop(object):
 
                 print("Done saving weights, took {} seconds".format(time.time() - weight_start))
 
+            local_step += 1
             self.global_step += 1
 
             # If `do_train` is False, we do no training and evaluate

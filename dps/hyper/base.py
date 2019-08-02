@@ -85,7 +85,12 @@ class HyperSearch(object):
         -------
         A nested data structure containing the requested data.
 
-        {param-setting-key: {(repeat, seed): (pd.DataFrame(), [dict()], dict())}}
+        {param-setting-key: {(repeat, seed): (df, sc, md)
+
+        where:
+            df is a pandas DataFrame
+            sc is a list giving the config for each stage
+            md is a dictionary storing metadata
 
         """
         stage_data = defaultdict(dict)
