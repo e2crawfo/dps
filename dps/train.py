@@ -173,7 +173,9 @@ class TrainingLoop(object):
         self.curriculum_remaining[idx].update(stage_config)
 
     def timestamp(self, message):
-        print("{} ({}, {:.2f}s elapsed, {:.2f}s remaining)".format(
+        if message:
+            message = message + " "
+        print("{}({}, {:.2f}s elapsed, {:.2f}s remaining)".format(
             message,
             datetime.datetime.now(),
             time.time() - self.start_time,
@@ -656,7 +658,6 @@ class TrainingLoop(object):
         # Start stage
         print("\n" + "-" * 10 + " Training begins " + "-" * 10)
         self.timestamp("")
-        print()
 
         total_hooks_time = 0.0
         time_per_hook = 0.0
@@ -694,8 +695,9 @@ class TrainingLoop(object):
             render = (local_step % render_step) == 0 and (local_step > 0 or cfg.render_first)
 
             if display or render or evaluate or local_step % 100 == 0:
-                print("\n{} Starting step {} {}\n".format("-" * 40, local_step, "-" * 40), flush=True)
+                print("\n{} Starting step {} {}".format("-" * 40, local_step, "-" * 40), flush=True)
                 self.timestamp("")
+                print("")
 
             data_to_store = []
 
@@ -1119,7 +1121,7 @@ class _TrainingLoopData(FrozenTrainingLoopData):
     def summarize_current_stage(self, local_step, global_step, n_local_experiences, n_global_experiences):
         stage_idx = self.current_stage_record['stage_idx']
 
-        print("\n {} Summary: Stage={}, Step(l={}, g={}), Experiences(l={}, g={}) {}\n".format(
+        print("\n{} Summary: Stage={}, Step(l={}, g={}), Experiences(l={}, g={}) {}\n".format(
             "*" * 20, stage_idx, local_step, global_step,
             n_local_experiences, n_global_experiences, "*" * 20))
 
