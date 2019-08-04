@@ -579,13 +579,13 @@ class TrainingLoop(object):
                             _print("\n" + "-" * 10 + " Final testing/rendering " + "-" * 10)
 
                             _print("Best hypothesis for this stage was found on "
-                                  "step (l: {best_local_step}, g: {best_global_step}) "
-                                  "with stopping criteria ({sc_name}) of {best_stopping_criteria}.".format(
-                                      sc_name=self.stopping_criteria_name, **self.data.current_stage_record))
+                                   "step (l: {best_local_step}, g: {best_global_step}) "
+                                   "with stopping criteria ({sc_name}) of {best_stopping_criteria}.".format(
+                                       sc_name=self.stopping_criteria_name, **self.data.current_stage_record))
 
                             best_path = self.data.current_stage_record['best_path']
                             _print("Loading best hypothesis for this stage "
-                                  "from file {}...".format(best_path))
+                                   "from file {}...".format(best_path))
                             updater.restore(sess, best_path)
 
                             test_record = updater.evaluate(cfg.batch_size, mode="test")
@@ -631,7 +631,7 @@ class TrainingLoop(object):
 
                 if not (threshold_reached or cfg.power_through):
                     _print("Failed to reach stopping criteria threshold on stage {} "
-                          "of the curriculum, terminating.".format(stage_idx))
+                           "of the curriculum, terminating.".format(stage_idx))
                     break
 
     def _run_stage(self, stage_idx, updater):
@@ -747,18 +747,18 @@ class TrainingLoop(object):
 
                 if self.stopping_criteria_name not in val_record:
                     _print("Stopping criteria {} not in record returned "
-                          "by updater, using 0.0.".format(self.stopping_criteria_name))
+                           "by updater, using 0.0.".format(self.stopping_criteria_name))
 
                 stopping_criteria = val_record.get(self.stopping_criteria_name, 0.0)
                 new_best, stop = early_stop.check(stopping_criteria, local_step, val_record)
 
                 if new_best:
                     _print("Storing new best on step (l={}, g={}), "
-                          "constituting (l={}, g={}) experiences, "
-                          "with stopping criteria ({}) of {}.".format(
-                              local_step, global_step,
-                              updater.n_experiences, self.n_global_experiences,
-                              self.stopping_criteria_name, stopping_criteria))
+                           "constituting (l={}, g={}) experiences, "
+                           "with stopping criteria ({}) of {}.".format(
+                               local_step, global_step,
+                               updater.n_experiences, self.n_global_experiences,
+                               self.stopping_criteria_name, stopping_criteria))
 
                     best_path = self.data.path_for(
                         'weights/best_of_stage_{}'.format(stage_idx))
@@ -866,12 +866,12 @@ class TrainingLoop(object):
                 self.data.dump_data(local_step)
 
             if local_step > 0 and local_step % cfg.weight_step == 0:
-                print("Storing checkpoint weights on step (l={}, g={}), "
-                      "constituting (l={}, g={}) experiences, "
-                      "with stopping criteria ({}) of {}.".format(
-                          local_step, global_step,
-                          updater.n_experiences, self.n_global_experiences,
-                          self.stopping_criteria_name, stopping_criteria))
+                _print("Storing checkpoint weights on step (l={}, g={}), "
+                       "constituting (l={}, g={}) experiences, "
+                       "with stopping criteria ({}) of {}.".format(
+                           local_step, global_step,
+                           updater.n_experiences, self.n_global_experiences,
+                           self.stopping_criteria_name, stopping_criteria))
 
                 if cfg.overwrite_weights:
                     weight_path = self.data.path_for(
@@ -883,7 +883,7 @@ class TrainingLoop(object):
                 weight_start = time.time()
                 weight_path = updater.save(tf.get_default_session(), weight_path)
 
-                print("Done saving weights, took {} seconds".format(time.time() - weight_start))
+                _print("Done saving weights, took {} seconds".format(time.time() - weight_start))
 
             local_step += 1
             self.global_step += 1
