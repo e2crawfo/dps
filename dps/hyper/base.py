@@ -442,7 +442,7 @@ class _RunTrainingLoop(object):
         )
 
         with config:
-            # This is used for passing args 'local_experiments_dir', 'env_name', and 'max_time'
+            # This is used for passing args 'local_experiments_dir', 'backup_dir', 'env_name', and 'max_time'
             cfg.update_from_command_line(strict=False)
 
             from dps.train import training_loop

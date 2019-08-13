@@ -505,6 +505,7 @@ class ParallelSession(object):
 
         _ignore_gpu = "--ignore-gpu" if self.ignore_gpu else ""
         _copy_locally = "--copy-dataset-to={}".format(self.local_scratch_prefix) if self.copy_locally else ""
+        _backup_dir = self.job_dir.path_for('experiments')
 
         indices = ' '.join(str(i) for i in indices_for_step)
 
@@ -512,8 +513,8 @@ class ParallelSession(object):
             parallel_command = (
                 "cd {local_scratch} && "
                 "dps-hyper run {archive_root} {pattern} {indices} --max-time {python_seconds_per_step} "
-                "--local-experiments-dir {local_scratch} --env-name experiments --gpu-set={gpu_set} --ppn={ppn} "
-                "{_ignore_gpu} {_copy_locally} {output_to_files}"
+                "--local-experiments-dir {local_scratch} --backup-dir {_backup_dir} --env-name experiments "
+                "--gpu-set={gpu_set} --ppn={ppn} {_ignore_gpu} {_copy_locally} {output_to_files}"
             )
 
             bind = "--accel-bind=g" if self.gpu_set else ""
@@ -535,7 +536,7 @@ class ParallelSession(object):
                 workon +
                 "cd {local_scratch} && "
                 "dps-hyper run {archive_root} {pattern} {{}} --max-time {python_seconds_per_step} "
-                "--local-experiments-dir {local_scratch} --env-name experiments "
+                "--local-experiments-dir {local_scratch} -backup-dir {_backup_dir} --env-name experiments "
                 "--idx-in-node={{%}} --gpu-set={gpu_set} --ppn={ppn} {_ignore_gpu} {_copy_locally} {output_to_files}"
             )
 
@@ -549,7 +550,9 @@ class ParallelSession(object):
             )
 
         command = command.format(
-            indices=indices, _ignore_gpu=_ignore_gpu, _copy_locally=_copy_locally, **self.__dict__)
+            indices=indices, _ignore_gpu=_ignore_gpu,
+            _copy_locally=_copy_locally, _backup_dir=_backup_dir,
+            **self.__dict__)
 
         self.execute_command(
             command, frmt=False, robust=True,

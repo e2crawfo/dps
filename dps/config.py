@@ -28,6 +28,8 @@ DEFAULT_CONFIG = SYSTEM_CONFIG.copy(
     pdb=False,
     update_latest=True,
     variable_scope_depth=3,
+    backup_dir=None,
+    backup_step=5000,
 
     patience=np.inf,
 

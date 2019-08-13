@@ -561,55 +561,6 @@ def sha_cache(directory='.cache', recurse=False, verbose=False, exclude_kwargs=N
     return decorator
 
 
-def sha_cache_call(func, args, kwargs, directory, key, recurse=False, verbose=False):
-    """ Useful when we want to cache results of function based on something other than function args.
-
-        Rather than a decorator, this is more of a use-once function, i.e. to wrap a particular function call,
-        rather than all calls to a function. But to implement this using existing sha_cache, one could always just
-        define a new function that additionally takes the other thing as input, and then just ignores it...
-
-    """
-    os.makedirs(directory, exist_ok=True)
-
-    def _print(s, verbose=verbose):
-        if verbose:
-            print("sha_cache: {}" .format(s))
-
-    if isinstance(key, dict):
-        key_hash = get_param_hash(key)
-    else:
-        key_hash = hashlib.sha1(str(key).encode()).hexdigest()
-
-    filename = os.path.join(directory, "{}_{}.cache".format(func.__name__, key_hash))
-    key_filename = os.path.join(directory, "{}_{}.key".format(func.__name__, key_hash))
-
-    loaded = False
-    try:
-        if not CLEAR_CACHE:
-            _print("Attempting to load...")
-            with open(filename, 'rb') as f:
-                value = dill.load(f)
-            loaded = True
-            _print("Loaded successfully.")
-    except FileNotFoundError:
-        _print("File not found.")
-        pass
-    finally:
-        if not loaded:
-            _print("Calling function...")
-            value = func(*args, **kwargs)
-
-            _print("Saving results...")
-
-            with open(filename, 'wb') as f:
-                dill.dump(value, f, protocol=dill.HIGHEST_PROTOCOL, recurse=recurse)
-
-            with open(key_filename, 'w') as f:
-                f.write(pformat(key))
-
-    return value
-
-
 def _run_cmd(cmd):
     if isinstance(cmd, str):
         cmd = cmd.split()

@@ -21,7 +21,7 @@ from dps import cfg
 from dps.utils import (
     gen_seed, time_limit, Alarm, memory_usage, gpu_memory_usage, ExperimentStore,
     ExperimentDirectory, nvidia_smi, memory_limit, Config, ClearConfig, redirect_stream,
-    NumpySeed, restart_tensorboard, pdb_postmortem
+    NumpySeed, restart_tensorboard, pdb_postmortem, execute_command
 )
 from dps.utils.tf import (
     uninitialized_variables_initializer, trainable_variables, walk_variable_scopes
@@ -694,9 +694,12 @@ class TrainingLoop(object):
             render_step = cfg.eval_step if cfg.render_step <= 0 else cfg.render_step
             display_step = cfg.eval_step if cfg.display_step <= 0 else cfg.display_step
 
-            evaluate = (local_step % cfg.eval_step) == 0
-            display = (local_step % display_step) == 0
-            render = (local_step % render_step) == 0 and (local_step > 0 or cfg.render_first)
+            evaluate = local_step % cfg.eval_step == 0
+            display = local_step % display_step == 0
+            render = local_step % render_step == 0 and (local_step > 0 or cfg.render_first)
+            checkpoint = local_step % cfg.checkpoint_step == 0 and local_step > 0
+            save_weights = local_step % cfg.weight_step == 0 and local_step > 0
+            backup = local_step % cfg.backup_step == 0 and local_step > 0 and cfg.backup_dir
 
             if display or render or evaluate or local_step % 100 == 0:
                 _print("\n{} Starting step {} {}".format("-" * 40, local_step, "-" * 40), flush=True)
@@ -862,10 +865,10 @@ class TrainingLoop(object):
                 if cfg.use_gpu:
                     _print(nvidia_smi())
 
-            if local_step > 0 and local_step % cfg.checkpoint_step == 0:
+            if checkpoint:
                 self.data.dump_data(local_step)
 
-            if local_step > 0 and local_step % cfg.weight_step == 0:
+            if save_weights:
                 _print("Storing checkpoint weights on step (l={}, g={}), "
                        "constituting (l={}, g={}) experiences, "
                        "with stopping criteria ({}) of {}.".format(
@@ -884,6 +887,16 @@ class TrainingLoop(object):
                 weight_path = updater.save(tf.get_default_session(), weight_path)
 
                 _print("Done saving weights, took {} seconds".format(time.time() - weight_start))
+
+            if backup:
+                _print("Backing up experiment directory.")
+                _print("src: {}".format(self.exp_dir.path))
+                _print("dest: {}".format(cfg.backup_dir))
+
+                command = "rsync -avz --timeout=300 {src} {dest}".format(
+                    src=self.exp_dir.path, dest=cfg.backup_dir,
+                )
+                execute_command(command, output="loud", robust=True)
 
             local_step += 1
             self.global_step += 1
