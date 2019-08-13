@@ -1,5 +1,6 @@
 from pprint import pformat
 from contextlib import contextmanager
+import progressbar
 import numpy as np
 import signal
 import time
@@ -29,6 +30,7 @@ import matplotlib.pyplot as plt
 from matplotlib import animation
 import imageio
 from skimage.transform import resize
+from future.utils import raise_with_traceback
 
 import clify
 import dps
@@ -497,20 +499,39 @@ def set_clear_cache(value):
     CLEAR_CACHE = value
 
 
-def sha_cache(directory, recurse=False, verbose=False):
+def sha_cache(directory='.cache', recurse=False, verbose=False, exclude_kwargs=None):
+    """
+
+    Parameters
+    ----------
+    exclude_kwargs: str or list of str, optional
+        List of kwarg names to exclude from the process of creating the caching key.
+
+    """
     os.makedirs(directory, exist_ok=True)
 
     def _print(s, verbose=verbose):
         if verbose:
             print("sha_cache: {}" .format(s))
 
+    if isinstance(exclude_kwargs, str):
+        exclude_kwargs = exclude_kwargs.split()
+
     def decorator(func):
         sig = inspect.signature(func)
 
         def new_f(*args, **kwargs):
             bound_args = sig.bind(*args, **kwargs)
-            param_hash = get_param_hash(bound_args.arguments)
+            params = dict(bound_args.arguments).copy()
+            params_for_hash = params.copy()
+
+            if exclude_kwargs is not None:
+                for kwarg in exclude_kwargs:
+                    del params_for_hash[kwarg]
+
+            param_hash = get_param_hash(params_for_hash)
             filename = os.path.join(directory, "{}_{}.cache".format(func.__name__, param_hash))
+            params_filename = os.path.join(directory, "{}_{}.params".format(func.__name__, param_hash))
 
             loaded = False
             try:
@@ -526,14 +547,67 @@ def sha_cache(directory, recurse=False, verbose=False):
             finally:
                 if not loaded:
                     _print("Calling function...")
-                    value = func(**bound_args.arguments)
+                    value = func(**params)
 
                     _print("Saving results...")
+
                     with open(filename, 'wb') as f:
                         dill.dump(value, f, protocol=dill.HIGHEST_PROTOCOL, recurse=recurse)
+
+                    with open(params_filename, 'w') as f:
+                        f.write(pformat(params_for_hash))
             return value
         return new_f
     return decorator
+
+
+def sha_cache_call(func, args, kwargs, directory, key, recurse=False, verbose=False):
+    """ Useful when we want to cache results of function based on something other than function args.
+
+        Rather than a decorator, this is more of a use-once function, i.e. to wrap a particular function call,
+        rather than all calls to a function. But to implement this using existing sha_cache, one could always just
+        define a new function that additionally takes the other thing as input, and then just ignores it...
+
+    """
+    os.makedirs(directory, exist_ok=True)
+
+    def _print(s, verbose=verbose):
+        if verbose:
+            print("sha_cache: {}" .format(s))
+
+    if isinstance(key, dict):
+        key_hash = get_param_hash(key)
+    else:
+        key_hash = hashlib.sha1(str(key).encode()).hexdigest()
+
+    filename = os.path.join(directory, "{}_{}.cache".format(func.__name__, key_hash))
+    key_filename = os.path.join(directory, "{}_{}.key".format(func.__name__, key_hash))
+
+    loaded = False
+    try:
+        if not CLEAR_CACHE:
+            _print("Attempting to load...")
+            with open(filename, 'rb') as f:
+                value = dill.load(f)
+            loaded = True
+            _print("Loaded successfully.")
+    except FileNotFoundError:
+        _print("File not found.")
+        pass
+    finally:
+        if not loaded:
+            _print("Calling function...")
+            value = func(*args, **kwargs)
+
+            _print("Saving results...")
+
+            with open(filename, 'wb') as f:
+                dill.dump(value, f, protocol=dill.HIGHEST_PROTOCOL, recurse=recurse)
+
+            with open(key_filename, 'w') as f:
+                f.write(pformat(key))
+
+    return value
 
 
 def _run_cmd(cmd):
@@ -2119,3 +2193,115 @@ def test_map_structure():
     result = map_structure(lambda *x: None, a, b, is_leaf=lambda x: isinstance(x, int))
     assert tuple(result["a"]) == (None, None)
     assert result["b"] is None
+
+
+def execute_command(
+        command, shell=True, max_seconds=None, progress=False, robust=False, output=None):
+    """ Uses `subprocess` to execute `command`. Has a few added bells and whistles.
+
+    if command returns non-zero exit status:
+        if robust:
+            returns as normal
+        else:
+            raise CalledProcessError
+
+    Parameters
+    ----------
+    command: str
+        The command to execute.
+
+
+    Returns
+    -------
+    returncode, stdout, stderr
+
+    """
+    p = None
+    try:
+        assert isinstance(command, str)
+
+        if output == "loud":
+            print("\nExecuting command: " + (">" * 40) + "\n")
+            print(command)
+
+        if not shell:
+            command = command.split()
+
+        stdout = None if output == "loud" else subprocess.PIPE
+        stderr = None if output == "loud" else subprocess.PIPE
+
+        start = time.time()
+
+        sys.stdout.flush()
+        sys.stderr.flush()
+
+        p = subprocess.Popen(command, shell=shell, universal_newlines=True,
+                             stdout=stdout, stderr=stderr)
+
+        progress_bar = None
+        if progress:
+            widgets = ['[', progressbar.Timer(), '] ',
+                       '(', progressbar.ETA(), ') ',
+                       progressbar.Bar()]
+            _max_value = max_seconds or progressbar.UnknownLength
+            progress_bar = progressbar.ProgressBar(
+                widgets=widgets, max_value=_max_value, redirect_stdout=True)
+
+        interval_length = 1
+        while True:
+            try:
+                p.wait(interval_length)
+            except subprocess.TimeoutExpired:
+                if progress_bar is not None:
+                    progress_bar.update(min(int(time.time() - start), max_seconds))
+
+            if p.returncode is not None:
+                break
+
+        if progress_bar is not None:
+            progress_bar.finish()
+
+        if output == "loud":
+            print("\nCommand took {} seconds.\n".format(time.time() - start))
+
+        _stdout = "" if p.stdout is None else p.stdout.read()
+        _stderr = "" if p.stderr is None else p.stderr.read()
+
+        if p.returncode != 0:
+            if isinstance(command, list):
+                command = ' '.join(command)
+
+            print("The following command returned with non-zero exit code "
+                  "{}:\n    {}".format(p.returncode, command))
+
+            if output is None or (output == "quiet" and not robust):
+                print("\n" + "-" * 20 + " stdout " + "-" * 20 + "\n")
+                print(_stdout)
+
+                print("\n" + "-" * 20 + " stderr " + "-" * 20 + "\n")
+                print(_stderr)
+
+            if robust:
+                return p.returncode, _stdout, _stderr
+            else:
+                raise subprocess.CalledProcessError(p.returncode, command, _stdout, _stderr)
+
+        return p.returncode, _stdout, _stderr
+
+    except BaseException as e:
+        if p is not None:
+            p.terminate()
+            p.kill()
+        if progress_bar is not None:
+            progress_bar.finish()
+        raise_with_traceback(e)
+
+
+def ssh_execute(command, host, ssh_options=None, **kwargs):
+    ssh_options = ssh_options or {}
+    if host == ":":
+        cmd = command
+    else:
+        cmd = "ssh {ssh_options} -T {host} \"{command}\"".format(
+            ssh_options=ssh_options, host=host, command=command)
+    return execute_command(cmd, **kwargs)
