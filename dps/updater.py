@@ -226,7 +226,8 @@ class DataManager(Parameterized):
         if self.val_dataset is not None:
             val_dataset = tf.data.TFRecordDataset(self.val_dataset.filename)
 
-            val_dataset = (val_dataset.batch(self.batch_size)
+            val_dataset = (val_dataset.shuffle(self.shuffle_buffer_size)
+                                      .batch(self.batch_size)
                                       .map(self.val_dataset.parse_example_batch))
 
             if self.prefetch_to_device:
@@ -246,7 +247,8 @@ class DataManager(Parameterized):
         if self.test_dataset is not None:
             test_dataset = tf.data.TFRecordDataset(self.test_dataset.filename)
 
-            test_dataset = (test_dataset.batch(self.batch_size)
+            test_dataset = (test_dataset.shuffle(self.shuffle_buffer_size)
+                                        .batch(self.batch_size)
                                         .map(self.test_dataset.parse_example_batch))
 
             if self.prefetch_to_device:
