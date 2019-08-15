@@ -97,7 +97,7 @@ class ParallelSession(object):
             parallel_exe=None, kind="parallel", host_pool=None, load_avg_threshold=8., min_hosts=None,
             max_hosts=1, env_vars=None, output_to_files=True, n_retries=0, gpu_set="", copy_venv="",
             python_startup=False, step_time_limit=None, ignore_gpu=False, ssh_options=None, loud_output=True,
-            rsync_verbosity=0, copy_locally=False):
+            rsync_verbosity=0, copy_locally=True):
 
         args = locals().copy()
         del args['self']
