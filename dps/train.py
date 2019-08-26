@@ -216,7 +216,7 @@ class TrainingLoop(object):
 
         self.curriculum = cfg.curriculum + []
 
-        if cfg.start_from is not None:
+        if cfg.start_from:
             initial_stage, initial_step = cfg.start_from.split(',')
             initial_stage = int(initial_stage)
             initial_step = int(initial_step)
@@ -305,6 +305,7 @@ class TrainingLoop(object):
                 stage_idx = cfg.initial_stage
             else:
                 raise Exception("Initial stage cannot be negative: {}".format(cfg.initial_stage))
+            self.curriculum_remaining = self.curriculum_remaining[stage_idx:]
         else:
             stage_idx = 0
 
@@ -932,7 +933,9 @@ class FrozenTrainingLoopData(ExperimentDirectory):
         return self.path_for(local_path)
 
     def step_data(self, mode, stage_slice=None):
-        indices = range(self.n_stages)
+        stage_dirs = sorted(os.listdir(self.path_for('data/{}'.format(mode))))
+        indices = [int(s[5:]) for s in stage_dirs]
+
         if stage_slice is None:
             pass
         elif isinstance(stage_slice, int):

@@ -36,6 +36,14 @@ import clify
 import dps
 
 
+def atleast_nd(array, n):
+    diff = n - len(array.shape)
+    if diff > 0:
+        s = (Ellipsis,) + (None,) * diff
+        array = array[s]
+    return array
+
+
 def copy_update(d, **kwargs):
     new = d.copy()
     new.update(kwargs)
@@ -574,16 +582,19 @@ def find_git_directories():
 
     version_controlled_dirs = set()
     for p in git_packages:
-        package = importlib.import_module(p)
-        directory = os.path.dirname(package.__file__)
+        try:
+            package = importlib.import_module(p)
+            directory = os.path.dirname(package.__file__)
 
-        # Check whether any ancestor directory contains a .git directory
-        while directory:
-            git_dir = os.path.join(directory, '.git')
-            if os.path.isdir(git_dir):
-                version_controlled_dirs.add(directory)
-                break
-            directory = os.path.dirname(directory)
+            # Check whether any ancestor directory contains a .git directory
+            while directory:
+                git_dir = os.path.join(directory, '.git')
+                if os.path.isdir(git_dir):
+                    version_controlled_dirs.add(directory)
+                    break
+                directory = os.path.dirname(directory)
+        except Exception:
+            pass
 
     return sorted(version_controlled_dirs)
 
@@ -635,8 +646,11 @@ def summarize_git_repos(**summary_kwargs):
     s = []
     git_dirs = find_git_directories()
     for git_dir in git_dirs:
-        git_summary = summarize_git_repo(git_dir, **summary_kwargs)
-        s.append(git_summary)
+        try:
+            git_summary = summarize_git_repo(git_dir, **summary_kwargs)
+            s.append(git_summary)
+        except Exception:
+            pass
     return '\n'.join(s)
 
 

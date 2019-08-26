@@ -7,6 +7,7 @@ import argparse
 from tabulate import tabulate
 import shutil
 import matplotlib.pyplot as plt
+import copy
 
 import tensorflow as tf
 try:
@@ -489,7 +490,7 @@ class ScopedFunction(Parameterized):
 
             self.initialized = True
 
-    def maybe_build_subnet(self, network_name, key=None, builder=None, builder_name=None):
+    def maybe_build_subnet(self, network_name, key=None, builder=None, builder_name=None, **builder_kwargs):
         existing = getattr(self, network_name, None)
 
         if existing is None:
@@ -506,7 +507,7 @@ class ScopedFunction(Parameterized):
                     raise AttributeError(
                         "No builder with name `{}` found for building subnet `{}`".format(builder_name, network_name))
 
-            network = builder(scope=network_name)
+            network = builder(scope=network_name, **builder_kwargs)
             setattr(self, network_name, network)
 
             if key is None:
@@ -890,6 +891,8 @@ class ConvNet(ScopedFunction):
 
 
 class GridConvNet(ConvNet):
+    layer_info = None
+
     def __init__(self, layers, n_grid_dims=2, scope=None, **kwargs):
         self.layers = layers
         self.n_grid_dims = n_grid_dims
@@ -897,7 +900,9 @@ class GridConvNet(ConvNet):
         super(ConvNet, self).__init__(scope)
 
     @staticmethod
-    def compute_receptive_field(ndim, layers):
+    def compute_receptive_field(img_shape, layers):
+        ndim = len(img_shape)
+        img_shape = tuple(int(i) for i in img_shape)
         j = np.array((1,)*ndim)
         r = np.array((1,)*ndim)
         receptive_fields = []
@@ -907,7 +912,20 @@ class GridConvNet(ConvNet):
             stride = np.array(layer['strides'])
             r = r + (kernel_size-1) * j
             j = j * stride
-            receptive_fields.append(dict(size=r, translation=j))
+
+            # scale wrt largest dimension
+            normed_j = np.array(j) / np.array(img_shape).max()
+            normed_r = np.array(r) / np.array(img_shape).max()
+
+            receptive_fields.append(
+                dict(
+                    rf_size=tuple(r),
+                    grid_cell_size=tuple(j),
+                    normed_rf_size=tuple(normed_r),
+                    normed_grid_cell_size=tuple(normed_j)
+                )
+            )
+
         return receptive_fields
 
     def _call(self, inp, output_size, is_training):
@@ -915,12 +933,12 @@ class GridConvNet(ConvNet):
         volume = inp
         self.volumes = [volume]
 
-        receptive_fields = self.compute_receptive_field(len(inp.shape)-2, self.layers)
+        receptive_fields = self.compute_receptive_field(inp.shape[1:-1], self.layers)
         print("Receptive fields for {} (GridConvNet)".format(self.name))
         pprint.pprint(receptive_fields)
 
-        grid_cell_size = receptive_fields[-1]["translation"][:self.n_grid_dims]
-        rf_size = receptive_fields[-1]["size"][:self.n_grid_dims]
+        grid_cell_size = np.array(receptive_fields[-1]["grid_cell_size"])[:self.n_grid_dims]
+        rf_size = np.array(receptive_fields[-1]["rf_size"])[:self.n_grid_dims]
         pre_padding = np.floor(rf_size / 2 - grid_cell_size / 2).astype('i')
         image_shape = np.array([int(i) for i in inp.shape[1:self.n_grid_dims+1]])
         n_grid_cells = np.ceil(image_shape / grid_cell_size).astype('i')
@@ -956,7 +974,65 @@ class GridConvNet(ConvNet):
             volume = self._apply_layer(volume, layer, i, final, is_training)
             self.volumes.append(volume)
 
+        if self.layer_info is None:
+            self.layer_info = copy.deepcopy(receptive_fields)
+            for li, v in zip(self.layer_info, self.volumes):
+                li['volume_size'] = tf_shape(v)[1:-1]
+                li['volume'] = v
+
         return volume, n_grid_cells, grid_cell_size
+
+
+class RecurrentGridConvNet(GridConvNet):
+    """ Operates on video rather than images. Apply a GridConvNet to each frame independently,
+        and integrate information over time by using a recurrent network, where each spatial location
+        has its own hidden state. The same recurrent network is used to update all spatial locations.
+
+    """
+    build_cell = Param()
+    bidirectional = Param()
+
+    forward_cell = None
+    backward_cell = None
+
+    def _call(self, inp, output_size, is_training):
+        final_n_channels = output_size
+        B, T, *rest = tf_shape(inp)
+        inp = tf.reshape(inp, (B*T, *rest))
+
+        processed, n_grid_cells, grid_cell_size = super()._call(inp, final_n_channels, is_training)
+
+        _, H, W, C = tf_shape(processed)
+        processed = tf.reshape(processed, (B, T, H, W, C))
+
+        if self.build_cell is None:
+            return processed, n_grid_cells, grid_cell_size
+
+        processed = tf.transpose(processed, (1, 0, 2, 3, 4))
+        processed = tf.reshape(processed, (T, B*H*W, C))
+
+        if self.forward_cell is None:
+            self.forward_cell = self.build_cell(n_hidden=final_n_channels, scope="forward_cell")
+
+        if self.bidirectional:
+            if self.backward_cell is None:
+                self.backward_cell = self.build_cell(n_hidden=final_n_channels, scope="backward_cell")
+
+            (fw_output, bw_output), final_state = bidirectional_dynamic_rnn(
+                self.forward_cell, self.backward_cell, processed,
+                initial_state_fw=self.forward_cell.zero_state(B*H*W, tf.float32),
+                initial_state_bw=self.backward_cell.zero_state(B*H*W, tf.float32),
+                parallel_iterations=1, swap_memory=False, time_major=True)
+            output = (fw_output + bw_output) / 2
+
+        else:
+            output, final_state = dynamic_rnn(
+                self.forward_cell, processed, initial_state=self.forward_cell.zero_state(B*H*W, tf.float32),
+                parallel_iterations=1, swap_memory=False, time_major=True)
+
+        output = tf.reshape(output, (T, B, H, W, C))
+        output = tf.transpose(output, (1, 0, 2, 3, 4))
+        return output, n_grid_cells, grid_cell_size
 
 
 class GridTransposeConvNet(GridConvNet):
@@ -1012,58 +1088,6 @@ class GridTransposeConvNet(GridConvNet):
         volume = volume[slices]
 
         return volume, n_grid_cells, grid_cell_size
-
-
-class RecurrentGridConvNet(GridConvNet):
-    """ Operates on video rather than images. Apply a GridConvNet to each frame independently,
-        and integrate information over time by using a recurrent network, where each spatial location
-        has its own hidden state. The same recurrent network is used to update all spatial locations.
-
-    """
-    build_cell = Param()
-    bidirectional = Param()
-
-    forward_cell = None
-    backward_cell = None
-
-    def _call(self, inp, output_size, is_training):
-        final_n_channels = output_size
-        B, T, *rest = tf_shape(inp)
-        inp = tf.reshape(inp, (B*T, *rest))
-
-        processed, n_grid_cells, grid_cell_size = super()._call(inp, final_n_channels, is_training)
-
-        _, H, W, C = tf_shape(processed)
-        processed = tf.reshape(processed, (B, T, H, W, C))
-
-        if self.build_cell is None:
-            return processed, n_grid_cells, grid_cell_size
-
-        processed = tf.transpose(processed, (1, 0, 2, 3, 4))
-        processed = tf.reshape(processed, (T, B*H*W, C))
-
-        if self.forward_cell is None:
-            self.forward_cell = self.build_cell(n_hidden=final_n_channels, scope="forward_cell")
-
-        if self.bidirectional:
-            if self.backward_cell is None:
-                self.backward_cell = self.build_cell(n_hidden=final_n_channels, scope="backward_cell")
-
-            (fw_output, bw_output), final_state = bidirectional_dynamic_rnn(
-                self.forward_cell, self.backward_cell, processed,
-                initial_state_fw=self.forward_cell.zero_state(B*H*W, tf.float32),
-                initial_state_bw=self.backward_cell.zero_state(B*H*W, tf.float32),
-                parallel_iterations=1, swap_memory=False, time_major=True)
-            output = (fw_output + bw_output) / 2
-
-        else:
-            output, final_state = dynamic_rnn(
-                self.forward_cell, processed, initial_state=self.forward_cell.zero_state(B*H*W, tf.float32),
-                parallel_iterations=1, swap_memory=False, time_major=True)
-
-        output = tf.reshape(output, (T, B, H, W, C))
-        output = tf.transpose(output, (1, 0, 2, 3, 4))
-        return output, n_grid_cells, grid_cell_size
 
 
 def pool_objects(op, objects, mask):

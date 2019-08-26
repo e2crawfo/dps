@@ -10,7 +10,7 @@ import abc
 from itertools import zip_longest
 
 from dps import cfg
-from dps.utils import Param, Parameterized, get_param_hash, NumpySeed, animate, resize_image
+from dps.utils import Param, Parameterized, get_param_hash, NumpySeed, animate, resize_image, atleast_nd
 from dps.datasets import (
     load_emnist, load_omniglot, omniglot_classes,
     load_backgrounds, background_names, hard_background_names
@@ -183,6 +183,10 @@ class VariableShapeArrayFeature(Feature):
 
     def get_write_features(self, data):
         data = np.array(data)
+
+        if not len(data):
+            data = atleast_nd(data, len(self.shape))
+
         assert data.ndim == len(self.shape)
         return {
             self.name + "/shape": _int64_feature(list(data.shape), is_list=True),
