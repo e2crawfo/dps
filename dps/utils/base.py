@@ -31,6 +31,7 @@ from matplotlib import animation
 import imageio
 from skimage.transform import resize
 from future.utils import raise_with_traceback
+import matplotlib.patches as patches
 
 import clify
 import dps
@@ -276,11 +277,30 @@ def prime_factors(n):
     return factors
 
 
+def annotate_with_rectangles(ax, annotations, colors=None, lw=1):
+    if colors is None:
+        colors = list(plt.get_cmap('Dark2').colors)
+
+    for valid, _, _id, t, b, l, r in annotations:
+        if not valid:
+            continue
+
+        h = b - t
+        w = r - l
+        color = colors[int(_id) % len(colors)]
+        rect = patches.Rectangle(
+            (l, t), w, h, clip_on=False, linewidth=lw, edgecolor=color, facecolor='none')
+        ax.add_patch(rect)
+
+
 def animate(
         images, *other_images, labels=None, interval=500,
-        path=None, square_grid=True, **kwargs):
-    """ Assumes `images` has shape (batch_size, n_frames, H, W, D) """
+        path=None, square_grid=True, annotations=None, **kwargs):
+    """ Assumes `images` has shape (batch_size, n_frames, H, W, D)
 
+    `annotations` only implemented for the first set of images.
+
+    """
     all_images = [images, *other_images]
     n_image_sets = len(all_images)
     B, T = images.shape[:2]
@@ -310,6 +330,17 @@ def animate(
         for i in range(B):
             for j in range(n_image_sets):
                 plots[i, j].set_array(np.squeeze(all_images[j][i, t]))
+
+                ax = axes[i, j]
+                for obj in ax.findobj(match=plt.Rectangle):
+                    try:
+                        obj.remove()
+                    except NotImplementedError:
+                        pass
+
+            if annotations is not None:
+                ax = axes[i, 0]
+                annotate_with_rectangles(ax, annotations[i][t])
 
     anim = animation.FuncAnimation(fig, func, frames=T, interval=interval)
 

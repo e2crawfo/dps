@@ -182,11 +182,7 @@ class VariableShapeArrayFeature(Feature):
         self.ndim = len(shape)
 
     def get_write_features(self, data):
-        data = np.array(data)
-
-        if not len(data):
-            data = atleast_nd(data, len(self.shape))
-
+        data = atleast_nd(np.array(data), len(self.shape))
         assert data.ndim == len(self.shape)
         return {
             self.name + "/shape": _int64_feature(list(data.shape), is_list=True),

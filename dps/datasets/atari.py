@@ -6,9 +6,11 @@ import tensorflow as tf
 import matplotlib.pyplot as plt
 from collections import defaultdict
 from pprint import pprint
+import cv2
+from scipy import optimize
 
 from dps import cfg
-from dps.datasets import Dataset, ImageDataset, ArrayFeature, ImageFeature
+from dps.datasets.base import ImageDataset, ArrayFeature, ImageFeature, VariableShapeArrayFeature
 from dps.utils import Param, resize_image, animate
 
 
@@ -430,6 +432,14 @@ class StaticAtariDataset(ReinforcementLearningDataset):
         scan_recorded_traces(directory, self._callback, self.max_episodes, self.episode_range)
 
 
+def variable_shape_array_to_list(vsa):
+    data = vsa['data']
+    shapes = vsa['shapes']
+    return [
+        d[[slice(None, _s) for _s in s]]
+        for d, s in zip(data, shapes)]
+
+
 class AtariVideoDataset(ImageDataset):
     atari_game = Param()
     n_frames = Param()
@@ -437,9 +447,18 @@ class AtariVideoDataset(ImageDataset):
     after_warp = Param()
     episode_range = Param()
     max_episodes = Param()
-    max_samples_per_ep = Param()
+    sample_density = Param()
     max_examples = Param()
     frame_skip = Param()
+    n_dilate = Param()
+    n_erode = Param()
+    filter_size = Param()
+    allowed_colors_for_annotations = Param()
+    distance_threshold = Param()
+    distance_ord = Param()
+    average_frames = Param()
+    crop = Param()
+    get_annotations = Param()
 
     depth = 3
     _n_examples = 0
@@ -451,38 +470,196 @@ class AtariVideoDataset(ImageDataset):
         if self._obs_shape is None:
             if self.postprocessing:
                 self._obs_shape = (self.n_frames, *self.tile_shape, self.depth,)
-            elif self.image_shape is None:
+            elif self.image_shape is not None:
+                self._obs_shape = (self.n_frames, *self.image_shape, self.depth,)
+            elif self.crop is not None:
+                t, b, l, r = self.crop
+                crop_shape = (b - t, r - l)
+                self._obs_shape = (self.n_frames, *crop_shape, self.depth,)
+            else:
                 image_shape = atari_image_shape(self.atari_game, self.after_warp)
                 self._obs_shape = (self.n_frames, *image_shape, self.depth,)
-            else:
-                self._obs_shape = (self.n_frames, *self.image_shape, self.depth,)
 
         return self._obs_shape
 
     @property
     def features(self):
         if self._features is None:
+            annotation_shape = (self.n_frames, -1, 7) if self.n_frames > 0 else (-1, 7)
             self._features = [
                 ImageFeature("image", self.obs_shape),
                 ArrayFeature("action", (self.n_frames,), np.int32),
                 ArrayFeature("reward", (self.n_frames,), np.float32),
                 ArrayFeature("offset", (2,), dtype=np.int32),
+                VariableShapeArrayFeature("annotations", annotation_shape),
             ]
 
         return self._features
+
+    def _get_annotations(self, video):
+
+        # --- get objects for each frame ---
+
+        colors = video.reshape(-1, 3)
+        unique_colors = np.unique(colors, axis=0)
+        unique_colors = [tuple(i) for i in unique_colors]
+        print(unique_colors)
+
+        try:
+            zero_idx = unique_colors.index((0, 0, 0))
+            del unique_colors[zero_idx]
+        except ValueError:
+            pass
+        unique_colors = np.array(unique_colors)
+
+        allowed_colors = self.allowed_colors_for_annotations
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (self.filter_size, self.filter_size))
+
+        annotations = [[] for image in video]
+
+        for image_idx, image in enumerate(video):
+
+            for color_idx, color in enumerate(unique_colors):
+                if allowed_colors is not None and color in allowed_colors:
+                    continue
+
+                mask = np.equal(image, color[None, None, :])
+                mask = np.equal(mask.sum(axis=2), 3)
+
+                mask = mask.astype('uint8')
+
+                if self.n_dilate:
+                    mask = cv2.dilate(mask, kernel, iterations=self.n_dilate)
+                if self.n_erode:
+                    mask = cv2.erode(mask, kernel, iterations=self.n_erode)
+
+                # plot processing steps
+                # print(color_idx)
+                # print(color)
+                # fig, axes = plt.subplots(1, 4, figsize=(4, 1))
+                # axes[0].imshow(mask)
+                # axes[1].imshow(mask_after_dilate)
+                # axes[2].imshow(mask_after_erode)
+                # axes[3].imshow(image)
+                # plt.show()
+
+                _, cc_labels = cv2.connectedComponents(mask)
+
+                for i in range(cc_labels.max()):
+                    y_locs, x_locs = np.nonzero(np.equal(cc_labels, i+1))
+
+                    top = min(y_locs) - 1
+                    bottom = max(y_locs)
+                    left = min(x_locs) - 1
+                    right = max(x_locs)
+
+                    annotations[image_idx].append((color_idx, top, bottom, left, right))
+
+        # --- compute object ids across frames ---
+
+        prev_ids = np.arange(len(annotations[0]))
+        next_id = np.amax(prev_ids, initial=0) + 1
+        ids = [0 for a in annotations]
+        ids[0] = prev_ids
+
+        def centroid(box):
+            t, b, l, r = box
+            return t + (b - t) / 2, l + (r - l) / 2
+
+        prev_centroids = np.array([centroid(box) for _, *box in annotations[0]])
+        prev_colors = np.array([c for c, *_ in annotations[0]]).astype('i')
+
+        nan_value = 10000.
+        F = len(annotations)
+
+        for f in range(1, F):
+            _annotations = annotations[f]
+            new_centroids = np.array([centroid(box) for _, *box in _annotations])
+            new_colors = np.array([c for c, *_ in _annotations]).astype('i')
+
+            n_new_objects = new_centroids.shape[0]
+
+            if not len(prev_ids):
+                # no objects on previous timestep
+                new_ids = np.arange(next_id, next_id+n_new_objects)
+                next_id += n_new_objects
+
+                ids[f] = new_ids
+
+                prev_centroids = new_centroids
+                prev_colors = new_colors
+                prev_ids = new_ids
+
+                continue
+
+            if not len(new_centroids):
+                # no objects on current timestep
+                ids[f] = new_ids = []
+
+                prev_centroids = new_centroids
+                prev_colors = new_colors
+                prev_ids = new_ids
+
+                continue
+
+            distances = np.linalg.norm(
+                new_centroids[:, None, :] - prev_centroids[None, :, :],
+                axis=2, ord=self.distance_ord)
+
+            distances[distances > self.distance_threshold] = nan_value
+
+            matching_colors = new_colors[:, None] == prev_colors[None, :]
+            distances += nan_value * (1 - matching_colors)
+
+            new_ids = np.zeros(n_new_objects)
+
+            row_indices, col_indices = optimize.linear_sum_assignment(distances)
+            row_indices = list(row_indices)
+
+            for j in range(n_new_objects):
+                match_found = False
+                if j in row_indices:
+                    pos = row_indices.index(j)
+                    col_idx = col_indices[pos]
+                    distance = distances[j, col_idx]
+                    if distance < nan_value:
+                        # found a match
+                        new_ids[j] = prev_ids[col_idx]
+                        match_found = True
+
+                if not match_found:
+                    new_ids[j] = next_id
+                    next_id += 1
+
+            ids[f] = new_ids
+
+            prev_centroids = new_centroids
+            prev_colors = new_colors
+            prev_ids = new_ids
+
+        # --- finalize annotations ---
+
+        max_annotations_per_frame = max(len(a) for a in annotations)
+
+        final_annotations = np.zeros((F, max_annotations_per_frame, 7), dtype='i')
+        for f, (_ids, _annotations) in enumerate(zip(ids, annotations)):
+            for i, (idx, a) in enumerate(zip(_ids, _annotations)):
+                _, top, bottom, left, right = a
+                final_annotations[f, i] = (1, 0, idx, top, bottom, left, right)
+
+        return final_annotations
 
     def _per_ep_callback(self, o, a, r):
         """ process one episode """
 
         episode_length = len(a)  # o is one step longer than a and r
 
-        frame_size = (self.n_frames - 1) * self.frame_skip + 1
-        max_start_idx = episode_length - frame_size + 1
+        n_frames_to_fetch = (self.n_frames - 1) * self.frame_skip + 1 + int(self.average_frames)
+        max_start_idx = episode_length - n_frames_to_fetch + 1
 
-        if max_start_idx <= self.max_samples_per_ep:
-            indices = np.arange(max_start_idx)
-        else:
-            indices = np.random.choice(max_start_idx, size=self.max_samples_per_ep, replace=False)
+        n_samples = int(self.sample_density * max_start_idx)
+
+        indices = np.random.choice(max_start_idx, size=n_samples, replace=False)
 
         step = self.frame_skip
 
@@ -490,14 +667,28 @@ class AtariVideoDataset(ImageDataset):
             if self._n_examples % 100 == 0:
                 print("Processing example {}".format(self._n_examples))
 
-            end = start + frame_size
+            end = start + n_frames_to_fetch
 
-            _o = np.array(o[start:end:step])
-            _a = np.array(a[start:end:step]).flatten()
-            _r = np.array(r[start:end:step]).flatten()
+            if self.average_frames:
+                _o = np.array(o[start:end])
+                _o = np.maximum(_o[:-1], _o[1:])
+                # _o = (_o[:-1] + _o[1:]) / 2
+                _o = _o[::step].astype(o[0].dtype)
+
+                _a = np.array(a[start+1:end:step]).flatten()
+                _r = np.array(r[start+1:end:step]).flatten()
+            else:
+                _o = np.array(o[start:end:step])
+                _a = np.array(a[start:end:step]).flatten()
+                _r = np.array(r[start:end:step]).flatten()
+
             assert len(_o) == self.n_frames
             assert len(_a) == self.n_frames
             assert len(_r) == self.n_frames
+
+            if self.crop is not None:
+                top, bot, left, right = self.crop
+                _o = _o[:, top:bot, left:right, ...]
 
             if self.image_shape is not None and _o.shape[1:3] != self.image_shape:
                 _o = np.array([resize_image(img, self.image_shape) for img in _o])
@@ -505,7 +696,12 @@ class AtariVideoDataset(ImageDataset):
             if self.after_warp:
                 _o = np.tile(_o, (1, 1, 1, 3))
 
-            self._write_example(image=_o, action=_a, reward=_r)
+            if self.get_annotations:
+                annotations = self._get_annotations(_o)
+            else:
+                annotations = []
+
+            self._write_example(image=_o, action=_a, reward=_r, annotations=annotations)
             self._n_examples += 1
 
             if self._n_examples >= self.max_examples:
@@ -532,10 +728,11 @@ class AtariVideoDataset(ImageDataset):
         images = sample["image"]
         actions = sample["action"]
         rewards = sample["reward"]
+        annotations = variable_shape_array_to_list(sample["annotations"])
 
         labels = ["actions={}, rewards={}".format(a, r) for a, r in zip(actions, rewards)]
 
-        fig, *_ = animate(images, labels=labels)
+        fig, *_ = animate(images, labels=labels, annotations=annotations)
         plt.subplots_adjust(top=0.95, bottom=0, left=0, right=1, wspace=0.05, hspace=0.1)
 
         plt.show()
@@ -574,24 +771,44 @@ if __name__ == "__main__":
 
     from dps.utils import Config
     config = Config(
+        # atari_game="Berzerk",
+        # atari_game="Venture",
         # atari_game="DemonAttack",
-        atari_game="SpaceInvaders",
-        # atari_game="KungFuMaster",
-        # atari_game="Centipede",
-        # atari_game="StarGunner",
-        n_frames=8,
+        # atari_game="Phoenix",
+        # atari_game="AirRaid",
+        atari_game="Pong",
+        # atari_game="Assault",
+        # atari_game="SpaceInvaders",
+        # atari_game="Carnival",
+        # atari_game="Asteroids",
+        # atari_game="Asteroids",
+        n_frames=16,
         image_shape=None,
-        # image_shape=(105, 80),
         after_warp=False,
-        episode_range=None,
-        # episode_range=(-1, None),
+        # episode_range=(0, 2),
+        episode_range=(-2, None),
+        # episode_range=None,
         max_episodes=100,
         max_examples=200,
-        max_samples_per_ep=5,
-        frame_skip=2,
-        # frame_skip=1,
-        seed=200,
+        sample_density=0.05,
+        frame_skip=1,
+        seed=201,
         N=16,
+        n_dilate=1,
+        n_erode=0,
+        filter_size=2,
+        allowed_colors_for_annotations=None,
+        distance_threshold=10000,
+        distance_ord=2,
+        average_frames=False,
+        # crop=(0, 195, 0, 160),  # For space invaders
+        # crop=(30, 215, 0, 160),  # For carnival
+        # crop=(0, 188, 0, 160),
+        crop=None,
+        tile_shape=(72, 72),
+        postprocessing="",
+        # postprocessing="random"
+        get_annotations=True,
     )
 
     with config:
