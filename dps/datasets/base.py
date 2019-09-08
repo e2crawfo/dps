@@ -762,6 +762,67 @@ class ImageDataset(Dataset):
         plt.close(fig)
 
 
+class LongVideoMixin:
+    """ To be used with ImageDataset """
+    n_batches = Param()
+
+    @property
+    def obs_shape(self):
+        leading_shape = (self.fragment_length,) if self.n_frames > 0 else ()
+        if self.postprocessing:
+            return leading_shape + self.tile_shape + (self.depth,)
+        else:
+            return leading_shape + self.image_shape + (self.depth,)
+
+    @property
+    def features(self):
+        if self._features is None:
+            self._features = [
+                ImageFeature("image", self.obs_shape),
+                ArrayFeature("offset", (2,), dtype=np.int32),
+            ]
+
+        return self._features
+
+    @property
+    def fragment_length(self):
+        assert self.n_frames % self.n_batches == 0
+        return self.n_frames // self.n_batches
+
+    def _make(self):
+        self.fragments = []
+
+        super()._make()
+
+        offset = 0
+
+        # so we have batch_size-many fragments.
+        for b in range(self.n_batches):
+            for i in range(self.n_examples):
+                image = self.fragments[i][offset:offset+self.fragment_length]
+                self._write_single_example(image=image, offset=(0, 0))
+            offset += self.fragment_length
+
+    def _write_example(self, **kwargs):
+        self.fragments.append(kwargs['image'])
+
+    def visualize(self, *_, **__):
+        sample = self.sample(self.n_examples * self.n_batches)
+        images = [[] for i in range(self.n_examples)]
+
+        for i in range(self.n_batches):
+            for j in range(self.n_examples):
+                images[j].append(sample['image'][i * self.n_examples + j])
+
+        images = np.array([np.concatenate(stream) for stream in images])
+
+        fig, *_ = animate(images)
+        plt.subplots_adjust(top=0.95, bottom=0, left=0, right=1, wspace=0.05, hspace=0.1)
+
+        plt.show()
+        plt.close(fig)
+
+
 class Rectangle(object):
     def __init__(self, top, left, h, w, v=None):
         self.top = top
@@ -1479,11 +1540,22 @@ class GridEmnistObjectDetectionDataset(EmnistObjectDetectionDataset, GridPatches
     pass
 
 
+class LongVideoVisualArithmetic(LongVideoMixin, VisualArithmeticDataset):
+    pass
+
+
 if __name__ == "__main__":
-    dset = VisualArithmeticDataset(
-        n_examples=18, reductions="sum", largest_digit=28, patch_speed=2, one_hot=False,
-        min_digits=9, max_digits=9, image_shape=(96, 96), tile_shape=(96, 96),# tile_shape=(48, 48),
-        postprocessing="random", max_overlap=98, colours="white blue", n_frames=10,
+    # dset = VisualArithmeticDataset(
+    #     n_examples=18, reductions="sum", largest_digit=28, patch_speed=2, one_hot=False,
+    #     min_digits=9, max_digits=9, image_shape=(96, 96), tile_shape=(96, 96),# tile_shape=(48, 48),
+    #     postprocessing="random", max_overlap=98, colours="white blue", n_frames=10,
+    #     digits="0 1".split(), example_range=None, n_patch_examples=None, patch_shape=(14, 14),
+    #     appearance_prob=0.5, disappearance_prob=0.0)
+
+    dset = LongVideoVisualArithmetic(
+        n_examples=4, n_frames=20, n_batches=4, reductions="sum", largest_digit=28, patch_speed=5, one_hot=False,
+        min_digits=9, max_digits=9, image_shape=(96, 96), tile_shape=(96, 96),
+        postprocessing="", max_overlap=98, colours="white blue",
         digits="0 1".split(), example_range=None, n_patch_examples=None, patch_shape=(14, 14),
         appearance_prob=0.5, disappearance_prob=0.0)
 

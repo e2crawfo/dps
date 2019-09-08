@@ -657,7 +657,7 @@ class AtariVideoDataset(ImageDataset):
         n_frames_to_fetch = (self.n_frames - 1) * self.frame_skip + 1 + int(self.average_frames)
         max_start_idx = episode_length - n_frames_to_fetch + 1
 
-        n_samples = int(self.sample_density * max_start_idx)
+        n_samples = int(np.ceil(self.sample_density * max_start_idx))
 
         indices = np.random.choice(max_start_idx, size=n_samples, replace=False)
 
@@ -739,6 +739,126 @@ class AtariVideoDataset(ImageDataset):
         plt.close(fig)
 
 
+class AtariLongVideoVideoDataset(AtariVideoDataset):
+    """
+    I need...episode range, batch_size, n_batches I guess, but that should really come out of the episode length.
+    Maybe n_batches * n_frames is the maximum video length, cut it off after that.
+    """
+    batch_size = Param()
+    n_batches = Param()
+    n_samples_per_episode = Param()
+
+    max_episodes = None
+    sample_density = None
+    max_examples = None
+    n_dilate = None
+    n_erode = None
+    filter_size = None
+    allowed_colors_for_annotations = None
+    distance_threshold = None
+    distance_ord = None
+    average_frames = None
+    get_annotations = None
+
+    @property
+    def features(self):
+        if self._features is None:
+            self._features = [
+                ImageFeature("image", self.obs_shape),
+                ArrayFeature("action", (self.n_frames,), np.int32),
+                ArrayFeature("reward", (self.n_frames,), np.float32),
+                ArrayFeature("offset", (2,), dtype=np.int32),
+            ]
+
+        return self._features
+
+    def _per_ep_callback(self, o, a, r):
+        """ process one episode """
+
+        n_frames_per_video = self.n_frames * self.n_batches
+
+        episode_length = len(a)  # o is one step longer than a and r
+
+        # Doesn't support averaging frames.
+        n_frames_to_fetch = (n_frames_per_video - 1) * self.frame_skip + 1
+        max_start_idx = episode_length - n_frames_to_fetch + 1
+
+        if max_start_idx < 0:
+            return
+
+        indices = np.random.choice(max_start_idx+1, size=self.n_samples_per_episode, replace=False)
+        print("indices: ", indices)
+
+        step = self.frame_skip
+
+        for start in indices:
+            if self._n_examples % 100 == 0:
+                print("Processing example {}".format(self._n_examples))
+
+            end = start + n_frames_to_fetch
+
+            _o = np.array(o[start:end:step])
+            _a = np.array(a[start:end:step]).flatten()
+            _r = np.array(r[start:end:step]).flatten()
+
+            assert len(_o) == n_frames_per_video
+            assert len(_a) == n_frames_per_video
+            assert len(_r) == n_frames_per_video
+
+            if self.crop is not None:
+                top, bot, left, right = self.crop
+                _o = _o[:, top:bot, left:right, ...]
+
+            if self.image_shape is not None and _o.shape[1:3] != self.image_shape:
+                _o = np.array([resize_image(img, self.image_shape) for img in _o])
+
+            if self.after_warp:
+                _o = np.tile(_o, (1, 1, 1, 3))
+
+            self.fragments['o'].append(_o)
+            self.fragments['a'].append(_a)
+            self.fragments['r'].append(_r)
+
+            self._n_examples += 1
+
+            if self._n_examples >= self.batch_size:
+                print("Found maximum of {} examples, done.".format(self._n_examples))
+                return True
+
+    def _make(self):
+        self.fragments = dict(o=[], a=[], r=[])
+        super()._make()
+
+        offset = 0
+
+        # so we have batch_size-many fragments.
+        for b in range(self.n_batches):
+            for i in range(self.batch_size):
+                o = self.fragments['o'][i][offset:offset+self.n_frames]
+                a = self.fragments['a'][i][offset:offset+self.n_frames]
+                r = self.fragments['r'][i][offset:offset+self.n_frames]
+
+                self._write_example(image=o, action=a, reward=r)
+
+            offset += self.n_frames
+
+    def visualize(self, n=None):
+        sample = self.sample(self.batch_size * self.n_batches)
+        images = [[] for i in range(self.batch_size)]
+
+        for i in range(self.n_batches):
+            for j in range(self.batch_size):
+                images[j].append(sample['image'][i * self.batch_size + j])
+
+        images = np.array([np.concatenate(stream) for stream in images])
+
+        fig, *_ = animate(images)
+        plt.subplots_adjust(top=0.95, bottom=0, left=0, right=1, wspace=0.05, hspace=0.1)
+
+        plt.show()
+        plt.close(fig)
+
+
 if __name__ == "__main__":
     # game = "AsteroidsNoFrameskip-v4"
     # dset = AtariAutoencodeDataset(game=game, policy=None, n_examples=100, density=0.01, atari_render=False)
@@ -811,9 +931,30 @@ if __name__ == "__main__":
         get_annotations=True,
     )
 
+    config = Config(
+        atari_game="SpaceInvaders",
+        n_frames=10,
+        batch_size=4,
+        n_batches=5,
+        image_shape=None,
+        after_warp=False,
+        # episode_range=(0, 2),
+        episode_range=(-2, None),
+        # episode_range=None,
+        n_samples_per_episode=2,
+        frame_skip=1,
+        seed=201,
+        crop=(0, 195, 0, 160),  # For space invaders
+        tile_shape=(72, 72),
+        postprocessing="",
+        # postprocessing="random"
+        N=1,
+    )
+
     with config:
         config.update_from_command_line()
-        dset = AtariVideoDataset()
+        dset = AtariLongVideoVideoDataset()
+        # dset = AtariVideoDataset()
 
         sess = tf.Session()
         with sess.as_default():

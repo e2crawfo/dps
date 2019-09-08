@@ -176,6 +176,7 @@ class DataManager(Parameterized):
     shuffle_buffer_size = Param(1000)
     prefetch_buffer_size_in_batches = Param(10)
     prefetch_to_device = Param(False)
+    shuffle_val = Param(True)
 
     train_initialized = False
 
@@ -226,8 +227,10 @@ class DataManager(Parameterized):
         if self.val_dataset is not None:
             val_dataset = tf.data.TFRecordDataset(self.val_dataset.filename)
 
-            val_dataset = (val_dataset.shuffle(self.shuffle_buffer_size)
-                                      .batch(self.batch_size)
+            if self.shuffle_val:
+                val_dataset = val_dataset.shuffle(self.shuffle_buffer_size)
+
+            val_dataset = (val_dataset.batch(self.batch_size)
                                       .map(self.val_dataset.parse_example_batch))
 
             if self.prefetch_to_device:
@@ -247,8 +250,10 @@ class DataManager(Parameterized):
         if self.test_dataset is not None:
             test_dataset = tf.data.TFRecordDataset(self.test_dataset.filename)
 
-            test_dataset = (test_dataset.shuffle(self.shuffle_buffer_size)
-                                        .batch(self.batch_size)
+            if self.shuffle_val:
+                test_dataset = test_dataset.shuffle(self.shuffle_buffer_size)
+
+            test_dataset = (test_dataset.batch(self.batch_size)
                                         .map(self.test_dataset.parse_example_batch))
 
             if self.prefetch_to_device:

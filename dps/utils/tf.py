@@ -2076,7 +2076,7 @@ def tf_discount_matrix(base, T, n=None):
     return tf.matrix_band_part(r, 0, -1)
 
 
-class RenderHook(object):
+class RenderHook:
     N = 16
     is_training = False
 
