@@ -36,6 +36,8 @@ import matplotlib.patches as patches
 import clify
 import dps
 
+from dps.utils.config_function import _ConfigScope
+
 
 def atleast_nd(array, n):
     diff = n - len(array.shape)
@@ -1625,7 +1627,7 @@ class HierDict(dict):
             try:
                 d = self[key]
                 if not isinstance(d, HierDict):
-                    raise Exception("HierDict about to access object {} with key {}.".format(d, key))
+                    raise Exception("HierDict about to access non-dict object {} with key {}.".format(d, key))
             except KeyError:
                 d = self[key] = HierDict(self._sep)
 
@@ -1702,6 +1704,10 @@ class Config(dict, MutableMapping):
         if _d:
             self.update(_d)
         self.update(kwargs)
+
+    @classmethod
+    def from_function(cls, func):
+        return cls(_ConfigScope(func)())
 
     def flatten(self):
         return {k: self[k] for k in self._keys()}
@@ -1883,6 +1889,10 @@ class Config(dict, MutableMapping):
     def update_from_command_line(self, strict=True):
         cl_args = clify.wrap_object(self, strict=strict).parse()
         self.update(cl_args)
+
+    def update_from_function(self, func):
+        config = self.__class__.from_function(func)
+        return self.update(config)
 
     def freeze(self, remove_callable=False):
         _config = Config()
