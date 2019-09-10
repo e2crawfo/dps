@@ -20,7 +20,7 @@ from tensorflow.python.util import nest
 
 import dps
 from dps import cfg
-from dps.utils.base import Parameterized, Param, Config, HierDict
+from dps.utils.base import Parameterized, Param, Config
 from dps.utils.inspect_checkpoint import get_tensors_from_checkpoint_file  # noqa: F401
 
 
@@ -1980,7 +1980,7 @@ def build_gradient_train_op(
     if grad_n_record_groups:
         # Break variables into groups until we have at least `grad_n_record_groups`-many groups,
         # and then record the RMSE for the gradient with respect to each group of variables.
-        groups = HierDict()
+        groups = Config()
         for v, g in zip(tvars, pure_gradients):
             name = v.name.replace('/', ':').replace('-', '_')
             groups[name] = g
@@ -1994,7 +1994,7 @@ def build_gradient_train_op(
             expanded = False
 
             for p, g in prefix_groups.items():
-                if isinstance(g, HierDict):
+                if isinstance(g, Config):
                     if len(g) == 1:
                         new_prefix_groups[p] = next(iter(g.values()))
                     else:

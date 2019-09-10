@@ -1564,15 +1564,18 @@ def _flatten_nested_dict(d, sep):
     """ returns a list of pairs of the form (flattened-key, value) """
     result = []
     for k, v in d.items():
-        assert isinstance(k, str)
+        if not isinstance(k, str):
+            result.append((k, v))
 
-        if isinstance(v, dict) and all([isinstance(_k, str) for _k in v.keys()]):
+        elif isinstance(v, dict) and all([isinstance(_k, str) for _k in v.keys()]):
             v = _flatten_nested_dict(v, sep)
             for _k, _v in v:
                 key = k + sep + _k
                 result.append((key, _v))
+
         else:
             result.append((k, v))
+
     return result
 
 
@@ -1584,10 +1587,13 @@ def _check_for_prefixes(pairs, sep):
     root = {}
 
     for k, v in pairs:
-        if isinstance(k, str):
-            subkeys = k.split(':')
-        else:
-            subkeys = [k]
+        if not isinstance(k, str):
+            if k in root:
+                raise Exception("Non-string key ({}) found multiple times.".format(k))
+            root[k] = v
+            continue
+
+        subkeys = k.split(':')
 
         d = root
         for i, sk in enumerate(subkeys[:-1]):
@@ -1613,10 +1619,10 @@ class Config(dict):
 
         Attribute access does the same as __getitem__ and __setitem__.
 
-        All keys must be valid python-identifiers. The exception is that if keys contain the special
-        character stored in `self._sep` (default ':'), then these are treated as hierarchical keys.
-        When *setting* with a hierarchical key, the key is split by the sep character, and the resulting
-        keys are treated as a sequence of keys into nested Configs, created necessary configs as we go.
+        Non-string keys are treated as normal, as are strings that do not contain the special character stored
+        in `self._sep` (default ':'). If a string key does contain the sep character, then it is treated as a
+        hierarchical key.  When *setting* with a hierarchical key, the key is split by the sep character, and
+        the resulting keys are treated as a sequence of keys into nested Configs, created necessary configs as we go.
         When *getting* with hierarchical keys, a similar procesude is followed but the intermediate dicts
         are not created.
 
@@ -1659,6 +1665,20 @@ class Config(dict):
         x.update({'a:b': {0: 1}})
         print(x)
 
+        One pitfall to be aware of: overwriting of nested dicts basically doesn't happen.
+
+        x = Config(a=dict(b=1))
+        x['a'] = dict(c=2)
+        print(x)
+        >>  Config{
+                "a": {
+                    "b": 1,
+                    "c": 2
+                }
+            }
+
+        The two dicts assigned to x['a'] are combined, rather than one overwriting the other.
+
     """
     _sep = ":"
     _reserved_keys = None
@@ -1673,8 +1693,7 @@ class Config(dict):
         return repr(self)
 
     def __repr__(self):
-        s = "{}{}\n".format(self.__class__.__name__, json.dumps(self, sort_keys=True, indent=4, default=repr))
-        return s
+        return "{}{}\n".format(self.__class__.__name__, json.dumps(self, sort_keys=True, indent=4, default=repr))
 
     def __contains__(self, key):
         try:
@@ -1718,8 +1737,8 @@ class Config(dict):
             The value stored at 'a:b' was overwritten.
 
         """
-        assert isinstance(key, str), (
-            "Config requires keys to be strings. Got: {} with type {}.".format(key, type(key)))
+        if not isinstance(key, str):
+            return super().__setitem__(key, value)
 
         if isinstance(value, dict) and all([isinstance(s, str) for s in value.keys()]):
             self._set_item_dict({key: value})
@@ -1780,7 +1799,7 @@ class Config(dict):
 
     def update(self, _=None, **kwargs):
         if _ is not None:
-            self._set_item_dict(_)
+            self._set_item_dict(dict(_))
 
         self._set_item_dict(kwargs)
 
