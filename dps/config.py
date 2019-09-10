@@ -2,7 +2,6 @@ import numpy as np
 
 from dps import cfg
 from dps.utils import SYSTEM_CONFIG
-from dps.rl import rl_render_hook
 
 
 DEFAULT_CONFIG = SYSTEM_CONFIG.copy(
@@ -80,7 +79,8 @@ RL_EXPERIMENT_CONFIG = DEFAULT_CONFIG.copy(
     name="RLExperiment",
 
     render_n_rollouts=10,
-    render_hook=rl_render_hook,
+    render_hook=None,
+    # render_hook=rl_render_hook,
 
     standardize_advantage=True,
     n_controller_units=64,

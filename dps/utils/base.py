@@ -36,8 +36,6 @@ import matplotlib.patches as patches
 import clify
 import dps
 
-from dps.utils.config_function import _ConfigScope
-
 
 def atleast_nd(array, n):
     diff = n - len(array.shape)
@@ -1551,56 +1549,128 @@ def popleft(l, default=None):
         return l.popleft()
 
 
-def nested_update(d, other):
+def _nested_update(d, other):
     if not isinstance(d, dict) or not isinstance(other, dict):
         return
 
     for k, v in other.items():
         if k in d and isinstance(d[k], dict) and isinstance(v, dict):
-            nested_update(d[k], v)
+            _nested_update(d[k], v)
         else:
             d[k] = v
 
 
-class HierDict(dict):
-    """ The main special property is that __setitem__ and __getitem__ create nested HierDicts
-        when the keys are strings containing the character `self._sep`. This is similar to Config's
-        behavior, but is intended to be more principled. Functions like `keys`, `values` and `items`
-        only regard the top level of keys. Also, keys can be set and retrieved using attributes.
+def _flatten_nested_dict(d, sep):
+    """ returns a list of pairs of the form (flattened-key, value) """
+    result = []
+    for k, v in d.items():
+        assert isinstance(k, str)
+
+        if isinstance(v, dict) and all([isinstance(_k, str) for _k in v.keys()]):
+            v = _flatten_nested_dict(v, sep)
+            for _k, _v in v:
+                key = k + sep + _k
+                result.append((key, _v))
+        else:
+            result.append((k, v))
+    return result
+
+
+def _check_for_prefixes(pairs, sep):
+    """ Takes a list of pairs of the form (flattened-key, value).
+        Check whether any of the flattened keys are prefixes of one another.
+
+    """
+    root = {}
+
+    for k, v in pairs:
+        if isinstance(k, str):
+            subkeys = k.split(':')
+        else:
+            subkeys = [k]
+
+        d = root
+        for i, sk in enumerate(subkeys[:-1]):
+            if sk in d:
+                if d[sk] is None:
+                    other = sep.join(subkeys[:i+1])
+                    raise Exception("One key ({}) is a prefix of another ({}).".format(other, k))
+                else:
+                    d = d[sk]
+            else:
+                d[sk] = {}
+                d = d[sk]
+
+        sk = subkeys[-1]
+        if sk in d:
+            raise Exception("One key {} is a prefix of another.".format(k))
+
+        d[sk] = None
+
+
+class Config(dict):
+    """ A hierarchical dict-like, tree-like data structure.
+
+        Attribute access does the same as __getitem__ and __setitem__.
+
+        All keys must be valid python-identifiers. The exception is that if keys contain the special
+        character stored in `self._sep` (default ':'), then these are treated as hierarchical keys.
+        When *setting* with a hierarchical key, the key is split by the sep character, and the resulting
+        keys are treated as a sequence of keys into nested Configs, created necessary configs as we go.
+        When *getting* with hierarchical keys, a similar procesude is followed but the intermediate dicts
+        are not created.
+
+        Whenever an added value is itself a hierarchical dicts with strings as keys, it is first flattened,
+        and the results are stitched into the tree. For example (assuming ':' as the sep):
+
+        x = Config()
+        x['a'] = {'b:c': 0, {'d': {'e': 3}}}
+        print(x)
+        >>  Config{
+                "a": {
+                    "b": {
+                        "c": 0
+                    },
+                    "d": {
+                        "e": 3
+                    }
+                }
+            }
+
+        The `update` function works the same way.
+
+        When updating or setting a value that is a hierarchical dict, it may be possible for the hierarchical dict
+        to refer to the same tree location in different way. For example {'a:b': 0, 'a': {'b': 1}}. The tree location
+        'a:b' is assigned two different values, 0 and 1. Such situations will be detected and an error thrown.
+        Of course, overwriting locations in separate calls is allowed, just not in the same call.
+
+        So this is OK:
+        x = Config()
+        x.update({'a:b': 0})
+        x.update({'a': {'b': 1}})
+
+        but not this:
+        x = Config()
+        x.update({'a:b': 0, 'a': {'b': 1}})
+
+        Recursion is stopped once we reached a non-dict value, or a dict that has at least one non-string key.
+
+        x = Config()
+        x.update({'a:b': {0: 1}})
+        print(x)
 
     """
     _sep = ":"
     _reserved_keys = None
 
-    def __init__(self, sep=':'):
-        self._sep = sep
+    def __init__(self, _d=None, **kwargs):
+        self.update(_d, **kwargs)
 
     def flatten(self):
-        return {k: self[k] for k in self._flat_keys()}
-
-    def _flat_keys(self):
-        stack = [iter(dict.items(self))]
-        key_prefix = ''
-
-        while stack:
-            new = next(stack[-1], None)
-            if new is None:
-                stack.pop()
-                key_prefix = key_prefix.rpartition(self._sep)[0]
-                continue
-
-            key, value = new
-            nested_key = key_prefix + self._sep + key
-
-            if isinstance(value, dict) and value:
-                stack.append(iter(value.items()))
-                key_prefix = nested_key
-            else:
-                yield nested_key[1:]
+        return dict(_flatten_nested_dict(self, self._sep))
 
     def __str__(self):
-        s = "{}{}\n".format(self.__class__.__name__, json.dumps(self, sort_keys=True, indent=4, default=str))
-        return s
+        return repr(self)
 
     def __repr__(self):
         s = "{}{}\n".format(self.__class__.__name__, json.dumps(self, sort_keys=True, indent=4, default=repr))
@@ -1621,15 +1691,52 @@ class HierDict(dict):
         else:
             return super().__getitem__(key)
 
+    def _set_item_dict(self, d):
+        """ This will never be involved in recursive calls, because _flatten_nested_dict should remove
+            all dictionary values from d.
+
+            alg is: create a list of flat keys and values
+            add each pairs to the dictionary after checking for prefixes.
+
+        """
+        flat = _flatten_nested_dict(d, self._sep)
+        _check_for_prefixes(flat, self._sep)
+
+        for k, v in flat:
+            self[k] = v
+
     def __setitem__(self, key, value):
-        if isinstance(key, str) and self._sep in key:
+        """ Note that this is ``destructive''.
+
+            For example:
+
+            x = Config({'a:b': 1})
+            x["a:b:c"] = 2
+            print(x)
+            {'a': {'b': {'c': 2}}}
+
+            The value stored at 'a:b' was overwritten.
+
+        """
+        assert isinstance(key, str), (
+            "Config requires keys to be strings. Got: {} with type {}.".format(key, type(key)))
+
+        if isinstance(value, dict) and all([isinstance(s, str) for s in value.keys()]):
+            self._set_item_dict({key: value})
+
+        elif isinstance(key, str) and self._sep in key:
             key, _, rest = key.partition(self._sep)
             try:
                 d = self[key]
-                if not isinstance(d, HierDict):
-                    raise Exception("HierDict about to access non-dict object {} with key {}.".format(d, key))
+
+                if not isinstance(d, Config):
+                    # This is where the destruction happens
+                    d = Config()
+                    super().__setitem__(key, d)
+
             except KeyError:
-                d = self[key] = HierDict(self._sep)
+                d = Config()
+                super().__setitem__(key, d)
 
             d[rest] = value
         else:
@@ -1644,7 +1751,7 @@ class HierDict(dict):
             return super().__delitem__(key)
 
     def __getattr__(self, key):
-        if key in HierDict._reserved_keys:
+        if key in Config._reserved_keys:
             return super().__getattr__(key)
 
         try:
@@ -1653,7 +1760,7 @@ class HierDict(dict):
             raise AttributeError("Could not find attribute called `{}`.".format(key))
 
     def __setattr__(self, key, value):
-        if key in HierDict._reserved_keys:
+        if key in Config._reserved_keys:
             super().__setattr__(key, value)
             return
 
@@ -1662,204 +1769,25 @@ class HierDict(dict):
     def _validate_key(self, key):
         msg = "Bad key for config: `{}`.".format(key)
         assert not key.startswith('_'), msg
-        assert key not in HierDict._reserved_keys, msg
+        assert key not in Config._reserved_keys, msg
+        assert self._sep not in key, msg
 
     def copy(self, _d=None, **kwargs):
         """ Copy and update at the same time. """
         new = copy.deepcopy(self)
-        if _d:
-            new.update(_d)
-        new.update(**kwargs)
+        new.update(_d, **kwargs)
         return new
 
-    def update(self, _d=None, **kwargs):
-        if _d is not None:
-            for k, v in _d.items():
-                self[k] = v
+    def update(self, _=None, **kwargs):
+        if _ is not None:
+            self._set_item_dict(_)
 
-        for k, v in kwargs.items():
-            self[k] = v
+        self._set_item_dict(kwargs)
 
-
-HierDict._reserved_keys = dir(HierDict)
-
-
-class Config(dict, MutableMapping):
-    """ Note: multi-level setting will succeed more often with __setitem__ than __setattr__.
-
-    This doesn't work:
-
-    c = Config()
-    c.a.b = 1
-
-    But this does:
-
-    c = Config()
-    c["a:b"] = 1
-
-    """
-    _reserved_keys = None
-
-    def __init__(self, _d=None, **kwargs):
-        if _d:
-            self.update(_d)
-        self.update(kwargs)
-
-    @classmethod
-    def from_function(cls, func):
-        return cls(_ConfigScope(func)())
-
-    def flatten(self):
-        return {k: self[k] for k in self._keys()}
-
-    def _keys(self, sep=":"):
-        stack = [iter(dict.items(self))]
-        key_prefix = ''
-
-        while stack:
-            new = next(stack[-1], None)
-            if new is None:
-                stack.pop()
-                key_prefix = key_prefix.rpartition(sep)[0]
-                continue
-
-            key, value = new
-            nested_key = key_prefix + sep + key
-
-            if isinstance(value, dict) and value:
-                stack.append(iter(value.items()))
-                key_prefix = nested_key
-            else:
-                yield nested_key[1:]
-
-    def __iter__(self):
-        return self._keys()
-
-    def keys(self):
-        return MutableMapping.keys(self)
-
-    def values(self):
-        return MutableMapping.values(self)
-
-    def items(self):
-        return MutableMapping.items(self)
-
-    def __str__(self):
-        items = {k: v for k, v in dict.items(self)}
-        s = "{}(\n{}\n)".format(self.__class__.__name__, pformat(items))
-        return s
-
-    def __repr__(self):
-        return str(self)
-
-    def __contains__(self, key):
-        try:
-            self[key]
-        except KeyError:
-            return False
-        else:
-            return True
-
-    def __getitem__(self, key):
-        assert isinstance(key, str), "`Config` keys must be strings."
-        if ':' in key:
-            keys = key.split(':')
-            value = self
-            for k in keys:
-                try:
-                    value = value[k]
-                except Exception:
-                    try:
-                        value = value[int(k)]
-                    except Exception:
-                        raise KeyError(
-                            "Calling __getitem__ with key {} failed at component {}.".format(key, k))
-            return value
-        else:
-            return super(Config, self).__getitem__(key)
-
-    def __setitem__(self, key, value):
-        """
-        TODO: there is currently a mismatch of behaviour between __setitem__ and update in the case
-        of nested dictionaries. e.g.
-
-        x = Config(y=dict(a=1))
-        x.update(y=dict(b=1))
-        print(x)
-
-        >>> Config({'y': {'a': 1, 'b': 1}})
-
-        x = Config(y=dict(a=1))
-        x.y=dict(b=1)
-        print(x)
-
-        >>> Config({'y': {'b': 1}})
-
-        update augments the current nested dictionary, __setitem__ replaces it.
-
-        """
-        assert isinstance(key, str), "`Config` keys must be strings."
-        if ':' in key:
-            keys = key.split(':')
-            to_set = self
-            for k in keys[:-1]:
-                nxt = None
-                try:
-                    nxt = to_set[k]
-                except KeyError:
-                    try:
-                        nxt = to_set[int(k)]
-                    except Exception:
-                        pass
-
-                if not isinstance(nxt, (list, dict)):
-                    nxt = self.__class__()
-                    to_set[k] = nxt
-
-                to_set = nxt
-
-            try:
-                to_set[keys[-1]] = value
-            except Exception:
-                to_set[int(keys[-1])] = value
-        else:
-            self._validate_key(key)
-            return super(Config, self).__setitem__(key, value)
-
-    def __delitem__(self, key):
-        assert isinstance(key, str), "`Config` keys must be strings."
-        if ':' in key:
-            keys = key.split(':')
-            to_del = self
-            for k in keys[:-1]:
-                try:
-                    to_del = to_del[k]
-                except Exception:
-                    try:
-                        to_del = to_del[int(k)]
-                    except Exception:
-                        raise KeyError("Calling __getitem__ with key {} failed at component {}.".format(key, k))
-            try:
-                del to_del[keys[-1]]
-            except Exception:
-                try:
-                    to_del = to_del[int(k)]
-                except Exception:
-                    raise KeyError("Calling __getitem__ with key {} failed at component {}.".format(key, k))
-        else:
-            return super(Config, self).__delitem__(key)
-
-    def __getattr__(self, key):
-        try:
-            return self.__getitem__(key)
-        except KeyError:
-            raise AttributeError("Could not find attribute called `{}`.".format(key))
-
-    def __setattr__(self, key, value):
-        if key == '_reserved_keys':
-            super(Config, self).__setattr__(key, value)
-        else:
-            self[key] = value
+    def update_from_command_line(self, strict=True):
+        flattened = self.flatten()
+        cl_args = clify.wrap_object(flattened, strict=strict).parse()
+        self.update(cl_args)
 
     def __enter__(self):
         ConfigStack._stack.append(self)
@@ -1868,31 +1796,6 @@ class Config(dict, MutableMapping):
         popped = ConfigStack._stack.pop()
         assert popped == self, "Something is wrong with the config stack."
         return False
-
-    def _validate_key(self, key):
-        msg = "Bad key for config: `{}`.".format(key)
-        assert not key.startswith('_'), msg
-        assert key not in self._reserved_keys, msg
-
-    def copy(self, _d=None, **kwargs):
-        """ Copy and update at the same time. """
-        new = copy.deepcopy(self)
-        if _d:
-            new.update(_d)
-        new.update(**kwargs)
-        return new
-
-    def update(self, _d=None, **kwargs):
-        nested_update(self, _d)
-        nested_update(self, kwargs)
-
-    def update_from_command_line(self, strict=True):
-        cl_args = clify.wrap_object(self, strict=strict).parse()
-        self.update(cl_args)
-
-    def update_from_function(self, func):
-        config = self.__class__.from_function(func)
-        return self.update(config)
 
     def freeze(self, remove_callable=False):
         _config = Config()
