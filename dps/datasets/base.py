@@ -259,6 +259,20 @@ class FloatFeature(Feature):
         return f
 
 
+class StringFeature(Feature):
+    def __init__(self, name):
+        self.name = name
+
+    def get_write_features(self, string):
+        return {self.name: _bytes_feature(string.encode('utf8'))}
+
+    def get_read_features(self):
+        return {self.name: tf.FixedLenFeature((), dtype=tf.string)}
+
+    def process_batch(self, records):
+        return records[self.name]
+
+
 class NestedListFeature(Feature):
     def __init__(self, name, sublist_length):
         self.name = name
@@ -313,7 +327,7 @@ class Dataset(Parameterized):
     _iterator = None
     _get_next = None
 
-    def __init__(self, shuffle=True, **kwargs):
+    def __init__(self, **kwargs):
         start = time.time()
         print("Trying to find dataset in cache...")
 
@@ -453,14 +467,24 @@ class Dataset(Parameterized):
         result = sess.run(self.get_next)
         return result
 
-    def sample(self, n=4):
+    def sample(self, n=4, shuffle_buffer_size=1000, seed=0):
         batch_size = n
         dset = tf.data.TFRecordDataset(self.filename)
-        dset = dset.batch(batch_size).map(self.parse_example_batch)
+
+        try:
+            shuffle_and_repeat_func = tf.data.experimental.shuffle_and_repeat
+        except AttributeError:
+            shuffle_and_repeat_func = tf.contrib.data.shuffle_and_repeat
+
+        shuffle_and_repeat = shuffle_and_repeat_func(shuffle_buffer_size)
+        dset = (dset.apply(shuffle_and_repeat)
+                    .batch(batch_size)
+                    .map(self.parse_example_batch))
 
         iterator = dset.make_one_shot_iterator()
 
         sess = tf.get_default_session()
+        tf.set_random_seed(seed)
 
         _sample = sess.run(iterator.get_next())
 
