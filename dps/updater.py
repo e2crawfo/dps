@@ -176,106 +176,82 @@ class DifferentiableUpdater(Updater):
 
 
 class DataManager(Parameterized):
-    shuffle_buffer_size = Param(1000)
+    """ Manages a collection of datasets (of type dps/datasets/base.py:Dataset) and iterators accessing them.
+
+        Datasets of type Dataset are passed into the constructor. At least one of those must be called
+        'train', 'val' or 'test'. When build_graph is called, iterators accessing those datasets
+        are created, and a special string-handle iterator is created. (Note: an iterator is a tensorflow
+        operations which is used to stream data from a file stored on disk). The string-handle iterator
+        can switch between datasets; which dataset it accesses is controlled by the value of a string tensor.
+        This allows us to build a single model (i.e. a single tensorflow graph), but feed it different data.
+        For example, we can easily switch from feeding the model training data to feeding it evaluation data.
+
+        Note: all datasets collected under a single DataManager instance must return data with the same structure.
+        (i.e. they should have the same set of Features; see dps/datasets/base.py:Dataset).
+
+        Convenience functions do_train, do_val and do_test are provided. When called, they return feed_dicts
+        when can be used to set the string handle to the appropriate value for the desired dataset.
+
+        Additional iterators can be provided by directly calling `build_iterator`, after `build_graph` has
+        been called. Indeed, this MUST be done in order to access datasets other than 'train', 'val', 'test',
+        as `build_graph` does not create iterators for these non-standard datasets.
+
+        Example use:
+
+            dm = DataManager(
+                train=MyTrainDataset(),
+                val=MyValDataset(),
+                test=MyTestDataset(),
+            )
+            input_data = dm.iterator.get_next()
+
+        The form of input_data will depend on the Features of the datasets; most often if will be a dictionary of tensors.
+
+    """
+    shuffle_buffer_size = Param()
+
     prefetch_buffer_size_in_batches = Param(10)
     prefetch_to_device = Param(False)
-    shuffle_val = Param(True)
+
+    batch_size = Param()
 
     train_initialized = False
 
-    def __init__(self, train_dataset=None, val_dataset=None, test_dataset=None, batch_size=1, **kwargs):
-        self.train_dataset = train_dataset
-        self.val_dataset = val_dataset
-        self.test_dataset = test_dataset
+    def __init__(self, train=None, val=None, test=None, datasets=None, **kwargs):
+        self.datasets = {}
+        self.datasets.update(train=train, val=val, test=test)
+        self.datasets.update(datasets)
 
-        self.batch_size = batch_size
+        assert (
+            self.datasets['train'] is not None
+            or self.datasets['val'] is not None
+            or self.datasets['test'] is not None), (
+                'Must provide at least one dataset with name "train", "val", or "test".')
+
+        self.iterators_and_handles = {}
 
     def build_graph(self):
-        sess = tf.get_default_session()
+        tf_dsets = []
 
-        datasets = []
+        train_dataset = self.datasets.get('train', None)
+        if train_dataset is not None:
+            train_dset, _, _ = self.build_iterator('train', 'train', self.batch_size, True, self.shuffle_buffer_size)
+            tf_dsets.append(train_dset)
 
-        # --- train ---
+        val_dataset = self.datasets.get('val', None)
+        if val_dataset is not None:
+            val_dset, _, _ = self.build_iterator('val', 'val', self.batch_size, False, 0)
+            tf_dsets.append(val_dset)
 
-        if self.train_dataset is not None:
-            train_dataset = tf.data.TFRecordDataset(self.train_dataset.filename)
-
-            try:
-                shuffle_and_repeat_func = tf.data.experimental.shuffle_and_repeat
-            except AttributeError:
-                shuffle_and_repeat_func = tf.contrib.data.shuffle_and_repeat
-
-            shuffle_and_repeat = shuffle_and_repeat_func(self.shuffle_buffer_size)
-            train_dataset = (train_dataset.apply(shuffle_and_repeat)
-                                          .batch(self.batch_size)
-                                          .map(self.train_dataset.parse_example_batch))
-
-            if self.prefetch_to_device:
-                # Suggested here: https://github.com/tensorflow/tensorflow/issues/18947#issuecomment-407778515
-                train_dataset = (train_dataset.apply(tf.data.experimental.copy_to_device('/gpu:0'))
-                                              .prefetch(self.prefetch_buffer_size_in_batches))
-                # prefetch = tf.data.experimental.prefetch_to_device('/gpu:0', self.prefetch_buffer_size_in_batches)
-                # train_dataset = train_dataset.apply(prefetch)
-            else:
-                train_dataset = train_dataset.prefetch(self.prefetch_buffer_size_in_batches)
-
-            datasets.append(train_dataset)
-
-            # self.train_iterator = train_dataset.make_one_shot_iterator()
-            self.train_iterator = train_dataset.make_initializable_iterator()
-            self.train_handle = sess.run(self.train_iterator.string_handle(name="train_string_handle"))
-
-        # --- val --
-
-        if self.val_dataset is not None:
-            val_dataset = tf.data.TFRecordDataset(self.val_dataset.filename)
-
-            if self.shuffle_val:
-                val_dataset = val_dataset.shuffle(self.shuffle_buffer_size)
-
-            val_dataset = (val_dataset.batch(self.batch_size)
-                                      .map(self.val_dataset.parse_example_batch))
-
-            if self.prefetch_to_device:
-                # Suggested here: https://github.com/tensorflow/tensorflow/issues/18947#issuecomment-407778515
-                val_dataset = (val_dataset.apply(tf.data.experimental.copy_to_device('/gpu:0'))
-                                          .prefetch(self.prefetch_buffer_size_in_batches))
-            else:
-                val_dataset = val_dataset.prefetch(self.prefetch_buffer_size_in_batches)
-
-            datasets.append(val_dataset)
-
-            self.val_iterator = val_dataset.make_initializable_iterator()
-            self.val_handle = sess.run(self.val_iterator.string_handle(name="val_string_handle"))
-
-        # --- test --
-
-        if self.test_dataset is not None:
-            test_dataset = tf.data.TFRecordDataset(self.test_dataset.filename)
-
-            if self.shuffle_val:
-                test_dataset = test_dataset.shuffle(self.shuffle_buffer_size)
-
-            test_dataset = (test_dataset.batch(self.batch_size)
-                                        .map(self.test_dataset.parse_example_batch))
-
-            if self.prefetch_to_device:
-                test_dataset = (test_dataset.apply(tf.data.experimental.copy_to_device('/gpu:0'))
-                                            .prefetch(self.prefetch_buffer_size_in_batches))
-            else:
-                test_dataset = test_dataset.prefetch(self.prefetch_buffer_size_in_batches)
-
-            datasets.append(test_dataset)
-
-            self.test_iterator = test_dataset.make_initializable_iterator()
-            self.test_handle = sess.run(self.test_iterator.string_handle(name="test_string_handle"))
-
-        assert datasets, "Must supply at least one of train_dataset, val_dataset, test_dataset"
-        dataset = datasets[0]
+        test_dataset = self.datasets.get('test', None)
+        if test_dataset is not None:
+            test_dset, _, _ = self.build_iterator('test', 'test', self.batch_size, False, 0)
+            tf_dsets.append(test_dset)
 
         # --- outputs ---
 
         self.handle = tf.placeholder(tf.string, shape=(), name="dataset_handle")
+        tf_dset = tf_dsets[0]
 
         if cfg.use_gpu and self.prefetch_to_device:
             # In tensorflow 1.13 (at least), tf wants to put this op on CPU, not sure why. This results in an error like:
@@ -289,29 +265,83 @@ class DataManager(Parameterized):
 
             with tf.device("/gpu:0"):
                 self.iterator = tf.data.Iterator.from_string_handle(
-                    self.handle, dataset.output_types, dataset.output_shapes)
+                    self.handle, tf_dset.output_types, tf_dset.output_shapes)
         else:
             self.iterator = tf.data.Iterator.from_string_handle(
-                self.handle, dataset.output_types, dataset.output_shapes)
+                self.handle, tf_dset.output_types, tf_dset.output_shapes)
 
         self.is_training = tf.placeholder(tf.bool, shape=(), name="is_training")
 
+    def build_iterator(self, name, base_dataset_name, batch_size, repeat, shuffle_buffer_size):
+        base_dataset = self.datasets[base_dataset_name]
+
+        if batch_size is None:
+            batch_size = self.batch_size
+
+        dset = tf.data.TFRecordDataset(base_dataset.filename)
+
+        # --- possibly repeat and shuffle --
+
+        if repeat and shuffle_buffer_size > 0:
+            try:
+                shuffle_and_repeat_func = tf.data.experimental.shuffle_and_repeat
+            except AttributeError:
+                shuffle_and_repeat_func = tf.contrib.data.shuffle_and_repeat
+            shuffle_and_repeat = shuffle_and_repeat_func(self.shuffle_buffer_size)
+
+            dset = dset.apply(shuffle_and_repeat)
+
+        elif shuffle_buffer_size > 0:
+            dset = dset.shuffle(self.shuffle_buffer_size)
+
+        # --- batch and parse ---
+
+        dset = dset.batch(batch_size).map(base_dataset.parse_example_batch)
+
+        # --- possibly prefetch to improve performance ---
+
+        if self.prefetch_buffer_size_in_batches > 0:
+            if cfg.use_gpu and self.prefetch_to_device:
+                # Suggested here: https://github.com/tensorflow/tensorflow/issues/18947#issuecomment-407778515
+                dset = (dset.apply(tf.data.experimental.copy_to_device('/gpu:0'))
+                            .prefetch(self.prefetch_buffer_size_in_batches))
+            else:
+                dset = dset.prefetch(self.prefetch_buffer_size_in_batches)
+
+        # --- finalize ---
+
+        iterator = dset.make_initializable_iterator()
+
+        sess = tf.get_default_session()
+        handle = sess.run(iterator.string_handle(name="{}_string_handle".format(name)))
+
+        self.iterators_and_handles[name] = (iterator, handle)
+
+        return dset, iterator, handle
+
     def do_train(self, is_training=True):
-        if not self.train_initialized:
-            sess = tf.get_default_session()
-            sess.run(self.train_iterator.initializer)
-            self.train_initialized = True
-        return {self.handle: self.train_handle, self.is_training: is_training}
+        return self.do('train', is_training)
 
     def do_val(self, is_training=False):
-        sess = tf.get_default_session()
-        sess.run(self.val_iterator.initializer)
-        return {self.handle: self.val_handle, self.is_training: is_training}
+        return self.do('val', is_training)
 
     def do_test(self, is_training=False):
+        return self.do('test', is_training)
+
+    def do(self, name, is_training=False):
+        """ Initialize iterator if it's not a repeating iterator (only train for now),
+            and return a feed_dict populated with the appropriate handle for the requested iterator. """
+        iterator, handle = self.iterators_and_handles[name]
+
         sess = tf.get_default_session()
-        sess.run(self.test_iterator.initializer)
-        return {self.handle: self.test_handle, self.is_training: is_training}
+        if name == 'train':
+            if not self.train_initialized:
+                sess.run(iterator.initializer)
+                self.train_initialized = True
+        else:
+            sess.run(iterator.initializer)
+
+        return {self.handle: handle, self.is_training: is_training}
 
 
 class DummyFunc:
