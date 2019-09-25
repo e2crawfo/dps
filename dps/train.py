@@ -201,18 +201,19 @@ class TrainingLoop(object):
 
         self.timestamp("Entering TrainingLoop.run")
 
+        # Call prepare_func to modify the config in arbitrary ways before training
         prepare_func = cfg.get("prepare_func", None)
         if callable(prepare_func):
-            prepare_func()  # Modify the config in arbitrary ways before training
+            prepare_funcs = [prepare_func]
         else:
             try:
                 prepare_funcs = list(prepare_func)
             except (TypeError, ValueError):
-                pass
-            else:
-                for f in prepare_funcs:
-                    if callable(f):
-                        f()
+                prepare_funcs = []
+        for f in prepare_funcs:
+            if callable(f):
+                _print("Calling prepare func {}...".format(f.__name__))
+                f()
 
         self.curriculum = cfg.curriculum + []
 
@@ -227,10 +228,18 @@ class TrainingLoop(object):
         if cfg.seed is None or cfg.seed < 0:
             cfg.seed = gen_seed()
 
-        # Create a directory to store the results of the training session.
+        # Create a directory to store the results of the training run.
         self.experiment_store = ExperimentStore(os.path.join(cfg.local_experiments_dir, cfg.env_name))
+
+        filename_keys = cfg.get('filename_keys', [])
+        if isinstance(filename_keys, str):
+            filename_keys = filename_keys.split(',')
+        filename_data = {key: cfg[key] for key in filename_keys}
+
         exp_dir = self.experiment_store.new_experiment(
-            self.exp_name, cfg.seed, add_date=1, force_fresh=1, update_latest=cfg.update_latest)
+            self.exp_name, cfg.seed, data=filename_data,
+            add_date=1, force_fresh=1, update_latest=cfg.update_latest)
+
         self.exp_dir = exp_dir
         cfg.path = exp_dir.path
 
@@ -286,6 +295,19 @@ class TrainingLoop(object):
                 _print("\n\n")
 
                 frozen_data = self.data.freeze()
+
+        finalize_func = cfg.get("finalize_func", None)
+        if callable(finalize_func):
+            finalize_funcs = [finalize_func]
+        else:
+            try:
+                finalize_funcs = list(finalize_func)
+            except (TypeError, ValueError):
+                finalize_funcs = []
+        for f in finalize_funcs:
+            if callable(f):
+                _print("Calling finalize func {}...".format(f.__name__))
+                f()
 
         self.timestamp("Leaving TrainingLoop.run")
 
@@ -483,8 +505,9 @@ class TrainingLoop(object):
                         path = os.path.realpath(path)
 
                         _print("Loading var scope \"{}\" from {}.".format(var_scope, path))
+                        start = time.time()
                         saver.restore(tf.get_default_session(), path)
-                        _print("Done.")
+                        _print("Done loading var scope, took {} seconds.".format(time.time() - start))
 
                 else:
                     _print("`load_path` is None, using a fresh set of weights.")
@@ -561,7 +584,7 @@ class TrainingLoop(object):
 
                     _print("Storing final weights...")
                     weight_start = time.time()
-                    final_path = self.data.path_for('weights/final_for_stage_{}'.format(stage_idx))
+                    final_path = self.data.path_for('weights/final_stage_{}'.format(stage_idx))
                     final_path = cfg.get('save_path', final_path)
                     final_path = updater.save(tf.get_default_session(), final_path)
                     _print("Done saving weights, took {} seconds".format(time.time() - weight_start))
@@ -621,7 +644,7 @@ class TrainingLoop(object):
 
                     _print("\n" + "-" * 10 + " Running end-of-stage hooks " + "-" * 10 + "\n")
                     for hook in cfg.hooks:
-                        hook.end_stage(self, stage_idx)
+                        hook.end_stage(self, updater, stage_idx)
 
                     _print()
                     self.timestamp("Done stage {}".format(stage_idx))
@@ -642,9 +665,7 @@ class TrainingLoop(object):
         reason = "NotStarted"
 
         # Parse stopping criteria, set up early stopping
-        stopping_criteria = cfg.get("stopping_criteria", None)
-        if not stopping_criteria:
-            stopping_criteria = updater.stopping_criteria
+        stopping_criteria = cfg.stopping_criteria
 
         if isinstance(stopping_criteria, str):
             stopping_criteria = stopping_criteria.split(",")
@@ -694,13 +715,16 @@ class TrainingLoop(object):
 
             render_step = cfg.eval_step if cfg.render_step <= 0 else cfg.render_step
             display_step = cfg.eval_step if cfg.display_step <= 0 else cfg.display_step
+            checkpoint_step = cfg.eval_step if cfg.checkpoint_step <= 0 else cfg.checkpoint_step
+            weight_step = cfg.eval_step if cfg.weight_step <= 0 else cfg.weight_step
+            backup_step = cfg.eval_step if cfg.backup_step <= 0 else cfg.backup_step
 
             evaluate = local_step % cfg.eval_step == 0
             display = local_step % display_step == 0
             render = local_step % render_step == 0 and (local_step > 0 or cfg.render_first)
-            checkpoint = local_step % cfg.checkpoint_step == 0 and local_step > 0
-            save_weights = local_step % cfg.weight_step == 0 and local_step > 0
-            backup = local_step % cfg.backup_step == 0 and local_step > 0 and cfg.backup_dir
+            checkpoint = local_step % checkpoint_step == 0 and local_step > 0
+            save_weights = local_step % weight_step == 0 and local_step > 0
+            backup = local_step % backup_step == 0 and local_step > 0 and cfg.backup_dir
 
             if display or render or evaluate or local_step % 100 == 0:
                 _print("\n{} Starting step {} {}".format("-" * 40, local_step, "-" * 40), flush=True)
@@ -765,7 +789,7 @@ class TrainingLoop(object):
                                self.stopping_criteria_name, stopping_criteria))
 
                     best_path = self.data.path_for(
-                        'weights/best_of_stage_{}'.format(stage_idx))
+                        'weights/best_stage_{}'.format(stage_idx))
                     best_path = cfg.get('save_path', best_path)
 
                     weight_start = time.time()
@@ -1209,7 +1233,7 @@ class _TrainingLoopData(FrozenTrainingLoopData):
         print()
 
 
-class Hook(object):
+class Hook:
     """ Hook called throughout training.
 
     Parameters
@@ -1247,7 +1271,7 @@ class Hook(object):
         """ Called at the beginning of every stage. """
         pass
 
-    def end_stage(self, training_loop, stage_idx):
+    def end_stage(self, training_loop, updater, stage_idx):
         """ Called at the end of every stage, after best hypothesis has been reloaded. """
         pass
 
@@ -1287,7 +1311,7 @@ class ScheduleHook(Hook):
         if stage_idx == 0:
             self.final_orig_stage = len(training_loop.curriculum) - 1
 
-    def end_stage(self, training_loop, stage_idx):
+    def end_stage(self, training_loop, updater, stage_idx):
 
         if stage_idx >= self.final_orig_stage:
             attr_value = self._attr_value_for_fragment(self.n_fragments_added)
