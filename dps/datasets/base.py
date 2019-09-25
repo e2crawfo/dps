@@ -3,14 +3,14 @@ import os
 import tensorflow as tf
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-import pprint
 import shutil
 import time
 import abc
 from itertools import zip_longest
+import dill
 
 from dps import cfg
-from dps.utils import Param, Parameterized, get_param_hash, NumpySeed, animate, resize_image, atleast_nd
+from dps.utils import Param, Parameterized, get_param_hash, NumpySeed, animate, resize_image, atleast_nd, pformat
 from dps.datasets import (
     load_emnist, load_omniglot, omniglot_classes,
     load_backgrounds, background_names, hard_background_names
@@ -44,7 +44,7 @@ class RawDataset(Parameterized):
         param_hash = get_param_hash(params)
         print(self.__class__.__name__)
         print("Params:")
-        pprint.pprint(params)
+        print(pformat(params))
         print("Param hash: {}".format(param_hash))
 
         self.directory = os.path.join(directory, str(param_hash))
@@ -74,13 +74,13 @@ class RawDataset(Parameterized):
                 raise
 
             with open(cfg_filename, 'w') as f:
-                f.write(pprint.pformat(params))
+                f.write(pformat(params))
         else:
             print("Found.")
 
         print("Took {} seconds.".format(time.time() - start))
         print("Features for dataset: ")
-        pprint.pprint(self.features)
+        print(pformat(self.features))
         print()
 
     def _make(self):
@@ -319,13 +319,22 @@ class Dataset(Parameterized):
     If `run_kwargs` is in kwargs, the corresponding value should be a dictionary of arguments which
     will be used to run the dataset creation in parallel.
 
+    Subclasses can override `_artifact_names` as a list of strings. If they do so, then they their `make`
+    function must return a dictionary whose set of keys is identical to `_artifact_names`. These are additional
+    objects that will be saved and loaded, and will be attributes of the resulting dataset.
+
+    To make use of datasets created with this class, use the tensorflow dataset API when building your graph:
+
+        my_dataset = MyDataset()
+        tf_dataset = tf.data.TFRecordDataset(my_dataset.filename)
+
     """
     n_examples = Param(None)
     seed = Param(None)
 
     _features = None
-    _iterator = None
-    _get_next = None
+    _no_cache = False
+    _artifact_names = []
 
     def __init__(self, **kwargs):
         start = time.time()
@@ -340,67 +349,93 @@ class Dataset(Parameterized):
         param_hash = get_param_hash(params)
         print(self.__class__.__name__)
         print("Params:")
-        pprint.pprint(params)
+        print(pformat(params))
         print("Param hash: {}".format(param_hash))
 
         self.filename = os.path.join(directory, str(param_hash))
         cfg_filename = self.filename + ".cfg"
+        artifact_filenames = [self.filename + '.' + a for a in self._artifact_names]
 
-        no_cache = os.getenv("DPS_NO_CACHE")
+        all_files = [self.filename, cfg_filename, *artifact_filenames]
+        all_files_exist = all([os.path.exists(f) for f in all_files])
+
+        no_cache = os.getenv("DPS_NO_CACHE") or self._no_cache
         if no_cache:
             print("Skipping dataset cache as DPS_NO_CACHE is set (value is {}).".format(no_cache))
 
         # We require cfg_filename to exist as it marks that dataset creation completed successfully.
-        if no_cache or not os.path.exists(self.filename) or not os.path.exists(cfg_filename):
-
+        if no_cache or not all_files_exist:
             if kwargs.get("no_make", False):
                 raise Exception("`no_make` is True, but dataset was not found in cache.")
 
             # Start fresh
-            try:
-                os.remove(self.filename)
-            except FileNotFoundError:
-                pass
-            try:
-                os.remove(cfg_filename)
-            except FileNotFoundError:
-                pass
+            for f in all_files:
+                try:
+                    os.remove(f)
+                except FileNotFoundError:
+                    pass
 
-            print("File for dataset not found, creating...")
+            print("Files for dataset not found, creating...")
 
             run_kwargs = kwargs.get('run_kwargs', None)
             if run_kwargs is not None:
+                if self._artifact_names:
+                    raise Exception("Artifacts not yet implemented for parallel dataset creation.")
+
                 # Create the dataset in parallel and write it to the cache.
                 make_dataset_in_parallel(run_kwargs, self.__class__, params)
             else:
                 self._writer = tf.python_io.TFRecordWriter(self.filename)
                 try:
                     with NumpySeed(self.seed):
-                        self._make()
+                        artifacts = self._make()
+
+                        if artifacts is None:
+                            artifacts = {}
+
+                        assert set(artifacts.keys()) == set(self._artifact_names)
+
                     self._writer.close()
                     print("Done creating dataset.")
+
                 except BaseException:
                     self._writer.close()
 
-                    try:
-                        os.remove(self.filename)
-                    except FileNotFoundError:
-                        pass
-                    try:
-                        os.remove(cfg_filename)
-                    except FileNotFoundError:
-                        pass
+                    for f in all_files:
+                        try:
+                            os.remove(f)
+                        except FileNotFoundError:
+                            pass
 
                     raise
 
             with open(cfg_filename, 'w') as f:
-                f.write(pprint.pformat(params))
+                f.write(pformat(params))
+
+            if artifact_filenames:
+                print("Saving artifacts...")
+                for a, af in zip(self._artifact_names, artifact_filenames):
+                    print("artifact: ", a)
+                    av = artifacts[a]
+                    with open(af, 'wb') as f:
+                        dill.dump(av, f, protocol=dill.HIGHEST_PROTOCOL)
+                    setattr(self, a, av)
+
         else:
             print("Found.")
 
+            if artifact_filenames:
+                print("Loading artifacts...")
+
+                for a, af in zip(self._artifact_names, artifact_filenames):
+                    print("artifact: ", a)
+                    with open(af, 'rb') as f:
+                        av = dill.load(f)
+                    setattr(self, a, av)
+
         print("Took {} seconds.".format(time.time() - start))
         print("Features for dataset: ")
-        pprint.pprint(self.features)
+        print(pformat(self.features))
 
         if cfg.copy_dataset_to:
             dest = os.path.join(cfg.copy_dataset_to, "{}.{}".format(os.getpid(), os.path.basename(self.filename)))
@@ -443,52 +478,39 @@ class Dataset(Parameterized):
     def parse_example_batch_postprocess(self, data):
         return data
 
-    @property
-    def iterator(self):
-        if self._iterator is not None:
-            return self._iterator
+    def sample(self, n, shuffle_buffer_size, batch_size=None):
+        if batch_size is None:
+            batch_size = n
 
         dset = tf.data.TFRecordDataset(self.filename)
-        dset = dset.repeat().batch(cfg.batch_size).map(self.parse_example_batch)
 
-        self._iterator = dset.make_one_shot_iterator()
-        return self._iterator
+        if shuffle_buffer_size > 0:
+            try:
+                shuffle_and_repeat_func = tf.data.experimental.shuffle_and_repeat
+            except AttributeError:
+                shuffle_and_repeat_func = tf.contrib.data.shuffle_and_repeat
 
-    @property
-    def get_next(self):
-        if self._get_next is not None:
-            return self._get_next
+            shuffle_and_repeat = shuffle_and_repeat_func(shuffle_buffer_size)
+            dset = dset.apply(shuffle_and_repeat)
 
-        self._get_next = self.iterator.get_next()
-        return self._get_next
-
-    def next_batch(self):
-        sess = tf.get_default_session()
-        result = sess.run(self.get_next)
-        return result
-
-    def sample(self, n=4, shuffle_buffer_size=1000, seed=0):
-        batch_size = n
-        dset = tf.data.TFRecordDataset(self.filename)
-
-        try:
-            shuffle_and_repeat_func = tf.data.experimental.shuffle_and_repeat
-        except AttributeError:
-            shuffle_and_repeat_func = tf.contrib.data.shuffle_and_repeat
-
-        shuffle_and_repeat = shuffle_and_repeat_func(shuffle_buffer_size)
-        dset = (dset.apply(shuffle_and_repeat)
-                    .batch(batch_size)
-                    .map(self.parse_example_batch))
-
+        dset = dset.batch(batch_size).map(self.parse_example_batch)
         iterator = dset.make_one_shot_iterator()
 
         sess = tf.get_default_session()
-        tf.set_random_seed(seed)
 
-        _sample = sess.run(iterator.get_next())
+        n_points = 0
+        sample = []
+        while n is None or n_points < n:
+            try:
+                _sample = sess.run(iterator.get_next())
+            except tf.errors.OutOfRangeError:
+                break
 
-        return _sample
+            sample.append(_sample)
+            n_points += len(_sample)
+
+        sample = np.concatenate(sample, axis=0)[:n]
+        return sample
 
 
 class ImageClassificationDataset(Dataset):
