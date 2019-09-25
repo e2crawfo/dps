@@ -20,7 +20,7 @@ from tensorflow.python.util import nest
 
 import dps
 from dps import cfg
-from dps.utils.base import Parameterized, Param, Config
+from dps.utils.base import Parameterized, Param, Config, pformat
 from dps.utils.inspect_checkpoint import get_tensors_from_checkpoint_file  # noqa: F401
 
 
@@ -432,7 +432,7 @@ class ScopedFunction(Parameterized):
 
         print(
             "\nBuilding {}(name={}) with args:\n{}".format(
-                self.__class__.__name__, self.name, pprint.pformat(self._params_at_creation_time)))
+                self.__class__.__name__, self.name, pformat(self._params_at_creation_time)))
 
     def trainable_variables(self, for_opt):
         return trainable_variables(self.scope, for_opt)
@@ -851,6 +851,7 @@ class ConvNet(ScopedFunction):
             if output_shape is not None:
                 batch_size = tf.shape(volume)[0]
                 volume = tf.reshape(volume, (batch_size, *output_shape))
+
         elif kind == 'global_pool':  # a global spatial pooling layer
             pool_kind = layer_spec.get('pool_kind', 'mean')
             keepdims = layer_spec.get('keepdims', False)
@@ -880,7 +881,10 @@ class ConvNet(ScopedFunction):
             final = i == len(self.layers) - 1
 
             if final and final_n_channels is not None:
-                layer['filters'] = final_n_channels
+                if layer['kind'] == 'fc':
+                    layer['n_units'] = final_n_channels
+                else:
+                    layer['filters'] = final_n_channels
 
             volume = self._apply_layer(volume, layer, i, final, is_training)
             self.volumes.append(volume)

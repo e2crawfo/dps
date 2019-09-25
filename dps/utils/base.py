@@ -1,4 +1,3 @@
-from pprint import pformat
 from contextlib import contextmanager
 import progressbar
 import numpy as np
@@ -32,6 +31,7 @@ import imageio
 from skimage.transform import resize
 from future.utils import raise_with_traceback
 import matplotlib.patches as patches
+import pprint
 
 import clify
 import dps
@@ -865,6 +865,48 @@ def _checked_makedirs(directory, force_fresh):
             raise
 
 
+class SourceJSONEncoder(json.JSONEncoder):
+    """ Convert functions to more informative representation. """
+
+    def default(self, obj):
+        if callable(obj):
+            lmbda = lambda: 0
+            if obj.__name__ == lmbda.__name__:
+                try:
+                    return inspect.getsource(obj)
+                except OSError:
+                    pass
+
+            info = dict(name=obj.__name__)
+
+            try:
+                source_lines = inspect.getsourcelines(obj)
+                start = source_lines[1]
+                end = start + len(source_lines[0])
+                info['linenos'] = (start, end)
+            except OSError:
+                info['linenos'] = None
+            try:
+                info['file'] = inspect.getsourcefile(obj)
+            except TypeError:
+                info['file'] = None
+            # try:
+            #     info['module'] = inspect.getmodule(obj)
+            # except TypeError:
+            #     info['module'] = None
+
+            s = "<function " + ", ".join("{}={}".format(k, v) for k, v in info.items()) + ">"
+
+            return s
+
+        return str(obj)
+
+
+def pformat(v):
+    """  Tries to handle functions in a nicer way. """
+    return pprint.pformat(json.loads(json.dumps(v, cls=SourceJSONEncoder)), width=140)
+
+
 class ExperimentDirectory(object):
     """ Wraps a directory storing data related to an experiment. """
 
@@ -911,7 +953,7 @@ class ExperimentDirectory(object):
                 dill.dump(config, f, protocol=dill.HIGHEST_PROTOCOL, recurse=dill_recurse)
 
             with open(self.path_for('config.json'), 'w') as f:
-                json.dump(config.freeze(), f, default=str, indent=4, sort_keys=True)
+                json.dump(config.freeze(), f, cls=SourceJSONEncoder, indent=4, sort_keys=True)
 
     @property
     def host(self):
@@ -1027,8 +1069,8 @@ def make_filename(main_title, directory='', config_dict=None, add_date=True,
 
     if add_date:
         date_time_string = str(datetime.datetime.now()).split('.')[0]
-        for c in ": -":
-            date_time_string = date_time_string.replace(c, '_')
+        for c in ": _":
+            date_time_string = date_time_string.replace(c, '-')
         labels.append(date_time_string)
 
     key_vals = list(config_dict.items())
@@ -1041,6 +1083,8 @@ def make_filename(main_title, directory='', config_dict=None, add_date=True,
             raise ValueError("values in config_dict must be strings.")
 
         if not str(key) in omit:
+            key = key.replace('_', '-')
+            value = value.replace('_', '-')
             labels.append(kvsep.join([key, value]))
 
     file_name = sep.join(labels)
@@ -2062,8 +2106,15 @@ class ConfigStack(dict, metaclass=Singleton):
             _config[key] = value
         return _config
 
+    def flatten(self):
+        flat = {}
+        for config in self._stack:
+            flat.update(config.flatten())
+        return flat
+
     def update_from_command_line(self, strict=True):
-        cl_args = clify.wrap_object(self, strict=strict).parse()
+        flat = self.flatten()
+        cl_args = clify.wrap_object(flat, strict=strict).parse()
         self.update(cl_args)
 
 
