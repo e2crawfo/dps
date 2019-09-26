@@ -184,8 +184,10 @@ def tf_inspect_cl():
     variables = get_tensors_from_checkpoint_file(path)
 
     if args.names_only:
-        pprint.pprint(list(variables.keys()))
+        variables = sorted([(k, v.shape) for k, v in variables.items()])
+        pprint.pprint(variables)
     else:
+        variables = sorted([(k, v.shape, v) for k, v in variables.items()])
         pprint.pprint(variables)
 
 

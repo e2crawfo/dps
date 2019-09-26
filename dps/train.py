@@ -319,7 +319,8 @@ class TrainingLoop(object):
         threshold_reached = True
         self.global_step = 0
         self.n_global_experiences = 0
-        self.curriculum_remaining = self.curriculum + []
+        max_stages = cfg.get('max_stages', 0) or None
+        self.curriculum_remaining = self.curriculum[:max_stages] + []
         self.curriculum_complete = []
 
         if cfg.initial_stage is not None:
@@ -612,11 +613,17 @@ class TrainingLoop(object):
                                    "from file {}...".format(best_path))
                             updater.restore(sess, best_path)
 
-                            test_record = updater.evaluate(cfg.batch_size, mode="test")
+                            try:
+                                test_record = updater.evaluate(cfg.batch_size, mode="test")
+                            except Exception:
+                                _print("Encountered error file running final tests: ")
+                                traceback.print_exc()
+
+                                test_record = {}
 
                             for hook in cfg.hooks:
-                                if hook.call_per_timestep and hook.final:
-                                    hook_record = hook.step(self, updater)
+                                if hook.final:
+                                    hook_record = hook.final_step(self, updater)
 
                                     if hook_record:
                                         assert len(hook_record) == 1
@@ -630,6 +637,8 @@ class TrainingLoop(object):
                                 _print("Rendering...")
                                 cfg.render_hook(updater)
                                 _print("Done rendering.")
+
+                            self.data.summarize()
 
                         except BaseException:
                             _print("Exception occurred while performing final testing/rendering: ")
@@ -1276,7 +1285,10 @@ class Hook:
         pass
 
     def step(self, training_loop, updater, step_idx):
-        """ May return a list of summaries and a dictionary of recorded values, similar to an updater. """
+        pass
+
+    def final_step(self, training_loop, updater):
+        """ Called during final testing for a stage. """
         pass
 
     def _print(self, s):
