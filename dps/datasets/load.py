@@ -111,7 +111,7 @@ def convert_emnist_and_store(path, new_image_shape):
 
 def load_emnist(
         path, classes, balance=False, include_blank=False,
-        shape=None, one_hot=False, n_examples=None, example_range=None, show=False):
+        shape=None, n_examples=None, example_range=None, show=False):
     """ Load emnist data from disk by class.
 
     Elements of `classes` pick out which emnist classes to load, but different labels
@@ -135,8 +135,6 @@ def load_emnist(
         If True, includes an additional class that consists of blank images.
     shape: (int, int)
         Shape of the images.
-    one_hot: bool
-        If True, labels are one-hot vectors instead of integers.
     n_examples: int
         Maximum number of examples returned. If not supplied, return all available data.
     example_range: pair of floats
@@ -163,9 +161,10 @@ def load_emnist(
         assert 0.0 <= example_range[0] < example_range[1] <= 1.0
 
     x, y = [], []
-    class_map, class_count = {}, {}
+    class_count = []
+    classes = sorted([str(s) for s in classes])
 
-    for i, cls in enumerate(sorted(classes)):
+    for i, cls in enumerate(classes):
         with gzip.open(os.path.join(emnist_dir, str(cls) + '.pklz'), 'rb') as f:
             _x = dill.load(f)
 
@@ -174,46 +173,44 @@ def load_emnist(
             high = int(example_range[1] * len(_x))
             _x = _x[low:high, ...]
 
-        x.append(np.uint8(255 * np.minimum(_x, 1)))
+        x.append(np.uint8(_x))
         y.extend([i] * _x.shape[0])
 
         if show:
             print(cls)
             print(image_to_string(x[-1]))
 
-        class_map[cls] = i
-        class_count[cls] = _x.shape[0]
+        class_count.append(_x.shape[0])
 
     x = np.concatenate(x, axis=0)
 
     if include_blank:
-        min_class_count = min(class_count.values())
+        min_class_count = min(class_count)
 
         blanks = np.zeros((min_class_count,) + x.shape[1:], dtype=np.uint8)
         x = np.concatenate((x, blanks), axis=0)
 
-        blank_idx = len(class_map)
+        blank_idx = len(classes)
 
         y.extend([blank_idx] * min_class_count)
 
         blank_symbol = ' '
-        class_map[blank_symbol] = blank_idx
         classes.append(blank_symbol)
 
     y = np.array(y)
 
     if balance:
-        min_class_count = min(class_count.values())
+        min_class_count = min(class_count)
 
         keep_x, keep_y = [], []
         for i, cls in enumerate(classes):
-            keep_indices = np.nonzero(y == class_map[cls])[0]
+            keep_indices = np.nonzero(y == i)[0]
             keep_indices = keep_indices[:min_class_count]
-            keep_x.append(x[keep_indices, ...])
+            keep_x.append(x[keep_indices])
             keep_y.append(y[keep_indices])
 
-        x = np.concatenate(keep_x, 0)
-        y = np.concatenate(keep_y, 0)
+        x = np.concatenate(keep_x, axis=0)
+        y = np.concatenate(keep_y, axis=0)
 
     order = np.random.permutation(x.shape[0])
     x = x[order]
@@ -222,11 +219,6 @@ def load_emnist(
     if n_examples:
         x = x[:n_examples]
         y = y[:n_examples]
-
-    if one_hot:
-        _y = np.zeros((y.shape[0], len(classes))).astype('f')
-        _y[np.arange(y.shape[0]), y] = 1.0
-        y = _y
 
     if needs_reshape:
         if x.shape[0] > 10000:
@@ -238,7 +230,7 @@ def load_emnist(
         x = [resize_image(img, shape) for img in x]
         x = np.uint8(x)
 
-    return x, y, class_map
+    return x, y, classes
 
 
 def omniglot_classes():

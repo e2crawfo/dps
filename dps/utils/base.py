@@ -865,41 +865,45 @@ def _checked_makedirs(directory, force_fresh):
             raise
 
 
+def pretty_func(f):
+    lmbda = lambda: 0
+    if f.__name__ == lmbda.__name__:
+        try:
+            return inspect.getsource(f)
+        except OSError:
+            pass
+
+    info = dict(name=f.__name__)
+
+    try:
+        source_lines = inspect.getsourcelines(f)
+        start = source_lines[1]
+        end = start + len(source_lines[0])
+        info['linenos'] = (start, end)
+    except OSError:
+        info['linenos'] = None
+    try:
+        info['file'] = inspect.getsourcefile(f)
+    except TypeError:
+        info['file'] = None
+    # try:
+    #     info['module'] = inspect.getmodule(f)
+    # except TypeError:
+    #     info['module'] = None
+
+    s = "<function " + ", ".join("{}={}".format(k, v) for k, v in info.items()) + ">"
+
+    return s
+
+
 class SourceJSONEncoder(json.JSONEncoder):
     """ Convert functions to more informative representation. """
 
     def default(self, obj):
         if callable(obj):
-            lmbda = lambda: 0
-            if obj.__name__ == lmbda.__name__:
-                try:
-                    return inspect.getsource(obj)
-                except OSError:
-                    pass
+            return pretty_func(obj)
 
-            info = dict(name=obj.__name__)
-
-            try:
-                source_lines = inspect.getsourcelines(obj)
-                start = source_lines[1]
-                end = start + len(source_lines[0])
-                info['linenos'] = (start, end)
-            except OSError:
-                info['linenos'] = None
-            try:
-                info['file'] = inspect.getsourcefile(obj)
-            except TypeError:
-                info['file'] = None
-            # try:
-            #     info['module'] = inspect.getmodule(obj)
-            # except TypeError:
-            #     info['module'] = None
-
-            s = "<function " + ", ".join("{}={}".format(k, v) for k, v in info.items()) + ">"
-
-            return s
-
-        return str(obj)
+        return repr(obj)
 
 
 def pformat(v):
@@ -1737,7 +1741,12 @@ class Config(dict):
         return repr(self)
 
     def __repr__(self):
-        return "{}{}\n".format(self.__class__.__name__, json.dumps(self, sort_keys=True, indent=4, default=repr))
+        try:
+            core = json.dumps(self, cls=SourceJSONEncoder, sort_keys=True, indent=4)
+        except TypeError:
+            core = json.dumps(self, cls=SourceJSONEncoder, indent=4)
+
+        return "{}{}\n".format(self.__class__.__name__, core)
 
     def __contains__(self, key):
         try:
@@ -1862,7 +1871,7 @@ class Config(dict):
 
     def freeze(self, remove_callable=False):
         _config = Config()
-        for key in self.keys():
+        for key in self.flatten().keys():
             value = self[key]
             if remove_callable and callable(value):
                 value = str(value)
@@ -1873,118 +1882,16 @@ class Config(dict):
 Config._reserved_keys = dir(Config)
 
 
-def update_scratch_dir(config, new_scratch_dir):
-    def fixup_dir(name):
-        attr_name = name + "_dir"
-        dir_name = os.path.join(new_scratch_dir, name)
-        dir_name = process_path(dir_name)
-        setattr(config, attr_name, dir_name)
-        os.makedirs(dir_name, exist_ok=True)
-
-    fixup_dir("data")
-    fixup_dir("model")
-    fixup_dir("local_experiments")
-    fixup_dir("parallel_experiments_build")
-    fixup_dir("parallel_experiments_run")
-
-
-config_template = """
-config = dict(
-    start_tensorboard=True,
-    tbport=6006,
-    reload_interval=10,
-    show_plots=False,
-    verbose=False,
-    use_gpu=False,
-    per_process_gpu_memory_fraction=0,
-    gpu_allow_growth=True,
-    parallel_exe="$HOME/.local/bin/parallel",
-    scratch_dir="{scratch_dir}",
-    slurm_preamble='''
-export OMP_NUM_THREADS=1
-module purge
-module load python/3.6.3
-module load scipy-stack
-source "$VIRTUALENVWRAPPER_BIN"/virtualenvwrapper.sh
-workon her_curriculum''',
-    ssh_hosts=(
-        ["ecrawf6@lab1-{{}}.cs.mcgill.ca".format(i+1) for i in range(16)]
-        + ["ecrawf6@lab2-{{}}.cs.mcgill.ca".format(i+1) for i in range(51)]
-        + ["ecrawf6@cs-{{}}.cs.mcgill.ca".format(i+1) for i in range(32)]
-    ),
-    ssh_options=(
-        "-oPasswordAuthentication=no "
-        "-oStrictHostKeyChecking=no "
-        "-oConnectTimeout=5 "
-        "-oServerAliveInterval=2"
-    ),
-)
-"""
-
-
-def _load_system_config(key=None):
-    home = os.getenv("HOME")
-    config_dir = os.path.join(home, ".config")
-    config_loc = os.path.join(config_dir, "dps_config.py")
-
-    if not os.path.exists(config_loc):
-        print("Creating config at {}...".format(config_loc))
-        default_scratch_dir = os.path.join(home, "dps_data")
-        scratch_dir = input("Enter a location to create a scratch directory for dps "
-                            "(for saving experiment results, cached datasets, etc.). "
-                            "Leave blank to accept the default of '{}'.\n".format(default_scratch_dir))
-        scratch_dir = process_path(scratch_dir) or default_scratch_dir
-
-        config = config_template.format(scratch_dir=scratch_dir)
-
-        with open(config_loc, "w") as f:
-            f.write(config)
-
-    config_module_spec = importlib.util.spec_from_file_location("dps_config", config_loc)
-    config_module = config_module_spec.loader.load_module()
-
-    config = Config(**config_module.config)
-
-    def fixup_dir(name):
-        attr_name = name + "_dir"
-        dir_name = getattr(config, attr_name, None)
-        if dir_name is None:
-            dir_name = os.path.join(config.scratch_dir, name)
-            dir_name = process_path(dir_name)
-            setattr(config, attr_name, dir_name)
-        os.makedirs(dir_name, exist_ok=True)
-
-    fixup_dir("data")
-    fixup_dir("model")
-    fixup_dir("local_experiments")
-    fixup_dir("parallel_experiments_build")
-    fixup_dir("parallel_experiments_run")
-
-    return config
-
-
-SYSTEM_CONFIG = _load_system_config()
-
-
 class ClearConfig(Config):
     def __init__(self, _d=None, **kwargs):
-        config = _load_system_config()
+        config = load_system_config()
         if _d:
             config.update(_d)
         config.update(kwargs)
         super().__init__(**config)
 
 
-class Singleton(type):
-    _instances = {}
-
-    def __call__(cls, *args, **kwargs):
-        if cls not in cls._instances:
-            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
-        return cls._instances[cls]
-
-
-class ConfigStack(dict, metaclass=Singleton):
+class ConfigStack(dict):
     _stack = []
 
     @property
@@ -2000,7 +1907,7 @@ class ConfigStack(dict, metaclass=Singleton):
         self._stack.clear()
         if default is not None:
             if default is NotSupplied:
-                self._stack.append(SYSTEM_CONFIG.copy())
+                self._stack.append(Config())
             else:
                 self._stack.append(default)
 
@@ -2098,12 +2005,13 @@ class ConfigStack(dict, metaclass=Singleton):
         self._stack[-1].update(*args, **kwargs)
 
     def freeze(self, remove_callable=False):
+        flat = self.flatten()
         _config = Config()
-        for key in self.keys():
-            value = self[key]
-            if remove_callable and callable(value):
-                value = str(value)
-            _config[key] = value
+
+        if remove_callable:
+            _config.update({k: pretty_func(v) if callable(v) else v for k, v in flat.items()})
+        else:
+            _config.update(flat)
         return _config
 
     def flatten(self):
@@ -2116,6 +2024,96 @@ class ConfigStack(dict, metaclass=Singleton):
         flat = self.flatten()
         cl_args = clify.wrap_object(flat, strict=strict).parse()
         self.update(cl_args)
+
+
+def update_scratch_dir(config, new_scratch_dir):
+    def fixup_dir(name):
+        attr_name = name + "_dir"
+        dir_name = os.path.join(new_scratch_dir, name)
+        dir_name = process_path(dir_name)
+        setattr(config, attr_name, dir_name)
+        os.makedirs(dir_name, exist_ok=True)
+
+    fixup_dir("data")
+    fixup_dir("model")
+    fixup_dir("local_experiments")
+    fixup_dir("parallel_experiments_build")
+    fixup_dir("parallel_experiments_run")
+
+
+config_template = """
+config = dict(
+    start_tensorboard=True,
+    tbport=6006,
+    reload_interval=10,
+    show_plots=False,
+    verbose=False,
+    use_gpu=False,
+    per_process_gpu_memory_fraction=0,
+    gpu_allow_growth=True,
+    parallel_exe="$HOME/.local/bin/parallel",
+    scratch_dir="{scratch_dir}",
+    slurm_preamble='''
+export OMP_NUM_THREADS=1
+module purge
+module load python/3.6.3
+module load scipy-stack
+source "$VIRTUALENVWRAPPER_BIN"/virtualenvwrapper.sh
+workon her_curriculum''',
+    ssh_hosts=(
+        ["ecrawf6@lab1-{{}}.cs.mcgill.ca".format(i+1) for i in range(16)]
+        + ["ecrawf6@lab2-{{}}.cs.mcgill.ca".format(i+1) for i in range(51)]
+        + ["ecrawf6@cs-{{}}.cs.mcgill.ca".format(i+1) for i in range(32)]
+    ),
+    ssh_options=(
+        "-oPasswordAuthentication=no "
+        "-oStrictHostKeyChecking=no "
+        "-oConnectTimeout=5 "
+        "-oServerAliveInterval=2"
+    ),
+)
+"""
+
+
+def load_system_config(key=None):
+    home = os.getenv("HOME")
+    config_dir = os.path.join(home, ".config")
+    config_loc = os.path.join(config_dir, "dps_config.py")
+
+    if not os.path.exists(config_loc):
+        print("Creating config at {}...".format(config_loc))
+        default_scratch_dir = os.path.join(home, "dps_data")
+        scratch_dir = input("Enter a location to create a scratch directory for dps "
+                            "(for saving experiment results, cached datasets, etc.). "
+                            "Leave blank to accept the default of '{}'.\n".format(default_scratch_dir))
+        scratch_dir = process_path(scratch_dir) or default_scratch_dir
+
+        config = config_template.format(scratch_dir=scratch_dir)
+
+        with open(config_loc, "w") as f:
+            f.write(config)
+
+    config_module_spec = importlib.util.spec_from_file_location("dps_config", config_loc)
+    config_module = config_module_spec.loader.load_module()
+
+    config = Config(**config_module.config)
+
+    def fixup_dir(name):
+        attr_name = name + "_dir"
+        dir_name = getattr(config, attr_name, None)
+        if dir_name is None:
+            dir_name = os.path.join(config.scratch_dir, name)
+            dir_name = process_path(dir_name)
+            setattr(config, attr_name, dir_name)
+        os.makedirs(dir_name, exist_ok=True)
+
+    fixup_dir("data")
+    fixup_dir("model")
+    fixup_dir("local_experiments")
+    fixup_dir("parallel_experiments_build")
+    fixup_dir("parallel_experiments_run")
+
+    return config
 
 
 def restart_tensorboard(logdir, port=6006, reload_interval=120):

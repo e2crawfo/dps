@@ -2,6 +2,8 @@ import pytest
 import time
 import logging
 
+from dps.utils import Config
+
 
 logging.getLogger('PIL').setLevel(logging.WARNING)
 
@@ -63,7 +65,7 @@ def tf_log_level(request):
 
 @pytest.fixture
 def test_config(request):
-    return dict(
+    return Config(
         start_tensorboard=False,
         intra_op_parallelism_threads=1,
         inter_op_parallelism_threads=1,

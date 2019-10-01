@@ -5,4 +5,3 @@ from .base import (
     VisualArithmeticDataset, GridArithmeticDataset,
     EmnistObjectDetectionDataset, GridEmnistObjectDetectionDataset,
 )
-from .game import GameDataset

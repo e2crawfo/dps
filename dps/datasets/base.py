@@ -1,4 +1,5 @@
 import numpy as np
+import inspect
 import os
 import tensorflow as tf
 import matplotlib as mpl
@@ -335,14 +336,17 @@ class Dataset(Parameterized):
     _features = None
     _no_cache = False
     _artifact_names = []
+    loaded = False
 
     def __init__(self, **kwargs):
         start = time.time()
         print("Trying to find dataset in cache...")
 
-        directory = kwargs.get(
-            "data_dir",
-            os.path.join(cfg.data_dir, "cached_datasets", self.__class__.__name__))
+        directory = getattr(cfg, 'cache_dir', None)
+        if directory is None:
+            directory = kwargs.get(
+                "data_dir",
+                os.path.join(cfg.data_dir, "cached_datasets", self.__class__.__name__))
         os.makedirs(directory, exist_ok=True)
 
         params = self.param_values()
@@ -359,7 +363,8 @@ class Dataset(Parameterized):
         all_files = [self.filename, cfg_filename, *artifact_filenames]
         all_files_exist = all([os.path.exists(f) for f in all_files])
 
-        no_cache = os.getenv("DPS_NO_CACHE") or self._no_cache
+        no_cache = kwargs.get('_no_cache', False)
+        no_cache = os.getenv("DPS_NO_CACHE") or self._no_cache or no_cache
         if no_cache:
             print("Skipping dataset cache as DPS_NO_CACHE is set (value is {}).".format(no_cache))
 
@@ -423,6 +428,7 @@ class Dataset(Parameterized):
 
         else:
             print("Found.")
+            self.loaded = True
 
             if artifact_filenames:
                 print("Loading artifacts...")
@@ -514,7 +520,6 @@ class Dataset(Parameterized):
 
 
 class ImageClassificationDataset(Dataset):
-    one_hot = Param()
     classes = Param()
     image_shape = Param()
     include_blank = Param()
@@ -526,7 +531,8 @@ class ImageClassificationDataset(Dataset):
         if self._features is None:
             self._features = [
                 ImageFeature("image", self.obs_shape),
-                IntegerFeature("label", self.n_classes if self.one_hot else None),
+                IntegerFeature("label"),
+                StringFeature("text_label"),
             ]
         return self._features
 
@@ -539,10 +545,6 @@ class ImageClassificationDataset(Dataset):
         return self.image_shape + (self.depth,)
 
     @property
-    def action_shape(self):
-        return self.n_classes if self.one_hot else 1
-
-    @property
     def depth(self):
         return 1
 
@@ -550,11 +552,11 @@ class ImageClassificationDataset(Dataset):
 class EmnistDataset(ImageClassificationDataset):
     """
     Download and pre-process EMNIST dataset:
-    python scripts/download.py emnist <desired location>
+    python scripts/download.py emnist
 
     """
-    balance = Param()
     example_range = Param()
+    balance = Param()
 
     class_pool = ''.join(
         [str(i) for i in range(10)]
@@ -569,19 +571,24 @@ class EmnistDataset(ImageClassificationDataset):
 
     def _make(self):
         param_values = self.param_values()
-        param_values['one_hot'] = False
-        param_values['shape'] = param_values['image_shape']
-        del param_values['image_shape']
+        kwargs = {}
+        for k in inspect.signature(load_emnist).parameters:
+            if k in param_values:
+                kwargs[k] = param_values[k]
+        kwargs['shape'] = param_values['image_shape']
 
-        x, y, class_map = load_emnist(cfg.data_dir, **param_values)
+        x, y, class_names = load_emnist(cfg.data_dir, **kwargs)
 
         if x.shape[0] < self.n_examples:
             raise Exception(
                 "Too few datapoints. Requested {}, "
                 "only {} are available.".format(self.n_examples, x.shape[0]))
 
-        for _x, _y in x, y:
-            self._write_example(image=_x, label=class_map[_y])
+        if x.ndim == 3:
+            x = x[..., None]
+
+        for _x, _y in zip(x, y):
+            self._write_example(image=_x, label=_y, text_label=class_names[_y])
 
 
 class OmniglotDataset(ImageClassificationDataset):
@@ -595,10 +602,11 @@ class OmniglotDataset(ImageClassificationDataset):
 
     def _make(self, **kwargs):
         param_values = self.param_values()
-        param_values['one_hot'] = False
-        param_values['shape'] = param_values['image_shape']
-        del param_values['image_shape']
-        del param_values['n_examples']
+        kwargs = {}
+        for k in inspect.signature(load_emnist).parameters:
+            if k in param_values:
+                kwargs[k] = param_values[k]
+        kwargs['shape'] = param_values['image_shape']
 
         x, y, class_map = load_omniglot(cfg.data_dir, **param_values)
 
@@ -607,7 +615,7 @@ class OmniglotDataset(ImageClassificationDataset):
                 "Too few datapoints. Requested {}, "
                 "only {} are available.".format(self.n_examples, x.shape[0]))
 
-        for _x, _y in x, y:
+        for _x, _y in zip(x, y):
             self._write_example(image=_x, label=class_map[_y])
 
 

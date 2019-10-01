@@ -9,6 +9,7 @@ import tensorflow as tf
 from dps import cfg
 from dps.utils import Parameterized, Param
 from dps.utils.tf import build_gradient_train_op, trainable_variables, get_scheduled_values, ScopedFunction
+from dps.datasets.base import Dataset
 
 
 class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
@@ -278,7 +279,12 @@ class DataManager(Parameterized):
         if batch_size is None:
             batch_size = self.batch_size
 
-        dset = tf.data.TFRecordDataset(base_dataset.filename)
+        if isinstance(base_dataset, tf.data.Dataset):
+            dset = base_dataset
+        elif isinstance(base_dataset, Dataset):
+            dset = tf.data.TFRecordDataset(base_dataset.filename)
+        else:
+            raise Exception("Unknown dataset type: {}.".format(base_dataset))
 
         # --- possibly repeat and shuffle --
 
@@ -296,7 +302,10 @@ class DataManager(Parameterized):
 
         # --- batch and parse ---
 
-        dset = dset.batch(batch_size).map(base_dataset.parse_example_batch)
+        dset = dset.batch(batch_size)
+
+        if hasattr(base_dataset, 'parse_example_batch'):
+            dset = dset.map(base_dataset.parse_example_batch)
 
         # --- possibly prefetch to improve performance ---
 

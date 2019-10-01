@@ -34,10 +34,10 @@ def download_backgrounds(data_dir):
             subprocess.run(command, check=True)
 
 
-# NIST link seems not to work anymore...
-# emnist_url = 'http://www.itl.nist.gov/iaui/vip/cs_links/EMNIST/gzip.zip'
+# This link seems not to work anymore...
+# emnist_url = 'https://cloudstor.aarnet.edu.au/plus/index.php/s/54h3OuGJhFLwAlQ/download'
 
-emnist_url = 'https://cloudstor.aarnet.edu.au/plus/index.php/s/54h3OuGJhFLwAlQ/download'
+emnist_url = 'http://www.itl.nist.gov/iaui/vip/cs_links/EMNIST/gzip.zip'
 
 
 template = 'emnist-byclass-{}-{}-idx{}-ubyte.gz'
@@ -120,10 +120,9 @@ def process_emnist(data_dir, quiet):
     called `emnist-byclass` which contains a separate pklz file for each emnist
     class.
 
-    Pixel values of stored images are floating points values between 0 and 1.
-    Images for each class are put into a floating point numpy array with shape
-    (n_images_in_class, 28, 28). This numpy array is pickled and stored in a zip
-    file with name <class char>.pklz.
+    Pixel values of stored images are uint8 values up to 255.
+    Images for each class are put into a numpy array with shape (n_images_in_class, 28, 28).
+    This numpy array is pickled and stored in a zip file with name <class char>.pklz.
 
     Parameters
     ----------
@@ -157,7 +156,6 @@ def process_emnist(data_dir, quiet):
 
             # Give images the right orientation so that plt.imshow(x[0]) just works.
             x = np.moveaxis(x.reshape(-1, 28, 28), 1, 2)
-            x = x.astype('f') / 255.0
 
             for i in sorted(set(y.flatten())):
                 keep = y == i

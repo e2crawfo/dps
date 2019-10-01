@@ -1,2 +1,0 @@
-# python retest_exploration.py --name=retest_exploration --n-repeats=1 --max-hosts=1 --ppn=6 --max-hosts=1 --cpp=1 --kind=slurm --wall-time=30mins --cleanup-time=2mins --slack-time=2mins --pmem=5000 --gpu-set=0 --ignore-gpu=False --error-on-timeout=True --n-param-settings=6
-python retest_exploration.py --name=retest_exploration --n-repeats=1 --max-hosts=1 --ppn=6 --max-hosts=1 --cpp=1 --kind=slurm --wall-time=3hours --cleanup-time=2mins --slack-time=2mins --pmem=5000 --gpu-set=0 --ignore-gpu=False --error-on-timeout=True

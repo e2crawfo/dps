@@ -219,11 +219,10 @@ class TrainingLoop(object):
 
         if cfg.start_from:
             initial_stage, initial_step = cfg.start_from.split(',')
-            initial_stage = int(initial_stage)
+            cfg.initial_stage = int(initial_stage)
             initial_step = int(initial_step)
-
-            self.curriculum[initial_stage]['initial_step'] = initial_step
-            cfg.initial_stage = initial_stage
+            if initial_step != 0:
+                self.curriculum[initial_stage]['initial_step'] = initial_step
 
         if cfg.seed is None or cfg.seed < 0:
             cfg.seed = gen_seed()
@@ -1074,7 +1073,7 @@ class _TrainingLoopData(FrozenTrainingLoopData):
     """
     def setup(self):
         # Record training session environment for later diagnostic purposes
-        self.record_environment(config=cfg)
+        self.record_environment(config=cfg.freeze())
         self.curriculum = []
 
         self.make_directory('weights')

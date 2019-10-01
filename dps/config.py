@@ -1,10 +1,9 @@
 import numpy as np
 
-from dps import cfg
-from dps.utils import SYSTEM_CONFIG
+from dps.utils import Config, load_system_config
 
 
-DEFAULT_CONFIG = SYSTEM_CONFIG.copy(
+DEFAULT_CONFIG = Config(
     env_name="default_env",
     exp_name="",
 
@@ -19,7 +18,7 @@ DEFAULT_CONFIG = SYSTEM_CONFIG.copy(
     # provided for easy access from command line.
     start_from="0,0",
 
-    load_path=-1,  # path or stage to load variables from.
+    load_path='-1',  # path or stage to load variables from.
     do_train=True,
     preserve_env=False,
     power_through=True,  # Whether to complete the entire curriculum, even if threshold not reached.
@@ -51,6 +50,7 @@ DEFAULT_CONFIG = SYSTEM_CONFIG.copy(
 
     max_time=0,
     max_steps=1000000,
+    max_stages=0,
     max_experiences=np.inf,
 
     render_hook=None,
@@ -72,33 +72,7 @@ DEFAULT_CONFIG = SYSTEM_CONFIG.copy(
     profile=False,
     copy_dataset_to="",
     warning_mode='once',
+    start_tensorboard=0,
 )
 
-
-RL_EXPERIMENT_CONFIG = DEFAULT_CONFIG.copy(
-    name="RLExperiment",
-
-    render_n_rollouts=10,
-    render_hook=None,
-    # render_hook=rl_render_hook,
-
-    standardize_advantage=True,
-    n_controller_units=64,
-    gamma=1.0,
-    opt_steps_per_update=1,
-
-    display_step=100,
-    eval_step=100,
-    patience=np.inf,
-    max_steps=1000000,
-    power_through=False,
-)
-
-
-SL_EXPERIMENT_CONFIG = RL_EXPERIMENT_CONFIG.copy(
-    name="SLExperiment",
-    patience=5000,
-)
-
-
-cfg._stack.append(DEFAULT_CONFIG)
+DEFAULT_CONFIG.update(load_system_config())

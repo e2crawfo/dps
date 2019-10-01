@@ -21,3 +21,4 @@ python-dateutil==2.6.1  # To satisfy botocore 1.10.1
 scikit-image
 scikit-learn
 tabulate
+tensorflow-datasets

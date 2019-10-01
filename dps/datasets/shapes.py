@@ -20,7 +20,7 @@ class ShapesDataset(PatchesDataset):
         for spec in self.shape_specs:
             shape, colour = spec.split(",")
 
-            f = os.path.join(os.path.dirname(dps.__file__), "shapes", "{}.png".format(shape))
+            f = os.path.join(os.path.dirname(dps.__file__), "datasets/shapes", "{}.png".format(shape))
             image = imageio.imread(f)
             image = resize_image(image[..., 3], self.patch_shape)
             image = self._colourize(image, colour)
@@ -164,7 +164,7 @@ class SetThreeAttr(PatchesDataset):
         if patch is None:
             colour, shape, digit = card
 
-            f = os.path.join(os.path.dirname(dps.__file__), "shapes", "{}.png".format(shape))
+            f = os.path.join(os.path.dirname(dps.__file__), "datasets/shapes", "{}.png".format(shape))
             image = imageio.imread(f)
             image = resize_image(image[..., 3], self.patch_shape)
             image = self._colourize(image, colour)
@@ -172,7 +172,7 @@ class SetThreeAttr(PatchesDataset):
             shape_colour = image[:, :, :3]
             shape_alpha = image[:, :, 3:4] / 255.
 
-            f = os.path.join(os.path.dirname(dps.__file__), "digits", "{}.png".format(digit))
+            f = os.path.join(os.path.dirname(dps.__file__), "datasets/digits", "{}.png".format(digit))
             digit_image = imageio.imread(f)
             digit_image = resize_image(digit_image[..., 3], self.patch_shape)
             digit_image = self._colourize(digit_image, self.digit_colour)

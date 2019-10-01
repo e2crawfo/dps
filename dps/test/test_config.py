@@ -15,12 +15,6 @@ def test_basic():
     assert c.b == 2
     assert c['b'] == 2
 
-    with pytest.raises(AssertionError):
-        c[1] = 2
-
-    with pytest.raises(AssertionError):
-        c['1'] = 2
-
     with pytest.raises(KeyError):
         c['1']
 
@@ -58,7 +52,7 @@ def test_config_stack():
             assert cfg.y.y == 2
             assert cfg['y']['y'] == 2
 
-            assert set(cfg.keys()) == set('a b c x:x y:y'.split())
+            assert set(cfg.flatten().keys()) == set('a b c x:x y:y'.split())
 
             with Config(a=10, c=100, d='a', e=100, y=Config(y=3), z=Config(z='a')):
                 assert cfg['a'] == 10
@@ -85,7 +79,7 @@ def test_config_stack():
                 assert cfg.z.z == 'a'
                 assert cfg['z']['z'] == 'a'
 
-                assert set(cfg.keys()) == set('a b c d e x:x y:y z:z'.split())
+                assert set(cfg.flatten().keys()) == set('a b c d e x:x y:y z:z'.split())
 
             assert cfg['a'] == 1
             assert cfg.a == 1
@@ -96,7 +90,7 @@ def test_config_stack():
             assert cfg['c'](2) == 3
             assert cfg.c(2) == 3
 
-            assert set(cfg.keys()) == set('a b c x:x y:y'.split())
+            assert set(cfg.flatten().keys()) == set('a b c x:x y:y'.split())
 
             with pytest.raises(KeyError):
                 cfg['d']
@@ -120,7 +114,7 @@ def test_config_stack():
             cfg['c']
         with pytest.raises(AttributeError):
             cfg.c
-        assert set(cfg.keys()) == set()
+        assert set(cfg.flatten().keys()) == set()
     finally:
         ConfigStack._stack = old_stack
 
