@@ -2043,62 +2043,45 @@ def update_scratch_dir(config, new_scratch_dir):
     fixup_dir("parallel_experiments_run")
 
 
-config_template = """
-config = dict(
-    start_tensorboard=True,
-    tbport=6006,
-    reload_interval=10,
-    show_plots=False,
-    verbose=False,
-    use_gpu=False,
-    per_process_gpu_memory_fraction=0,
-    gpu_allow_growth=True,
-    parallel_exe="$HOME/.local/bin/parallel",
-    scratch_dir="{scratch_dir}",
-    slurm_preamble='''
-export OMP_NUM_THREADS=1
-module purge
-module load python/3.6.3
-module load scipy-stack
-source "$VIRTUALENVWRAPPER_BIN"/virtualenvwrapper.sh
-workon her_curriculum''',
-    ssh_hosts=(
-        ["ecrawf6@lab1-{{}}.cs.mcgill.ca".format(i+1) for i in range(16)]
-        + ["ecrawf6@lab2-{{}}.cs.mcgill.ca".format(i+1) for i in range(51)]
-        + ["ecrawf6@cs-{{}}.cs.mcgill.ca".format(i+1) for i in range(32)]
-    ),
-    ssh_options=(
-        "-oPasswordAuthentication=no "
-        "-oStrictHostKeyChecking=no "
-        "-oConnectTimeout=5 "
-        "-oServerAliveInterval=2"
-    ),
-)
-"""
-
-
 def load_system_config(key=None):
     home = os.getenv("HOME")
     config_dir = os.path.join(home, ".config")
     config_loc = os.path.join(config_dir, "dps_config.py")
 
-    if not os.path.exists(config_loc):
-        print("Creating config at {}...".format(config_loc))
-        default_scratch_dir = os.path.join(home, "dps_data")
-        scratch_dir = input("Enter a location to create a scratch directory for dps "
-                            "(for saving experiment results, cached datasets, etc.). "
-                            "Leave blank to accept the default of '{}'.\n".format(default_scratch_dir))
-        scratch_dir = process_path(scratch_dir) or default_scratch_dir
+    if os.path.exists(config_loc):
+        config_module_spec = importlib.util.spec_from_file_location("dps_config", config_loc)
+        config_module = config_module_spec.loader.load_module()
+        config = Config(**config_module.config)
+    else:
+        config = Config(
+            start_tensorboard=True,
+            tbport=6006,
+            reload_interval=10,
+            show_plots=False,
+            verbose=False,
+            use_gpu=False,
+            per_process_gpu_memory_fraction=0,
+            gpu_allow_growth=True,
+            scratch_dir="/tmp",
+            # parallel_exe="$HOME/.local/bin/parallel",
+            # slurm_preamble='''
+            #     export OMP_NUM_THREADS=1
+            #     module purge
+            #     module load python/3.6.3
+            #     module load scipy-stack
+            #     source "$VIRTUALENVWRAPPER_BIN"/virtualenvwrapper.sh
+            #     workon her_curriculum''',
+            # ssh_hosts=[],
+            ssh_options=(
+                "-oPasswordAuthentication=no "
+                "-oStrictHostKeyChecking=no "
+                "-oConnectTimeout=5 "
+                "-oServerAliveInterval=2"
+            ),
+            make_dirs=False,
+        )
 
-        config = config_template.format(scratch_dir=scratch_dir)
-
-        with open(config_loc, "w") as f:
-            f.write(config)
-
-    config_module_spec = importlib.util.spec_from_file_location("dps_config", config_loc)
-    config_module = config_module_spec.loader.load_module()
-
-    config = Config(**config_module.config)
+    make_dirs = config.get('make_dirs', True)
 
     def fixup_dir(name):
         attr_name = name + "_dir"
@@ -2107,7 +2090,9 @@ def load_system_config(key=None):
             dir_name = os.path.join(config.scratch_dir, name)
             dir_name = process_path(dir_name)
             setattr(config, attr_name, dir_name)
-        os.makedirs(dir_name, exist_ok=True)
+
+        if make_dirs:
+            os.makedirs(dir_name, exist_ok=True)
 
     fixup_dir("data")
     fixup_dir("model")
