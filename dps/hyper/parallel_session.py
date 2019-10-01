@@ -5,7 +5,6 @@ import subprocess
 from future.utils import raise_with_traceback
 import numpy as np
 import time
-import progressbar
 import shutil
 from collections import defaultdict
 import sys
@@ -17,7 +16,7 @@ import json
 from dps import cfg
 from dps.parallel import ReadOnlyJob
 from dps.utils import (
-    cd, parse_timedelta, make_symlink, ExperimentStore,
+    cd, parse_timedelta, ExperimentStore,
     zip_root, process_path, path_stem, redirect_stream
 )
 
@@ -387,8 +386,7 @@ class ParallelSession(object):
         return hosts, n_procs
 
     def execute_command(
-            self, command, frmt=True, shell=True, max_seconds=None,
-            progress=False, robust=False, output=None):
+            self, command, frmt=True, shell=True, max_seconds=None, robust=False, output=None):
         """ Uses `subprocess` to execute `command`. Has a few added bells and whistles.
 
         if command returns non-zero exit status:
@@ -432,28 +430,15 @@ class ParallelSession(object):
             p = subprocess.Popen(command, shell=shell, universal_newlines=True,
                                  stdout=stdout, stderr=stderr)
 
-            progress_bar = None
-            if progress:
-                widgets = ['[', progressbar.Timer(), '] ',
-                           '(', progressbar.ETA(), ') ',
-                           progressbar.Bar()]
-                _max_value = max_seconds or progressbar.UnknownLength
-                progress_bar = progressbar.ProgressBar(
-                    widgets=widgets, max_value=_max_value, redirect_stdout=True)
-
             interval_length = 1
             while True:
                 try:
                     p.wait(interval_length)
                 except subprocess.TimeoutExpired:
-                    if progress_bar is not None:
-                        progress_bar.update(min(int(time.time() - start), max_seconds))
+                    pass
 
                 if p.returncode is not None:
                     break
-
-            if progress_bar is not None:
-                progress_bar.finish()
 
             if output == "loud":
                 print("\nCommand took {} seconds.\n".format(time.time() - start))
@@ -486,8 +471,6 @@ class ParallelSession(object):
             if p is not None:
                 p.terminate()
                 p.kill()
-            if progress_bar is not None:
-                progress_bar.finish()
             raise_with_traceback(e)
 
     def ssh_execute(self, command, host, **kwargs):
@@ -556,7 +539,7 @@ class ParallelSession(object):
 
         self.execute_command(
             command, frmt=False, robust=True,
-            max_seconds=self.parallel_seconds_per_step, progress=not self.hpc,
+            max_seconds=self.parallel_seconds_per_step,
             output='loud' if self.loud_output else None)
 
     def _checkpoint(self, i):
@@ -608,7 +591,7 @@ class ParallelSession(object):
     def get_slurm_var(self, var_name):
         parallel_command = "printenv | grep {}".format(var_name)
         command = 'srun --ntasks 1 --no-kill sh -c "{parallel_command}"'.format(parallel_command=parallel_command)
-        returncode, stdout, stderr = self.execute_command(command, frmt=False, robust=False, progress=False)
+        returncode, stdout, stderr = self.execute_command(command, frmt=False, robust=False)
         split = stdout.split('=')
 
         if len(split) != 2:

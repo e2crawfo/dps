@@ -1,5 +1,4 @@
 from contextlib import contextmanager
-import progressbar
 import numpy as np
 import signal
 import time
@@ -2173,7 +2172,7 @@ def test_map_structure():
 
 
 def execute_command(
-        command, shell=True, max_seconds=None, progress=False, robust=False, output=None):
+        command, shell=True, max_seconds=None, robust=False, output=None):
     """ Uses `subprocess` to execute `command`. Has a few added bells and whistles.
 
     if command returns non-zero exit status:
@@ -2215,28 +2214,15 @@ def execute_command(
         p = subprocess.Popen(command, shell=shell, universal_newlines=True,
                              stdout=stdout, stderr=stderr)
 
-        progress_bar = None
-        if progress:
-            widgets = ['[', progressbar.Timer(), '] ',
-                       '(', progressbar.ETA(), ') ',
-                       progressbar.Bar()]
-            _max_value = max_seconds or progressbar.UnknownLength
-            progress_bar = progressbar.ProgressBar(
-                widgets=widgets, max_value=_max_value, redirect_stdout=True)
-
         interval_length = 1
         while True:
             try:
                 p.wait(interval_length)
             except subprocess.TimeoutExpired:
-                if progress_bar is not None:
-                    progress_bar.update(min(int(time.time() - start), max_seconds))
+                pass
 
             if p.returncode is not None:
                 break
-
-        if progress_bar is not None:
-            progress_bar.finish()
 
         if output == "loud":
             print("\nCommand took {} seconds.\n".format(time.time() - start))
@@ -2269,8 +2255,6 @@ def execute_command(
         if p is not None:
             p.terminate()
             p.kill()
-        if progress_bar is not None:
-            progress_bar.finish()
         raise_with_traceback(e)
 
 
