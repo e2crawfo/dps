@@ -8,6 +8,7 @@ from tabulate import tabulate
 import shutil
 import matplotlib.pyplot as plt
 import copy
+import logging
 
 import tensorflow as tf
 try:
@@ -432,7 +433,7 @@ class ScopedFunction(Parameterized):
         if isinstance(self.no_gradient, str):
             self.no_gradient = self.no_gradient.split()
 
-        print(
+        logging.debug(
             "\nBuilding {}(name={}) with args:\n{}".format(
                 self.__class__.__name__, self.name, pformat(self._params_at_creation_time)))
 
@@ -454,7 +455,7 @@ class ScopedFunction(Parameterized):
 
         with tf.variable_scope(self.scope, reuse=self.initialized):
             if first_call:
-                print("\nEntering var scope '{}' for first time.".format(self.scope.name))
+                logging.debug("\nEntering var scope '{}' for first time.".format(self.scope.name))
 
             outp = self._call(*args, **kwargs)
 
@@ -462,7 +463,7 @@ class ScopedFunction(Parameterized):
                 s = "Leaving var scope '{}' for first time.".format(self.scope.name)
                 if isinstance(outp, tf.Tensor):
                     s += " Actual output shape: {}.".format(outp.shape)
-                print(s)
+                logging.debug(s)
 
         self._maybe_initialize()
 
@@ -867,14 +868,16 @@ class ConvNet(ScopedFunction):
 
         layer_string = ', '.join("{}={}".format(k, v) for k, v in sorted(layer_spec.items()))
         output_shape = tuple(int(i) for i in volume.shape[1:])
-        print("CNN >>> Applying layer {} of kind {}: {}. Output shape: {}".format(idx, kind, layer_string, output_shape))
+        logging.debug(
+            "CNN >>> Applying layer {} of kind {}: {}. Output shape: {}".format(
+                idx, kind, layer_string, output_shape))
 
         return volume
 
     def _call(self, inp, output_size, is_training):
         final_n_channels = output_size
 
-        print("--- Entering CNN(name={}) ---".format(self.name))
+        logging.debug("--- Entering CNN(name={}) ---".format(self.name))
 
         volume = inp
         self.volumes = [volume]
@@ -891,7 +894,7 @@ class ConvNet(ScopedFunction):
             volume = self._apply_layer(volume, layer, i, final, is_training)
             self.volumes.append(volume)
 
-        print("--- Leaving CNN(name={}) ---".format(self.name))
+        logging.debug("--- Leaving CNN(name={}) ---".format(self.name))
 
         return volume
 
@@ -940,7 +943,7 @@ class GridConvNet(ConvNet):
         self.volumes = [volume]
 
         receptive_fields = self.compute_receptive_field(inp.shape[1:-1], self.layers)
-        print("Receptive fields for {} (GridConvNet)".format(self.name))
+        logging.debug("Receptive fields for {} (GridConvNet)".format(self.name))
         pprint.pprint(receptive_fields)
 
         grid_cell_size = np.array(receptive_fields[-1]["grid_cell_size"])[:self.n_grid_dims]
@@ -951,13 +954,13 @@ class GridConvNet(ConvNet):
         required_image_size = rf_size + (n_grid_cells-1) * grid_cell_size
         post_padding = required_image_size - image_shape - pre_padding
 
-        print("{} (GridConvNet):".format(self.name))
-        print("rf_size: {}".format(rf_size))
-        print("grid_cell_size: {}".format(grid_cell_size))
-        print("n_grid_cells: {}".format(n_grid_cells))
-        print("pre_padding: {}".format(pre_padding))
-        print("post_padding: {}".format(post_padding))
-        print("required_image_size: {}".format(required_image_size))
+        logging.debug("{} (GridConvNet):".format(self.name))
+        logging.debug("rf_size: {}".format(rf_size))
+        logging.debug("grid_cell_size: {}".format(grid_cell_size))
+        logging.debug("n_grid_cells: {}".format(n_grid_cells))
+        logging.debug("pre_padding: {}".format(pre_padding))
+        logging.debug("post_padding: {}".format(post_padding))
+        logging.debug("required_image_size: {}".format(required_image_size))
 
         padding = (
             [[0, 0]]
@@ -1039,61 +1042,6 @@ class RecurrentGridConvNet(GridConvNet):
         output = tf.reshape(output, (T, B, H, W, C))
         output = tf.transpose(output, (1, 0, 2, 3, 4))
         return output, n_grid_cells, grid_cell_size
-
-
-class GridTransposeConvNet(GridConvNet):
-    """ Incomplete, particularly figuring out the correct amount of padding..."""
-
-    def _call(self, inp, output_size, is_training):
-        volume = inp
-        self.volumes = [volume]
-
-        reverse_layers = self.layers[::-1]
-
-        *image_shape, final_n_channels = output_size
-
-        receptive_fields = self.compute_receptive_field(len(inp.shape)-2, reverse_layers)
-        print("Inverse receptive fields for {} (GridTransposeConvNet)".format(self.name))
-        pprint.pprint(receptive_fields)
-
-        grid_cell_size = receptive_fields[-1]["translation"][:self.n_grid_dims]
-        rf_size = receptive_fields[-1]["size"][:self.n_grid_dims]
-        pre_padding = np.floor(rf_size / 2 - grid_cell_size / 2).astype('i')
-        image_shape = np.array([int(i) for i in inp.shape[1:self.n_grid_dims+1]])
-        n_grid_cells = np.ceil(image_shape / grid_cell_size).astype('i')
-        required_image_size = rf_size + (n_grid_cells-1) * grid_cell_size
-        post_padding = required_image_size - image_shape - pre_padding
-
-        print("{} (GridTransposeConvNet):".format(self.name))
-        print("rf_size: {}".format(rf_size))
-        print("grid_cell_size: {}".format(grid_cell_size))
-        print("n_grid_cells: {}".format(n_grid_cells))
-        print("pre_padding: {}".format(pre_padding))
-        print("post_padding: {}".format(post_padding))
-        print("required_image_size: {}".format(required_image_size))
-
-        for i, layer in enumerate(self.layers):
-            padding_type = layer.get('padding', 'VALID')
-            if padding_type != 'VALID':
-                raise Exception("Layer {} trying to use padding type {} in GridTransposeConvNet.".format(i, padding_type))
-
-            final = i == len(self.layers) - 1
-
-            if final and final_n_channels is not None:
-                layer['filters'] = final_n_channels
-
-            volume = self._apply_layer(volume, layer, i, final, is_training)
-            self.volumes.append(volume)
-
-        slices = (
-            [slice(None)]
-            + [slice(pre, post) for pre, post in zip(pre_padding, post_padding)]
-            + [slice(None)] * (len(inp.shape) - 1 - self.n_grid_dims)
-        )
-
-        volume = volume[slices]
-
-        return volume, n_grid_cells, grid_cell_size
 
 
 def pool_objects(op, objects, mask):
