@@ -9,6 +9,7 @@ import time
 import abc
 from itertools import zip_longest
 import dill
+from collections import defaultdict
 
 from dps import cfg
 from dps.utils import Param, Parameterized, get_param_hash, NumpySeed, animate, resize_image, atleast_nd, pformat
@@ -484,7 +485,7 @@ class Dataset(Parameterized):
     def parse_example_batch_postprocess(self, data):
         return data
 
-    def sample(self, n, shuffle_buffer_size, batch_size=None):
+    def sample(self, n, shuffle_buffer_size=0, batch_size=None):
         if batch_size is None:
             batch_size = n
 
@@ -504,19 +505,22 @@ class Dataset(Parameterized):
 
         sess = tf.get_default_session()
 
+        get_next = iterator.get_next()
+
         n_points = 0
-        sample = []
+        sample = defaultdict(list)
         while n is None or n_points < n:
             try:
-                _sample = sess.run(iterator.get_next())
+                _sample = sess.run(get_next)
             except tf.errors.OutOfRangeError:
                 break
 
-            sample.append(_sample)
-            n_points += len(_sample)
+            for k, v in _sample.items():
+                sample[k].append(v)
 
-        sample = np.concatenate(sample, axis=0)[:n]
-        return sample
+            n_points += len(list(_sample.values())[0])
+
+        return {k: np.concatenate(v, axis=0)[:n] for k, v in sample.items()}
 
 
 class ImageClassificationDataset(Dataset):
@@ -799,7 +803,7 @@ class ImageDataset(Dataset):
         return new_videos, new_annotations, new_backgrounds, offsets
 
     def visualize(self, n=9):
-        sample = self.sample(n)
+        sample = self.sample(n, 0)
         images = sample["image"]
         annotations, annotations_shape, annotations_mask = sample["annotations"]
         labels = sample["label"]
@@ -861,7 +865,7 @@ class LongVideoMixin:
         self.fragments.append(kwargs['image'])
 
     def visualize(self, *_, **__):
-        sample = self.sample(self.n_examples * self.n_batches)
+        sample = self.sample(self.n_examples * self.n_batches, 0)
         images = [[] for i in range(self.n_examples)]
 
         for i in range(self.n_batches):
