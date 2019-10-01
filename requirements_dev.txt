@@ -1,9 +1,7 @@
 -e git+https://github.com/e2crawfo/clify.git@d236061#egg=clify
 dill==0.2.6
-dominate=2.3.5
 future==0.16.0
 gym==0.9.5
--e git+https://github.com/e2crawfo/gym-recording.git@master#egg=gym_recording
 iso8601==0.1.12
 imageio==2.2.0
 kmodes==0.8
@@ -19,3 +17,11 @@ python-dateutil==2.6.1  # To satisfy botocore
 scikit-image==0.13.1
 scikit-learn==0.19.1
 tabulate==0.8.2
+
+# optional
+-e git+https://github.com/e2crawfo/gym-recording.git@master#egg=gym_recording
+tensorflow-datasets
+gym==0.9.5
+tensorflow_datasets==1.2.0
+mpi4py==3.0.2
+dominate=2.3.5
