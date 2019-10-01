@@ -1,22 +1,18 @@
-bs4
 -e git+https://github.com/e2crawfo/clify.git@master#egg=clify
-colorama
 dill==0.2.6
-dominate
 future
 iso8601
 imageio
 matplotlib
 numpy>=1.7
 pandas
-progressbar2
 psutil
-pyskiplist
 pytest
 pytest-env
 python-dateutil==2.6.1  # To satisfy botocore 1.10.1
 scikit-image
 scikit-learn
 tabulate
-tensorflow
-opencv_python
+
+# Probably want to install tensorflow separately.
+# tensorflow==1.13.2

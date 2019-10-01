@@ -631,7 +631,10 @@ def find_git_directories():
 
 def summarize_git_repo(directory, n_logs=10, diff=False, terminal=False, porcelain_status=True):
     if terminal:
-        import colorama as crama
+        try:
+            import colorama as crama
+        except ImportError:
+            crama = None
     else:
         crama = None
 
@@ -639,16 +642,16 @@ def summarize_git_repo(directory, n_logs=10, diff=False, terminal=False, porcela
     with cd(directory):
         s.append("*" * 80)
 
-        if terminal:
-            s.append("git summary for directory {}{}{}".format(crama.Fore.BLUE, directory, crama.Style.RESET_ALL))
-        else:
+        if crama is None:
             s.append("git summary for directory {}".format(directory))
+        else:
+            s.append("git summary for directory {}{}{}".format(crama.Fore.BLUE, directory, crama.Style.RESET_ALL))
 
         def cmd_string(_cmd):
-            if terminal:
-                return "\n{}{}{}:\n".format(crama.Fore.YELLOW, cmd, crama.Style.RESET_ALL)
-            else:
+            if crama is None:
                 return "\n{}:\n".format(cmd)
+            else:
+                return "\n{}{}{}:\n".format(crama.Fore.YELLOW, cmd, crama.Style.RESET_ALL)
 
         cmd = 'git log -n {} --decorate=short'.format(n_logs)
         s.append(cmd_string(cmd))
