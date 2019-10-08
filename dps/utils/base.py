@@ -2052,9 +2052,13 @@ def update_scratch_dir(config, new_scratch_dir):
 
 
 def load_system_config(key=None):
+    """ Looks for a file called `$HOME/.config/dps_config.py` and load
+        it as a module. Should define a single variable called `config` containing
+        a dict storing system default config values.
+
+    """
     home = os.getenv("HOME")
-    config_dir = os.path.join(home, ".config")
-    config_loc = os.path.join(config_dir, "dps_config.py")
+    config_loc = os.path.join(home, ".config/dps_config.py")
 
     if os.path.exists(config_loc):
         config_module_spec = importlib.util.spec_from_file_location("dps_config", config_loc)
@@ -2071,22 +2075,22 @@ def load_system_config(key=None):
             per_process_gpu_memory_fraction=0,
             gpu_allow_growth=True,
             scratch_dir="/tmp",
-            # parallel_exe="$HOME/.local/bin/parallel",
-            # slurm_preamble='''
-            #     export OMP_NUM_THREADS=1
-            #     module purge
-            #     module load python/3.6.3
-            #     module load scipy-stack
-            #     source "$VIRTUALENVWRAPPER_BIN"/virtualenvwrapper.sh
-            #     workon her_curriculum''',
-            # ssh_hosts=[],
+            parallel_exe="$HOME/.local/bin/parallel",
+            slurm_preamble='''
+                export OMP_NUM_THREADS=1
+                module purge
+                module load python/3.6.3
+                module load scipy-stack
+                source "$VIRTUALENVWRAPPER_BIN"/virtualenvwrapper.sh
+                workon her_curriculum''',
+            ssh_hosts=[],
             ssh_options=(
                 "-oPasswordAuthentication=no "
                 "-oStrictHostKeyChecking=no "
                 "-oConnectTimeout=5 "
                 "-oServerAliveInterval=2"
             ),
-            make_dirs=False,
+            make_dirs=True,
         )
 
     make_dirs = config.get('make_dirs', True)
@@ -2100,7 +2104,11 @@ def load_system_config(key=None):
             setattr(config, attr_name, dir_name)
 
         if make_dirs:
-            os.makedirs(dir_name, exist_ok=True)
+            try:
+                os.makedirs(dir_name, exist_ok=True)
+            except Exception:
+                print("Unable to create directory {}.".format(dir_name))
+                traceback.print_exc()
 
     fixup_dir("data")
     fixup_dir("model")
