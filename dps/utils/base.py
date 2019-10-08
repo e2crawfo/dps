@@ -606,25 +606,33 @@ def _run_cmd(cmd):
 
 
 def find_git_directories():
+    import __main__ as main
+    # Try current directory, and the directory that contains the script that is running.
+    dirs = [os.getcwd(), os.path.realpath(main.__file__)]
+
     all_packages = pip_freeze()
     all_packages = all_packages.split('\n')
     git_packages = [p.split('=')[-1] for p in all_packages if p.startswith('-e git+')]
 
-    version_controlled_dirs = set()
     for p in git_packages:
         try:
             package = importlib.import_module(p)
             directory = os.path.dirname(package.__file__)
 
-            # Check whether any ancestor directory contains a .git directory
-            while directory:
-                git_dir = os.path.join(directory, '.git')
-                if os.path.isdir(git_dir):
-                    version_controlled_dirs.add(directory)
-                    break
-                directory = os.path.dirname(directory)
+            dirs.append(directory)
         except Exception:
             pass
+
+    version_controlled_dirs = set()
+
+    for directory in list(set(dirs)):
+        # Check whether any ancestor directory contains a .git directory
+        while directory:
+            git_dir = os.path.join(directory, '.git')
+            if os.path.isdir(git_dir):
+                version_controlled_dirs.add(directory)
+                break
+            directory = os.path.dirname(directory)
 
     return sorted(version_controlled_dirs)
 

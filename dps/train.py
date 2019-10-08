@@ -648,11 +648,11 @@ class TrainingLoop(object):
 
                     # --------------- Finish up the stage -------------------
 
-                    self.data.end_stage(updater.n_updates)
-
                     _print("\n" + "-" * 10 + " Running end-of-stage hooks " + "-" * 10 + "\n")
                     for hook in cfg.hooks:
                         hook.end_stage(self, updater, stage_idx)
+
+                    self.data.end_stage(updater.n_updates)
 
                     _print()
                     self.timestamp("Done stage {}".format(stage_idx))
@@ -727,8 +727,8 @@ class TrainingLoop(object):
             weight_step = cfg.eval_step if cfg.weight_step <= 0 else cfg.weight_step
             backup_step = cfg.eval_step if cfg.backup_step <= 0 else cfg.backup_step
 
-            evaluate = local_step % cfg.eval_step == 0
-            display = local_step % display_step == 0
+            evaluate = local_step % cfg.eval_step == 0 and (local_step > 0 or cfg.get('eval_first', True))
+            display = local_step % display_step == 0 and local_step > 0
             render = local_step % render_step == 0 and (local_step > 0 or cfg.render_first)
             checkpoint = local_step % checkpoint_step == 0 and local_step > 0
             save_weights = local_step % weight_step == 0 and local_step > 0
@@ -1152,7 +1152,8 @@ class _TrainingLoopData(FrozenTrainingLoopData):
     def _get_summary_writer(self, mode):
         if mode not in self.summary_writers:
             self.summary_writers[mode] = tf.summary.FileWriter(
-                self.get_summary_path(mode), flush_secs=cfg.reload_interval)
+                self.get_summary_path(mode), flush_secs=cfg.reload_interval,
+                graph=tf.get_default_graph())
         return self.summary_writers[mode]
 
     @property
