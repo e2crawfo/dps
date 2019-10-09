@@ -876,21 +876,29 @@ def _checked_makedirs(directory, force_fresh):
 
 
 def pretty_func(f):
+    if hasattr(f, '__name__'):
+        name = f.__name__
+    elif hasattr(f, '__class__'):
+        name = f.__class__.__name__
+    else:
+        name = ''
+
     lmbda = lambda: 0
-    if f.__name__ == lmbda.__name__:
+
+    if name == lmbda.__name__:
         try:
             return inspect.getsource(f)
         except OSError:
             pass
 
-    info = dict(name=f.__name__)
+    info = dict(name=name)
 
     try:
         source_lines = inspect.getsourcelines(f)
         start = source_lines[1]
         end = start + len(source_lines[0])
         info['linenos'] = (start, end)
-    except OSError:
+    except (OSError, TypeError):
         info['linenos'] = None
     try:
         info['file'] = inspect.getsourcefile(f)

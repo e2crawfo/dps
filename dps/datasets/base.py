@@ -9,10 +9,12 @@ import time
 import abc
 from itertools import zip_longest
 import dill
-from collections import defaultdict
 
 from dps import cfg
-from dps.utils import Param, Parameterized, get_param_hash, NumpySeed, animate, resize_image, atleast_nd, pformat
+from dps.utils import (
+    Param, Parameterized, get_param_hash, NumpySeed, animate,
+    resize_image, atleast_nd, pformat, map_structure
+)
 from dps.datasets import (
     load_emnist, load_omniglot, omniglot_classes,
     load_backgrounds, background_names, hard_background_names
@@ -168,8 +170,8 @@ class ImageFeature(ArrayFeature):
     Can also be used for video, use a shape with 4 entries, first entry being the number of frames.
 
     """
-    def __init__(self, name, shape):
-        super().__init__(name, shape, dtype=np.uint8)
+    def __init__(self, name, shape, dtype=np.uint8):
+        super().__init__(name, shape, dtype=dtype)
 
     def process_batch(self, records):
         images = super().process_batch(records)
@@ -508,19 +510,20 @@ class Dataset(Parameterized):
         get_next = iterator.get_next()
 
         n_points = 0
-        sample = defaultdict(list)
+        sample = []
         while n is None or n_points < n:
             try:
                 _sample = sess.run(get_next)
             except tf.errors.OutOfRangeError:
                 break
 
-            for k, v in _sample.items():
-                sample[k].append(v)
+            sample.append(_sample)
+            n_points += batch_size
 
-            n_points += len(list(_sample.values())[0])
-
-        return {k: np.concatenate(v, axis=0)[:n] for k, v in sample.items()}
+        return map_structure(
+            lambda *v: np.concatenate(v, axis=0)[:n],
+            *sample,
+            is_leaf=lambda v: isinstance(v, np.ndarray))
 
 
 class ImageClassificationDataset(Dataset):
@@ -675,7 +678,6 @@ class ImageDataset(Dataset):
         for img, a, bg, o in zip_longest(images, annotations, backgrounds, offsets):
             # Capture any features other than what is referenced here explicitly
             kwargs = kwargs.copy()
-
             kwargs.update(image=img, annotations=a, background=bg, offset=o)
             self._write_single_example(**kwargs)
 
@@ -755,8 +757,6 @@ class ImageDataset(Dataset):
         if self.n_frames == 0:
             video = video[None]
             annotations = [annotations]
-        else:
-            video = video
 
         n_frames = len(video)
 
@@ -772,6 +772,10 @@ class ImageDataset(Dataset):
             offsets.append((_top, _left))
 
             crop = video[:, _top:_top+self.tile_shape[0], _left:_left+self.tile_shape[1], ...]
+
+            if self.n_frames == 0:
+                crop = crop[0]
+
             new_videos.append(crop)
 
             if background is not None:
@@ -798,15 +802,18 @@ class ImageDataset(Dataset):
                     # number of annotations
                     na.append((valid, label, _id, top, bottom, left, right))
 
+            if self.n_frames == 0:
+                _new_annotations = _new_annotations[0]
+
             new_annotations.append(_new_annotations)
 
         return new_videos, new_annotations, new_backgrounds, offsets
 
-    def visualize(self, n=9):
+    def visualize(self, n=9, tight=False):
         sample = self.sample(n, 0)
         images = sample["image"]
         annotations, annotations_shape, annotations_mask = sample["annotations"]
-        labels = sample["label"]
+        labels = sample.get("label", [0] * len(images))
         offsets = sample["offset"]
 
         if self.n_frames == 0:
@@ -815,6 +822,9 @@ class ImageDataset(Dataset):
         labels = ["l={}, o={}".format(el, o) for el, o in zip(labels, offsets)]
 
         fig, *_ = animate(images, labels=labels)
+
+        if tight:
+            plt.tight_layout()
 
         plt.show()
         plt.close(fig)

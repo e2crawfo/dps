@@ -885,7 +885,8 @@ class ConvNet(ScopedFunction):
             final = i == len(self.layers) - 1
 
             if final and final_n_channels is not None:
-                if layer['kind'] == 'fc':
+                kind = layer.get('kind', 'conv')
+                if kind == 'fc':
                     layer['n_units'] = final_n_channels
                 else:
                     layer['filters'] = final_n_channels
