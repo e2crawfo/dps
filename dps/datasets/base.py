@@ -9,6 +9,7 @@ import time
 import abc
 from itertools import zip_longest
 import dill
+import itertools
 
 from dps import cfg
 from dps.utils import (
@@ -669,7 +670,14 @@ class ImageDataset(Dataset):
             if self.n_frames > 0:
                 raise Exception("NotImplemented")
 
-            images, annotations, backgrounds, offsets = self._tile_postprocess(image, annotation, background=background)
+            images, annotations, backgrounds, offsets = self._tile_postprocess(image, annotation, background, pad=False)
+
+        elif self.postprocessing == "tile_pad":
+            if self.n_frames > 0:
+                raise Exception("NotImplemented")
+
+            images, annotations, backgrounds, offsets = self._tile_postprocess(image, annotation, background, pad=True)
+
         elif self.postprocessing == "random":
             images, annotations, backgrounds, offsets = self._random_postprocess(image, annotation, background=background)
         else:
@@ -682,74 +690,62 @@ class ImageDataset(Dataset):
             self._write_single_example(**kwargs)
 
     @staticmethod
-    def tile_sample(image, tile_shape):
+    def tile_sample(image, tile_shape, pad):
         height, width, n_channels = image.shape
 
-        hangover = width % tile_shape[1]
-        if hangover != 0:
-            pad_amount = tile_shape[1] - hangover
-            pad_shape = (height, pad_amount)
-            padding = np.zeros(pad_shape)
-            image = np.concat([image, padding], axis=2)
+        if pad:
+            pad_height = tile_shape[0] - height % tile_shape[0]
+            pad_width = tile_shape[1] - width % tile_shape[1]
+            image = np.pad(image, ((0, pad_height), (0, pad_width), (0, 0)), 'constant')
+        else:
+            h = (image.shape[0] // tile_shape[0]) * tile_shape[0]
+            w = (image.shape[1] // tile_shape[1]) * tile_shape[1]
+            image = image[:h, :w]
 
-        hangover = height % tile_shape[0]
-        if hangover != 0:
-            pad_amount = tile_shape[0] - hangover
-            pad_shape = list(image.shape)
-            pad_shape[1] = pad_amount
-            padding = np.zeros(pad_shape)
-            image = np.concat([image, padding], axis=1)
-
-        pad_height = tile_shape[0] - height % tile_shape[0]
-        pad_width = tile_shape[1] - width % tile_shape[1]
-        image = np.pad(image, ((0, pad_height), (0, pad_width), (0, 0)), 'constant')
-
-        H = int(height / tile_shape[0])
-        W = int(width / tile_shape[1])
+        H = int(image.shape[0] / tile_shape[0])
+        W = int(image.shape[1] / tile_shape[1])
 
         slices = np.split(image, W, axis=1)
         new_shape = (H, *tile_shape, n_channels)
         slices = [np.reshape(s, new_shape) for s in slices]
         new_images = np.concatenate(slices, axis=1)
         new_images = new_images.reshape(H * W, *tile_shape, n_channels)
-        return new_images
 
-    def _tile_postprocess(self, image, annotations, background=None):
-        new_images = self.tile_sample(image, self.tile_shape)
+        offsets = np.array(list(itertools.product(np.arange(H) * tile_shape[0], np.arange(W) * tile_shape[1])))
+
+        return new_images, offsets
+
+    def _tile_postprocess(self, image, annotations, background, pad):
+        new_images, offsets = self.tile_sample(image, self.tile_shape, pad)
+
         new_annotations = []
+        for offset in offsets:
+            _new_annotations = []
+            for l, top, bottom, left, right in annotations:
+                # Transform to tile co-ordinates
+                top = top - offset[0]
+                bottom = bottom - offset[0]
+                left = left - offset[1]
+                right = right - offset[1]
 
-        H = int(image.shape[0] / self.tile_shape[0])
-        W = int(image.shape[1] / self.tile_shape[1])
+                # Restrict to chosen crop
+                top = np.clip(top, 0, self.tile_shape[0])
+                bottom = np.clip(bottom, 0, self.tile_shape[0])
+                left = np.clip(left, 0, self.tile_shape[1])
+                right = np.clip(right, 0, self.tile_shape[1])
 
-        for h in range(H):
-            for w in range(W):
-                offset = (h * self.tile_shape[0], w * self.tile_shape[1])
-                _new_annotations = []
-                for l, top, bottom, left, right in annotations:
-                    # Transform to tile co-ordinates
-                    top = top - offset[0]
-                    bottom = bottom - offset[0]
-                    left = left - offset[1]
-                    right = right - offset[1]
+                invalid = (bottom - top < 1e-6) or (right - left < 1e-6)
 
-                    # Restrict to chosen crop
-                    top = np.clip(top, 0, self.tile_shape[0])
-                    bottom = np.clip(bottom, 0, self.tile_shape[0])
-                    left = np.clip(left, 0, self.tile_shape[1])
-                    right = np.clip(right, 0, self.tile_shape[1])
+                if not invalid:
+                    _new_annotations.append((l, top, bottom, left, right))
 
-                    invalid = (bottom - top < 1e-6) or (right - left < 1e-6)
-
-                    if not invalid:
-                        _new_annotations.append((l, top, bottom, left, right))
-
-                new_annotations.append(_new_annotations)
+            new_annotations.append(_new_annotations)
 
         new_backgrounds = []
         if background is not None:
             new_backgrounds = self.tile_sample(background, self.tile_shape)
 
-        return new_images, new_annotations, new_backgrounds
+        return new_images, new_annotations, new_backgrounds, offsets
 
     def _random_postprocess(self, video, annotations, background=None):
         *_, height, width, _ = video.shape
@@ -809,8 +805,8 @@ class ImageDataset(Dataset):
 
         return new_videos, new_annotations, new_backgrounds, offsets
 
-    def visualize(self, n=9, tight=False):
-        sample = self.sample(n, 0)
+    def visualize(self, n=9, shuffle_buffer_size=0, batch_size=None, tight=False):
+        sample = self.sample(n, shuffle_buffer_size, batch_size)
         images = sample["image"]
         annotations, annotations_shape, annotations_mask = sample["annotations"]
         labels = sample.get("label", [0] * len(images))
