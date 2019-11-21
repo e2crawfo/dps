@@ -26,10 +26,6 @@ except Exception:
 
 for item in requirements:
     # we want to handle package names and also repo urls
-    print(dir(item))
-    print(item.req)
-    print(item.link)
-
     link = None
     if getattr(item, 'url', None):   # older pip has url
         link = str(item.url)
@@ -37,7 +33,7 @@ for item in requirements:
         link = str(item.link)
 
     if link is not None and item.editable:
-        command = 'pip install -e {}'.format(link)
+        command = 'pip install -v -e {}'.format(link)
         print("Installing editable repo with command: {}".format(command))
         subprocess.run(command.split())
         continue
