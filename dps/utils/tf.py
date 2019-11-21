@@ -439,20 +439,16 @@ class ScopedFunction(Parameterized):
     def trainable_variables(self, for_opt):
         return trainable_variables(self.scope, for_opt)
 
-    def resolve_scope(self):
-        if self.scope is None:
-            with tf.variable_scope(self.name):
-                self.scope = tf.get_variable_scope()
-
     def _call(self, *args, **kwargs):
         raise Exception("NotImplemented")
 
     def __call__(self, *args, **kwargs):
-        self.resolve_scope()
-
         first_call = not self.initialized
 
-        with tf.variable_scope(self.scope, reuse=self.initialized):
+        with tf.variable_scope(self.name, reuse=self.initialized):
+            if self.scope is None:
+                self.scope = tf.get_variable_scope()
+
             if first_call:
                 print("\nEntering var scope '{}' for first time.".format(self.scope.name))
 
@@ -462,6 +458,7 @@ class ScopedFunction(Parameterized):
                 s = "Leaving var scope '{}' for first time.".format(self.scope.name)
                 if isinstance(outp, tf.Tensor):
                     s += " Actual output shape: {}.".format(outp.shape)
+                s += '\n'
                 print(s)
 
         self._maybe_initialize()
@@ -909,58 +906,73 @@ class GridConvNet(ConvNet):
         super(ConvNet, self).__init__(scope)
 
     @staticmethod
-    def compute_receptive_field(img_shape, layers):
-        ndim = len(img_shape)
-        img_shape = tuple(int(i) for i in img_shape)
-        j = np.array((1,)*ndim)
-        r = np.array((1,)*ndim)
-        receptive_fields = []
+    def compute_receptive_field_info(image_shape, layers):
+        ndim = len(image_shape)
+        image_shape = tuple(int(i) for i in image_shape)
+        grid_cell_size = np.array((1,)*ndim)
+        rf_size = np.array((1,)*ndim)
+        info = []
 
         for layer in layers:
-            kernel_size = np.array(layer['kernel_size'])
-            stride = np.array(layer['strides'])
-            r = r + (kernel_size-1) * j
-            j = j * stride
+            kernel_size = np.array(layer['kernel_size']) * ([1] * ndim)
+            stride = np.array(layer['strides']) * ([1] * ndim)
+
+            rf_size = rf_size + (kernel_size-1) * grid_cell_size
+            grid_cell_size = grid_cell_size * stride
 
             # scale wrt largest dimension
-            normed_j = np.array(j) / np.array(img_shape).max()
-            normed_r = np.array(r) / np.array(img_shape).max()
+            normed_j = np.array(grid_cell_size) / np.array(image_shape).max()
+            normed_r = np.array(rf_size) / np.array(image_shape).max()
 
-            receptive_fields.append(
+            info.append(
                 dict(
-                    rf_size=tuple(r),
-                    grid_cell_size=tuple(j),
-                    normed_rf_size=tuple(normed_r),
-                    normed_grid_cell_size=tuple(normed_j)
+                    kernel_size=kernel_size,
+                    stride=stride,
+                    rf_size=rf_size,
+                    grid_cell_size=grid_cell_size,
+                    normed_rf_size=normed_r,
+                    normed_grid_cell_size=normed_j
                 )
             )
 
-        return receptive_fields
+        n_grid_cells = np.ceil(image_shape / grid_cell_size).astype('i')
+        required_image_size = rf_size + (n_grid_cells-1) * grid_cell_size
+        pre_padding = np.floor(rf_size / 2 - grid_cell_size / 2).astype('i')
+        post_padding = required_image_size - image_shape - pre_padding
+
+        volume_dimensions = required_image_size
+
+        for i, _info in enumerate(info):
+            grid_offset = -pre_padding + _info['rf_size'] / 2 - _info['grid_cell_size'] / 2
+
+            new_volume_dimensions = (volume_dimensions - _info['kernel_size']) / _info['stride'] + 1
+
+            _info.update(
+                grid_offset=grid_offset,
+                n_grid_cells=new_volume_dimensions,
+                virtual_image_size=new_volume_dimensions*_info['grid_cell_size']
+            )
+
+            volume_dimensions = new_volume_dimensions
+
+        assert (info[-1]['n_grid_cells'] == n_grid_cells).all()
+        assert (np.abs(info[-1]['grid_offset']) <= 0.5).all()
+
+        return info, required_image_size, pre_padding, post_padding
 
     def _call(self, inp, output_size, is_training):
         final_n_channels = output_size
         volume = inp
         self.volumes = [volume]
 
-        receptive_fields = self.compute_receptive_field(inp.shape[1:-1], self.layers)
-        print("Receptive fields for {} (GridConvNet)".format(self.name))
-        pprint.pprint(receptive_fields)
+        receptive_field_info, required_image_size, pre_padding, post_padding = (
+            self.compute_receptive_field_info(inp.shape[1:-1], self.layers))
 
-        grid_cell_size = np.array(receptive_fields[-1]["grid_cell_size"])[:self.n_grid_dims]
-        rf_size = np.array(receptive_fields[-1]["rf_size"])[:self.n_grid_dims]
-        pre_padding = np.floor(rf_size / 2 - grid_cell_size / 2).astype('i')
-        image_shape = np.array([int(i) for i in inp.shape[1:self.n_grid_dims+1]])
-        n_grid_cells = np.ceil(image_shape / grid_cell_size).astype('i')
-        required_image_size = rf_size + (n_grid_cells-1) * grid_cell_size
-        post_padding = required_image_size - image_shape - pre_padding
-
-        print("{} (GridConvNet):".format(self.name))
-        print("rf_size: {}".format(rf_size))
-        print("grid_cell_size: {}".format(grid_cell_size))
-        print("n_grid_cells: {}".format(n_grid_cells))
+        print("Receptive field info for {} (GridConvNet)".format(self.name))
+        pprint.pprint(receptive_field_info)
+        print("required_image_size: {}".format(required_image_size))
         print("pre_padding: {}".format(pre_padding))
         print("post_padding: {}".format(post_padding))
-        print("required_image_size: {}".format(required_image_size))
 
         padding = (
             [[0, 0]]
@@ -984,12 +996,12 @@ class GridConvNet(ConvNet):
             self.volumes.append(volume)
 
         if self.layer_info is None:
-            self.layer_info = copy.deepcopy(receptive_fields)
+            self.layer_info = copy.deepcopy(receptive_field_info)
             for li, v in zip(self.layer_info, self.volumes):
                 li['volume_size'] = tf_shape(v)[1:-1]
                 li['volume'] = v
 
-        return volume, n_grid_cells, grid_cell_size
+        return volume, receptive_field_info[-1]['n_grid_cells'], receptive_field_info[-1]['grid_cell_size']
 
 
 class RecurrentGridConvNet(GridConvNet):
@@ -2087,7 +2099,8 @@ class RenderHook:
     def _fetch(self, updater, fetches=None):
         feed_dict = self.get_feed_dict(updater)
         sess = tf.get_default_session()
-        return sess.run(self.to_fetch, feed_dict=feed_dict)
+        fetched = sess.run(self.to_fetch, feed_dict=feed_dict)
+        return Config(fetched)
 
     def path_for(self, name, updater, ext="pdf"):
         local_step = (

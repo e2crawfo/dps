@@ -36,6 +36,60 @@ import clify
 import dps
 
 
+class HashableDist:
+    """ Wraps a distribution from scipy.stats.distributions, making it hashable. """
+
+    def __init__(self, dist_class, *args, **kwargs):
+        dist = dist_class(*args, **kwargs)
+        self._dist = dist
+        self.dist_class = dist_class
+
+    def __getattr__(self, attr):
+        return getattr(self._dist, attr)
+
+    def __str__(self):
+        args_strs = [str(a) for a in self.args] + ["{}={}".format(k, v) for k, v in sorted(self.kwds.items())]
+        args_str = ", ".join(args_strs)
+        return "<{} - {}>".format(self.dist_class.name, args_str)
+
+    def __repr__(self):
+        return str(self)
+
+    def __hash__(self):
+        return hash(str(self))
+
+    def __copy__(self):
+        newone = type(self)()
+        newone.__dict__.update(self.__dict__)
+        return newone
+
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            setattr(result, k, copy.deepcopy(v, memo))
+        return result
+
+
+def walk_images(path, extensions=None, concat=False):
+    extensions = extensions or 'jpg jpeg png tif'
+    if isinstance(extensions, str):
+        extensions = extensions.split()
+    extensions = [ext if ext.startswith('.') else '.' + ext for ext in extensions]
+
+    for dir_name, _, filenames in os.walk(path):
+        local_path_start = len(path) + (0 if path.endswith('/') else 1)
+        local_path = dir_name[local_path_start:]
+
+        for f in filenames:
+            if any(f.endswith(ext) for ext in extensions):
+                if concat:
+                    yield os.path.join(path, local_path, f)
+                else:
+                    yield os.path.join(local_path, f)
+
+
 def atleast_nd(array, n):
     diff = n - len(array.shape)
     if diff > 0:
@@ -348,6 +402,25 @@ def animate(
         anim.save(path, writer='ffmpeg', codec='hevc', extra_args=['-preset', 'ultrafast'])
 
     return fig, _axes, anim, path
+
+
+def add_rect(ax, top, left, height, width, color, lw=2, **kwargs):
+    kwargs.update(linewidth=lw)
+    if 'facecolor' not in kwargs:
+        kwargs['facecolor'] = 'none'
+    rect = patches.Rectangle(
+        (left, top), width, height, edgecolor=color, **kwargs)
+    ax.add_patch(rect)
+
+
+def add_dotted_rect(ax, top, left, height, width, c1, c2, **kwargs):
+    if 'ls' in kwargs:
+        del kwargs['ls']
+    if 'linestyle' in kwargs:
+        del kwargs['ls']
+
+    add_rect(ax, top, left, height, width, c1, ls='-', **kwargs)
+    add_rect(ax, top, left, height, width, c2, ls=':', **kwargs)
 
 
 def square_subplots(N, n_repeats=1, repeat_horizontal=True, **kwargs):

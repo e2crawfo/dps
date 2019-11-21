@@ -14,12 +14,9 @@ import itertools
 from dps import cfg
 from dps.utils import (
     Param, Parameterized, get_param_hash, NumpySeed, animate,
-    resize_image, atleast_nd, pformat, map_structure
+    resize_image, atleast_nd, pformat, map_structure,
 )
-from dps.datasets import (
-    load_emnist, load_omniglot, omniglot_classes,
-    load_backgrounds, background_names, hard_background_names
-)
+from dps.datasets.load import load_emnist, load_backgrounds, background_names, hard_background_names
 from dps.datasets.parallel import make_dataset_in_parallel
 
 
@@ -146,13 +143,20 @@ def _float_feature(value, is_list=False):
 
 
 class ArrayFeature(Feature):
-    def __init__(self, name, shape, dtype=np.float32):
+    def __init__(self, name, shape, dtype=np.float32, strict=False):
         self.name = name
         self.shape = shape
         self.dtype = dtype
+        self.strict = strict
 
     def get_write_features(self, array):
-        array = np.array(array).astype(self.dtype)
+        array = np.array(array)
+
+        if self.strict:
+            assert array.dtype == self.dtype, "{} vs {}".format(array.dtype, self.dtype)
+        else:
+            array = array.astype(self.dtype)
+
         assert array.shape == self.shape, "{} vs {}".format(array.shape, self.shape)
 
         return {self.name: _bytes_feature(array)}
@@ -171,8 +175,8 @@ class ImageFeature(ArrayFeature):
     Can also be used for video, use a shape with 4 entries, first entry being the number of frames.
 
     """
-    def __init__(self, name, shape, dtype=np.uint8):
-        super().__init__(name, shape, dtype=dtype)
+    def __init__(self, name, shape, dtype=np.uint8, strict=False):
+        super().__init__(name, shape, dtype=dtype, strict=strict)
 
     def process_batch(self, records):
         images = super().process_batch(records)
@@ -585,7 +589,7 @@ class EmnistDataset(ImageClassificationDataset):
                 kwargs[k] = param_values[k]
         kwargs['shape'] = param_values['image_shape']
 
-        x, y, class_names = load_emnist(cfg.data_dir, **kwargs)
+        x, y, class_names = load_emnist(**kwargs)
 
         if x.shape[0] < self.n_examples:
             raise Exception(
@@ -644,7 +648,7 @@ class ImageDataset(Dataset):
             self._features = [
                 ImageFeature("image", self.obs_shape),
                 VariableShapeArrayFeature("annotations", annotation_shape),
-                IntegerFeature("label", self.n_classes if self.one_hot else None),
+                IntegerFeature("label", None),
                 ArrayFeature("offset", (2,), dtype=np.int32),
             ]
 
@@ -981,7 +985,7 @@ class PatchesDataset(ImageDataset):
     max_overlap = Param()
     draw_shape = Param(None)
     draw_offset = Param((0, 0))
-    patch_size_std = Param(None)
+    patch_shape_dist = Param(None)
     distractor_shape = Param((3, 3))
     n_distractors_per_image = Param(0)
     backgrounds = Param(
@@ -992,7 +996,6 @@ class PatchesDataset(ImageDataset):
     background_colours = Param("")
     max_attempts = Param(10000)
     colours = Param('red green blue')
-    one_hot = Param(True)
     patch_speed = Param(10, help="In pixels per frame.")
     annotation_scheme = Param("correct")
     bounce_patches = Param(True)
@@ -1260,7 +1263,7 @@ class PatchesDataset(ImageDataset):
         locs = self._sample_patch_locations(
             patch_shapes,
             max_overlap=self.max_overlap,
-            size_std=self.patch_size_std)
+            shape_dist=self.patch_shape_dist)
 
         velocity = np.random.randn(len(locs), 2)
         velocity /= np.maximum(np.linalg.norm(velocity, axis=1, keepdims=True), 1e-6)
@@ -1274,7 +1277,7 @@ class PatchesDataset(ImageDataset):
     def _sample_patches(self):
         raise Exception("AbstractMethod")
 
-    def _sample_patch_locations(self, patch_shapes, max_overlap=None, size_std=None):
+    def _sample_patch_locations(self, patch_shapes, max_overlap=None, shape_dist=None):
         """ Sample random locations within draw_shape. """
         if len(patch_shapes) == 0:
             return []
@@ -1288,10 +1291,12 @@ class PatchesDataset(ImageDataset):
             for i in range(n_rects):
                 n_tries_inner = 0
                 while True:
-                    if size_std is None:
+                    if shape_dist is None:
                         shape_multipliers = 1.
+                    elif hasattr(shape_dist, 'rvs'):
+                        shape_multipliers = shape_dist.rvs()
                     else:
-                        shape_multipliers = np.maximum(np.random.randn(2) * size_std + 1.0, 0.5)
+                        shape_multipliers = np.array([s.rvs() for s in shape_dist])
 
                     m, n = np.ceil(shape_multipliers * patch_shapes[i, :2]).astype('i')
 
@@ -1471,8 +1476,8 @@ class VisualArithmeticDataset(PatchesDataset):
 
         if isinstance(reductions, dict):
             op_characters = sorted(reductions)
-            emnist_x, emnist_y, character_map = load_emnist(cfg.data_dir, op_characters, balance=True,
-                                                            shape=self.patch_shape, one_hot=False,
+            emnist_x, emnist_y, character_map = load_emnist(op_characters, balance=True,
+                                                            shape=self.patch_shape,
                                                             n_examples=self.n_patch_examples,
                                                             example_range=self.example_range)
             emnist_y = emnist_y.flatten()
@@ -1485,14 +1490,11 @@ class VisualArithmeticDataset(PatchesDataset):
             self.op_reps = None
             self.func = reductions
 
-        mnist_x, mnist_y, classmap = load_emnist(cfg.data_dir, self.digits, balance=True,
-                                                 shape=self.patch_shape, one_hot=False,
-                                                 n_examples=self.n_patch_examples,
-                                                 example_range=self.example_range)
+        mnist_x, mnist_y, _ = load_emnist(self.digits, balance=True,
+                                          shape=self.patch_shape,
+                                          n_examples=self.n_patch_examples,
+                                          example_range=self.example_range)
         mnist_y = mnist_y.flatten()
-
-        inverted_classmap = {v: k for k, v in classmap.items()}
-        mnist_y = np.array([inverted_classmap[y] for y in mnist_y])
 
         self.digit_reps = list(zip(mnist_x, mnist_y))
 
@@ -1556,9 +1558,9 @@ class EmnistObjectDetectionDataset(PatchesDataset):
     def _make(self):
         assert self.min_chars <= self.max_chars
 
-        emnist_x, emnist_y, self.classmap = load_emnist(
-            cfg.data_dir, self.characters, balance=True, shape=self.patch_shape,
-            one_hot=False, n_examples=self.n_patch_examples,
+        emnist_x, emnist_y, _ = load_emnist(
+            self.characters, balance=True, shape=self.patch_shape,
+            n_examples=self.n_patch_examples,
             example_range=self.example_range)
 
         self.char_reps = list(zip(emnist_x, emnist_y))
@@ -1609,19 +1611,21 @@ class LongVideoVisualArithmetic(LongVideoMixin, VisualArithmeticDataset):
 
 
 if __name__ == "__main__":
-    # dset = VisualArithmeticDataset(
-    #     n_examples=18, reductions="sum", largest_digit=28, patch_speed=2, one_hot=False,
-    #     min_digits=9, max_digits=9, image_shape=(96, 96), tile_shape=(96, 96),# tile_shape=(48, 48),
-    #     postprocessing="random", max_overlap=98, colours="white blue", n_frames=10,
+    from scipy.stats.distributions import truncexpon
+    dset = VisualArithmeticDataset(
+        n_examples=18, reductions="sum", largest_digit=28, patch_speed=2,
+        min_digits=9, max_digits=50, image_shape=(96, 96), tile_shape=(96, 96),# tile_shape=(48, 48),
+        postprocessing="random", max_overlap=98, colours="white blue", n_frames=10,
+        digits="0 1".split(), example_range=None, n_patch_examples=None, patch_shape=(14, 14),
+        appearance_prob=1.0, disappearance_prob=0.0, patch_shape_dist=truncexpon(b=2, loc=0.25)
+    )
+
+    # dset = LongVideoVisualArithmetic(
+    #     n_examples=4, n_frames=20, n_batches=4, reductions="sum", largest_digit=28, patch_speed=5,
+    #     min_digits=9, max_digits=9, image_shape=(96, 96), tile_shape=(96, 96),
+    #     postprocessing="", max_overlap=98, colours="white blue",
     #     digits="0 1".split(), example_range=None, n_patch_examples=None, patch_shape=(14, 14),
     #     appearance_prob=0.5, disappearance_prob=0.0)
-
-    dset = LongVideoVisualArithmetic(
-        n_examples=4, n_frames=20, n_batches=4, reductions="sum", largest_digit=28, patch_speed=5, one_hot=False,
-        min_digits=9, max_digits=9, image_shape=(96, 96), tile_shape=(96, 96),
-        postprocessing="", max_overlap=98, colours="white blue",
-        digits="0 1".split(), example_range=None, n_patch_examples=None, patch_shape=(14, 14),
-        appearance_prob=0.5, disappearance_prob=0.0)
 
     sess = tf.Session()
     with sess.as_default():

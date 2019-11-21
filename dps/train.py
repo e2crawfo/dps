@@ -761,7 +761,14 @@ class TrainingLoop(object):
             if render and cfg.render_hook is not None:
                 _print("Rendering...")
                 start = time.time()
-                cfg.render_hook(updater)
+                if cfg.robust:
+                    try:
+                        cfg.render_hook(updater)
+                    except Exception:
+                        pass
+                else:
+                    cfg.render_hook(updater)
+
                 _print("Done rendering, took {} seconds.".format(time.time() - start))
 
             # --------------- Possibly evaluate -------------------
