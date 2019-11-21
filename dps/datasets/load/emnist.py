@@ -303,7 +303,9 @@ def load_emnist(
 
         if show:
             print(cls)
-            print(image_to_string(x[-1]))
+            indices_to_show = np.random.choice(len(_x), size=100)
+            for i in indices_to_show:
+                print(image_to_string(_x[i]))
 
         class_count.append(_x.shape[0])
 
@@ -354,6 +356,12 @@ def load_emnist(
 
         x = [resize_image(img, shape) for img in x]
         x = np.uint8(x)
+
+    if show:
+        indices_to_show = np.random.choice(len(x), size=200)
+        for i in indices_to_show:
+            print(y[i])
+            print(image_to_string(x[i]))
 
     return x, y, classes
 

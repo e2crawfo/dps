@@ -562,11 +562,6 @@ class ImageClassificationDataset(Dataset):
 
 
 class EmnistDataset(ImageClassificationDataset):
-    """
-    Download and pre-process EMNIST dataset:
-    python scripts/download.py emnist
-
-    """
     example_range = Param()
     balance = Param()
 

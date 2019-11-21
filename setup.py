@@ -36,13 +36,14 @@ for item in requirements:
     elif getattr(item, 'link', None):  # newer pip has link
         link = str(item.link)
 
-    if link is not None:
-        if item.editable:
-            command = 'pip install -e {}'.format(link)
-            print("Installing editable repo with command: {}".format(command))
-            subprocess.run(command.split())
-        else:
-            links.append(link)
+    if link is not None and item.editable:
+        command = 'pip install -e {}'.format(link)
+        print("Installing editable repo with command: {}".format(command))
+        subprocess.run(command.split())
+        continue
+
+    elif link is not None:
+        links.append(link)
 
     if item.req:
         requires.append(str(item.req))

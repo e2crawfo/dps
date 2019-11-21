@@ -1,12 +1,12 @@
 import gym
 from gym_recording.playback import scan_recorded_traces
+import cv2
 import numpy as np
 import os
 import tensorflow as tf
 import matplotlib.pyplot as plt
 from collections import defaultdict
 from pprint import pprint
-import cv2
 from scipy import optimize
 
 from dps import cfg

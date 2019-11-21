@@ -1,6 +1,7 @@
 -e git+https://github.com/e2crawfo/clify.git@persona#egg=clify
 dill==0.2.6
 future
+gym  # for atari
 iso8601
 imageio
 matplotlib
@@ -17,3 +18,21 @@ tensorflow_datasets
 
 # User should install tensorflow separately beforehand.
 # tensorflow==1.13.2
+
+# html_report
+beautifulsoup4==4.8.0
+dominate==2.3.5
+
+# atari
+-e git+https://github.com/e2crawfo/gym-recording.git@master#egg=gym_recording
+gym==0.9.5
+opencv-python==4.0.0.21
+
+# examples
+tensorflow_datasets==1.2.0
+
+# parallel training
+mpi4py==3.0.2
+
+# colorful output
+colorama==0.4.1

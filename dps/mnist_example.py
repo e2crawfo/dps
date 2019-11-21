@@ -21,7 +21,6 @@ class Updater(_Updater):
 
     def __init__(self, env, scope=None, **kwargs):
         super(Updater, self).__init__(env, scope=scope, **kwargs)
-
         self.network = self.build_network(env, self, scope="network")
 
     def trainable_variables(self, for_opt):
@@ -42,7 +41,6 @@ class Updater(_Updater):
 
     def _evaluate(self, _batch_size, mode):
         result = self.evaluator.eval(self.recorded_tensors, self.data_manager, mode)
-
         return result
 
     def _build_graph(self):
@@ -196,16 +194,6 @@ class MnistEnvironment(Environment):
             example_range=cfg.test_example_range, seed=test_seed)
 
         self.datasets = dict(train=train, val=val, test=test)
-
-
-# class MnistEnvironment(Environment):
-#     def __init__(self):
-#         dsets, info = tfds.load('mnist:3.*.*', with_info=True)
-#         train = dsets['train']
-#         val = dsets['test']
-#         train.n_classes = 10
-#         val.n_classes = 10
-#         self.datasets = dict(train=train, val=val)
 
 
 def mnist_config_func():
