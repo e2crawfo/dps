@@ -1,6 +1,5 @@
-from setuptools import setup, find_packages
-import os
 import subprocess
+from setuptools import setup, find_packages
 from setuptools.command.install import install as install_command
 from setuptools.command.develop import develop as develop_command
 from setuptools.command.egg_info import egg_info as egg_info_command
@@ -52,18 +51,21 @@ def manual_install():
 
 class InstallCommand(install_command):
     def run(self):
+        print("$$$ In install command $$$")
         manual_install()
         super().run()
 
 
 class DevelopCommand(develop_command):
     def run(self):
+        print("$$$ In develop command $$$")
         manual_install()
         super().run()
 
 
 class EggInfoCommand(egg_info_command):
     def run(self):
+        print("$$$ In egginfo command $$$")
         manual_install()
         super().run()
 
@@ -74,7 +76,6 @@ setup(
     author_email="eric.crawford@mail.mcgill.ca",
     version='0.1',
     packages=find_packages(),
-    setup_requires=['numpy>=1.7'],
     install_requires=requires,
     dependency_links=links,
     cmdclass={'install': InstallCommand, 'develop': DevelopCommand, 'egg_info': EggInfoCommand},
