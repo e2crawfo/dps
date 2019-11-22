@@ -40,13 +40,17 @@ for item in requirements:
     if item.req:
         requires.append(str(item.req))
 
+manual_install_done = False
+
 
 def manual_install():
-    global to_manually_install
-    for link in to_manually_install:
-        print("Manually installing editable url: {}".format(link))
-        command = 'pip install -v -e {}'.format(link)
-        subprocess.run(command.split())
+    global to_manually_install, manual_install_done
+
+    if not manual_install_done:
+        for link in to_manually_install:
+            print("Manually installing editable url: {}".format(link))
+            command = 'pip install -v -e {}'.format(link)
+            subprocess.run(command.split())
 
 
 class InstallCommand(install_command):
@@ -88,3 +92,5 @@ setup(
                             'report-to-videos=dps.utils.html_report:report_to_videos_cl']
     }
 )
+
+raise Exception()
