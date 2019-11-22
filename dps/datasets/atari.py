@@ -1,5 +1,4 @@
 import gym
-from gym_recording.playback import scan_recorded_traces
 import cv2
 import numpy as np
 import os
@@ -8,6 +7,7 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 from pprint import pprint
 from scipy import optimize
+from gym_recording import scan_recorded_traces
 
 from dps import cfg
 from dps.datasets.base import ImageDataset, ArrayFeature, ImageFeature, VariableShapeArrayFeature

@@ -1,12 +1,9 @@
+from setuptools import setup, find_packages
+import os
 import subprocess
-try:
-    import setuptools
-    from setuptools import setup
-except ImportError:
-    from ez_setup import use_setuptools
-    setuptools = use_setuptools()
-
-from setuptools import find_packages, setup  # noqa: F811
+from setuptools.command.install import install as install_command
+from setuptools.command.develop import develop as develop_command
+from setuptools.command.egg_info import egg_info as egg_info_command
 
 try:  # for pip >= 10
     from pip._internal.req import parse_requirements
@@ -24,6 +21,8 @@ except Exception:
     # new versions of pip requires a session
     requirements = list(parse_requirements('requirements.txt', session=PipSession()))
 
+to_manually_install = []
+
 for item in requirements:
     # we want to handle package names and also repo urls
     link = None
@@ -33,16 +32,40 @@ for item in requirements:
         link = str(item.link)
 
     if link is not None and item.editable:
-        command = 'pip install -v -e {}'.format(link)
-        print("Installing editable repo with command: {}".format(command))
-        subprocess.run(command.split())
+        to_manually_install.append(link)
         continue
 
-    elif link is not None:
+    if link is not None:
         links.append(link)
 
     if item.req:
         requires.append(str(item.req))
+
+
+def manual_install():
+    global to_manually_install
+    for link in to_manually_install:
+        print("Manually installing editable url: {}".format(link))
+        command = 'pip install -v -e {}'.format(link)
+        subprocess.run(command.split())
+
+
+class InstallCommand(install_command):
+    def run(self):
+        manual_install()
+        super().run()
+
+
+class DevelopCommand(develop_command):
+    def run(self):
+        manual_install()
+        super().run()
+
+
+class EggInfoCommand(egg_info_command):
+    def run(self):
+        manual_install()
+        super().run()
 
 
 setup(
@@ -54,6 +77,7 @@ setup(
     setup_requires=['numpy>=1.7'],
     install_requires=requires,
     dependency_links=links,
+    cmdclass={'install': InstallCommand, 'develop': DevelopCommand, 'egg_info': EggInfoCommand},
     entry_points={
         'console_scripts': ['dps-hyper=dps.hyper.command_line:dps_hyper_cl',
                             'dps-run=dps.run:run',

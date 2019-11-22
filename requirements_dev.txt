@@ -1,11 +1,13 @@
 -e git+https://github.com/e2crawfo/clify.git@d236061#egg=clify
 dill==0.2.6
 future==0.16.0
+gym==0.9.5
 iso8601==0.1.12
 imageio==2.2.0
 matplotlib==2.1.0
 numpy==1.13.3
 pandas==0.21.0
+opencv-python==4.0.0.21
 psutil==5.4.1
 pytest==3.3.0
 pytest-env==0.6.2
@@ -22,14 +24,6 @@ tabulate==0.8.2
 # html_report
 beautifulsoup4==4.8.0
 dominate==2.3.5
-
-# atari
--e git+https://github.com/e2crawfo/gym-recording.git@master#egg=gym_recording
-gym==0.9.5
-opencv-python==4.0.0.21
-
-# examples
-tensorflow_datasets==1.2.0
 
 # parallel training
 mpi4py==3.0.2
