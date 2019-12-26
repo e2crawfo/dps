@@ -348,33 +348,40 @@ def annotate_with_rectangles(ax, annotations, colors=None, lw=1):
 
 def animate(
         images, *other_images, labels=None, interval=500,
-        path=None, square_grid=True, annotations=None, **kwargs):
+        path=None, block_shape=None, annotations=None, fig_unit_size=1, **kwargs):
     """ Assumes `images` has shape (batch_size, n_frames, H, W, D)
 
     `annotations` only implemented for the first set of images.
+
+    Allow specification of a `block_size`.
 
     """
     all_images = [images, *other_images]
     n_image_sets = len(all_images)
     B, T = images.shape[:2]
 
-    if square_grid:
-        fig, _axes = square_subplots(B, n_repeats=n_image_sets, repeat_horizontal=True)
-    else:
-        fig, _axes = plt.subplots(B, n_image_sets)
+    if block_shape is None:
+        N = n_image_sets
+        sqrt_N = int(np.ceil(np.sqrt(N)))
+        m = int(np.ceil(N / sqrt_N))
+        block_shape = (m, sqrt_N)
 
-    axes = _axes.reshape(-1, n_image_sets)
+    assert np.prod(block_shape) >= n_image_sets
 
-    plots = np.zeros((B, n_image_sets), dtype=np.object)
+    fig, axes = square_subplots(B, block_shape=block_shape, fig_unit_size=fig_unit_size)
+
+    plots = np.zeros_like(axes)
+
+    if labels is not None:
+        for j in range(n_image_sets):
+            axes[0, j].set_title(str(labels[j]))
 
     for i in range(B):
-        if labels is not None:
-            axes[i, 0].set_title(str(labels[i]))
+        for ax in axes[i]:
+            ax.set_axis_off()
 
         for j in range(n_image_sets):
             ax = axes[i, j]
-            ax.set_axis_off()
-
             plots[i, j] = ax.imshow(np.squeeze(all_images[j][i, 0]))
 
     plt.subplots_adjust(top=0.95, bottom=0.02, left=0.02, right=.98, wspace=0.1, hspace=0.1)
@@ -398,10 +405,12 @@ def animate(
     anim = animation.FuncAnimation(fig, func, frames=T, interval=interval)
 
     if path is not None:
-        path = path + '.mp4'
+        if not path.endswith('.mp4'):
+            path = path + '.mp4'
+
         anim.save(path, writer='ffmpeg', codec='hevc', extra_args=['-preset', 'ultrafast'])
 
-    return fig, _axes, anim, path
+    return fig, axes, anim, path
 
 
 def add_rect(ax, top, left, height, width, color, lw=2, **kwargs):
@@ -423,20 +432,46 @@ def add_dotted_rect(ax, top, left, height, width, c1, c2, **kwargs):
     add_rect(ax, top, left, height, width, c2, ls=':', **kwargs)
 
 
-def square_subplots(N, n_repeats=1, repeat_horizontal=True, **kwargs):
-    sqrt_N = int(np.ceil(np.sqrt(N)))
-    m = int(np.ceil(N / sqrt_N))
-    import matplotlib.pyplot as plt
-    if repeat_horizontal:
-        fig, axes = plt.subplots(m, sqrt_N*n_repeats, **kwargs)
-    else:
-        fig, axes = plt.subplots(m*n_repeats, sqrt_N, **kwargs)
+def square_subplots(N, block_shape=None, fig_unit_size=1, **kwargs):
+    w = int(np.ceil(np.sqrt(N)))
+    h = int(np.ceil(N / w))
+
+    if block_shape is None:
+        block_shape = (1, 1)
+
+    axes_shape = (h*block_shape[0], w*block_shape[1])
+
+    if 'figsize' not in kwargs:
+        kwargs['figsize'] = (
+            axes_shape[0] * fig_unit_size,
+            axes_shape[1] * fig_unit_size
+        )
+
+    fig, axes = plt.subplots(*axes_shape, **kwargs)
+    axes = np.array(axes).reshape(*axes_shape)
+
+    _axes = np.zeros((w*h, int(np.prod(block_shape))), dtype=np.object)
+    for i in range(w*h):
+        _h = i // w
+        _w = i % w
+
+        _axes[i, :] = axes[
+            _h * block_shape[0]: (_h+1) * block_shape[0],
+            _w * block_shape[1]: (_w+1) * block_shape[1]
+        ].flatten()
+    axes = np.array(_axes)
+
     return fig, axes
 
 
-def grid_subplots(h, w, fig_unit_size):
+def grid_subplots(h, w, fig_unit_size, axes_off=False):
     fig, axes = plt.subplots(h, w, figsize=(w * fig_unit_size, h * fig_unit_size))
     axes = np.array(axes).reshape(h, w)  # to fix the inconsistent way axes is return if h==1 or w==1
+
+    if axes_off:
+        for ax in axes.flatten():
+            ax.set_axis_off()
+
     return fig, axes
 
 
@@ -1761,8 +1796,8 @@ class Config(dict):
         Non-string keys are treated as normal, as are strings that do not contain the special character stored
         in `self._sep` (default ':'). If a string key does contain the sep character, then it is treated as a
         hierarchical key.  When *setting* with a hierarchical key, the key is split by the sep character, and
-        the resulting keys are treated as a sequence of keys into nested Configs, created necessary configs as we go.
-        When *getting* with hierarchical keys, a similar procesude is followed but the intermediate dicts
+        the resulting keys are treated as a sequence of keys into nested Configs, creating necessary configs as we go.
+        When *getting* with hierarchical keys, a similar procedure is followed but the intermediate dicts
         are not created.
 
         Whenever an added value is itself a hierarchical dicts with strings as keys, it is first flattened,

@@ -14,7 +14,7 @@ import itertools
 from dps import cfg
 from dps.utils import (
     Param, Parameterized, get_param_hash, NumpySeed, animate,
-    resize_image, atleast_nd, pformat, map_structure,
+    resize_image, atleast_nd, pformat, map_structure, HashableDist
 )
 from dps.datasets.load import load_emnist, load_backgrounds, background_names, hard_background_names
 from dps.datasets.parallel import make_dataset_in_parallel
@@ -451,6 +451,9 @@ class Dataset(Parameterized):
         print("Features for dataset: ")
         print(pformat(self.features))
 
+        if cfg.get('visualize_dataset', False):
+            self.visualize(16)
+
         if cfg.copy_dataset_to:
             dest = os.path.join(cfg.copy_dataset_to, "{}.{}".format(os.getpid(), os.path.basename(self.filename)))
             print("Copying dataset to {}...".format(dest))
@@ -679,6 +682,7 @@ class ImageDataset(Dataset):
 
         elif self.postprocessing == "random":
             images, annotations, backgrounds, offsets = self._random_postprocess(image, annotation, background=background)
+
         else:
             images, annotations, backgrounds, offsets = [image], [annotation], [background], [(0, 0)]
 
@@ -807,7 +811,7 @@ class ImageDataset(Dataset):
     def visualize(self, n=9, shuffle_buffer_size=0, batch_size=None, tight=False):
         sample = self.sample(n, shuffle_buffer_size, batch_size)
         images = sample["image"]
-        annotations, annotations_shape, annotations_mask = sample["annotations"]
+        annotations = sample["annotations"]["data"]
         labels = sample.get("label", [0] * len(images))
         offsets = sample["offset"]
 
@@ -816,7 +820,7 @@ class ImageDataset(Dataset):
 
         labels = ["l={}, o={}".format(el, o) for el, o in zip(labels, offsets)]
 
-        fig, *_ = animate(images, labels=labels)
+        fig, *_ = animate(images, labels=labels, annotations=annotations)
 
         if tight:
             plt.tight_layout()
@@ -1152,8 +1156,7 @@ class PatchesDataset(ImageDataset):
 
                 if self.n_distractors_per_image > 0:
                     distractor_patches = self._sample_distractors()
-                    distractor_shapes = [img.shape for img in distractor_patches]
-                    distractor_locs = self._sample_patch_locations(distractor_shapes)
+                    distractor_locs = self._sample_patch_locations(distractor_patches)
 
                     for patch, loc in zip(distractor_patches, distractor_locs):
                         if patch.shape[:2] != (loc.h, loc.w):
@@ -1253,12 +1256,21 @@ class PatchesDataset(ImageDataset):
 
     def _sample_image(self):
         patches, patch_labels, image_label = self._sample_patches()
-        patch_shapes = np.array([img.shape for img in patches])
 
-        locs = self._sample_patch_locations(
-            patch_shapes,
-            max_overlap=self.max_overlap,
-            shape_dist=self.patch_shape_dist)
+        _patches = []
+        for patch in patches:
+            nz_y, nz_x = np.nonzero(patch[:, :, -1] > 0.5)
+
+            top = nz_y.min()
+            left = nz_x.min()
+            bottom = nz_y.max() + 1
+            right = nz_x.max() + 1
+
+            _patches.append(patch[top:bottom, left:right])
+
+        patches = _patches
+
+        locs = self._sample_patch_locations(patches, max_overlap=self.max_overlap, shape_dist=self.patch_shape_dist)
 
         velocity = np.random.randn(len(locs), 2)
         velocity /= np.maximum(np.linalg.norm(velocity, axis=1, keepdims=True), 1e-6)
@@ -1272,12 +1284,12 @@ class PatchesDataset(ImageDataset):
     def _sample_patches(self):
         raise Exception("AbstractMethod")
 
-    def _sample_patch_locations(self, patch_shapes, max_overlap=None, shape_dist=None):
+    def _sample_patch_locations(self, patches, max_overlap=None, shape_dist=None):
         """ Sample random locations within draw_shape. """
-        if len(patch_shapes) == 0:
+        if len(patches) == 0:
             return []
 
-        patch_shapes = np.array(patch_shapes)
+        patch_shapes = np.array([img.shape for img in patches])
         n_rects = patch_shapes.shape[0]
 
         n_tries_outer = 0
@@ -1393,10 +1405,11 @@ class GridPatchesDataset(PatchesDataset):
             self.patch_shape[1] + self.spacing[1])
         return super()._make()
 
-    def _sample_patch_locations(self, patch_shapes, **kwargs):
-        n_patches = len(patch_shapes)
+    def _sample_patch_locations(self, patches, **kwargs):
+        n_patches = len(patches)
         if not n_patches:
             return []
+        patch_shapes = np.array([img.shape for img in patches])
         indices = np.random.choice(self.grid_size, n_patches, replace=False)
 
         grid_locs = list(zip(*np.unravel_index(indices, self.grid_shape)))
@@ -1612,7 +1625,8 @@ if __name__ == "__main__":
         min_digits=9, max_digits=50, image_shape=(96, 96), tile_shape=(96, 96),# tile_shape=(48, 48),
         postprocessing="random", max_overlap=98, colours="white blue", n_frames=10,
         digits="0 1".split(), example_range=None, n_patch_examples=None, patch_shape=(14, 14),
-        appearance_prob=1.0, disappearance_prob=0.0, patch_shape_dist=truncexpon(b=2, loc=0.25)
+        appearance_prob=1.0, disappearance_prob=0.0, patch_shape_dist=HashableDist(truncexpon, b=2, loc=0.25),
+        _no_cache=True,
     )
 
     # dset = LongVideoVisualArithmetic(

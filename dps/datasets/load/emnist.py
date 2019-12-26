@@ -100,18 +100,18 @@ def _emnist_load_helper(path_img, path_lbl):
 
         image_data = array("B", file.read())
 
-    images = np.zeros((size, rows * cols))
+    images = np.zeros((size, rows * cols), dtype=np.uint8)
 
     for i in range(size):
         images[i][:] = image_data[i * rows * cols:(i + 1) * rows * cols]
 
-    return np.array(images), np.array(labels)
+    return np.array(images, dtype=np.uint8), np.array(labels, dtype=np.uint8)
 
 
 def maybe_convert_emnist_shape(path, shape):
     """ Create a version of emnist on disk that is reshaped to the desired shape.
 
-        Images are stored on disk in float format.
+        Images are stored on disk as uint8.
 
     """
     if shape == (28, 28):
@@ -144,8 +144,8 @@ def maybe_convert_emnist_shape(path, shape):
             _x = dill.load(f)
 
             new_x = []
-            for img in _x:
-                img = resize_image(img, shape, preserve_range=False)
+            for img in _x[:10]:
+                img = resize_image(img, shape, preserve_range=True)
                 new_x.append(img)
 
             print(cls)
@@ -298,7 +298,7 @@ def load_emnist(
             high = int(example_range[1] * len(_x))
             _x = _x[low:high, ...]
 
-        x.append(np.uint8(255 * _x))
+        x.append(_x)
         y.extend([i] * _x.shape[0])
 
         if show:
@@ -364,4 +364,3 @@ def load_emnist(
             print(image_to_string(x[i]))
 
     return x, y, classes
-

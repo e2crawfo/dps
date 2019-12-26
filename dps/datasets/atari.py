@@ -389,7 +389,7 @@ def atari_image_shape(game, after_warp):
 class StaticAtariDataset(ReinforcementLearningDataset):
     game = Param(aliases="atari_game")
     after_warp = Param()
-    episode_range = Param()
+    episode_indices = Param()
 
     _obs_shape = None
 
@@ -429,7 +429,7 @@ class StaticAtariDataset(ReinforcementLearningDataset):
 
         directory = os.path.join(directory, sorted(matching_dirs)[-1])
         directory = os.path.join(directory, ("after" if self.after_warp else "before") + "_warp_recording")
-        scan_recorded_traces(directory, self._callback, self.max_episodes, self.episode_range)
+        scan_recorded_traces(directory, self._callback, self.max_episodes, self.episode_indices)
 
 
 def variable_shape_array_to_list(vsa):
@@ -445,7 +445,7 @@ class AtariVideoDataset(ImageDataset):
     n_frames = Param()
     image_shape = Param()
     after_warp = Param()
-    episode_range = Param()
+    episode_indices = Param()
     max_episodes = Param()
     sample_density = Param()
     max_examples = Param()
@@ -699,7 +699,7 @@ class AtariVideoDataset(ImageDataset):
             if self.get_annotations:
                 annotations = self._get_annotations(_o)
             else:
-                annotations = []
+                annotations = [[] for i in range(self.n_frames)]
 
             self._write_example(image=_o, action=_a, reward=_r, annotations=annotations)
             self._n_examples += 1
@@ -720,7 +720,7 @@ class AtariVideoDataset(ImageDataset):
 
         directory = os.path.join(directory, sorted(matching_dirs)[-1])
         directory = os.path.join(directory, ("after" if self.after_warp else "before") + "_warp_recording")
-        scan_recorded_traces(directory, self._per_ep_callback, self.max_episodes, self.episode_range)
+        scan_recorded_traces(directory, self._per_ep_callback, self.max_episodes, self.episode_indices)
         print("Ended up with {} examples.".format(self._n_examples))
 
     def visualize(self, n=4):
@@ -737,6 +737,28 @@ class AtariVideoDataset(ImageDataset):
 
         plt.show()
         plt.close(fig)
+
+
+def count_episodes(atari_game, after_warp):
+    directory = os.path.join(cfg.data_dir, "atari_data")
+    dirs = os.listdir(directory)
+    game_full_name = "{}NoFrameskip-v4".format(atari_game)
+    starts_with = "atari_data_env={}.datetime=".format(game_full_name)
+    matching_dirs = [d for d in dirs if d.startswith(starts_with)]
+    if not matching_dirs:
+        pprint(sorted(dirs))
+        raise Exception("No data found for game {}".format(atari_game))
+    directory = os.path.join(directory, sorted(matching_dirs)[-1])
+    directory = os.path.join(directory, ("after" if after_warp else "before") + "_warp_recording")
+
+    n_eps = 0
+
+    def per_ep_callback(*a, **k):
+        nonlocal n_eps
+        n_eps += 1
+
+    scan_recorded_traces(directory, per_ep_callback)
+    return n_eps
 
 
 class AtariLongVideoVideoDataset(AtariVideoDataset):
@@ -875,7 +897,7 @@ if __name__ == "__main__":
     #     max_samples_per_ep=100,
     #     after_warp=args.warped,
     #     # after_warp=False,
-    #     episode_range=(-1, None),
+    #     episode_indices=slice(-1, None),
     #     store_o=True,
     #     store_r=False,
     #     store_a=False,
@@ -905,9 +927,9 @@ if __name__ == "__main__":
         n_frames=16,
         image_shape=None,
         after_warp=False,
-        # episode_range=(0, 2),
-        episode_range=(-2, None),
-        # episode_range=None,
+        # episode_indices=slice(0, 2),
+        episode_indices=slice(-2, None),
+        # episode_indices=None,
         max_episodes=100,
         max_examples=200,
         sample_density=0.05,
@@ -938,9 +960,9 @@ if __name__ == "__main__":
         n_batches=5,
         image_shape=None,
         after_warp=False,
-        # episode_range=(0, 2),
-        episode_range=(-2, None),
-        # episode_range=None,
+        # episode_indices=slice(0, 2),
+        episode_indices=slice(-2, None),
+        # episode_indices=None,
         n_samples_per_episode=2,
         frame_skip=1,
         seed=201,

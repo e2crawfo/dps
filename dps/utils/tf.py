@@ -914,6 +914,8 @@ class GridConvNet(ConvNet):
         info = []
 
         for layer in layers:
+            assert 'kind' not in layer or layer['kind'] == 'conv'
+
             kernel_size = np.array(layer['kernel_size']) * ([1] * ndim)
             stride = np.array(layer['strides']) * ([1] * ndim)
 
@@ -983,9 +985,8 @@ class GridConvNet(ConvNet):
         volume = tf.pad(inp, padding, mode="CONSTANT")
 
         for i, layer in enumerate(self.layers):
-            padding_type = layer.get('padding', 'VALID')
-            if padding_type != 'VALID':
-                raise Exception("Layer {} trying to use padding type {} in GridConvNet.".format(i, padding_type))
+            layer['padding'] = 'VALID'
+            layer['transpose'] = False
 
             final = i == len(self.layers) - 1
 
@@ -1001,7 +1002,67 @@ class GridConvNet(ConvNet):
                 li['volume_size'] = tf_shape(v)[1:-1]
                 li['volume'] = v
 
-        return volume, receptive_field_info[-1]['n_grid_cells'], receptive_field_info[-1]['grid_cell_size']
+        return volume
+
+
+class TransposeGridConvNet(GridConvNet):
+    """ Just think of this as the inverse counterpart to a GridConvNet.
+        Layers should be in the same order as the corresponding GridConvNet;
+        that is, they should go from pixels to abstract representation. When actually
+        applying the layers, they will be applied in reverse order of how they are supplied.
+
+    """
+    def _call(self, inp, output_shape, is_training):
+        if len(output_shape) == 3:
+            *output_spatial_shape, final_n_channels = output_shape
+            output_spatial_shape = tuple(output_spatial_shape)
+        else:
+            assert len(output_shape) == 2
+            output_spatial_shape = tuple(output_shape)
+            final_n_channels = None
+
+        receptive_field_info, required_image_size, pre_padding, post_padding = (
+            self.compute_receptive_field_info(output_spatial_shape, self.layers))
+
+        print("Receptive field info for {} (TransposeGridConvNet)".format(self.name))
+        pprint.pprint(receptive_field_info)
+        print("required_image_size: {}".format(required_image_size))
+        print("pre_padding: {}".format(pre_padding))
+        print("post_padding: {}".format(post_padding))
+
+        input_spatial_shape = tuple(tf_shape(inp)[1:-1])
+        n_grid_cells = tuple(receptive_field_info[-1]['n_grid_cells'])
+        assert input_spatial_shape == n_grid_cells
+
+        reversed_layers = self.layers[::-1]
+
+        volume = inp
+        self.volumes = [volume]
+
+        for i, layer in enumerate(reversed_layers):
+            layer['padding'] = 'VALID'
+            layer['transpose'] = True
+
+            final = i == len(self.layers) - 1
+
+            if final and final_n_channels is not None:
+                layer['filters'] = final_n_channels
+
+            volume = self._apply_layer(volume, layer, i, final, is_training)
+            self.volumes.append(volume)
+
+        if self.layer_info is None:
+            self.layer_info = copy.deepcopy(receptive_field_info)
+
+            # in the same order as self.layers
+            reversed_volumes = self.volumes[::-1]
+
+            for li, v in zip(self.layer_info, reversed_volumes):
+                li['volume_size'] = tf_shape(v)[1:-1]
+                li['volume'] = v
+
+        output = volume[:, pre_padding[0]:-post_padding[0], pre_padding[1]:-post_padding[1]]
+        return output
 
 
 class RecurrentGridConvNet(GridConvNet):
@@ -1021,13 +1082,13 @@ class RecurrentGridConvNet(GridConvNet):
         B, T, *rest = tf_shape(inp)
         inp = tf.reshape(inp, (B*T, *rest))
 
-        processed, n_grid_cells, grid_cell_size = super()._call(inp, final_n_channels, is_training)
+        processed = super()._call(inp, final_n_channels, is_training)
 
         _, H, W, C = tf_shape(processed)
         processed = tf.reshape(processed, (B, T, H, W, C))
 
         if self.build_cell is None:
-            return processed, n_grid_cells, grid_cell_size
+            return processed
 
         processed = tf.transpose(processed, (1, 0, 2, 3, 4))
         processed = tf.reshape(processed, (T, B*H*W, C))
@@ -1053,7 +1114,31 @@ class RecurrentGridConvNet(GridConvNet):
 
         output = tf.reshape(output, (T, B, H, W, C))
         output = tf.transpose(output, (1, 0, 2, 3, 4))
-        return output, n_grid_cells, grid_cell_size
+        return output
+
+
+class SpatialBroadcastDecoder(ConvNet):
+    def _call(self, inp, output_shape, is_training):
+        output_shape = output_shape[:2]
+
+        *leading_dims, D = tf_shape(inp)
+        inp = tf.reshape(inp, (-1, D))
+        b = tf_shape(inp)[0]
+
+        tiled_inp = tf.tile(inp[:, None, None, :], (1, *output_shape, 1))
+
+        y = tf.linspace(-1., 1., output_shape[0])
+        x = tf.linspace(-1., 1., output_shape[1])
+        y, x = tf.meshgrid(y, x, indexing='ij')
+        y = tf.tile(y[None, :, :, None], (b, 1, 1, 1))
+        x = tf.tile(x[None, :, :, None], (b, 1, 1, 1))
+
+        tiled_inp = tf.concat([tiled_inp, y, x], axis=3)
+
+        output = super()._call(tiled_inp, None, is_training)
+        trailing_dims = tf_shape(output)[1:]
+
+        return tf.reshape(output, (*leading_dims, *trailing_dims))
 
 
 def pool_objects(op, objects, mask):
@@ -2051,6 +2136,11 @@ class RenderHook:
             setattr(self, k, v)
 
     @staticmethod
+    def normalize_images(images):
+        mx = images.reshape(*images.shape[:-3], -1).max(axis=-1)
+        return images / mx[..., None, None, None]
+
+    @staticmethod
     def remove_rects(ax):
         for obj in ax.findobj(match=plt.Rectangle):
             try:
@@ -2096,8 +2186,12 @@ class RenderHook:
         to_fetch = {k: tensors_config[k] for k in fetches}
         self.to_fetch = nest.map_structure(lambda s: s[:self.N], to_fetch)
 
-    def _fetch(self, updater, fetches=None):
+    def _fetch(self, updater, extra_feed_dict=None):
         feed_dict = self.get_feed_dict(updater)
+
+        if extra_feed_dict is not None:
+            feed_dict.update(extra_feed_dict)
+
         sess = tf.get_default_session()
         fetched = sess.run(self.to_fetch, feed_dict=feed_dict)
         return Config(fetched)
