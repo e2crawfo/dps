@@ -76,11 +76,11 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
     def trainable_variables(self, for_opt):
         raise Exception("AbstractMethod")
 
-    def save(self, session, filename):
+    def save(self, filename):
         path = self.saver.save(tf.get_default_session(), filename)
         return path
 
-    def restore(self, session, path):
+    def restore(self, path):
         self.saver.restore(tf.get_default_session(), path)
 
 
@@ -96,7 +96,7 @@ class DummyUpdater(Updater):
         pass
 
     def _update(self, batch_size):
-        return dict(train={})
+        return dict()
 
     def _evaluate(self, batch_size, mode):
         return dict()
@@ -104,7 +104,7 @@ class DummyUpdater(Updater):
     def save(self, session, filename):
         return ''
 
-    def restore(self, session, path):
+    def restore(self, path):
         pass
 
 
@@ -162,7 +162,7 @@ class DifferentiableUpdater(Updater):
             [self.train_op, self.recorded_tensors, self.train_recorded_tensors], feed_dict=feed_dict)
         record.update(train_record)
 
-        return dict(train=record)
+        return record
 
     def _evaluate(self, batch_size, mode):
         if mode == "val":
@@ -196,7 +196,7 @@ class VideoUpdater(Updater):
 
     def _update(self, batch_size):
         if cfg.get('no_gradient', False):
-            return dict(train=dict())
+            return dict()
 
         feed_dict = self.data_manager.do_train()
 
@@ -205,7 +205,7 @@ class VideoUpdater(Updater):
             [self.train_op, self.recorded_tensors, self.train_records], feed_dict=feed_dict)
         record.update(train_record)
 
-        return dict(train=record)
+        return record
 
     def _evaluate(self, _batch_size, mode):
         return self.evaluator.eval(self.recorded_tensors, self.data_manager, mode)

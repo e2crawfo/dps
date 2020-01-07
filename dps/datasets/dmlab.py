@@ -323,8 +323,8 @@ if __name__ == "__main__":
         level_config=dict(minimalUI="true"),
 
         get_depth=True,
-        agent_class=RotatingAgent,
-        # agent_class=SpringAgent,
+        # agent_class=RotatingAgent,
+        agent_class=SpringAgent,
         agent_params=dict(dummy=1),
 
         renderer='hardware',

@@ -2,11 +2,9 @@ from __future__ import absolute_import
 from __future__ import division
 import time
 from contextlib import ExitStack
-import tensorflow as tf
 import numpy as np
 from pprint import pformat
 import datetime
-import shutil
 import os
 import pandas as pd
 import dill
@@ -20,22 +18,27 @@ import warnings
 from dps import cfg
 from dps.utils import (
     gen_seed, time_limit, Alarm, memory_usage, gpu_memory_usage, ExperimentStore,
-    ExperimentDirectory, nvidia_smi, memory_limit, Config, ClearConfig, redirect_stream,
-    NumpySeed, restart_tensorboard, pdb_postmortem, execute_command
-)
-from dps.utils.tf import (
-    uninitialized_variables_initializer, trainable_variables, walk_variable_scopes
+    ExperimentDirectory, nvidia_smi, memory_limit, Config, redirect_stream,
+    NumpySeed, restart_tensorboard, pdb_postmortem, execute_command, flush_print as _print
 )
 from dps.mpi_train import MPI_MasterContext
 
 
 def training_loop(exp_name='', start_time=None):
-    loop = TrainingLoop(exp_name)
+    framework = cfg.get('framework', 'tensorflow')
+
+    if framework == 'tensorflow':
+        from dps.tf.train import TensorFlowTrainingLoop
+        loop = TensorFlowTrainingLoop(exp_name)
+
+    elif framework == 'pytorch':
+        from dps.pytorch.train import PyTorchTrainingLoop
+        loop = PyTorchTrainingLoop(exp_name)
+
+    else:
+        raise Exception("Unknown framework: {}. Options are {'tensorflow', 'pytorch'}.".format(cfg.framework))
+
     return loop.run(start_time)
-
-
-def _print(*args, flush=True, **kwargs):
-    print(*args, **kwargs, flush=flush)
 
 
 class EarlyStopHook:
@@ -92,59 +95,7 @@ class EarlyStopHook:
         self._early_stopped = 0
 
 
-def load_or_train(train_config, var_scope, path, target_var_scope=None, sess=None):
-    """ Attempts to load variables into ``var_scope`` from checkpoint stored at ``path``.
-
-    If said checkpoint is not found, trains a model using the function
-    ``train`` and stores the resulting variables for future use.
-
-    Returns True iff model was successfully loaded, False otherwise.
-
-    If `target_var_scope` is not None, look for the variables under that scope name in the file
-    that we load from, instead of `var_scope`.
-
-    """
-    sess = sess or tf.get_default_session()
-
-    to_be_loaded = trainable_variables(var_scope, for_opt=False)
-    if target_var_scope is not None:
-        _tbl = {}
-        for var in to_be_loaded:
-            assert var.name.startswith(var_scope.name)
-            bare_name = var.name[len(var_scope.name):]
-            while bare_name.startswith('/'):
-                bare_name = bare_name[1:]
-            name_in_file = target_var_scope + '/' + bare_name
-            _tbl[name_in_file] = var
-        to_be_loaded = _tbl
-    else:
-        to_be_loaded = {v.name: v for v in to_be_loaded}
-
-    saver = tf.train.Saver(to_be_loaded)
-
-    if path is not None:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-
-    success = False
-    try:
-        saver.restore(sess, path)
-        success = True
-    except tf.errors.NotFoundError:
-        with ExitStack() as stack:
-            stack.enter_context(ClearConfig())
-            stack.enter_context(train_config.copy(save_path=path))
-
-            output = training_loop(var_scope.name)
-
-            stem = os.path.splitext(path)[0]
-            shutil.copyfile(output.path_for('stdout'), stem + '.stdout')
-            shutil.copyfile(output.path_for('stderr'), stem + '.stderr')
-
-        saver.restore(sess, path)
-    return success
-
-
-class TrainingLoop(object):
+class TrainingLoop:
     """ A training loop.
 
     The behaviour of the training loop depends on the context stack that is active when it is
@@ -160,6 +111,11 @@ class TrainingLoop(object):
     def __init__(self, exp_name=''):
         self.exp_name = exp_name or cfg.exp_name
         self.start_time = None
+
+    """ Abstract methods """
+
+    def framework_initialize(self):
+        raise Exception("NotImplemented")
 
     @property
     def time_remaining(self):
@@ -184,6 +140,73 @@ class TrainingLoop(object):
             datetime.datetime.now(),
             time.time() - self.start_time,
             self.time_remaining))
+
+    def get_load_paths(self):
+        """
+        Let a *path_specification* be one of three things:
+            1. An integer specifying a previous stage to load the best hypothesis from.
+            2. A string of format: "stage_idx,kind" where `stage_idx` specifies a previous stage to load from
+               and `kind` is either "final" or "best", specifying whether to load final or best
+               hypothesis from that stage.
+            3. A path on the filesystem that gives a prefix for a tensorflow checkpoint file to load from.
+
+        Then cfg.load_path can either be a path_specification itself, in which case all variables
+        in the network will be loaded from that path_specification, or a dictionary mapping from
+        variable scope names to path specifications, in which case all variables in each supplied
+        variable scope name will be loaded from the path_specification paired with that scope name.
+
+        """
+        load_path = cfg.load_path
+        _print("\nMaybe loading weights, load_path={} ...".format(load_path))
+
+        if load_path is not None:
+            if isinstance(load_path, str) or isinstance(load_path, int):
+                load_path = {"": load_path}
+
+            load_path = dict(load_path)
+
+            # Sort in increasing order, so that it if one variable scope lies within another scope,
+            # the outer scope gets loaded before the inner scope, rather than having the outer scope
+            # wipe out the inner scope.
+            items = sorted(load_path.items())
+
+            # --- fill in paths from stages ---
+
+            _items = []
+            for module_path, path in items:
+                load_stage, kind = None, None
+
+                try:
+                    load_stage = int(path)
+                    kind = "best"
+                except (TypeError, ValueError):
+                    try:
+                        split = path.split(',')
+                        load_stage = int(split[0])
+                        kind = 'best' if len(split) > 1 else split[1]
+                        assert kind in 'best final'.split(), "path={}".format(path)
+                    except Exception:
+                        load_stage, kind = None, None
+
+                if load_stage is not None:
+                    if self.stage_idx == 0:
+                        _print(
+                            "Not loading submodule \"{}\" from stage {}, "
+                            "currently in stage 0.".format(module_path, load_stage))
+                        continue
+                    else:
+                        key = kind + '_path'
+                        completed_history = self.data.history[:-1]
+                        path = completed_history[load_stage][key]
+
+                path = os.path.realpath(path)
+
+                _items.append((module_path, path))
+            return _items
+
+        else:
+            _print("`load_path` is None, using a fresh set of weights.")
+            return []
 
     def run(self, start_time):
         """ Run the training loop.
@@ -249,7 +272,7 @@ class TrainingLoop(object):
         with open(exp_dir.path_for('README.md'), 'w') as f:
             f.write(readme)
 
-        self.data = _TrainingLoopData(exp_dir)
+        self.data = self.training_loop_data_class(exp_dir)
         self.data.setup()
 
         frozen_data = None
@@ -265,8 +288,6 @@ class TrainingLoop(object):
 
             stack.enter_context(warnings.catch_warnings())
             warnings.simplefilter(cfg.warning_mode)
-
-            tf.logging.set_verbosity(tf.logging.ERROR)
 
             _print("\n\n" + "=" * 80)
             self.timestamp("Starting training run (name={})".format(self.exp_name))
@@ -330,6 +351,7 @@ class TrainingLoop(object):
             self.curriculum_remaining = self.curriculum_remaining[stage_idx:]
         else:
             stage_idx = 0
+        self.stage_idx = stage_idx
 
         while self.curriculum_remaining:
             _print("\n" + "=" * 50)
@@ -366,55 +388,14 @@ class TrainingLoop(object):
                 if callable(stage_prepare_func):
                     stage_prepare_func()  # Modify the stage config in arbitrary ways before starting stage
 
-                self.mpi_context.start_stage()
-
-                # Configure and create session and graph for stage.
-                session_config = tf.ConfigProto()
-                session_config.intra_op_parallelism_threads = cfg.get('intra_op_parallelism_threads', 0)
-                session_config.inter_op_parallelism_threads = cfg.get('inter_op_parallelism_threads', 0)
-                session_config.log_device_placement = cfg.get('log_device_placement', 0)
-
-                if cfg.use_gpu:
-                    per_process_gpu_memory_fraction = getattr(cfg, 'per_process_gpu_memory_fraction', None)
-                    if per_process_gpu_memory_fraction:
-                        session_config.gpu_options.per_process_gpu_memory_fraction = per_process_gpu_memory_fraction
-
-                    gpu_allow_growth = getattr(cfg, 'gpu_allow_growth', None)
-                    if gpu_allow_growth:
-                        session_config.gpu_options.allow_growth = gpu_allow_growth
-
-                if cfg.use_gpu:
-                    _print("Using GPU if available.")
-                    _print("Using {}% of GPU memory.".format(
-                        100 * session_config.gpu_options.per_process_gpu_memory_fraction))
-                    _print("Allowing growth of GPU memory: {}".format(session_config.gpu_options.allow_growth))
-
-                graph = tf.Graph()
-                sess = tf.Session(graph=graph, config=session_config)
-
-                # This HAS to come after the creation of the session, otherwise
-                # it allocates all GPU memory if using the GPU.
-                _print("\nAvailable devices: ")
-                from tensorflow.python.client import device_lib
-                _print(device_lib.list_local_devices())
-
-                if not cfg.use_gpu:
-                    _print("Not using GPU.")
-                    stack.enter_context(graph.device("/cpu:0"))
-
-                stack.enter_context(graph.as_default())
-                stack.enter_context(sess)
-                stack.enter_context(sess.as_default())
-
-                # Set the seed for the stage. Notice we generate a new tf seed for each stage.
-                tf_seed = gen_seed()
-                _print("Setting tensorflow seed to generated seed: {}\n".format(tf_seed))
-                tf.set_random_seed(tf_seed)
-
                 # Set limit on CPU RAM for the stage
                 cpu_ram_limit_mb = cfg.get("cpu_ram_limit_mb", None)
                 if cpu_ram_limit_mb is not None:
                     stack.enter_context(memory_limit(cfg.cpu_ram_limit_mb))
+
+                self.mpi_context.start_stage()
+
+                self.framework_initialize_stage(stack)
 
                 _print("Building env...\n")
 
@@ -422,7 +403,6 @@ class TrainingLoop(object):
                 if stage_idx == 0 or not cfg.preserve_env:
                     if getattr(self, 'env', None):
                         self.env.close()
-
                     self.env = cfg.build_env()
 
                 if hasattr(self.env, "print_memory_footprint"):
@@ -435,6 +415,7 @@ class TrainingLoop(object):
                     updater = cfg.get_updater(self.env, mpi_context=self.mpi_context)
                 else:
                     updater = cfg.get_updater(self.env)
+                self.updater = updater
 
                 updater.stage_idx = stage_idx
                 updater.exp_dir = self.exp_dir
@@ -442,83 +423,7 @@ class TrainingLoop(object):
                 updater.build_graph()
                 _print("\nDone building updater.\n")
 
-                walk_variable_scopes(max_depth=cfg.variable_scope_depth)
-
-                # Maybe initialize network weights.
-                # Let a *path_specification* be one of three things:
-                #     1. An integer specifying a previous stage to load the best hypothesis from.
-                #     2. A string of format: "stage_idx,kind" where `stage_idx` specifies a previous stage to load from
-                #        and `kind` is either "final" or "best", specifying whether to load final or best
-                #        hypothesis from that stage.
-                #     3. A path on the filesystem that gives a prefix for a tensorflow checkpoint file to load from.
-                #
-                # Then cfg.load_path can either be a path_specification itself, in which case all variables
-                # in the network will be loaded from that path_specification, or a dictionary mapping from
-                # variable scope names to path specifications, in which case all variables in each supplied
-                # variable scope name will be loaded from the path_specification paired with that scope name.
-                load_path = cfg.load_path
-                _print("\nMaybe loading weights, load_path={} ...".format(load_path))
-                if load_path is not None:
-                    if isinstance(load_path, str) or isinstance(load_path, int):
-                        load_path = {"": load_path}
-
-                    load_path = dict(load_path)
-
-                    # Sort in increasing order, so that it if one variable scope lies within another scope,
-                    # the outer scope gets loaded before the inner scope, rather than having the outer scope
-                    # wipe out the inner scope.
-                    items = sorted(load_path.items())
-
-                    for var_scope, path in items:
-                        variables = {v.name: v for v in trainable_variables(var_scope, for_opt=False)}
-                        if not variables:
-                            _print("No variables to load in scope {}.".format(str(var_scope)))
-                            continue
-
-                        saver = tf.train.Saver(variables)
-
-                        load_stage, kind = None, None
-
-                        try:
-                            load_stage = int(path)
-                            kind = "best"
-                        except (TypeError, ValueError):
-                            try:
-                                split = path.split(',')
-                                load_stage = int(split[0])
-                                kind = 'best' if len(split) > 1 else split[1]
-                                assert kind in 'best final'.split(), "path={}".format(path)
-                            except Exception:
-                                load_stage, kind = None, None
-
-                        if load_stage is not None:
-                            if stage_idx == 0:
-                                _print(
-                                    "Not loading var scope \"{}\" from stage {}, "
-                                    "currently in stage 0.".format(var_scope, load_stage))
-                                continue
-                            else:
-                                key = kind + '_path'
-                                completed_history = self.data.history[:-1]
-                                path = completed_history[load_stage][key]
-
-                        path = os.path.realpath(path)
-
-                        _print("Loading var scope \"{}\" from {}.".format(var_scope, path))
-                        start = time.time()
-                        saver.restore(tf.get_default_session(), path)
-                        _print("Done loading var scope, took {} seconds.".format(time.time() - start))
-
-                else:
-                    _print("`load_path` is None, using a fresh set of weights.")
-
-                tf_step = tf.train.get_or_create_global_step()
-
-                if cfg.initial_step is not None and cfg.initial_step > 0:
-                    sess.run(tf_step.assign(cfg.initial_step))
-
-                sess.run(uninitialized_variables_initializer())
-                sess.run(tf.assert_variables_initialized())
+                # --- build hooks ---
 
                 for hook in cfg.hooks:
                     assert isinstance(hook, Hook)
@@ -527,8 +432,7 @@ class TrainingLoop(object):
                 if cfg.render_hook is not None:
                     cfg.render_hook.start_stage(self, updater, stage_idx)
 
-                # Prevent memory leaks, no ops can be added to the graph after this point
-                graph.finalize()
+                self.framework_finalize_stage_initialization()
 
                 threshold_reached = False
                 reason = None
@@ -586,12 +490,12 @@ class TrainingLoop(object):
                     weight_start = time.time()
                     final_path = self.data.path_for('weights/final_stage_{}'.format(stage_idx))
                     final_path = cfg.get('save_path', final_path)
-                    final_path = updater.save(tf.get_default_session(), final_path)
+                    final_path = updater.save(final_path)
                     _print("Done saving weights, took {} seconds".format(time.time() - weight_start))
 
                     self.data.record_values_for_stage(final_path=final_path)
 
-                    # --------------- Maybe render performance of best hypothesis -------------------
+                    # --------------- Maybe test and render with best hypothesis -------------------
 
                     do_final_testing = (
                         "Exception occurred" not in reason
@@ -610,7 +514,7 @@ class TrainingLoop(object):
                             best_path = self.data.current_stage_record['best_path']
                             _print("Loading best hypothesis for this stage "
                                    "from file {}...".format(best_path))
-                            updater.restore(sess, best_path)
+                            updater.restore(best_path)
 
                             try:
                                 test_record = updater.evaluate(cfg.batch_size, mode="test")
@@ -672,7 +576,6 @@ class TrainingLoop(object):
         threshold_reached = False
         reason = "NotStarted"
 
-        # Parse stopping criteria, set up early stopping
         stopping_criteria = cfg.stopping_criteria
 
         if isinstance(stopping_criteria, str):
@@ -689,7 +592,6 @@ class TrainingLoop(object):
         early_stop = EarlyStopHook(
             patience=cfg.patience, maximize=self.maximize_sc, start=cfg.get('patience_start', None))
 
-        # Start stage
         _print("\n" + "-" * 10 + " Training begins " + "-" * 10)
         self.timestamp("")
 
@@ -710,7 +612,9 @@ class TrainingLoop(object):
             local_step = 0
 
         while True:
-            # Check whether to keep training
+
+            # --- check whether to keep training ---
+
             if local_step >= cfg.max_steps:
                 reason = "Maximum number of steps-per-stage reached"
                 break
@@ -718,6 +622,8 @@ class TrainingLoop(object):
             if updater.n_experiences >= cfg.max_experiences:
                 reason = "Maximum number of experiences-per-stage reached"
                 break
+
+            # --- check which steps to run ---
 
             global_step = self.global_step
 
@@ -808,7 +714,7 @@ class TrainingLoop(object):
                     best_path = cfg.get('save_path', best_path)
 
                     weight_start = time.time()
-                    best_path = updater.save(tf.get_default_session(), best_path)
+                    best_path = updater.save(best_path)
 
                     _print("Done saving weights, took {} seconds".format(time.time() - weight_start))
 
@@ -844,21 +750,21 @@ class TrainingLoop(object):
                 update_record = updater.update(cfg.batch_size)
 
                 update_duration = time.time() - update_start_time
-                update_record["train"]["duration"] = update_duration
+                update_record["duration"] = update_duration
 
                 if local_step % 100 == 0:
                     _print("Done update step, took {} seconds.".format(update_duration))
 
                 if local_step % 100 == 0:
                     start = time.time()
-                    update_record["train"]["memory_physical_mb"] = memory_usage(physical=True)
-                    update_record["train"]["memory_virtual_mb"] = memory_usage(physical=False)
-                    update_record["train"]["memory_gpu_mb"] = gpu_memory_usage()
+                    update_record["memory_physical_mb"] = memory_usage(physical=True)
+                    update_record["memory_virtual_mb"] = memory_usage(physical=False)
+                    update_record["memory_gpu_mb"] = gpu_memory_usage()
                     _print("Memory check duration: {}".format(time.time() - start))
 
                 if evaluate:
                     # Only store train data as often as we evaluate, otherwise it's just too much data
-                    data_to_store.extend(dict(update_record).items())
+                    data_to_store.append(('train', update_record))
 
                 n_experiences_delta = updater.n_experiences - _old_n_experiences
                 self.n_global_experiences += n_experiences_delta
@@ -924,7 +830,7 @@ class TrainingLoop(object):
                         'weights/checkpoint_stage_{}_step_{}'.format(stage_idx, local_step))
 
                 weight_start = time.time()
-                weight_path = updater.save(tf.get_default_session(), weight_path)
+                weight_path = updater.save(weight_path)
 
                 _print("Done saving weights, took {} seconds".format(time.time() - weight_start))
 
@@ -1073,11 +979,9 @@ class FrozenTrainingLoopData(ExperimentDirectory):
         return os.listdir(self.path_for('summaries'))
 
 
-class _TrainingLoopData(FrozenTrainingLoopData):
-    """ Data structure used by a TrainingLoop to manage data
-        throughout the experiment.
+class TrainingLoopData(FrozenTrainingLoopData):
+    """ Data structure used by a TrainingLoop to manage data throughout the experiment.  """
 
-    """
     def setup(self):
         # Record training session environment for later diagnostic purposes
         self.record_environment(config=cfg.freeze())
@@ -1091,9 +995,10 @@ class _TrainingLoopData(FrozenTrainingLoopData):
         self._history = []
 
         self.data = defaultdict(list)
-        self.summary_writers = {}
 
         self.stage_idx = -1
+
+        self.writers = {}
 
     @property
     def history(self):
@@ -1102,12 +1007,13 @@ class _TrainingLoopData(FrozenTrainingLoopData):
     def start_stage(self, stage_idx, stage_config):
         self.history.append(dict(stage_idx=stage_idx, stage_config=stage_config))
         self.stage_idx = stage_idx
-        self.summary_writers = {}
+        self.writers = {}
 
     def end_stage(self, local_step=None):
         self.dump_data(local_step)
-        for writer in self.summary_writers.values():
-            writer.close()
+
+        for w in self.writers.values():
+            w.close()
 
     def dump_data(self, local_step):
         if local_step is None:
@@ -1128,6 +1034,9 @@ class _TrainingLoopData(FrozenTrainingLoopData):
         self.current_stage_record.update(d)
         self.current_stage_record.update(kwargs)
 
+    def store_scalar_summaries(self, mode, path, record, n_global_experiences):
+        raise Exception("NotImplemented")
+
     def store_step_data_and_summaries(
             self, stage_idx, local_step, global_step, n_local_experiences, n_global_experiences, **data):
 
@@ -1146,22 +1055,8 @@ class _TrainingLoopData(FrozenTrainingLoopData):
 
                 self.data[mode].append(record)
 
-            self.store_scalar_summaries(mode, record, n_global_experiences)
-
-    def store_scalar_summaries(self, mode, record, n_global_experiences):
-        # Build a summary using the Summary protocol buffer
-        # See https://stackoverflow.com/questions/37902705/how-to-manually-create-a-tf-summary
-        summary_values = [tf.Summary.Value(tag="all/"+k, simple_value=float(v)) for k, v in record.items()]
-        summary = tf.Summary(value=summary_values)
-        writer = self._get_summary_writer(mode)
-        writer.add_summary(summary, n_global_experiences)
-
-    def _get_summary_writer(self, mode):
-        if mode not in self.summary_writers:
-            self.summary_writers[mode] = tf.summary.FileWriter(
-                self.get_summary_path(mode), flush_secs=cfg.reload_interval,
-                graph=tf.get_default_graph())
-        return self.summary_writers[mode]
+            path = self.get_summary_path(mode)
+            self.store_scalar_summaries(mode, path, record, n_global_experiences)
 
     @property
     def current_stage_record(self):

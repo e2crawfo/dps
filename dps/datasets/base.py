@@ -513,7 +513,7 @@ class Dataset(Parameterized):
         dset = dset.batch(batch_size).map(self.parse_example_batch)
         iterator = dset.make_one_shot_iterator()
 
-        sess = tf.get_default_session()
+        sess = tf.get_default_session() or tf.Session()
 
         get_next = iterator.get_next()
 

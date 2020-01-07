@@ -5,7 +5,7 @@ import numpy as np
 from dps import cfg
 from dps.utils import Param, Config
 from dps.utils.tf import MLP, build_gradient_train_op
-from dps.updater import Updater as _Updater, DataManager, Evaluator, TensorRecorder
+from dps.tf.updater import Updater as _Updater, DataManager, Evaluator, TensorRecorder
 from dps.datasets.base import Environment, EmnistDataset
 
 

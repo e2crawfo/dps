@@ -1,12 +1,10 @@
 import numpy as np
-from collections import OrderedDict, defaultdict
+from collections import defaultdict
 import os
 import hashlib
 import pprint
 import argparse
 from tabulate import tabulate
-import shutil
-import matplotlib.pyplot as plt
 import copy
 
 import tensorflow as tf
@@ -20,7 +18,7 @@ from tensorflow.python.util import nest
 
 import dps
 from dps import cfg
-from dps.utils.base import Parameterized, Param, Config, pformat
+from dps.utils.base import Parameterized, Param, Config, pformat, RenderHook as _RenderHook
 from dps.utils.inspect_checkpoint import get_tensors_from_checkpoint_file  # noqa: F401
 
 
@@ -421,7 +419,6 @@ class ScopedFunction(Parameterized):
         self.directory = None
         self.train_config = None
         self.was_loaded = None
-        self.do_pretraining = False
         self.fixed_variables = False
 
         self.fixed_values = self.fixed_values or {}
@@ -469,20 +466,6 @@ class ScopedFunction(Parameterized):
         """ Initialize the network once it has been built. """
 
         if not self.initialized:
-            if self.do_pretraining:
-                from dps.train import load_or_train
-
-                filename = "{}_{}.chk".format(self.name, self.param_hash)
-                self.path = os.path.join(self.directory, filename)
-
-                self.was_loaded = load_or_train(self.train_config, self.scope, self.path, target_var_scope=self.name)
-
-                param_path = os.path.join(self.directory, "{}_{}.params".format(self.name, self.param_hash))
-
-                if not os.path.exists(param_path):
-                    with open(param_path, 'w') as f:
-                        f.write(str(self.param_dict))
-
             if self.fixed_variables:
                 for v in self.trainable_variables(False):
                     tf.add_to_collection(FIXED_COLLECTION, v)
@@ -518,25 +501,6 @@ class ScopedFunction(Parameterized):
             return network
         else:
             return existing
-
-    def set_pretraining_params(self, train_config, name_params=None, directory=None):
-        if self.initialized:
-            raise Exception("ScopedFunction with scope {} has already been initialized, "
-                            "it is an error to call `set_pretraining_params` at this point")
-
-        assert train_config is not None
-        self.train_config = train_config
-
-        self.do_pretraining = True
-
-        if isinstance(name_params, str):
-            name_params = name_params.split()
-        name_params = sorted(name_params or [])
-        self.param_hash = get_param_hash(train_config, name_params)
-
-        self.directory = directory or os.path.join(cfg.local_experiments_dir, cfg.env_name)
-
-        self.param_dict = OrderedDict((key, train_config[key]) for key in name_params)
 
     def fix_variables(self):
         if self.initialized:
@@ -871,7 +835,10 @@ class ConvNet(ScopedFunction):
         return volume
 
     def _call(self, inp, output_size, is_training):
-        final_n_channels = output_size
+        if isinstance(output_size, (list, tuple)):
+            final_n_channels = output_size[-1]
+        else:
+            final_n_channels = output_size
 
         print("--- Entering CNN(name={}) ---".format(self.name))
 
@@ -963,7 +930,11 @@ class GridConvNet(ConvNet):
         return info, required_image_size, pre_padding, post_padding
 
     def _call(self, inp, output_size, is_training):
-        final_n_channels = output_size
+        if isinstance(output_size, (list, tuple)):
+            final_n_channels = output_size[-1]
+        else:
+            final_n_channels = output_size
+
         volume = inp
         self.volumes = [volume]
 
@@ -2127,43 +2098,9 @@ def tf_discount_matrix(base, T, n=None):
     return tf.matrix_band_part(r, 0, -1)
 
 
-class RenderHook:
+class RenderHook(_RenderHook):
     N = 16
     is_training = False
-
-    def __init__(self, **kwargs):
-        for k, v in kwargs.items():
-            setattr(self, k, v)
-
-    @staticmethod
-    def normalize_images(images):
-        mx = images.reshape(*images.shape[:-3], -1).max(axis=-1)
-        return images / mx[..., None, None, None]
-
-    @staticmethod
-    def remove_rects(ax):
-        for obj in ax.findobj(match=plt.Rectangle):
-            try:
-                obj.remove()
-            except NotImplementedError:
-                pass
-
-    def imshow(self, ax, frame, remove_rects=True, vmin=0.0, vmax=1.0, **kwargs):
-        """ If ax already has an image, uses set_array on that image instead of doing imshow.
-            Allows this function to work well with animations. """
-
-        if frame.ndim == 3 and frame.shape[2] == 1:
-            frame = frame[:, :, 0]
-
-        frame = np.clip(frame, vmin, vmax)
-        frame = np.where(np.isnan(frame), 0, frame)
-
-        if ax.images:
-            ax.images[0].set_array(frame)
-            if remove_rects:
-                self.remove_rects(ax)
-        else:
-            ax.imshow(frame, vmin=vmin, vmax=vmax, **kwargs)
 
     def get_feed_dict(self, updater):
         return updater.data_manager.do_val(self.is_training)
@@ -2195,29 +2132,3 @@ class RenderHook:
         sess = tf.get_default_session()
         fetched = sess.run(self.to_fetch, feed_dict=feed_dict)
         return Config(fetched)
-
-    def path_for(self, name, updater, ext="pdf"):
-        local_step = (
-            np.inf if dps.cfg.overwrite_plots else "{:0>10}".format(updater.n_updates))
-
-        if ext is None:
-            basename = 'stage={:0>4}_local_step={}'.format(updater.stage_idx, local_step)
-        else:
-            basename = 'stage={:0>4}_local_step={}.{}'.format(updater.stage_idx, local_step, ext)
-        return updater.exp_dir.path_for('plots', name, basename)
-
-    def savefig(self, name, fig, updater, is_dir=True):
-        if is_dir:
-            path = self.path_for(name, updater)
-            fig.savefig(path)
-            plt.close(fig)
-
-            shutil.copyfile(
-                path,
-                os.path.join(
-                    os.path.dirname(path),
-                    'latest_stage{:0>4}.pdf'.format(updater.stage_idx)))
-        else:
-            path = updater.exp_dir.path_for('plots', name + ".pdf")
-            fig.savefig(path)
-            plt.close(fig)

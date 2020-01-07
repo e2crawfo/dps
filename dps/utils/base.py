@@ -36,6 +36,78 @@ import clify
 import dps
 
 
+class RenderHook:
+    N = 16
+    is_training = False
+
+    def __init__(self, **kwargs):
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+    def start_stage(self, training_loop, updater, stage_idx):
+        pass
+
+    @staticmethod
+    def normalize_images(images):
+        mx = images.reshape(*images.shape[:-3], -1).max(axis=-1)
+        return images / mx[..., None, None, None]
+
+    @staticmethod
+    def remove_rects(ax):
+        for obj in ax.findobj(match=plt.Rectangle):
+            try:
+                obj.remove()
+            except NotImplementedError:
+                pass
+
+    def imshow(self, ax, frame, remove_rects=True, vmin=0.0, vmax=1.0, **kwargs):
+        """ If ax already has an image, uses set_array on that image instead of doing imshow.
+            Allows this function to work well with animations. """
+
+        if frame.ndim == 3 and frame.shape[2] == 1:
+            frame = frame[:, :, 0]
+
+        frame = np.clip(frame, vmin, vmax)
+        frame = np.where(np.isnan(frame), 0, frame)
+
+        if ax.images:
+            ax.images[0].set_array(frame)
+            if remove_rects:
+                self.remove_rects(ax)
+        else:
+            ax.imshow(frame, vmin=vmin, vmax=vmax, **kwargs)
+
+    def path_for(self, name, updater, ext="pdf"):
+        local_step = (
+            np.inf if dps.cfg.overwrite_plots else "{:0>10}".format(updater.n_updates))
+
+        if ext is None:
+            basename = 'stage={:0>4}_local_step={}'.format(updater.stage_idx, local_step)
+        else:
+            basename = 'stage={:0>4}_local_step={}.{}'.format(updater.stage_idx, local_step, ext)
+        return updater.exp_dir.path_for('plots', name, basename)
+
+    def savefig(self, name, fig, updater, is_dir=True):
+        if is_dir:
+            path = self.path_for(name, updater)
+            fig.savefig(path)
+            plt.close(fig)
+
+            shutil.copyfile(
+                path,
+                os.path.join(
+                    os.path.dirname(path),
+                    'latest_stage{:0>4}.pdf'.format(updater.stage_idx)))
+        else:
+            path = updater.exp_dir.path_for('plots', name + ".pdf")
+            fig.savefig(path)
+            plt.close(fig)
+
+
+def flush_print(*args, flush=True, **kwargs):
+    print(*args, **kwargs, flush=flush)
+
+
 class HashableDist:
     """ Wraps a distribution from scipy.stats.distributions, making it hashable. """
 
