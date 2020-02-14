@@ -36,6 +36,85 @@ import clify
 import dps
 
 
+def np_build_cam2world(angle, t, do_correction=False):
+    """ "Extrinsic" Euler rotations.
+
+    Tait-Bryan Extrinsic? Aerospace.
+
+    But yaw, pitch and roll are intrinsic...are rotation matrices intrinsic rotations?
+
+        yaw: counterclockwise rotation of alpha about z axis.
+        pitch: counterclockwise rotation of beta about y axis.
+        roll: counterclockwise rotation of gamma about x axis.
+
+    Notice that we're actually doing (R_yaw * R_pitch * R_roll) x. So it makes sense.
+
+    If `do_correction` is true, we assume that in the camera coordinate frame,
+    z increases into the frame, y increases downward, z increases rightward (looking out from the camera),
+    and therefore we do an initial correction rotation to get a coordinate system where
+    x increases into the frame, y increases leftward, z increases upward.
+
+    """
+    leading_dims = angle.shape[:-1]
+
+    angle = np.reshape(angle, (-1, angle.shape[-1]))
+    t = np.reshape(t, (-1, t.shape[-1]))
+
+    so3_a = np.array([
+        [0, -1, 0, 1, 0, 0, 0, 0, 0],
+        [1, 0, 0, 0, 1, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 1]
+    ]).astype('f')
+
+    so3_b = np.array([
+        [0, 0, 1, 0, 0, 0, -1, 0, 0],
+        [1, 0, 0, 0, 0, 0, 0, 0, 1],
+        [0, 0, 0, 0, 1, 0, 0, 0, 0]
+    ]).astype('f')
+
+    so3_y = np.array([
+        [0, 0, 0, 0, 0, -1, 0, 1, 0],
+        [0, 0, 0, 0, 1, 0, 0, 0, 1],
+        [1, 0, 0, 0, 0, 0, 0, 0, 0]
+    ]).astype('f')
+
+    sin = np.sin(angle)
+    cos = np.cos(angle)
+    v = np.stack([sin, cos, np.ones_like(sin)], axis=2)
+
+    soa = np.matmul(v[:, 0], so3_a)
+    soa = np.reshape(soa, (-1, 3, 3))
+
+    sob = np.matmul(v[:, 1], so3_b)
+    sob = np.reshape(sob, (-1, 3, 3))
+
+    soy = np.matmul(v[:, 2], so3_y)
+    soy = np.reshape(soy, (-1, 3, 3))
+
+    so3 = np.matmul(soa, np.matmul(sob, soy))
+
+    if do_correction:
+        # rotate pi/2 CW around positive x axis, then pi/2 CW around positive z axis (intrinsically).
+        correction = np.array([
+            [0., 0., 1.],
+            [-1., 0., 0.],
+            [0., -1., 0.],
+        ]).astype('f')
+        correction = np.tile(correction, (so3.shape[0], 1, 1))
+
+        so3 = np.matmul(so3, correction)
+
+    mat = np.concatenate([so3, t[:, :, None]], axis=2)
+
+    b = sin.shape[0]
+    row = np.tile(np.array([0., 0., 0., 1.], dtype='f'), (b, 1, 1))
+    mat = np.concatenate([mat, row], axis=1)
+
+    mat = np.reshape(mat, (*leading_dims, 4, 4))
+
+    return mat
+
+
 class RenderHook:
     N = 16
     is_training = False
@@ -402,6 +481,16 @@ def prime_factors(n):
     return factors
 
 
+@contextmanager
+def numpy_print_options(**print_options):
+    old_print_options = np.get_printoptions()
+    try:
+        np.set_printoptions(**print_options)
+        yield
+    finally:
+        np.set_printoptions(**old_print_options)
+
+
 def annotate_with_rectangles(ax, annotations, colors=None, lw=1):
     if colors is None:
         colors = list(plt.get_cmap('Dark2').colors)
@@ -420,12 +509,21 @@ def annotate_with_rectangles(ax, annotations, colors=None, lw=1):
 
 def animate(
         images, *other_images, labels=None, interval=500,
-        path=None, block_shape=None, annotations=None, fig_unit_size=1, **kwargs):
-    """ Assumes `images` has shape (batch_size, n_frames, H, W, D)
+        path=None, block_shape=None, annotations=None, fig_unit_size=1,
+        text=None, text_loc=None, fontsize='x-small',
+        **kwargs):
+    """ Assumes `images` has shape (batch_size, n_frames, H, W, C)
 
     `annotations` only implemented for the first set of images.
 
-    Allow specification of a `block_size`.
+    `block_shape` controls the shape of the set of plots for an individual example.
+
+    `text` should be an array of strings with shape (batch_size, n_frames)
+    or a dictionary where the keys are indices and each value is an array of strings with shape (batch_size, n_frames).
+    In the former case, text plotted only on the first image of each set. In the later case, the keys say
+    which plot within the block to put the text on.
+
+    `text_loc` specifies where to draw the text.
 
     """
     all_images = [images, *other_images]
@@ -443,6 +541,15 @@ def animate(
     fig, axes = square_subplots(B, block_shape=block_shape, fig_unit_size=fig_unit_size)
 
     plots = np.zeros_like(axes)
+    text_elements = np.zeros_like(axes)
+
+    if text is None:
+        text = {}
+    elif not isinstance(text, dict):
+        text = {0: text}
+
+    if text_loc is None:
+        text_loc = (0.05, 0.95)
 
     if labels is not None:
         for j in range(n_image_sets):
@@ -454,7 +561,11 @@ def animate(
 
         for j in range(n_image_sets):
             ax = axes[i, j]
-            plots[i, j] = ax.imshow(np.squeeze(all_images[j][i, 0]))
+            plots[i, j] = ax.imshow(np.squeeze(all_images[j][i, 0]), vmin=0.0, vmax=1.0)
+
+            text_elements[i, j] = ax.text(
+                *text_loc, '', ha='left', va='top',
+                transform=ax.transAxes, fontsize=fontsize)
 
     plt.subplots_adjust(top=0.95, bottom=0.02, left=0.02, right=.98, wspace=0.1, hspace=0.1)
 
@@ -469,6 +580,9 @@ def animate(
                         obj.remove()
                     except NotImplementedError:
                         pass
+
+                if j in text:
+                    text_elements[i, j].set_text(text[j][i, t])
 
             if annotations is not None:
                 ax = axes[i, 0]
@@ -514,9 +628,10 @@ def square_subplots(N, block_shape=None, fig_unit_size=1, **kwargs):
     axes_shape = (h*block_shape[0], w*block_shape[1])
 
     if 'figsize' not in kwargs:
+        # figsize is (width, height)
         kwargs['figsize'] = (
-            axes_shape[0] * fig_unit_size,
-            axes_shape[1] * fig_unit_size
+            axes_shape[1] * fig_unit_size,
+            axes_shape[0] * fig_unit_size
         )
 
     fig, axes = plt.subplots(*axes_shape, **kwargs)
@@ -542,9 +657,19 @@ def grid_subplots(h, w, fig_unit_size, axes_off=False):
 
     if axes_off:
         for ax in axes.flatten():
-            ax.set_axis_off()
+            set_axis_off(ax)
 
     return fig, axes
+
+
+def set_axis_off(ax):
+    """ Differs from ax.set_axis_off() in that axis labels are still shown. """
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.set_xticklabels('')
+    ax.set_yticklabels('')
+    ax.set_xticks([])
+    ax.set_yticks([])
 
 
 def nvidia_smi(robust=True):
@@ -586,8 +711,8 @@ def _nvidia_smi_parse_processes(s):
         gpu_idx = int(tokens[1])
         pid = int(tokens[2])
         type = tokens[3]
-        process_name = tokens[4]
-        memory_usage = tokens[5]
+        process_name = ' '.join(tokens[4:-2])  # To handle process names containg spaces
+        memory_usage = tokens[-2]
         memory_usage_mb = int(memory_usage[:-3])
 
         processes.append((gpu_idx, pid, type, process_name, memory_usage_mb))
@@ -1065,13 +1190,13 @@ def pretty_func(f):
 
     lmbda = lambda: 0
 
+    info = dict(name=name)
+
     if name == lmbda.__name__:
         try:
-            return inspect.getsource(f)
+            info['source'] = '"{}"'.format(inspect.getsource(f).strip())
         except OSError:
             pass
-
-    info = dict(name=name)
 
     try:
         source_lines = inspect.getsourcelines(f)
@@ -1395,7 +1520,7 @@ def image_to_string(array):
 def shift_fill(a, n, axis=0, fill=0.0, reverse=False):
     """ shift n spaces backward along axis, filling rest in with 0's. if n is negative, shifts forward. """
     shifted = np.roll(a, n, axis=axis)
-    shifted[:n, ...] = fill
+    shifted[:n] = fill
     return shifted
 
 
@@ -1705,13 +1830,15 @@ def timed_func(func):
 
 
 @contextmanager
-def timed_block(name=None):
+def timed_block(name=None, flag=True):
     if name is None:
         frame = inspect.stack()[1]
         name = "{}:{}".format(frame.filename, frame.lineno)
     start_time = time.time()
     yield
-    print("Call to block <{}> took {} seconds.".format(name, time.time() - start_time))
+
+    if flag:
+        print("Call to block <{}> took {} seconds.".format(name, time.time() - start_time))
 
 
 # From py.test
@@ -1892,7 +2019,7 @@ class Config(dict):
         The `update` function works the same way.
 
         When updating or setting a value that is a hierarchical dict, it may be possible for the hierarchical dict
-        to refer to the same tree location in different way. For example {'a:b': 0, 'a': {'b': 1}}. The tree location
+        to refer to the same tree location in different ways. For example {'a:b': 0, 'a': {'b': 1}}. The tree location
         'a:b' is assigned two different values, 0 and 1. Such situations will be detected and an error thrown.
         Of course, overwriting locations in separate calls is allowed, just not in the same call.
 
@@ -2056,7 +2183,8 @@ class Config(dict):
 
     def update_from_command_line(self, strict=True):
         flattened = self.flatten()
-        cl_args = clify.wrap_object(flattened, strict=strict).parse()
+        cl_object = clify.wrap_object(flattened, strict=strict)
+        cl_args = cl_object.parse()
         self.update(cl_args)
 
     def __enter__(self):
@@ -2184,7 +2312,13 @@ class ConfigStack(dict):
     def __getitem__(self, key):
         for config in self.config_sequence:
             if key in config:
-                return config[key]
+                value = config[key]
+
+                if isinstance(value, ConfigFn):
+                    value = value()
+
+                return value
+
         raise KeyError("Cannot find a value for key `{}`".format(key))
 
     def __setitem__(self, key, value):
@@ -2213,15 +2347,38 @@ class ConfigStack(dict):
         return _config
 
     def flatten(self):
-        flat = {}
+        _config = Config()
         for config in self._stack:
-            flat.update(config.flatten())
-        return flat
+            _config.update(config)
+        return _config.flatten()
 
     def update_from_command_line(self, strict=True):
         flat = self.flatten()
-        cl_args = clify.wrap_object(flat, strict=strict).parse()
+        cl_object = clify.wrap_object(flat, strict=strict)
+        cl_args = cl_object.parse()
         self.update(cl_args)
+
+
+class ConfigFn:
+    """ If a ConfigStack is queried with a key, and the resulting value is an instance
+        if this class, then the instance will be called and the result will be returned
+        as the value.
+
+    """
+    def __init__(self, fn):
+        self.fn = fn
+
+    def __call__(self, *args, **kwargs):
+        return self.fn(*args, **kwargs)
+
+    def __str__(self):
+        fn_s = pretty_func(self.fn)
+        fn_s = '\n'.join(['    ' + l for l in fn_s.split('\n') if l])
+
+        return "ConfigFn(fn=\n    '''\n{}\n    '''\n)".format(fn_s)
+
+    def __repr__(self):
+        return str(self)
 
 
 def update_scratch_dir(config, new_scratch_dir):
@@ -2458,3 +2615,30 @@ def ssh_execute(command, host, ssh_options=None, **kwargs):
         cmd = "ssh {ssh_options} -T {host} \"{command}\"".format(
             ssh_options=ssh_options, host=host, command=command)
     return execute_command(cmd, **kwargs)
+
+
+class RunningStats:
+    def __init__(self):
+        self.count = 0
+        self.mean = None
+        self.m2 = None
+
+    def add(self, data):
+        """ First dimension is batch dimension, all the rest are different dimensions of the input. """
+        for d in data:
+            self.update(d)
+
+    def update(self, data):
+        if self.count == 0:
+            self.mean = np.zeros_like(data)
+            self.m2 = np.zeros_like(data)
+
+        self.count += 1
+        delta = data - self.mean
+        self.mean += delta / self.count
+        delta2 = data - self.mean
+        self.m2 += delta * delta2
+
+    def get_stats(self):
+        var = self.m2 / self.count
+        return self.mean, var

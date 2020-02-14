@@ -3,13 +3,24 @@ from torch.utils.tensorboard import SummaryWriter
 import tensorflow as tf
 import numpy as np
 import time
-from collections import defaultdict
 
 from dps import cfg
 from dps.datasets.base import Dataset
 from dps.train import TrainingLoop, TrainingLoopData
-from dps.utils import Parameterized, Param, flush_print as _print, gen_seed, map_structure
-from dps.utils.pytorch import walk_variable_scopes
+from dps.utils import Parameterized, Param, flush_print as _print, gen_seed, map_structure, timed_block
+from dps.utils.pytorch import walk_variable_scopes, to_np
+
+
+pytorch_device = None
+
+
+def set_pytorch_device(device):
+    global pytorch_device
+    pytorch_device = device
+
+
+def get_pytorch_device():
+    return pytorch_device
 
 
 class PyTorchTrainingLoopData(TrainingLoopData):
@@ -33,6 +44,20 @@ class PyTorchTrainingLoop(TrainingLoop):
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
+        if cfg.use_gpu:
+            _print("Using GPU.")
+
+            _print("Device count: {}".format(torch.cuda.device_count()))
+            device = torch.cuda.current_device()
+            _print("Device idx: {}".format(device))
+            _print("Device name: {}".format(torch.cuda.get_device_name(device)))
+            _print("Device capability: {}".format(torch.cuda.get_device_capability(device)))
+
+            set_pytorch_device('cuda')
+        else:
+            _print("Not using GPU.")
+            set_pytorch_device('cpu')
+
     def framework_finalize_stage_initialization(self):
         self.framework_print_variables()
         self.framework_load_weights()
@@ -53,18 +78,23 @@ class PyTorchTrainingLoop(TrainingLoop):
 
             start = time.time()
 
-            state_dict = torch.load(path)['model']
-            submodule = self.updater.model
+            device = get_pytorch_device()
+
+            loaded_state_dict = torch.load(path, map_location=device)['model']
+
             if module_path:
-                for attr in module_path.split('.'):
-                    state_dict = state_dict.get(attr)
-                    submodule = getattr(submodule, attr)
+                loaded_state_dict = type(loaded_state_dict)(
+                    {k: v for k, v in loaded_state_dict.items() if k.startswith(module_path)}
+                )
 
-            _state_dict = submodule.state_dict()
-            _state_dict.update(state_dict)
-            submodule.load_state_dict(_state_dict)
+            module = self.updater.model
 
-            _print("Done loading submodule, took {} seconds.".format(time.time() - start))
+            state_dict = module.state_dict()
+            state_dict.update(loaded_state_dict)
+
+            module.load_state_dict(state_dict)
+
+            _print("Done loading weights for module {}, took {} seconds.".format(module_path, time.time() - start))
 
 
 class PyTorchUpdater(Parameterized):
@@ -91,16 +121,7 @@ class PyTorchUpdater(Parameterized):
     def build_graph(self):
         self.model = self.build_model(env=self.env)
 
-        if cfg.use_gpu:
-            _print("Using GPU if available.")
-            self.model.cuda()
-
-            _print("Device count: {}".format(torch.cuda.device_count()))
-            device = torch.cuda.current_device()
-            _print("Device idx: {}".format(device))
-            _print("Device name: {}".format(torch.cuda.get_device_name(device)))
-            _print("Device capability: {}".format(torch.cuda.get_device_capability(device)))
-
+        self.model.to(get_pytorch_device())
         self.optimizer = self.build_optimizer(self.model.parameters(), lr=self.lr_schedule)
 
         data_manager = self.data_manager = PyTorchDataManager(datasets=self.env.datasets)
@@ -126,9 +147,15 @@ class PyTorchUpdater(Parameterized):
             recorded_tensors['loss_' + name] = tensor
         recorded_tensors['loss'] = loss
 
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
+        print_time = self._n_updates % 100 == 0
+        with timed_block('zero_grad', print_time):
+            self.optimizer.zero_grad()
+
+        with timed_block('loss backward', print_time):
+            loss.backward()
+
+        with timed_block('optimizer step', print_time):
+            self.optimizer.step()
 
         update_result = self._update(batch_size)
 
@@ -155,7 +182,10 @@ class PyTorchUpdater(Parameterized):
             raise Exception("Unknown data mode: {}".format(mode))
 
         n_points = 0
+        n_batches = 0
         record = None
+
+        start = time.time()
 
         for data in data_iterator:
 
@@ -169,7 +199,7 @@ class PyTorchUpdater(Parameterized):
                 recorded_tensors['loss'] = loss
 
                 recorded_tensors = map_structure(
-                    lambda t: t.cpu().detach().numpy() if isinstance(t, torch.Tensor) else t,
+                    lambda t: to_np(t) if isinstance(t, torch.Tensor) else t,
                     recorded_tensors, is_leaf=lambda rec: not isinstance(rec, dict))
 
             batch_size = recorded_tensors['batch_size']
@@ -182,26 +212,29 @@ class PyTorchUpdater(Parameterized):
                     is_leaf=lambda rec: not isinstance(rec, dict))
 
             n_points += batch_size
+            n_batches += 1
 
         record = map_structure(
             lambda rec: rec / n_points, record, is_leaf=lambda rec: not isinstance(rec, dict))
+
+        record['eval_duration_per_item'] = (time.time() - start) / n_points
+        record['eval_duration_per_batch'] = (time.time() - start) / n_batches
+        print("Evaluation took {} seconds per item, {} seconds per batch.".format(
+            record['eval_duration_per_item'], record['eval_duration_per_batch']))
 
         return record
 
     def save(self, path):
         whole_dict = dict(model=self.model.state_dict())
-        # if optimizer:
-        #     whole_dict['optimizer'] = optimizer.state_dict()
         torch.save(whole_dict, path)
+        return path
 
     def restore(self, path):
-        whole_dict = torch.load(path)
+        device = get_pytorch_device()
+        whole_dict = torch.load(path, map_location=device)
         state = self.model.state_dict()
         state.update(whole_dict['model'])
         self.model.load_state_dict(state)
-
-        # if optimizer:
-        #     optimizer.load_state_dict(whole_dict['optimizer'])
 
 
 class PyTorchDataManager(Parameterized):
@@ -221,9 +254,16 @@ class PyTorchDataManager(Parameterized):
                 'Must provide at least one dataset with name "train", "val", or "test".')
 
         self.iterators = {}
-        self.graph = tf.Graph()
-        self.sess = tf.Session(graph=self.graph)
         self.train_initialized = False
+
+        self.graph = tf.Graph()
+
+        # Don't use GPU at all for this. There's no point in using the GPU here,
+        # as the data is going to come back through the CPU anyway.
+        session_config = tf.ConfigProto()
+        session_config.device_count['GPU'] = 0
+        session_config.gpu_options.per_process_gpu_memory_fraction = 0.0
+        self.sess = tf.Session(graph=self.graph, config=session_config)
 
     def build_graph(self):
         tf_dsets = []
@@ -338,12 +378,11 @@ class DataIterator:
         except tf.errors.OutOfRangeError:
             raise StopIteration("TensorFlow iterator raised tf.errors.OutOfRangeError.")
 
-        if cfg.use_gpu:
-            device = torch.cuda.current_device()
+        device = get_pytorch_device()
 
-            result = map_structure(
-                lambda v: torch.from_numpy(v).to(device) if isinstance(v, np.ndarray) else v,
-                result, is_leaf=lambda v: not isinstance(v, dict)
-            )
+        result = map_structure(
+            lambda v: torch.from_numpy(v).to(device) if isinstance(v, np.ndarray) else v,
+            result, is_leaf=lambda v: not isinstance(v, dict)
+        )
 
         return result

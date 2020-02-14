@@ -406,7 +406,9 @@ class Dataset(Parameterized):
                         if artifacts is None:
                             artifacts = {}
 
-                        assert set(artifacts.keys()) == set(self._artifact_names)
+                        target_key_set = set(self._artifact_names)
+                        actual_key_set = set(artifacts.keys())
+                        assert target_key_set == actual_key_set, "{} vs {}".format(target_key_set, actual_key_set)
 
                     self._writer.close()
                     print("Done creating dataset.")

@@ -670,6 +670,31 @@ def run_experiment(
     alg_name = sanitize(config.get("alg_name", ""))
 
     if args.duration == "local":
+        if cl_mode is not None:
+            if cl_mode == 'strict':
+                config.update_from_command_line(strict=True)
+            elif cl_mode == 'lax':
+                config.update_from_command_line(strict=False)
+            else:
+                raise Exception("Unknown value for cl_mode: {}".format(cl_mode))
+
+        config.exp_name = "alg={}".format(alg_name)
+
+        with config:
+            return training_loop()
+
+    else:
+        run_kwargs = Config(
+            kind="slurm",
+            pmem=5000,
+            ignore_gpu=False,
+        )
+
+        duration_args = durations[args.duration]
+
+        if 'config' in duration_args:
+            config.update(duration_args['config'])
+            del duration_args['config']
 
         if cl_mode is not None:
             if cl_mode == 'strict':
@@ -679,45 +704,20 @@ def run_experiment(
             else:
                 raise Exception("Unknown value for cl_mode: {}".format(cl_mode))
 
-        config.env_name = "env={}".format(env_name)
-        config.exp_name = "alg={}".format(alg_name)
-        with config:
-            return training_loop()
+        if 'distributions' in duration_args:
+            distributions = duration_args['distributions']
+            del duration_args['distributions']
 
-    run_kwargs = Config(
-        kind="slurm",
-        pmem=5000,
-        ignore_gpu=False,
-    )
+        run_kwargs.update(durations[args.duration])
 
-    duration_args = durations[args.duration]
+        if name_variables is not None:
+            name_variables_str = "_".join(
+                "{}={}".format(sanitize(k), sanitize(getattr(config, k)))
+                for k in name_variables.split(","))
+            env_name = "{}_{}".format(env_name, name_variables_str)
 
-    if 'config' in duration_args:
-        config.update(duration_args['config'])
-        del duration_args['config']
+        config.env_name = env_name
 
-    if cl_mode is not None:
-        if cl_mode == 'strict':
-            config.update_from_command_line(strict=True)
-        elif cl_mode == 'lax':
-            config.update_from_command_line(strict=False)
-        else:
-            raise Exception("Unknown value for cl_mode: {}".format(cl_mode))
+        exp_name = "env={}_alg={}_duration={}".format(env_name, alg_name, args.duration)
 
-    if 'distributions' in duration_args:
-        distributions = duration_args['distributions']
-        del duration_args['distributions']
-
-    run_kwargs.update(durations[args.duration])
-
-    if name_variables is not None:
-        name_variables_str = "_".join(
-            "{}={}".format(sanitize(k), sanitize(getattr(config, k)))
-            for k in name_variables.split(","))
-        env_name = "{}_{}".format(env_name, name_variables_str)
-
-    config.env_name = env_name
-
-    exp_name = "env={}_alg={}_duration={}".format(config.env_name, alg_name, args.duration)
-
-    build_and_submit(name, exp_name, config, distributions=distributions, **run_kwargs)
+        build_and_submit(name, exp_name, config, distributions=distributions, **run_kwargs)

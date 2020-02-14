@@ -41,8 +41,10 @@ class _BuildDataset(object):
             cfg.update_from_command_line()
             print(cfg)
 
-            experiment_store = ExperimentStore(os.path.join(cfg.local_experiments_dir, cfg.env_name))
+            exp_store_name = 'env={}'.format(cfg.env_name)
+            experiment_store = ExperimentStore(os.path.join(cfg.local_experiments_dir, exp_store_name))
             exp_dir = experiment_store.new_experiment("", seed, add_date=1, force_fresh=1, update_latest=False)
+
             params["data_dir"] = exp_dir.path
 
             print(params)
@@ -128,7 +130,9 @@ def make_dataset_in_parallel(run_kwargs, dataset_cls, param_values=None):
             assert len(df) == 1
             dataset_files.append(os.path.join(dir_path, df[0]))
 
-        cached_filename = os.path.join(cfg.data_dir, "cached_datasets", dataset_cls.__name__, str(get_param_hash(param_values)))
+        cached_filename = os.path.join(
+            cfg.data_dir, "cached_datasets",
+            dataset_cls.__name__, str(get_param_hash(param_values)))
 
         command = "cat " + " ".join(dataset_files) + " > " + cached_filename
         print("Running command: \n" + command)

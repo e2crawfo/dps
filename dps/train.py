@@ -251,7 +251,8 @@ class TrainingLoop:
             cfg.seed = gen_seed()
 
         # Create a directory to store the results of the training run.
-        self.experiment_store = ExperimentStore(os.path.join(cfg.local_experiments_dir, cfg.env_name))
+        exp_store_name = 'env={}'.format(cfg.env_name)
+        self.experiment_store = ExperimentStore(os.path.join(cfg.local_experiments_dir, exp_store_name))
 
         filename_keys = cfg.get('filename_keys', [])
         if isinstance(filename_keys, str):
@@ -345,17 +346,16 @@ class TrainingLoop:
 
         if cfg.initial_stage is not None:
             if cfg.initial_stage >= 0:
-                stage_idx = cfg.initial_stage
+                self.stage_idx = cfg.initial_stage
             else:
                 raise Exception("Initial stage cannot be negative: {}".format(cfg.initial_stage))
-            self.curriculum_remaining = self.curriculum_remaining[stage_idx:]
+            self.curriculum_remaining = self.curriculum_remaining[self.stage_idx:]
         else:
-            stage_idx = 0
-        self.stage_idx = stage_idx
+            self.stage_idx = 0
 
         while self.curriculum_remaining:
             _print("\n" + "=" * 50)
-            self.timestamp("Starting stage {}".format(stage_idx))
+            self.timestamp("Starting stage {}".format(self.stage_idx))
             _print("\n")
 
             if cfg.start_tensorboard:
@@ -373,7 +373,7 @@ class TrainingLoop:
             stage_config = self.curriculum_remaining.pop(0)
             stage_config = Config(stage_config)
 
-            self.data.start_stage(stage_idx, stage_config)
+            self.data.start_stage(self.stage_idx, stage_config)
 
             with ExitStack() as stack:
 
@@ -400,7 +400,7 @@ class TrainingLoop:
                 _print("Building env...\n")
 
                 # Maybe build env
-                if stage_idx == 0 or not cfg.preserve_env:
+                if self.stage_idx == 0 or not cfg.preserve_env:
                     if getattr(self, 'env', None):
                         self.env.close()
                     self.env = cfg.build_env()
@@ -417,7 +417,7 @@ class TrainingLoop:
                     updater = cfg.get_updater(self.env)
                 self.updater = updater
 
-                updater.stage_idx = stage_idx
+                updater.stage_idx = self.stage_idx
                 updater.exp_dir = self.exp_dir
 
                 updater.build_graph()
@@ -427,10 +427,10 @@ class TrainingLoop:
 
                 for hook in cfg.hooks:
                     assert isinstance(hook, Hook)
-                    hook.start_stage(self, updater, stage_idx)
+                    hook.start_stage(self, updater, self.stage_idx)
 
                 if cfg.render_hook is not None:
-                    cfg.render_hook.start_stage(self, updater, stage_idx)
+                    cfg.render_hook.start_stage(self, updater, self.stage_idx)
 
                 self.framework_finalize_stage_initialization()
 
@@ -444,7 +444,7 @@ class TrainingLoop:
                     phys_memory_before = memory_usage(physical=True)
                     gpu_memory_before = gpu_memory_usage()
 
-                    threshold_reached, reason = self._run_stage(stage_idx, updater)
+                    threshold_reached, reason = self._run_stage(self.stage_idx, updater)
 
                 except KeyboardInterrupt:
                     reason = "User interrupt"
@@ -488,7 +488,7 @@ class TrainingLoop:
 
                     _print("Storing final weights...")
                     weight_start = time.time()
-                    final_path = self.data.path_for('weights/final_stage_{}'.format(stage_idx))
+                    final_path = self.data.path_for('weights/final_stage_{}'.format(self.stage_idx))
                     final_path = cfg.get('save_path', final_path)
                     final_path = updater.save(final_path)
                     _print("Done saving weights, took {} seconds".format(time.time() - weight_start))
@@ -554,20 +554,20 @@ class TrainingLoop:
 
                     _print("\n" + "-" * 10 + " Running end-of-stage hooks " + "-" * 10 + "\n")
                     for hook in cfg.hooks:
-                        hook.end_stage(self, updater, stage_idx)
+                        hook.end_stage(self, updater, self.stage_idx)
 
                     self.data.end_stage(updater.n_updates)
 
                     _print()
-                    self.timestamp("Done stage {}".format(stage_idx))
+                    self.timestamp("Done stage {}".format(self.stage_idx))
                     _print("=" * 50)
 
-                    stage_idx += 1
+                    self.stage_idx += 1
                     self.curriculum_complete.append(stage_config)
 
                 if not (threshold_reached or cfg.power_through):
                     _print("Failed to reach stopping criteria threshold on stage {} "
-                           "of the curriculum, terminating.".format(stage_idx))
+                           "of the curriculum, terminating.".format(self.stage_idx-1))
                     break
 
     def _run_stage(self, stage_idx, updater):
@@ -755,7 +755,6 @@ class TrainingLoop:
                 if local_step % 100 == 0:
                     _print("Done update step, took {} seconds.".format(update_duration))
 
-                if local_step % 100 == 0:
                     start = time.time()
                     update_record["memory_physical_mb"] = memory_usage(physical=True)
                     update_record["memory_virtual_mb"] = memory_usage(physical=False)
@@ -930,8 +929,8 @@ class FrozenTrainingLoopData(ExperimentDirectory):
         return self._config
 
     def get_config_value(self, key):
-        """ A temporary hack to deal with version inconsistencies. """
         if self.config is None:
+            # A temporary hack to deal with version inconsistencies
             command = "grep \"'{}':\" < {}".format(key, self.path_for("config.txt"))
             p = subprocess.run(command, shell=True, stdout=subprocess.PIPE)
 
@@ -984,7 +983,7 @@ class TrainingLoopData(FrozenTrainingLoopData):
 
     def setup(self):
         # Record training session environment for later diagnostic purposes
-        self.record_environment(config=cfg.freeze())
+        self.record_environment(config=cfg.freeze(), dill_recurse=True)
         self.curriculum = []
 
         self.make_directory('weights')

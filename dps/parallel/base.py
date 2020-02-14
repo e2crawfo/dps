@@ -17,7 +17,7 @@ def vprint(s, v, threshold=0):
         print(s)
 
 
-class Operator(object):
+class Operator:
     """ A processing element of a computation graph.
 
     Needs to be fully serializable since we're saving and loading these all the time.
@@ -106,7 +106,7 @@ Operator(
                 outp = [outp]
 
             for key, obj in zip(self.outp_keys, outp):
-                store.save_object('data', key, obj, recurse=False)
+                store.save_object('data', key, obj, recurse=True)
 
     def run(self, store, force, output_to_files=True, verbose=False):
         vprint("\n\n" + ("*" * 80), verbose)
@@ -241,7 +241,9 @@ class ReadOnlyJob(object):
         is_complete = [op.is_complete(self.objects) for op in operators]
         is_partially_complete = [op.is_complete(self.objects, partial=True) for op in operators]
         completed_ops = [op for i, op in enumerate(operators) if is_complete[i]]
-        partially_completed_ops = [op for i, op in enumerate(operators) if is_partially_complete[i] and not is_complete[i]]
+        partially_completed_ops = [
+            op for i, op in enumerate(operators)
+            if is_partially_complete[i] and not is_complete[i]]
         incomplete_ops = [op for i, op in enumerate(operators) if not is_complete[i]]
 
         s.append("\nn_completed_ops: {}".format(len(completed_ops)))
@@ -323,7 +325,7 @@ class Job(ReadOnlyJob):
         for inp in inputs:
             if not isinstance(inp, Signal):
                 key = self.objects.get_unique_key('data')
-                self.save_object('data', key, inp, recurse=False)
+                self.save_object('data', key, inp, recurse=True)
             else:
                 key = inp.key
             inp_keys.append(key)
