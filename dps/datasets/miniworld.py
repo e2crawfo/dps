@@ -260,7 +260,10 @@ if __name__ == "__main__":
     from dps.utils import Config
 
     config = Config(
-        level='MiniWorld-CollectHealth-v0',
+        level='MiniWorld-RoomObjs-v0',  # Supposedly inspired by GQN datasets.
+        # level='MiniWorld-WallGap-v0',
+        # level='MiniWorld-SimToRealGoTo-v0',
+        # level='MiniWorld-CollectHealth-v0',
         # level='MiniWorld-PutNext-v0',
         # level='MiniWorld-Maze-v0',
         # level='MiniWorld-Sidewalk-v0',
@@ -278,7 +281,7 @@ if __name__ == "__main__":
         n_episodes=10,
         max_episode_length=2000,
         sample_density=0.1,
-        max_examples=100,
+        max_examples=1000,
         frame_skip=1,
         N=16,
     )

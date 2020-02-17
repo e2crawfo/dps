@@ -10,6 +10,7 @@ import abc
 from itertools import zip_longest
 import dill
 import itertools
+import pprint
 
 from dps import cfg
 from dps.utils import (
@@ -350,12 +351,15 @@ class Dataset(Parameterized):
         start = time.time()
         print("Trying to find dataset in cache...")
 
-        directory = getattr(cfg, 'cache_dir', None)
-        if directory is None:
-            directory = kwargs.get(
+        # Get cache directory to use. First check cfg.cache_dir and kwargs['data_dir'], in that order.
+        # Fallback to cfg.data_dir / "cached_datasets" / self.__class__.__name__
+
+        cache_dir = getattr(cfg, 'cache_dir', None)
+        if cache_dir is None:
+            cache_dir = kwargs.get(
                 "data_dir",
                 os.path.join(cfg.data_dir, "cached_datasets", self.__class__.__name__))
-        os.makedirs(directory, exist_ok=True)
+        os.makedirs(cache_dir, exist_ok=True)
 
         params = self.param_values()
         param_hash = get_param_hash(params)
@@ -364,11 +368,13 @@ class Dataset(Parameterized):
         print(pformat(params))
         print("Param hash: {}".format(param_hash))
 
-        self.filename = os.path.join(directory, str(param_hash))
-        cfg_filename = self.filename + ".cfg"
-        artifact_filenames = [self.filename + '.' + a for a in self._artifact_names]
+        self.directory = os.path.join(cache_dir, str(param_hash) + '.dataset')
 
-        all_files = [self.filename, cfg_filename, *artifact_filenames]
+        self.filename = os.path.join(self.directory, str(param_hash) + '.data')
+        cfg_filename = os.path.join(self.directory, str(param_hash) + '.config')
+        artifact_filename = os.path.join(self.directory, str(param_hash) + '.artifacts')
+
+        all_files = [self.filename, cfg_filename, artifact_filename]
         all_files_exist = all([os.path.exists(f) for f in all_files])
 
         no_cache = kwargs.get('_no_cache', False)
@@ -376,17 +382,17 @@ class Dataset(Parameterized):
         if no_cache:
             print("Skipping dataset cache as DPS_NO_CACHE is set (value is {}).".format(no_cache))
 
-        # We require cfg_filename to exist as it marks that dataset creation completed successfully.
         if no_cache or not all_files_exist:
             if kwargs.get("no_make", False):
-                raise Exception("`no_make` is True, but dataset was not found in cache.")
+                raise Exception("`no_make` is True, but complete dataset was not found in cache.")
 
             # Start fresh
-            for f in all_files:
-                try:
-                    os.remove(f)
-                except FileNotFoundError:
-                    pass
+            try:
+                shutil.rmtree(self.directory)
+            except FileNotFoundError:
+                pass
+
+            os.makedirs(self.directory, exist_ok=False)
 
             print("Files for dataset not found, creating...")
 
@@ -416,38 +422,32 @@ class Dataset(Parameterized):
                 except BaseException:
                     self._writer.close()
 
-                    for f in all_files:
-                        try:
-                            os.remove(f)
-                        except FileNotFoundError:
-                            pass
+                    try:
+                        shutil.rmtree(self.directory)
+                    except FileNotFoundError:
+                        pass
 
                     raise
 
             with open(cfg_filename, 'w') as f:
                 f.write(pformat(params))
 
-            if artifact_filenames:
-                print("Saving artifacts...")
-                for a, af in zip(self._artifact_names, artifact_filenames):
-                    print("artifact: ", a)
-                    av = artifacts[a]
-                    with open(af, 'wb') as f:
-                        dill.dump(av, f, protocol=dill.HIGHEST_PROTOCOL)
-                    setattr(self, a, av)
+            print("Saving artifacts...")
+            pprint.pprint(artifacts)
+            with open(artifact_filename, 'wb') as f:
+                dill.dump(artifacts, f, protocol=dill.HIGHEST_PROTOCOL)
 
         else:
             print("Found.")
             self.loaded = True
 
-            if artifact_filenames:
-                print("Loading artifacts...")
+            print("Loading artifacts...")
 
-                for a, af in zip(self._artifact_names, artifact_filenames):
-                    print("artifact: ", a)
-                    with open(af, 'rb') as f:
-                        av = dill.load(f)
-                    setattr(self, a, av)
+            with open(artifact_filename, 'rb') as f:
+                artifacts = dill.load(f)
+
+        for k, v in artifacts.items():
+            setattr(self, k, v)
 
         print("Took {} seconds.".format(time.time() - start))
         print("Features for dataset: ")
