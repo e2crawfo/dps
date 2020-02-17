@@ -368,6 +368,7 @@ class LabDataset(ImageDataset):
                  for t, (_a, _r, _pr, _pt) in enumerate(zip(a, r, pr, pt))]
                 for i, a, r, pr, pt in zip(indices, actions, rewards, pose_r, pose_t)
             ]
+            text = np.array(text)
 
         fig, *_ = animate(images, depth, text=text)
         plt.subplots_adjust(top=0.95, bottom=0, left=0, right=1, wspace=0.05, hspace=0.1)

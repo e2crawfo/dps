@@ -119,11 +119,16 @@ class PyTorchUpdater(Parameterized):
         return self._n_updates
 
     def build_graph(self):
+        print("Building model...")
         self.model = self.build_model(env=self.env)
 
+        print("Moving model to device...")
         self.model.to(get_pytorch_device())
+
+        print("Building optimizer...")
         self.optimizer = self.build_optimizer(self.model.parameters(), lr=self.lr_schedule)
 
+        print("Building data manager...")
         data_manager = self.data_manager = PyTorchDataManager(datasets=self.env.datasets)
         data_manager.build_graph()
         self.train_iterator = data_manager.do_train()
