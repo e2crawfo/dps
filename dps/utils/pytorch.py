@@ -551,20 +551,16 @@ def normal_vae(mean, std, prior_mean, prior_std):
 
 
 def build_cam2world(angle, t, do_correction=False):
-    """ "Extrinsic" Euler rotations.
+    """ Angle specified as Tait-Bryan Angles (basically Euler angles) with extrinsic order 'xyz'.
 
-    Tait-Bryan Extrinsic? Aerospace.
+    roll: counterclockwise rotation of gamma about x axis.
+    pitch: counterclockwise rotation of beta about y axis.
+    yaw: counterclockwise rotation of alpha about z axis.
 
-    But yaw, pitch and roll are intrinsic...are rotation matrices intrinsic rotations?
-
-        yaw: counterclockwise rotation of alpha about z axis.
-        pitch: counterclockwise rotation of beta about y axis.
-        roll: counterclockwise rotation of gamma about x axis.
-
-    Notice that we're actually doing (R_yaw * R_pitch * R_roll) x. So it makes sense.
+    world_point = (R_yaw * R_pitch * R_roll) cam_point
 
     If `do_correction` is true, we assume that in the camera coordinate frame,
-    z increases into the frame, y increases downward, z increases rightward (looking out from the camera),
+    z increases into the frame, y increases downward, x increases rightward (looking out from the camera),
     and therefore we do an initial correction rotation to get a coordinate system where
     x increases into the frame, y increases leftward, z increases upward.
 

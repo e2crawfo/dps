@@ -18,8 +18,8 @@ import warnings
 from dps import cfg
 from dps.utils import (
     gen_seed, time_limit, Alarm, memory_usage, gpu_memory_usage, ExperimentStore,
-    ExperimentDirectory, nvidia_smi, memory_limit, Config, redirect_stream,
-    NumpySeed, restart_tensorboard, pdb_postmortem, execute_command, flush_print as _print
+    ExperimentDirectory, nvidia_smi, memory_limit, Config, redirect_stream, pretty_func,
+    NumpySeed, restart_tensorboard, pdb_postmortem, execute_command, flush_print as _print,
 )
 from dps.mpi_train import MPI_MasterContext
 
@@ -233,9 +233,10 @@ class TrainingLoop:
                 prepare_funcs = list(prepare_func)
             except (TypeError, ValueError):
                 prepare_funcs = []
+
         for f in prepare_funcs:
             if callable(f):
-                _print("Calling prepare func {}...".format(f.__name__))
+                _print("Calling prepare func {}...".format(pretty_func(f)))
                 f()
 
         self.curriculum = cfg.curriculum + []
