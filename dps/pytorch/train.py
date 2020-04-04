@@ -3,11 +3,12 @@ from torch.utils.tensorboard import SummaryWriter
 import tensorflow as tf
 import numpy as np
 import time
+from torch._six import inf
 
 from dps import cfg
 from dps.datasets.base import Dataset
 from dps.train import TrainingLoop, TrainingLoopData
-from dps.utils import Parameterized, Param, flush_print as _print, gen_seed, map_structure, timed_block
+from dps.utils import AttrDict, Parameterized, Param, flush_print as _print, gen_seed, map_structure, timed_block
 from dps.utils.pytorch import walk_variable_scopes, to_np
 
 
@@ -68,7 +69,7 @@ class PyTorchTrainingLoop(TrainingLoop):
     def framework_load_weights(self):
         """
         Adapted from the tensorflow version, roughly treats a pytorch module as equivalant
-        to a tensorflow variable scope. Currently, similar to the tensorflow version, This
+        to a tensorflow variable scope. Currently, similar to the tensorflow version, this
         assumes that that all loaded modules lie on the same path in the on disk file as
         they do in the current module.
 
@@ -83,8 +84,13 @@ class PyTorchTrainingLoop(TrainingLoop):
             loaded_state_dict = torch.load(path, map_location=device)['model']
 
             if module_path:
+                module_path_with_sep = module_path + '.'
                 loaded_state_dict = type(loaded_state_dict)(
-                    {k: v for k, v in loaded_state_dict.items() if k.startswith(module_path)}
+                    {k: v for k, v in loaded_state_dict.items() if k.startswith(module_path_with_sep)}
+                )
+
+                assert loaded_state_dict, (
+                    "File contains no tensors with prefix {} (file: {})".format(module_path_with_sep, path)
                 )
 
             module = self.updater.model
@@ -92,15 +98,30 @@ class PyTorchTrainingLoop(TrainingLoop):
             state_dict = module.state_dict()
             state_dict.update(loaded_state_dict)
 
-            module.load_state_dict(state_dict)
+            module.load_state_dict(state_dict, strict=False)
 
             _print("Done loading weights for module {}, took {} seconds.".format(module_path, time.time() - start))
+
+
+def grad_norm(parameters, norm_type=2):
+    parameters = list(filter(lambda p: p.grad is not None, parameters))
+
+    if norm_type == inf:
+        return max(p.grad.data.abs().max() for p in parameters)
+
+    total_norm = 0
+    for p in parameters:
+        param_norm = p.grad.data.norm(norm_type)
+        total_norm += param_norm.item() ** norm_type
+    total_norm = total_norm ** (1. / norm_type)
+    return total_norm
 
 
 class PyTorchUpdater(Parameterized):
     build_model = Param()
     lr_schedule = Param()
     build_optimizer = Param()
+    max_grad_norm = Param()
 
     def __init__(self, env, scope=None, mpi_context=None, **kwargs):
         self.scope = scope
@@ -122,27 +143,44 @@ class PyTorchUpdater(Parameterized):
         print("Building model...")
         self.model = self.build_model(env=self.env)
 
-        print("Moving model to device...")
+        print("Built model:")
+        print(repr(self.model))
+
+        print("\nMoving model to device...")
         self.model.to(get_pytorch_device())
 
         print("Building optimizer...")
-        self.optimizer = self.build_optimizer(self.model.parameters(), lr=self.lr_schedule)
+
+        if isinstance(self.lr_schedule, float):
+            lr = self.lr_schedule
+            lr_schedule = None
+        else:
+            lr = 1e-4
+            lr_schedule = self.lr_schedule
+
+        self.optimizer = self.build_optimizer(self.model.parameters(), lr=lr)
+
+        if lr_schedule is not None:
+            self.scheduler = lr_schedule(self.optimizer)
+        else:
+            self.scheduler = None
 
         print("Building data manager...")
         data_manager = self.data_manager = PyTorchDataManager(datasets=self.env.datasets)
         data_manager.build_graph()
         self.train_iterator = data_manager.do_train()
 
-        self._build_graph()
-
-    def _build_graph(self):
-        pass
-
     def update(self, batch_size):
         self.model.train()
 
-        data = next(self.train_iterator)
-        tensors, recorded_tensors, losses = self.model(data, plot=False, is_training=True)
+        data = AttrDict(next(self.train_iterator))
+
+        self.model.update_global_step(self._n_updates)
+        tensors, recorded_tensors, losses = self.model(data, self._n_updates)
+
+        recorded_tensors = map_structure(
+            lambda t: t.mean() if isinstance(t, torch.Tensor) else t,
+            recorded_tensors, is_leaf=lambda rec: not isinstance(rec, dict))
 
         # --- loss ---
 
@@ -159,8 +197,20 @@ class PyTorchUpdater(Parameterized):
         with timed_block('loss backward', print_time):
             loss.backward()
 
+        parameters = self.model.parameters()
+
+        pure_grad_norm = grad_norm(parameters)
+
+        if self.max_grad_norm is not None and self.max_grad_norm > 0.0:
+            torch.nn.utils.clip_grad_norm_(parameters, self.max_grad_norm)
+
+        clipped_grad_norm = grad_norm(self.model.parameters())
+
         with timed_block('optimizer step', print_time):
             self.optimizer.step()
+
+        if self.scheduler is not None:
+            self.scheduler.step()
 
         update_result = self._update(batch_size)
 
@@ -169,6 +219,14 @@ class PyTorchUpdater(Parameterized):
 
         self._n_experiences += batch_size
         self._n_updates += 1
+
+        recorded_tensors.update(
+            grad_norm_pure=pure_grad_norm,
+            grad_norm_clipped=clipped_grad_norm
+        )
+
+        scheduled_values = self.model.get_scheduled_values()
+        recorded_tensors.update(scheduled_values)
 
         return recorded_tensors
 
@@ -193,9 +251,10 @@ class PyTorchUpdater(Parameterized):
         start = time.time()
 
         for data in data_iterator:
+            data = AttrDict(data)
 
             with torch.no_grad():
-                tensors, recorded_tensors, losses = self.model.evaluate(data)
+                tensors, recorded_tensors, losses = self.model.evaluate(data, self._n_updates)
 
                 loss = 0.0
                 for name, tensor in losses.items():
@@ -204,7 +263,7 @@ class PyTorchUpdater(Parameterized):
                 recorded_tensors['loss'] = loss
 
                 recorded_tensors = map_structure(
-                    lambda t: to_np(t) if isinstance(t, torch.Tensor) else t,
+                    lambda t: to_np(t.mean()) if isinstance(t, torch.Tensor) else t,
                     recorded_tensors, is_leaf=lambda rec: not isinstance(rec, dict))
 
             batch_size = recorded_tensors['batch_size']
@@ -239,7 +298,7 @@ class PyTorchUpdater(Parameterized):
         whole_dict = torch.load(path, map_location=device)
         state = self.model.state_dict()
         state.update(whole_dict['model'])
-        self.model.load_state_dict(state)
+        self.model.load_state_dict(state, strict=False)
 
 
 class PyTorchDataManager(Parameterized):
@@ -338,16 +397,16 @@ class PyTorchDataManager(Parameterized):
 
         return dset, iterator
 
-    def do_train(self, is_training=True):
-        return self.do('train', is_training)
+    def do_train(self):
+        return self.do('train')
 
-    def do_val(self, is_training=False):
-        return self.do('val', is_training)
+    def do_val(self):
+        return self.do('val')
 
-    def do_test(self, is_training=False):
-        return self.do('test', is_training)
+    def do_test(self):
+        return self.do('test')
 
-    def do(self, name, is_training=False):
+    def do(self, name):
         """ Initialize iterator (unless it's the `train` iterator, which is handled slightly differently)
             and return a feed_dict populated with the appropriate handle for the requested iterator. """
 
@@ -355,10 +414,10 @@ class PyTorchDataManager(Parameterized):
 
         if name == 'train':
             if not self.train_initialized:
-                iterator.reset(is_training)
+                iterator.reset()
                 self.train_initialized = True
         else:
-            iterator.reset(is_training)
+            iterator.reset()
         return iterator
 
 
@@ -367,11 +426,9 @@ class DataIterator:
         self.sess = sess
         self.tf_iterator = tf_iterator
         self.get_next_op = self.tf_iterator.get_next()
-        self.is_training = None
 
-    def reset(self, is_training):
+    def reset(self):
         self.sess.run(self.tf_iterator.initializer)
-        self.is_training = is_training
 
     def __iter__(self):
         return self
@@ -379,7 +436,6 @@ class DataIterator:
     def __next__(self):
         try:
             result = self.sess.run(self.get_next_op)
-            result['is_training'] = True
         except tf.errors.OutOfRangeError:
             raise StopIteration("TensorFlow iterator raised tf.errors.OutOfRangeError.")
 

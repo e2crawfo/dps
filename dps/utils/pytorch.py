@@ -2,11 +2,112 @@ from collections import defaultdict
 import numpy as np
 from tabulate import tabulate
 import torch
+from torch import nn
 import torch.nn.functional as F
 from torch.nn.modules.normalization import LayerNorm
 import pprint
+import copy
 
-from dps.utils.base import RenderHook as _RenderHook, Config, map_structure, Param, Parameterized
+from dps.utils.base import RenderHook as _RenderHook, AttrDict, Config, map_structure, Param, Parameterized, pformat
+
+
+def repeat_along_axis(a, dim, n_repeats):
+    """ Repeats in a different order than `repeat`.
+
+        repeat_along_axis(arange(3), dim=0, n_repeats=2) -> (0, 0, 1, 1, 2, 2)
+
+        whereas
+
+        arange(3).repeat(2) -> (0, 1, 2, 0, 1, 2)
+
+    """
+    repeats = [1] * (a.ndim+1)
+    repeats[dim+1] = n_repeats
+    new_shape = list(a.shape)
+    new_shape[dim] *= n_repeats
+    return a.unsqueeze(dim+1).repeat(repeats).reshape(new_shape)
+
+
+def reshape_and_apply(func, *signals, n_batch_dims, restore_shape=True, **func_kwargs):
+    """
+    permute so that batch dims are at the front, reshape to have a single batch dim, apply function,
+    then restore shape to outputs.
+
+    Assumes all elements of `signals` have the same batch dims.
+
+    n_batch_dims: int or length-2 tuple
+        If int, then gives the number of batch dims at the front of the shape. If tuple, then first element
+        gives number of batch dims at front, second gives number of batch dims at the back.
+
+    """
+    try:
+        n_leading_batch_dims, n_trailing_batch_dims = tuple(n_batch_dims)
+    except Exception:
+        n_leading_batch_dims = n_batch_dims
+        n_trailing_batch_dims = 0
+
+    n_leading_batch_dims = int(n_leading_batch_dims)
+    n_trailing_batch_dims = int(n_trailing_batch_dims)
+    n_batch_dims = n_leading_batch_dims + n_trailing_batch_dims
+
+    _signals = []
+
+    for signal in signals:
+        assert 0 < n_batch_dims < signal.ndim
+
+        dims = list(range(signal.ndim))
+
+        leading_batch_dims = dims[:n_leading_batch_dims]
+
+        trailing_idx = len(dims)-n_trailing_batch_dims
+        trailing_batch_dims = dims[trailing_idx:]
+        other_dims = dims[n_leading_batch_dims:trailing_idx]
+
+        perm = leading_batch_dims + trailing_batch_dims + other_dims
+
+        leading_batch_shape = signal.shape[:n_leading_batch_dims]
+        trailing_batch_shape = signal.shape[trailing_idx:]
+        other_shape = signal.shape[n_leading_batch_dims:trailing_idx]
+
+        batch_dim = int(np.prod(leading_batch_shape) * np.prod(trailing_batch_shape))
+        batch_shape = leading_batch_shape + trailing_batch_shape
+
+        signal = signal.permute(perm).reshape(batch_dim, *other_shape)
+
+        _signals.append(signal)
+
+    outputs = func(*_signals, **func_kwargs)
+
+    if isinstance(outputs, torch.Tensor):
+        outputs = [outputs]
+        is_iter = False
+    else:
+        outputs = list(outputs)
+        is_iter = True
+
+    if restore_shape:
+        _outputs = []
+        for o in outputs:
+            o_shape = o.shape[1:]
+            o = o.reshape(*batch_shape, *o_shape)
+
+            if n_trailing_batch_dims:
+                perm = list(range(o.ndim))
+                perm = (
+                    perm[:n_leading_batch_dims]
+                    + perm[n_batch_dims:]
+                    + perm[n_leading_batch_dims:n_batch_dims]
+                )
+                o = o.permute(*perm)
+
+            _outputs.append(o)
+
+        outputs = _outputs
+
+    if is_iter:
+        return outputs
+    else:
+        return outputs[0]
 
 
 def to_np(cuda_tensor):
@@ -17,8 +118,6 @@ def walk_variable_scopes(model, max_depth=None):
     def _fmt(i):
         return "{:,}".format(i)
 
-    fixed_vars = set()
-
     n_fixed = defaultdict(int)
     n_trainable = defaultdict(int)
     shapes = {}
@@ -26,12 +125,12 @@ def walk_variable_scopes(model, max_depth=None):
     for name, v in model.named_parameters():
         n_variables = int(np.prod(tuple(v.size())))
 
-        if name in fixed_vars:
-            n_fixed[""] += n_variables
-            n_trainable[""] += 0
-        else:
+        if v.requires_grad:
             n_fixed[""] += 0
             n_trainable[""] += n_variables
+        else:
+            n_fixed[""] += n_variables
+            n_trainable[""] += 0
 
         shapes[name] = tuple(v.shape)
 
@@ -39,12 +138,14 @@ def walk_variable_scopes(model, max_depth=None):
 
         for token in name.split("."):
             name_so_far += token
-            if v in fixed_vars:
-                n_fixed[name_so_far] += n_variables
-                n_trainable[name_so_far] += 0
-            else:
+
+            if v.requires_grad:
                 n_fixed[name_so_far] += 0
                 n_trainable[name_so_far] += n_variables
+            else:
+                n_fixed[name_so_far] += n_variables
+                n_trainable[name_so_far] += 0
+
             name_so_far += "."
 
     table = ["scope shape n_trainable n_fixed total".split()]
@@ -77,6 +178,8 @@ def walk_variable_scopes(model, max_depth=None):
 
 
 class RenderHook(_RenderHook):
+    N = 4
+
     def process_data(self, data, N=None):
         if N is None:
             N = self.N
@@ -84,46 +187,212 @@ class RenderHook(_RenderHook):
             lambda t: t[:N] if isinstance(t, torch.Tensor) else t,
             data, is_leaf=lambda t: not isinstance(t, (dict, list, tuple, set)))
 
-    def get_tensors(self, data, updater):
-        tensors, recorded_tensors, losses = updater.model(data, plot=True, is_training=False)
-        tensors = Config(tensors)
-        tensors = map_structure(
-            lambda t: to_np(t) if isinstance(t, torch.Tensor) else t,
-            tensors, is_leaf=lambda rec: not isinstance(rec, dict))
-        return tensors, recorded_tensors, losses
+    def get_tensors(self, updater, train_mode=False, train_data=False, data_iterator=None):
+        if train_mode:
+            updater.model.train()
+        else:
+            updater.model.eval()
+
+        if data_iterator is None:
+            if train_data:
+                data_iterator = updater.train_iterator
+            else:
+                data_iterator = updater.data_manager.do_val()
+
+        n_render = self.N
+        step = updater._n_experiences
+
+        n_collected = 0
+        _tensors = []
+        _data = []
+
+        with torch.no_grad():
+            while True:
+                data = AttrDict(next(data_iterator))
+                tensors, recorded_tensors, losses = updater.model(data, step)
+
+                tensors = Config(tensors)
+                tensors = map_structure(
+                    lambda t: to_np(t) if isinstance(t, torch.Tensor) else t,
+                    tensors, is_leaf=lambda rec: not isinstance(rec, dict))
+
+                data = Config(data)
+                data = map_structure(
+                    lambda t: to_np(t) if isinstance(t, torch.Tensor) else t,
+                    data, is_leaf=lambda rec: not isinstance(rec, dict))
+
+                _tensors.append(tensors)
+                _data.append(data)
+
+                n_collected += recorded_tensors['batch_size']
+                if n_collected >= n_render:
+                    break
+
+        _tensors = map_structure(
+            lambda *t: np.concatenate(t, axis=0)[:n_render],
+            *_tensors, is_leaf=lambda rec: not isinstance(rec, dict))
+        _data = map_structure(
+            lambda *t: np.concatenate(t, axis=0)[:n_render],
+            *_data, is_leaf=lambda rec: not isinstance(rec, dict))
+
+        return _tensors, _data
+
+
+def scheduled_value(obj, step):
+    if callable(obj):
+        return obj(step)
+    else:
+        return obj
 
 
 class ParameterizedModule(torch.nn.Module, Parameterized):
+    _path = "root"
+    step = 0
+
     def __init__(self, **kwargs):
         torch.nn.Module.__init__(self)
         Parameterized.__init__(self, **kwargs)
 
+        self.scheduled_values = dict()
+        self.current_scheduled_values = dict()
+
+        print(
+            "\nBuilding pytorch module {} with args:\n{}".format(
+                self.__class__.__name__, pformat(self._params_at_creation_time)))
+
+    def set_requires_grad(self, requires_grad):
+        for param in self.parameters():
+            param.requires_grad_(requires_grad)
+
+    def update_global_step(self, step):
+        ParameterizedModule.step = step
+
+    def build_scheduled_value(self, name, value=None):
+        value = value or getattr(self, name)
+        if callable(value):
+            self.scheduled_values[name] = value
+        else:
+            setattr(self, name, value)
+
+    def get_scheduled_values(self):
+        scheduled_values = {}
+        for name, module in self.named_modules():
+            sv = getattr(module, 'current_scheduled_values', {})
+            for k, v in sv.items():
+                scheduled_values[name + '.' + k] = v
+        return scheduled_values
+
+    def forward(self, *args, **kwargs):
+        for name, value in self.scheduled_values.items():
+            _value = value(ParameterizedModule.step)
+            setattr(self, name, _value)
+            self.current_scheduled_values[name] = _value
+
+        return self._forward(*args, **kwargs)
+
+    def _forward(self, *args, **kwargs):
+        raise Exception("NotImplementedError")
+
+    def extra_repr(self):
+        return "{}\n".format(pformat(self.param_values()))
+
+
+def _init_recurrent_weights(module):
+    for m in module.modules():
+        if type(m) in [nn.GRU, nn.LSTM, nn.RNN]:
+            for name, param in m.named_parameters():
+                if 'weight_ih' in name:
+                    nn.init.kaiming_normal_(param.data)
+                elif 'weight_hh' in name:
+                    nn.init.orthogonal_(param.data)
+                elif 'bias' in name:
+                    param.data.fill_(0)
+
+
+class CellWrapper(ParameterizedModule):
+    """ Combine a recurrent cell with a learnable initial state, and packs hidden state such that all state is stored
+        in a single tensor. """
+    cell_class = Param()
+    cell_kwargs = Param(None)
+
+    def __init__(self, input_size, hidden_size, *args, **kwargs):
+        super().__init__(**kwargs)
+        cell_kwargs = self.cell_kwargs or {}
+
+        self.cell = self.cell_class(input_size, hidden_size, *args, **cell_kwargs)
+
+        dummy_input = torch.zeros((1, input_size))
+        dummy_state = self.cell(dummy_input)
+
+        if isinstance(dummy_state, torch.Tensor):
+            self.state_is_tuple = False
+            dummy_state = (dummy_state,)
+        else:
+            self.state_is_tuple = True
+
+        self.state_component_sizes = [d.shape[-1] for d in dummy_state]
+
+        dummy_state = torch.cat(dummy_state, dim=-1)
+
+        state_shape = dummy_state.shape[1:]
+
+        self._initial_state = torch.nn.Parameter(torch.zeros(state_shape), requires_grad=False)
+        # self._initial_state = torch.nn.Parameter(torch.zeros(state_shape), requires_grad=True)
+
+        self.init_weights()
+
+    def initial_state(self, b):
+        return repeat_along_axis(self._initial_state.clone()[None, ...], dim=0, n_repeats=b)
+
+    def forward(self, inp, hidden=None):
+        if hidden is None:
+            hidden = self.initial_hidden
+
+        if self.state_is_tuple:
+            hidden = torch.split(hidden, self.state_component_sizes, dim=-1)
+
+        return self.cell(inp, hidden)
+
+    def init_weights(self):
+        # nn.init.xavier_uniform_(self._initial_state)
+
+        self.apply(_init_recurrent_weights)
+
+        # --- forget_gate_init ---
+
+        for name, parameter in self.named_parameters():
+            if "bias" not in name:
+                continue
+            n = parameter.size(0)
+            start, end = n // 4, n // 2
+            parameter.data[start:end].fill_(1.)
+
 
 class ConvNet(ParameterizedModule):
     layer_specs = Param()
+    preserve_shape = Param(False)
+    batch_norm = Param(False)
 
-    nonlinearities = dict(
-        relu=F.relu,
-        sigmoid=F.sigmoid,
-        tanh=F.tanh,
-        elu=F.elu,
-        softmax=F.softmax,
-        linear=lambda x: x,
-    )
-
-    def __init__(self, input_n_channels, output_size=None, input_image_shape=None, **kwargs):
+    def __init__(self, input_shape, output_size=None, **kwargs):
         super().__init__(**kwargs)
+
+        try:
+            input_shape = tuple(input_shape)
+            input_n_filters, *spatial_shape = input_shape
+            assert len(spatial_shape) == 2
+        except Exception:
+            input_n_filters = input_shape
+            spatial_shape = None
 
         self.module_list = torch.nn.ModuleList()
         self.batch_norms = torch.nn.ModuleDict()
 
-        spatial_shape = input_image_shape
         print("Spatial shape: {}".format(spatial_shape))
-        prev_n_channels = input_n_channels
+        prev_n_filters = input_n_filters
         prev_n_units = None
 
         for i, layer_spec in enumerate(self.layer_specs):
-            kind = layer_spec['kind']
+            kind = layer_spec.get('kind', 'conv')
 
             is_last = i == len(self.layer_specs)-1
 
@@ -131,26 +400,30 @@ class ConvNet(ParameterizedModule):
                 n_filters = layer_spec['n_filters']
                 kernel_size = layer_spec['kernel_size']
                 stride = layer_spec.get('stride', 1)
-                padding = layer_spec.get('padding', 0)
 
                 if is_last and output_size is not None:
                     n_filters = output_size
+                elif n_filters is None:
+                    n_filters = prev_n_filters
 
-                layer = torch.nn.Conv2d(prev_n_channels, n_filters, kernel_size, stride=stride, padding=padding)
+                layer = torch.nn.Conv2d(prev_n_filters, n_filters, kernel_size, stride=stride)
                 self.module_list.append(layer)
 
-                if not is_last and layer_spec.get('batch_norm', False):
+                if not is_last and layer_spec.get('batch_norm', self.batch_norm):
                     bn = torch.nn.BatchNorm2d(n_filters)
                     self.batch_norms[str(i)] = bn
 
-                prev_n_channels = n_filters
+                prev_n_filters = n_filters
 
                 if spatial_shape is not None:
-                    spatial_shape = self.conv_output_shape(spatial_shape, kernel_size, stride, padding)
+                    if self.preserve_shape and stride == 1:
+                        pass
+                    else:
+                        spatial_shape = self.conv_output_shape(spatial_shape, kernel_size, stride)
 
             elif kind == 'fc':
                 if spatial_shape is not None:
-                    prev_n_units = prev_n_channels * spatial_shape[0] * spatial_shape[1]
+                    prev_n_units = prev_n_filters * spatial_shape[0] * spatial_shape[1]
                 else:
                     assert prev_n_units is not None
                 spatial_shape = None
@@ -163,7 +436,7 @@ class ConvNet(ParameterizedModule):
                 layer = torch.nn.Linear(prev_n_units, n_units)
                 self.module_list.append(layer)
 
-                if not is_last and layer_spec.get('batch_norm', False):
+                if not is_last and layer_spec.get('batch_norm', self.batch_norm):
                     bn = torch.nn.BatchNorm1d(n_units)
                     self.batch_norms[str(i)] = bn
 
@@ -179,14 +452,22 @@ class ConvNet(ParameterizedModule):
         for i, (layer, layer_spec) in enumerate(zip(self.module_list, self.layer_specs)):
             is_last = i == len(self.module_list) - 1
 
-            if layer_spec['kind'] == 'fc':
+            kind = layer_spec.get('kind', 'conv')
+
+            if kind == 'fc':
                 b = x.shape[0]
                 x = x.view(b, -1)
 
-            x = layer(x)
+            if kind == 'conv':
+                stride = layer_spec.get('stride', 1)
 
-            if layer_spec.get('layer_norm', False):
-                x = torch.nn.LayerNorm(x)
+                if self.preserve_shape and stride == 1:
+                    kernel_size = layer_spec['kernel_size']
+                    left_pad = int(np.floor((kernel_size-1) / 2))
+                    right_pad = int(np.ceil((kernel_size-1) / 2))
+                    x = torch.nn.functional.pad(x, (left_pad, right_pad, left_pad, right_pad))
+
+            x = layer(x)
 
             bn_key = str(i)
             if bn_key in self.batch_norms:
@@ -194,16 +475,18 @@ class ConvNet(ParameterizedModule):
 
             if not is_last:
                 nl_key = layer_spec.get('nl', 'relu')
-                nl = ConvNet.nonlinearities[nl_key]
-                x = nl(x)
+                x = nonlinearities[nl_key](x)
 
         return x
 
     @staticmethod
-    def conv_output_shape(h_w, kernel_size=1, stride=1, pad=0, dilation=1):
+    def conv_output_shape(h_w, kernel_size=1, stride=1):
         """ Utility function for computing output shapes of convolutions. """
 
-        if type(h_w) is not tuple:
+        try:
+            h_w = tuple(h_w)
+            assert len(h_w) == 2
+        except Exception:
             h_w = (h_w, h_w)
 
         if type(kernel_size) is not tuple:
@@ -212,13 +495,104 @@ class ConvNet(ParameterizedModule):
         if type(stride) is not tuple:
             stride = (stride, stride)
 
-        if type(pad) is not tuple:
-            pad = (pad, pad)
+        print(h_w, kernel_size, stride)
 
-        h = (h_w[0] + (2 * pad[0]) - (dilation * (kernel_size[0] - 1)) - 1) // stride[0] + 1
-        w = (h_w[1] + (2 * pad[1]) - (dilation * (kernel_size[1] - 1)) - 1) // stride[1] + 1
+        h = (h_w[0] - (kernel_size[0] - 1) - 1) // stride[0] + 1
+        w = (h_w[1] - (kernel_size[1] - 1) - 1) // stride[1] + 1
 
         return (h, w)
+
+
+class GridConvNet(ConvNet):
+    preserve_shape = False
+
+    def __init__(self, input_shape, output_size=None, n_grid_dims=2, **kwargs):
+        input_n_channels, *image_shape = input_shape
+
+        super().__init__(input_shape, output_size=output_size, **kwargs)
+
+        receptive_field_info, required_image_size, pre_padding, post_padding = (
+            self.compute_receptive_field_info(image_shape, self.layer_specs))
+
+        print("Receptive field info for GridConvNet")
+        pprint.pprint(receptive_field_info)
+        print("required_image_size: {}".format(required_image_size))
+        print("pre_padding: {}".format(pre_padding))
+        print("post_padding: {}".format(post_padding))
+
+        self.pre_padding = pre_padding
+        self.post_padding = post_padding
+
+        self.padding = [d for s in reversed(list(zip(self.pre_padding, self.post_padding))) for d in s]
+
+        self.layer_info = copy.deepcopy(receptive_field_info)
+
+        # for li, v in zip(self.layer_info, self.volumes):
+        #     li['volume_size'] = v.shape[1:-1]
+        #     li['volume'] = v
+
+    def forward(self, inp):
+        padded_inp = F.pad(inp, self.padding)
+        return super().forward(padded_inp)
+
+    @staticmethod
+    def compute_receptive_field_info(image_shape, layers):
+        ndim = len(image_shape)
+        image_shape = tuple(int(i) for i in image_shape)
+        grid_cell_size = np.array((1,)*ndim)
+        rf_size = np.array((1,)*ndim)
+        info = []
+
+        for layer in layers:
+            kind = layer.get('kind', 'conv')
+            assert kind == 'conv'
+
+            kernel_size = np.array(layer['kernel_size']) * ([1] * ndim)
+            stride = np.array(layer['stride']) * ([1] * ndim)
+
+            rf_size = rf_size + (kernel_size-1) * grid_cell_size
+            grid_cell_size = grid_cell_size * stride
+
+            # scale wrt largest dimension
+            normed_j = np.array(grid_cell_size) / np.array(image_shape).max()
+            normed_r = np.array(rf_size) / np.array(image_shape).max()
+
+            info.append(
+                dict(
+                    kernel_size=kernel_size,
+                    stride=stride,
+                    rf_size=rf_size,
+                    grid_cell_size=grid_cell_size,
+                    normed_rf_size=normed_r,
+                    normed_grid_cell_size=normed_j
+                )
+            )
+
+        n_grid_cells = np.ceil(image_shape / grid_cell_size).astype('i')
+        required_image_size = rf_size + (n_grid_cells-1) * grid_cell_size
+        pre_padding = np.floor(rf_size / 2 - grid_cell_size / 2).astype('i')
+        post_padding = required_image_size - image_shape - pre_padding
+
+        volume_dimensions = required_image_size
+
+        for i, _info in enumerate(info):
+            grid_offset = -pre_padding + _info['rf_size'] / 2 - _info['grid_cell_size'] / 2
+
+            new_volume_dimensions = (volume_dimensions - _info['kernel_size']) / _info['stride'] + 1
+            new_volume_dimensions = new_volume_dimensions.astype('i')
+
+            _info.update(
+                grid_offset=grid_offset,
+                n_grid_cells=new_volume_dimensions,
+                virtual_image_size=new_volume_dimensions*_info['grid_cell_size']
+            )
+
+            volume_dimensions = new_volume_dimensions
+
+        assert (info[-1]['n_grid_cells'] == n_grid_cells).all()
+        assert (np.abs(info[-1]['grid_offset']) <= 0.5).all()
+
+        return info, required_image_size, pre_padding, post_padding
 
 
 class SimpleConvNet(ConvNet):
@@ -238,7 +612,7 @@ class SimpleConvNet(ConvNet):
 
     layer_specs = None
 
-    def __init__(self, input_n_channels, output_size=None, input_image_shape=None, **kwargs):
+    def __init__(self, input_shape, output_size=None, **kwargs):
         layer_specs = []
 
         def add_conv_layer(n_filters, stride=1):
@@ -270,7 +644,163 @@ class SimpleConvNet(ConvNet):
         self.layer_specs = layer_specs
         pprint.pprint(self.layer_specs)
 
-        super().__init__(input_n_channels, output_size=output_size, input_image_shape=input_image_shape, **kwargs)
+        super().__init__(input_shape, output_size=output_size, **kwargs)
+
+
+class ConvTransposeNet(ParameterizedModule):
+    n_fc_layers = Param()
+    n_fc_units = Param()
+    batch_norm = Param()
+    conv_layer_specs = Param()
+    nl = Param()
+
+    def __init__(self, output_n_channels, input_n_features, output_image_shape, **kwargs):
+        super().__init__(**kwargs)
+
+        spatial_shape = output_image_shape
+
+        print("Spatial shape: {}".format(spatial_shape))
+        prev_n_channels = output_n_channels
+
+        shapes_after_slice = [spatial_shape]
+        target_shapes = []
+        conv_layers = []
+        batch_norm_layers = []
+
+        # We have to start from the output image and work backwards to get the right shapes.
+
+        for i, layer_spec in enumerate(reversed(self.conv_layer_specs)):
+            is_last = i == 0  # i == 0 because of the reversal.
+
+            n_filters = layer_spec['n_filters']
+            kernel_size = layer_spec['kernel_size']
+            stride = layer_spec.get('stride', 1)
+
+            shape_after_slice = shapes_after_slice[-1]
+            target_shape = self.get_target_shape(shape_after_slice, kernel_size, stride)
+            target_shapes.append(target_shape)
+
+            layer = torch.nn.ConvTranspose2d(n_filters, prev_n_channels, kernel_size, stride=stride)
+            conv_layers.append(layer)
+
+            if not is_last and self.batch_norm:
+                bn = torch.nn.BatchNorm2d(prev_n_channels)
+                batch_norm_layers.append(bn)
+
+            prev_n_channels = n_filters
+
+            new_spatial_shape = self.conv_transpose_input_shape(target_shape, kernel_size, stride)
+            shapes_after_slice.append(new_spatial_shape)
+
+            print("ConvTranspose layer {}: shapes_after_slice: {}, output_shape: {}, input_shape: {}".format(
+                i, shape_after_slice, target_shape, new_spatial_shape))
+
+        self.conv_layers = torch.nn.ModuleList(list(reversed(conv_layers)))
+        self.batch_norm_layers = torch.nn.ModuleList(list(reversed(batch_norm_layers)))
+        self.shapes_after_slice = list(reversed(shapes_after_slice[:-1]))
+        self.conv_input_shape = (n_filters, *new_spatial_shape)
+
+        conv_input_size = int(np.prod(self.conv_input_shape))
+
+        self.fully_connected = MLP(
+            input_n_features, conv_input_size,
+            n_hidden_units=[self.n_fc_units] * self.n_fc_layers,
+            batch_norm=self.batch_norm,
+            nl=self.nl,
+        )
+
+    def forward(self, x):
+        b = x.shape[0]
+
+        fc_output = self.fully_connected(x)
+        volume = fc_output.reshape(b, *self.conv_input_shape)
+
+        for i, (layer, layer_spec) in enumerate(zip(self.conv_layers, self.conv_layer_specs)):
+            volume = layer(volume)
+            shape_after_slice = self.shapes_after_slice[i]
+
+            volume = volume[..., :shape_after_slice[0], :shape_after_slice[1]]
+
+            is_last = i == len(self.conv_layers) - 1
+
+            if not is_last and self.batch_norm:
+                volume = self.batch_norm_layers[i](volume)
+
+            if not is_last:
+                volume = nonlinearities[self.nl](volume)
+
+        return volume
+
+    @staticmethod
+    def conv_transpose_input_shape(output_shape, kernel_size=1, stride=1):
+        """ Utility function for computing input shapes given desired output shape. """
+
+        h, w = output_shape
+
+        if type(kernel_size) is not tuple:
+            kernel_size = (kernel_size, kernel_size)
+
+        if type(stride) is not tuple:
+            stride = (stride, stride)
+
+        H = (h - kernel_size[0]) // stride[0] + 1
+        W = (w - kernel_size[1]) // stride[1] + 1
+
+        return (H, W)
+
+    @staticmethod
+    def get_target_shape(shape, kernel_size, stride):
+        """ Get a shape larger than the given shape that can be mapped to via a ConvTranspose with the given params. """
+        if type(kernel_size) is not tuple:
+            kernel_size = (kernel_size, kernel_size)
+
+        if type(stride) is not tuple:
+            stride = (stride, stride)
+
+        h, w = shape
+        H = int(np.ceil((h - kernel_size[0]) / stride[0])) * stride[0] + kernel_size[0]
+        W = int(np.ceil((h - kernel_size[1]) / stride[1])) * stride[1] + kernel_size[1]
+
+        return (H, W)
+
+
+class SimpleConvTransposeNet(ConvTransposeNet):
+    """ A standard ConvNet that ends with a series of fully connected layers. """
+
+    n_layers_in_between = Param()
+    n_conv_blocks = Param()
+    stride = Param()
+    base_n_filters = Param()
+    max_n_filters = Param()
+    kernel_size = Param()
+
+    conv_layer_specs = None
+
+    def __init__(self, output_n_channels, input_n_features, output_image_shape, **kwargs):
+        conv_layer_specs = []
+
+        def add_conv_layer(n_filters, stride=1):
+            nonlocal conv_layer_specs
+            n_filters = min(n_filters, self.max_n_filters)
+            conv_layer_specs.append(
+                dict(n_filters=n_filters, stride=stride, kernel_size=self.kernel_size)
+            )
+
+        for j in range(self.n_layers_in_between):
+            add_conv_layer(self.base_n_filters)
+
+        for i in range(1, self.n_conv_blocks+1):
+            n_filters = (self.stride**i) * self.base_n_filters
+
+            add_conv_layer(n_filters, stride=self.stride)
+
+            for j in range(self.n_layers_in_between):
+                add_conv_layer(n_filters)
+
+        self.conv_layer_specs = list(reversed(conv_layer_specs))
+        pprint.pprint(self.conv_layer_specs)
+
+        super().__init__(output_n_channels, input_n_features, output_image_shape, **kwargs)
 
 
 activations = dict(
@@ -300,12 +830,24 @@ def activation_module(s):
 
 class MLP(ParameterizedModule):
     n_hidden_units = Param()
-    nl = Param()
+    nl = Param('relu')
     batch_norm = Param(False)
     layer_norm = Param(False)
 
     def __init__(self, n_inputs, n_outputs, **kwargs):
         super().__init__(**kwargs)
+
+        try:
+            n_inputs = tuple(n_inputs)
+            n_inputs = int(np.prod(n_inputs))
+        except Exception:
+            pass
+
+        try:
+            n_outputs = tuple(n_outputs)
+            n_outputs = int(np.prod(n_outputs))
+        except Exception:
+            pass
 
         assert not (self.batch_norm and self.layer_norm)
 
@@ -313,6 +855,7 @@ class MLP(ParameterizedModule):
         self.batch_norms = torch.nn.ModuleList()
         self.layer_norms = torch.nn.ModuleList()
 
+        self.n_inputs = n_inputs
         prev_n_units = n_inputs
 
         for n_units in self.n_hidden_units:
@@ -327,7 +870,10 @@ class MLP(ParameterizedModule):
 
         self.module_list.append(torch.nn.Linear(prev_n_units, n_outputs))
 
-    def forward(self, x):
+    def forward(self, x, flatten=False):
+        b = x.shape[0]
+        x = x.reshape(b, -1)
+
         for i, layer in enumerate(self.module_list):
             x = layer(x)
 
@@ -533,6 +1079,113 @@ class UNET(ParameterizedModule):
         return padded
 
 
+class SpatialAttentionLayer(ParameterizedModule):
+    """ Now there are no keys and queries.
+
+    For the input we are given data and an array of locations. For the output we are just given
+    an array of locations.
+
+    Kind of interesting: this can be viewed as a differentiable way of converting a sparse matrix representation
+    of an image to a dense representation of an image, assuming the output locations are the locations of image pixels.
+    Input data is a list of locations paired with data, conceptually similar to sparse matrix representations.
+
+    """
+    kernel_std = Param()
+    build_mlp = Param()
+
+    query_dim = Param()
+    ref_dim = Param()
+    loc_dim = Param()
+    n_hidden = Param()
+
+    process_queries = Param()
+
+    is_built = False
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        if self.process_queries:
+            self.query_func = self.build_mlp(self.query_dim, self.n_hidden)
+
+        n_in = self.ref_dim + self.loc_dim
+        if self.process_queries:
+            n_in += self.n_hidden
+        self.relation_func = self.build_mlp(n_in, self.n_hidden)
+
+        self.final_func = self.build_mlp(self.n_hidden, self.n_hidden)
+
+        self.layer_norm_1 = torch.nn.LayerNorm(self.n_hidden)
+        self.layer_norm_2 = torch.nn.LayerNorm(self.n_hidden)
+
+    def _forward(self, reference_locs, reference_features, query_locs, query_features):
+        """
+        reference_locs: (B, loc_dim, n_ref)
+        reference_features: (B, n_hidden, n_ref)
+        query_locs: (B, loc_dim, n_query)
+        query_features: (B, n_hidden, n_query) or None
+
+        Returns
+        -------
+        output (B, n_hidden, n_query)
+
+        """
+        reference_locs = reference_locs.permute(0, 2, 1)
+        reference_features = reference_features.permute(0, 2, 1)
+        query_locs = query_locs.permute(0, 2, 1)
+
+        if query_features is not None:
+            query_features = query_features.permute(0, 2, 1)
+
+        assert (query_features is not None) == self.process_queries
+
+        n_query = query_locs.shape[-2]
+        b, n_ref, _ = reference_features.shape
+
+        # --- process queries, if we have them ---
+
+        if self.process_queries:
+            processed_queries = reshape_and_apply(
+                self.query_func, query_features, n_batch_dims=2)  # (B, n_query, n_hidden)
+        else:
+            processed_queries = None
+
+        # --- process all query-reference pairs, taking relative position into account ---
+
+        adjusted_locs = reference_locs[:, None, :, :] - query_locs[:, :, None, :]  # (B, n_query, n_ref, loc_dim)
+        adjusted_features = reference_features[:, None].repeat(1, n_query, 1, 1)  # (B, n_query, n_ref, ref_dim)
+        relation_input = torch.cat([adjusted_features, adjusted_locs], axis=3)
+
+        if self.process_queries:
+            _processed_queries = processed_queries[:, :, None].repeat(1, 1, n_ref, 1)  # (b, n_query, n_ref, n_hidden)
+            relation_input = torch.cat([relation_input, _processed_queries], dim=3)
+
+        V = reshape_and_apply(self.relation_func, relation_input, n_batch_dims=3)  # (B, n_query, n_ref, n_hidden)
+
+        # --- for each query, get a set of attention weights over the references, based on spatial proximity ---
+
+        attention_weights = torch.exp(-0.5 * ((adjusted_locs / self.kernel_std)**2).sum(dim=3))
+        attention_weights = (
+            attention_weights / (2 * np.pi) ** (self.loc_dim / 2) / self.kernel_std**self.loc_dim)  # (B, n_query, n_ref)
+
+        # --- apply attention weights ---
+
+        result = (V * attention_weights[..., None]).sum(dim=2)  # (B, n_query, n_hidden)
+
+        # --- finish up ---
+
+        if self.process_queries:
+            result += processed_queries
+
+        result = self.layer_norm_1(result)
+
+        final_result = reshape_and_apply(self.final_func, result, n_batch_dims=2)
+
+        result = self.layer_norm_2(result + final_result)
+
+        return result.permute(0, 2, 1)
+
+
 def normal_kl(mean, std, prior_mean, prior_std):
     var = std**2
     prior_var = prior_std**2
@@ -550,7 +1203,7 @@ def normal_vae(mean, std, prior_mean, prior_std):
     return sample, kl
 
 
-def build_cam2world(angle, t, do_correction=False):
+def build_cam2world(yaw_pitch_roll, t, do_correction=False):
     """ Angle specified as Tait-Bryan Angles (basically Euler angles) with extrinsic order 'xyz'.
 
     roll: counterclockwise rotation of gamma about x axis.
@@ -565,11 +1218,11 @@ def build_cam2world(angle, t, do_correction=False):
     x increases into the frame, y increases leftward, z increases upward.
 
     """
-    leading_dims = angle.shape[:-1]
-    angle = angle.view(-1, angle.shape[-1])
+    leading_dims = yaw_pitch_roll.shape[:-1]
+    yaw_pitch_roll = yaw_pitch_roll.view(-1, yaw_pitch_roll.shape[-1])
     t = t.view(-1, t.shape[-1])
 
-    device = angle.device
+    device = yaw_pitch_roll.device
     so3_a = np.array([
         [0, -1, 0, 1, 0, 0, 0, 0, 0],
         [1, 0, 0, 0, 1, 0, 0, 0, 0],
@@ -591,8 +1244,8 @@ def build_cam2world(angle, t, do_correction=False):
     ]).astype('f')
     so3_y = torch.from_numpy(so3_y).to(device)
 
-    sin = torch.sin(angle)
-    cos = torch.cos(angle)
+    sin = torch.sin(yaw_pitch_roll)
+    cos = torch.cos(yaw_pitch_roll)
     v = torch.stack([sin, cos, torch.ones_like(sin)], axis=2)
 
     soa = torch.matmul(v[:, 0], so3_a)
@@ -631,16 +1284,43 @@ def build_cam2world(angle, t, do_correction=False):
 
 def torch_mean_sum(x, n_mean=1):
     """ Average over batch dim, sum over all other dims. """
-    _sum = x.sum(dim=tuple(range(n_mean, x.ndim)))
-    return _sum.mean()
+    return x.sum(dim=tuple(range(n_mean, x.ndim))).mean()
 
 
-def transformation_matrix_to_pose(T):
+def transformation_matrix_to_pose(T, angle_format):
     """ T: torch.Tensor(b, 4, 4) or (b, 3, 4) """
+    *leading_dims, h, w = T.shape
+    T = T.reshape(-1, h, w)
+
     R = T[:, :3]
-    t = T[:, :3, 3]
-    axis_angle = rotation_matrix_to_angle_axis(R)
-    return axis_angle, t
+    if angle_format == 'axis_angle':
+        rotation = rotation_matrix_to_angle_axis(R)
+    else:
+        raise Exception("Angle format {} not implemented.".format(angle_format))
+
+    position = T[:, :3, 3]
+
+    rotation = rotation.reshape(*leading_dims, 3)
+    position = position.reshape(*leading_dims, 3)
+
+    return rotation, position
+
+
+def interpolate_2d(v, resize_to, chw=True):
+    if not chw:
+        ndim = len(v.shape)
+        v = v.permute(*list(range(ndim-3)), ndim-1, ndim-3, ndim-2)
+
+    *leading_shape, c, h, w = v.shape
+    v = v.reshape(-1, c, h, w)
+    v = F.interpolate(v, resize_to, mode='bilinear', align_corners=False)
+    v = v.reshape(*leading_shape, c, *resize_to)
+
+    if not chw:
+        ndim = len(v.shape)
+        v = v.permute(*list(range(ndim-3)), ndim-2, ndim-1, ndim-3)
+
+    return v
 
 
 # Taken from torchgeometry.

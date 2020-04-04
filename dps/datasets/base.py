@@ -254,6 +254,15 @@ class IntegerFeature(Feature):
         return integer
 
 
+class LongIntegerFeature(IntegerFeature):
+    """ If `maximum` is supplied, the integer is returned as a one-hot vector. """
+    def __init__(self, name):
+        self.name = name
+
+    def process_batch(self, records):
+        return tf.cast(records[self.name], tf.int64)
+
+
 class FloatFeature(Feature):
     def __init__(self, name):
         self.name = name

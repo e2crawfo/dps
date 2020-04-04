@@ -127,7 +127,7 @@ class RenderHook:
         pass
 
     @staticmethod
-    def normalize_images(images):
+    def normalize_images(images, dim=-1):
         mx = images.reshape(*images.shape[:-3], -1).max(axis=-1)
         return images / mx[..., None, None, None]
 
@@ -181,6 +181,15 @@ class RenderHook:
             path = updater.exp_dir.path_for('plots', name + ".pdf")
             fig.savefig(path)
             plt.close(fig)
+
+    def save_video(self, name, fig, anim, updater):
+        path = self.path_for(name, updater, ext="mp4")
+        anim.save(path, writer='ffmpeg', codec='hevc', extra_args=['-preset', 'ultrafast'])
+
+        plt.close(fig)
+
+        latest = os.path.join(os.path.dirname(path), 'latest_stage{:0>4}.mp4'.format(updater.stage_idx))
+        shutil.copyfile(path, latest)
 
 
 def flush_print(*args, flush=True, **kwargs):
@@ -290,30 +299,39 @@ def video_unstack(stacked_video, n_frames):
     return np.transpose(video, perm)
 
 
-def liang_barsky(bottom, top, left, right, y0, x0, y1, x1):
-    """ Compute the intersection between a rectangle and a line segment.
+def liang_barsky(rect, line):
+    """ Compute the intersection between an axis-aligned rectangle and a line segment, in n-dimensions.
 
-        rect is sepcified by (bottom, top, left, right)
-        line segment specified by (y0, x0), (y1, x1)
+        rect is an array-like with shape (2, n) where the first row gives the lower bounds of the rectangle
+        in each dimension, and the second row gives the upper bounds.
+
+        line is an array-like with shape (2, n) where the first row gives the start of the line segment,
+        and the second row gives the end of the line segment.
 
         If no intersection, returns None.
 
-        Otherwise, returns (r, s) where (y0, x0) + r * (y1 - y0, x1 - x0) is the location of the "ingoing"
-        intersection, and (y0, x0) + s * (y1 - y0, x1 - x0) is the location of the "outgoing" intersection.
+        Otherwise, returns (r, s) where line[0] + r * (line[1] - line[0]) is the location of the "ingoing"
+        intersection, and line[0] + s * (line[1] - line[0]) is the location of the "outgoing" intersection.
         It will always hold that 0 <= r <= s <= 1. If the line segment starts inside the rectangle then r = 0;
         and if it stops inside the rectangle then s = 1.
 
     """
-    assert bottom < top
-    assert left < right
+    rect = np.array(rect)  # (2, n)
+    line = np.array(line)  # (2, n)
 
-    dx = x1 - x0
-    dy = y1 - y0
+    n = rect.shape[1]
+    assert line.shape[1] == n
+    assert rect.shape[0] == 2
+    assert line.shape[0] == 2
 
-    checks = ((-dx, -(left - x0)),
-              (dx, right - x0),
-              (-dy, -(bottom - y0)),
-              (dy, top - y0))
+    assert (rect[0] < rect[1]).all()
+
+    delta = line[1] - line[0]
+
+    checks_1 = np.stack([-delta, -(rect[0] - line[0])], axis=1)
+    checks_2 = np.stack([delta, rect[1] - line[0]], axis=1)
+
+    checks = np.concatenate([checks_1, checks_2], axis=0)
 
     out_in = [0]
     in_out = [1]
@@ -333,26 +351,6 @@ def liang_barsky(bottom, top, left, right, y0, x0, y1, x1):
         return _out_in, _in_out
     else:
         return None
-
-
-# NoAnswer = object()
-# def _test_liang_barsky(*args, ref_answer=NoAnswer):
-#     answer = liang_barsky(*args)
-#     print("{}: {}".format(args, answer))
-#
-#     if ref_answer is not NoAnswer:
-#         assert answer == ref_answer
-# if __name__ == "__main__":
-#     _test_liang_barsky(1, 2, 1, 2, 1.5, 0.5, 1.5, 2.5, ref_answer=(1/4, 3/4))
-#     _test_liang_barsky(1, 2, 1, 2, 1.5, 0.5, 1.5, .99, ref_answer=None)
-#     _test_liang_barsky(1, 2, 1, 2, 1.5, 0.5, 1.5, 1, ref_answer=None)
-#     _test_liang_barsky(1, 2, 1, 2, 1.5, 0.5, 1.5, 1.01, ref_answer=(0.5 / 0.51, 1))
-#     _test_liang_barsky(1, 2, 1, 2, 1.5, 0.5, -1.5, -2.5, ref_answer=None)
-#     _test_liang_barsky(1, 2, 1, 2, 2.5, 0.5, 2.5, 2.5, ref_answer=None)
-#     _test_liang_barsky(1, 2, 1, 2, 0.5, 2.5, 2.5, 2.5, ref_answer=None)
-#     _test_liang_barsky(1, 2, 1, 2, 0, 0, 2, 2, ref_answer=(0.5, 1))
-#     _test_liang_barsky(1, 2, 1, 2, 0, .99, 2, 2.99, ref_answer=(0.5, 0.505))
-#     _test_liang_barsky(1, 2, 1, 2, 1.5, 1.5, 3, 3, ref_answer=(0, 1/3))
 
 
 def create_maze(shape):
@@ -508,11 +506,11 @@ def annotate_with_rectangles(ax, annotations, colors=None, lw=1):
 
 
 def animate(
-        images, *other_images, labels=None, interval=500,
+        *images, labels=None, interval=500,
         path=None, block_shape=None, annotations=None, fig_unit_size=1,
-        text=None, text_loc=None, fontsize='x-small',
+        text=None, text_loc=None, fontsize='x-small', normalize=None,
         **kwargs):
-    """ Assumes `images` has shape (batch_size, n_frames, H, W, C)
+    """ Assumes each element of `images` has shape (batch_size, n_frames, H, W, C). Each element is a set of images.
 
     `annotations` only implemented for the first set of images.
 
@@ -525,10 +523,12 @@ def animate(
 
     `text_loc` specifies where to draw the text.
 
+    `normalize` can be a list of length len(other_images) + 1. Each entry should be a bool saying
+    whether the corresponding data should be normalized (over the whole video) or not.
+
     """
-    all_images = [images, *other_images]
-    n_image_sets = len(all_images)
-    B, T = images.shape[:2]
+    n_image_sets = len(images)
+    B, T = images[0].shape[:2]
 
     if block_shape is None:
         N = n_image_sets
@@ -536,9 +536,14 @@ def animate(
         m = int(np.ceil(N / sqrt_N))
         block_shape = (m, sqrt_N)
 
+    images = [
+        img[..., 0] if img.ndim == 5 and img.shape[-1] == 1 else img
+        for img in images]
+
     assert np.prod(block_shape) >= n_image_sets
 
     fig, axes = square_subplots(B, block_shape=block_shape, fig_unit_size=fig_unit_size)
+    time_text = fig.text(0.01, .99, 't=0', ha='left', va='top', transform=fig.transFigure, fontsize=12)
 
     plots = np.zeros_like(axes)
     text_elements = np.zeros_like(axes)
@@ -557,22 +562,41 @@ def animate(
 
     for i in range(B):
         for ax in axes[i]:
-            ax.set_axis_off()
+            set_axis_off(ax)
 
         for j in range(n_image_sets):
             ax = axes[i, j]
-            plots[i, j] = ax.imshow(np.squeeze(all_images[j][i, 0]), vmin=0.0, vmax=1.0)
+
+            _normalize = False
+            if normalize is not None:
+                _normalize = normalize[j]
+
+            # A note on vmin/vmax: vmin and vmax are set permanently when imshow is called.
+            # They are not modified when you call set_array.
+
+            if _normalize:
+                vmin = images[j][i].min()
+                vmax = images[j][i].max()
+                mean = images[j][i].mean()
+
+                ax.set_ylabel('min={:.3f}, mean={:.3f}, max={:.3f}'.format(vmin, mean, vmax))
+            else:
+                vmin = 0.0
+                vmax = 1.0
+
+            plots[i, j] = ax.imshow(images[j][i, 0], vmin=vmin, vmax=vmax)
 
             text_elements[i, j] = ax.text(
-                *text_loc, '', ha='left', va='top',
-                transform=ax.transAxes, fontsize=fontsize)
+                *text_loc, '', ha='left', va='top', transform=ax.transAxes, fontsize=fontsize)
 
     plt.subplots_adjust(top=0.95, bottom=0.02, left=0.02, right=.98, wspace=0.1, hspace=0.1)
 
     def func(t):
+        time_text.set_text('t={}'.format(t))
+
         for i in range(B):
             for j in range(n_image_sets):
-                plots[i, j].set_array(np.squeeze(all_images[j][i, t]))
+                plots[i, j].set_array(images[j][i, t])
 
                 ax = axes[i, j]
                 for obj in ax.findobj(match=plt.Rectangle):
@@ -662,10 +686,13 @@ def grid_subplots(h, w, fig_unit_size, axes_off=False):
     return fig, axes
 
 
-def set_axis_off(ax):
+def set_axis_off(ax, remove_border=False):
     """ Differs from ax.set_axis_off() in that axis labels are still shown. """
-    for spine in ax.spines.values():
-        spine.set_visible(False)
+
+    if remove_border:
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+
     ax.set_xticklabels('')
     ax.set_yticklabels('')
     ax.set_xticks([])
@@ -1259,7 +1286,8 @@ class ExperimentDirectory(object):
 
     def record_environment(self, config=None, dill_recurse=False, git_diff=True):
         with open(self.path_for('context/git_summary.txt'), 'w') as f:
-            f.write(summarize_git_repos(diff=git_diff))
+            git_summary = summarize_git_repos(diff=git_diff)
+            f.write(git_summary)
 
         uname_path = self.path_for("context/uname.txt")
         subprocess.run("uname -a > {}".format(uname_path), shell=True)
@@ -1621,6 +1649,9 @@ class Parameterized(object):
     def __str__(self):
         return "{}(\n{}\n)".format(self.__class__.__name__, pformat(self.param_values()))
 
+    def __repr__(self):
+        return str(self)
+
     @classmethod
     def _get_param_value(cls, name, param, kwargs):
         aliases = list([name] + param.aliases)
@@ -1704,18 +1735,36 @@ def du(path):
     return subprocess.check_output(['du', '-sh', str(path)]).split()[0].decode('utf-8')
 
 
-class pdb_postmortem:
-    def __init__(self, do_it=True):
-        self.do_it = do_it
+class launch_pdb_on_exception:
+    def __init__(self, context=10):
+        self.context = context
 
     def __enter__(self):
         pass
 
     def __exit__(self, type_, value, tb):
-        if self.do_it and type_:
+        if type_:
             traceback.print_exc()
-            pdb.post_mortem(tb)
+
+            sys.stdout = sys.__stdout__
+            sys.stderr = sys.__stderr__
+
+            ipdb_post_mortem(tb, self.context)
             return True
+
+
+def ipdb_post_mortem(tb=None, context=10):
+    from ipdb.__main__ import _init_pdb, wrap_sys_excepthook
+
+    wrap_sys_excepthook()
+    p = _init_pdb(context)
+    p.reset()
+    if tb is None:
+        # sys.exc_info() returns (type, value, traceback) if an exception is
+        # being handled, otherwise it returns None
+        tb = sys.exc_info()[2]
+    if tb:
+        p.interaction(None, tb)
 
 
 def camel_to_snake(name):
@@ -2208,6 +2257,10 @@ class Config(dict):
 Config._reserved_keys = dir(Config)
 
 
+class AttrDict(Config):
+    pass
+
+
 class ClearConfig(Config):
     def __init__(self, _d=None, **kwargs):
         config = load_system_config()
@@ -2642,3 +2695,31 @@ class RunningStats:
     def get_stats(self):
         var = self.m2 / self.count
         return self.mean, var
+
+
+if __name__ == "__main__":
+    def _test_liang_barsky(*args, ref_answer):
+        answer = liang_barsky(*args)
+        print("{}: {}".format(args, answer))
+
+        if ref_answer is not None:
+            assert answer == ref_answer
+        else:
+            assert answer is None
+
+    rect = [[1, 1], [2, 2]]
+
+    _test_liang_barsky(rect, [[1.5, 0.5], [1.5, 2.5]], ref_answer=(1/4, 3/4))
+    _test_liang_barsky(rect, [[1.5, 0.5], [1.5, .99]], ref_answer=None)
+    _test_liang_barsky(rect, [[1.5, 0.5], [1.5, 1]], ref_answer=None)
+    _test_liang_barsky(rect, [[1.5, 0.5], [1.5, 1.01]], ref_answer=(0.5 / 0.51, 1))
+    _test_liang_barsky(rect, [[1.5, 0.5], [-1.5, -2.5]], ref_answer=None)
+    _test_liang_barsky(rect, [[2.5, 0.5], [2.5, 2.5]], ref_answer=None)
+    _test_liang_barsky(rect, [[0.5, 2.5], [2.5, 2.5]], ref_answer=None)
+    _test_liang_barsky(rect, [[0, 0], [2, 2]], ref_answer=(0.5, 1))
+    _test_liang_barsky(rect, [[0, .99], [2, 2.99]], ref_answer=(0.5, 0.505))
+    _test_liang_barsky(rect, [[1.5, 1.5], [3, 3]], ref_answer=(0, 1/3))
+
+    rect = [[1, 2, 3], [2, 3, 4]]
+    line = [[1, 2, 2], [2, 3, 5]]
+    _test_liang_barsky(rect, line, ref_answer=(1/3, 2/3))

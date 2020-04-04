@@ -1,6 +1,5 @@
 try:
     import matplotlib
-    # matplotlib.use("pdf")
 except ImportError:
     pass
 
@@ -13,3 +12,28 @@ def reset_config():
     cfg.clear_stack(DEFAULT_CONFIG.copy())
 
 reset_config()
+
+
+def set_trace(context=10):
+    """ We define our own trace function which first resets `stdout` and `stderr` to their default values.
+        In the dps training loop we overwrite stdout and stderr so that they output to a files on disk (in addition
+        to the console); however, doing so interferes with the interactive debuggers (messes with completion, command
+        history, navigation, etc).
+
+    """
+    import sys
+    import inspect
+
+    old = sys.stdout, sys.stderr
+    sys.stdout = sys.__stdout__
+    sys.stderr = sys.__stderr__
+
+    up_one_level = inspect.currentframe().f_back
+
+    try:
+        import ipdb
+        ipdb.set_trace(up_one_level, context=context)
+    except ImportError:
+        pdb.Pdb().set_trace(up_one_level)
+
+    sys.stdout, sys.stderr = old

@@ -19,7 +19,7 @@ from dps import cfg
 from dps.utils import (
     gen_seed, time_limit, Alarm, memory_usage, gpu_memory_usage, ExperimentStore,
     ExperimentDirectory, nvidia_smi, memory_limit, Config, redirect_stream, pretty_func,
-    NumpySeed, restart_tensorboard, pdb_postmortem, execute_command, flush_print as _print,
+    NumpySeed, restart_tensorboard, launch_pdb_on_exception, execute_command, flush_print as _print,
 )
 from dps.mpi_train import MPI_MasterContext
 
@@ -281,7 +281,8 @@ class TrainingLoop:
 
         with ExitStack() as stack:
             if cfg.pdb:
-                stack.enter_context(pdb_postmortem())
+                stack.enter_context(launch_pdb_on_exception())
+
                 _print("`pdb` is turned on, so forcing setting robust=False")
                 cfg.robust = False
 
@@ -667,6 +668,7 @@ class TrainingLoop:
 
             if render and cfg.render_hook is not None:
                 _print("Rendering...")
+
                 start = time.time()
                 if cfg.robust:
                     try:
@@ -984,7 +986,8 @@ class TrainingLoopData(FrozenTrainingLoopData):
 
     def setup(self):
         # Record training session environment for later diagnostic purposes
-        self.record_environment(config=cfg.freeze(), dill_recurse=True)
+        frozen_config = cfg.freeze()
+        self.record_environment(config=frozen_config, dill_recurse=True)
         self.curriculum = []
 
         self.make_directory('weights')
