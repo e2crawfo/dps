@@ -5,7 +5,6 @@ import time
 import re
 import os
 import traceback
-import pdb
 from collections.abc import MutableMapping
 import subprocess
 import copy
@@ -17,7 +16,7 @@ import shutil
 import errno
 import tempfile
 import dill
-from functools import wraps
+from functools import wraps, partial
 import inspect
 import hashlib
 from zipfile import ZipFile
@@ -26,93 +25,140 @@ import json
 import gc
 import matplotlib.pyplot as plt
 from matplotlib import animation
+import matplotlib.patches as patches
 import imageio
 from skimage.transform import resize
 from future.utils import raise_with_traceback
-import matplotlib.patches as patches
 import pprint
+from scipy.spatial.transform import Rotation
+import pandas as pd
+from tabulate import tabulate
 
 import clify
 import dps
 
 
-def np_build_cam2world(angle, t, do_correction=False):
-    """ "Extrinsic" Euler rotations.
+green = np.array([27, 158, 119]) / 255.
+orange = np.array([217, 95, 2]) / 255.
+blue = np.array([117, 112, 179]) / 255.
 
-    Tait-Bryan Extrinsic? Aerospace.
 
-    But yaw, pitch and roll are intrinsic...are rotation matrices intrinsic rotations?
+def describe_tensor(tensor):
+    df = pd.DataFrame(tensor.flatten())
+    print(df.describe()[0])
 
-        yaw: counterclockwise rotation of alpha about z axis.
-        pitch: counterclockwise rotation of beta about y axis.
-        roll: counterclockwise rotation of gamma about x axis.
 
-    Notice that we're actually doing (R_yaw * R_pitch * R_roll) x. So it makes sense.
+def describe_structure(tensors):
+    print()
+    tensors = AttrDict(tensors).flatten()
 
-    If `do_correction` is true, we assume that in the camera coordinate frame,
-    z increases into the frame, y increases downward, z increases rightward (looking out from the camera),
-    and therefore we do an initial correction rotation to get a coordinate system where
-    x increases into the frame, y increases leftward, z increases upward.
+    table = []
+    for k, t in tensors.items():
+        flat_t = t.flatten()
+        n_nan = np.isnan(flat_t).sum()
+        n_inf = np.isinf(flat_t).sum()
+
+        desc = pd.DataFrame(flat_t).describe()[0]
+
+        record = dict(key=k, shape=tuple(t.shape), **desc, n_nan=n_nan, n_inf=n_inf)
+        table.append(record)
+
+    print(tabulate(table, headers="keys"))
+    print()
+
+
+class PiecewiseConstantFn:
+    def __init__(self, transitions, values):
+        assert len(values) == len(transitions)+1
+        assert tuple(sorted(transitions)) == tuple(transitions)
+
+        self.transitions = tuple(transitions)
+        self.values = tuple(values)
+
+    def __hash__(self):
+        return hash(str(self))
+
+    def __str__(self):
+        return "<{} transitions={}, values={}>".format(self.__class__.__name__, self.transitions, self.values)
+
+    def __call__(self, t):
+        for transition, value in zip(self.transitions, self.values):
+            if t < transition:
+                return value
+        else:
+            return self.values[-1]
+
+
+def interpret_fov(fov):
+    """ The focal lengths under give fov, assuming that the dimensions of the image plane are (2, 2).
+
+        and
+
+        0.5 times the dimensions of the image plane under given fov, assuming an image plane at distance 1 from camera.
 
     """
-    leading_dims = angle.shape[:-1]
+    try:
+        fov_x, fov_y = tuple(fov)
+    except Exception:
+        fov_x, fov_y = fov + 0., fov + 0.
 
-    angle = np.reshape(angle, (-1, angle.shape[-1]))
-    t = np.reshape(t, (-1, t.shape[-1]))
+    fx = 1 / np.tan(fov_x/2)
+    fy = 1 / np.tan(fov_y/2)
 
-    so3_a = np.array([
-        [0, -1, 0, 1, 0, 0, 0, 0, 0],
-        [1, 0, 0, 0, 1, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0, 0, 0, 0, 1]
-    ]).astype('f')
+    sx = np.tan(fov_x/2)
+    sy = np.tan(fov_y/2)
 
-    so3_b = np.array([
-        [0, 0, 1, 0, 0, 0, -1, 0, 0],
-        [1, 0, 0, 0, 0, 0, 0, 0, 1],
-        [0, 0, 0, 0, 1, 0, 0, 0, 0]
-    ]).astype('f')
+    return fx, fy, sx, sy
 
-    so3_y = np.array([
-        [0, 0, 0, 0, 0, -1, 0, 1, 0],
-        [0, 0, 0, 0, 1, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 0, 0]
-    ]).astype('f')
 
-    sin = np.sin(angle)
-    cos = np.cos(angle)
-    v = np.stack([sin, cos, np.ones_like(sin)], axis=2)
+use_from_matrix = hasattr(Rotation, 'from_matrix')
 
-    soa = np.matmul(v[:, 0], so3_a)
-    soa = np.reshape(soa, (-1, 3, 3))
 
-    sob = np.matmul(v[:, 1], so3_b)
-    sob = np.reshape(sob, (-1, 3, 3))
+def build_transformation_matrix(kind, r, t=None, **rotation_kwargs):
+    """
+    `kind` indicates how `r` is to be interpreted, and in particular specifies which `from_<blank>` function
+    (exported by Rotation) to use. Must be one of: 'quat', 'rotvec', 'euler_<order>', 'matrix', 'dcm'.
+    In the case of 'euler', the <order> portion should specify the axis order.
+    The last two are synonymous (from_dcm was renamed to from_matrix.
 
-    soy = np.matmul(v[:, 2], so3_y)
-    soy = np.reshape(soy, (-1, 3, 3))
+    r specifies a (batch of) rotation matrices, t is a (batch of) translation vectors.
 
-    so3 = np.matmul(soa, np.matmul(sob, soy))
+    """
+    if kind == 'dcm' and use_from_matrix:
+        kind = 'matrix'
+    elif kind == 'matrix' and not use_from_matrix:
+        kind = 'dcm'
 
-    if do_correction:
-        # rotate pi/2 CW around positive x axis, then pi/2 CW around positive z axis (intrinsically).
-        correction = np.array([
-            [0., 0., 1.],
-            [-1., 0., 0.],
-            [0., -1., 0.],
-        ]).astype('f')
-        correction = np.tile(correction, (so3.shape[0], 1, 1))
+    if kind in ['dcm', 'matrix']:
+        n_trailing_dims = 2
+    else:
+        n_trailing_dims = 1
+    batch_dims = r.shape[:-n_trailing_dims]
+    trailing_dims = r.shape[-n_trailing_dims:]
+    n_batch_dims = int(np.prod(batch_dims))
+    r = r.reshape(n_batch_dims, *trailing_dims)
 
-        so3 = np.matmul(so3, correction)
+    if kind.startswith('euler'):
+        order = kind.split('_')[1]
+        function = partial(Rotation.from_euler, order)
+    else:
+        function = getattr(Rotation, 'from_{}'.format(kind))
 
-    mat = np.concatenate([so3, t[:, :, None]], axis=2)
+    rotation = function(r, **rotation_kwargs)
 
-    b = sin.shape[0]
-    row = np.tile(np.array([0., 0., 0., 1.], dtype='f'), (b, 1, 1))
-    mat = np.concatenate([mat, row], axis=1)
+    if use_from_matrix:
+        R = rotation.as_matrix()
+    else:
+        R = rotation.as_dcm()
 
-    mat = np.reshape(mat, (*leading_dims, 4, 4))
+    output = np.zeros((*batch_dims, 4, 4))
+    output[..., :3, :3] = R.reshape(*batch_dims, 3, 3)
+    output[..., 3, 3] = 1.0
 
-    return mat
+    if t is not None:
+        output[..., :3, 3] = t
+
+    return output
 
 
 class RenderHook:
@@ -508,7 +554,7 @@ def annotate_with_rectangles(ax, annotations, colors=None, lw=1):
 def animate(
         *images, labels=None, interval=500,
         path=None, block_shape=None, annotations=None, fig_unit_size=1,
-        text=None, text_loc=None, fontsize='x-small', normalize=None,
+        text=None, text_loc=None, fontsize='x-small', text_color='black', normalize=None,
         **kwargs):
     """ Assumes each element of `images` has shape (batch_size, n_frames, H, W, C). Each element is a set of images.
 
@@ -587,7 +633,7 @@ def animate(
             plots[i, j] = ax.imshow(images[j][i, 0], vmin=vmin, vmax=vmax)
 
             text_elements[i, j] = ax.text(
-                *text_loc, '', ha='left', va='top', transform=ax.transAxes, fontsize=fontsize)
+                *text_loc, '', ha='left', va='top', transform=ax.transAxes, fontsize=fontsize, color=text_color)
 
     plt.subplots_adjust(top=0.95, bottom=0.02, left=0.02, right=.98, wspace=0.1, hspace=0.1)
 
@@ -1176,12 +1222,12 @@ class ExperimentStore(object):
         exp_dir.path = os.path.join(dest_path, os.path.basename(exp_dir.path))
 
     def isolate_n_latest(self, n):
-        files = [os.path.join(self.path, f) for f in os.listdir(self.path) if f.startswith(self.prefix)]
-        exp_dirs = [f for f in files if os.path.isdir(f)]
+        exp_dirs = [os.path.join(self.path, f) for f in os.listdir(self.path) if f.startswith(self.prefix)]
+        exp_dirs = [f for f in exp_dirs if os.path.isdir(f)]
         exp_dirs_with_mtime = [(os.path.getmtime(d), d) for d in exp_dirs]
         latest_exp_dirs = [d for _, d in sorted(exp_dirs_with_mtime)[-n:]]
 
-        latest_dir = os.path.join(self.path, 'tensorboard_{}_latest'.format(n))
+        latest_dir = os.path.join(self.path, 'tensorboard_latest')
 
         try:
             shutil.rmtree(latest_dir)
@@ -1192,6 +1238,13 @@ class ExperimentStore(object):
 
         for exp_dir in latest_exp_dirs:
             make_symlink(os.path.join('..', exp_dir), os.path.join(latest_dir, os.path.basename(exp_dir)))
+
+        # Look for a directory called `tensorboard_pinned`, and create links to each file therein from the n_latest dir.
+        tensorboard_pinned = os.path.join(self.path, 'tensorboard_pinned')
+        if os.path.isdir(tensorboard_pinned):
+            for d in os.listdir(tensorboard_pinned):
+                full = os.path.join('../tensorboard_pinned', d)
+                make_symlink(full, os.path.join(latest_dir, d))
 
         return latest_dir
 
@@ -1305,7 +1358,11 @@ class ExperimentDirectory(object):
 
         if config is not None:
             with open(self.path_for('config.pkl'), 'wb') as f:
-                dill.dump(config, f, protocol=dill.HIGHEST_PROTOCOL, recurse=dill_recurse)
+                try:
+                    dill.dump(config, f, protocol=dill.HIGHEST_PROTOCOL, recurse=dill_recurse)
+                except RecursionError:
+                    print("Exception when writing config: ")
+                    traceback.print_exc()
 
             with open(self.path_for('config.json'), 'w') as f:
                 json.dump(config.freeze(), f, cls=SourceJSONEncoder, indent=4, sort_keys=True)
@@ -1736,14 +1793,15 @@ def du(path):
 
 
 class launch_pdb_on_exception:
-    def __init__(self, context=10):
+    def __init__(self, context=11):
         self.context = context
 
     def __enter__(self):
         pass
 
     def __exit__(self, type_, value, tb):
-        if type_:
+        from bdb import BdbQuit
+        if type_ and type_ is not BdbQuit:
             traceback.print_exc()
 
             sys.stdout = sys.__stdout__
@@ -2218,9 +2276,19 @@ class Config(dict):
         assert key not in Config._reserved_keys, msg
         assert self._sep not in key, msg
 
-    def copy(self, _d=None, **kwargs):
-        """ Copy and update at the same time. """
+    def deepcopy(self, _d=None, **kwargs):
+        """ Deep copy and update at the same time. """
         new = copy.deepcopy(self)
+        new.update(_d, **kwargs)
+        return new
+
+    def copy(self, _d=None, **kwargs):
+        """ Copy and update at the same time.
+
+        A pseudo-deep copy; copies everything except the leaves (the leaves being the stored values).
+
+        """
+        new = self.__class__(self.flatten())
         new.update(_d, **kwargs)
         return new
 
@@ -2676,6 +2744,9 @@ class RunningStats:
         self.mean = None
         self.m2 = None
 
+        self.min = None
+        self.max = None
+
     def add(self, data):
         """ First dimension is batch dimension, all the rest are different dimensions of the input. """
         for d in data:
@@ -2685,6 +2756,8 @@ class RunningStats:
         if self.count == 0:
             self.mean = np.zeros_like(data)
             self.m2 = np.zeros_like(data)
+            self.min = np.inf * np.ones_like(data)
+            self.max = -np.inf * np.ones_like(data)
 
         self.count += 1
         delta = data - self.mean
@@ -2692,9 +2765,12 @@ class RunningStats:
         delta2 = data - self.mean
         self.m2 += delta * delta2
 
+        self.min = np.minimum(data, self.min)
+        self.max = np.maximum(data, self.max)
+
     def get_stats(self):
         var = self.m2 / self.count
-        return self.mean, var
+        return self.mean, var, self.min, self.max
 
 
 if __name__ == "__main__":

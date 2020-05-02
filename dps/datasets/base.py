@@ -455,6 +455,10 @@ class Dataset(Parameterized):
             with open(artifact_filename, 'rb') as f:
                 artifacts = dill.load(f)
 
+            target_key_set = set(self._artifact_names)
+            actual_key_set = set(artifacts.keys())
+            assert target_key_set == actual_key_set, "{} vs {}".format(target_key_set, actual_key_set)
+
         for k, v in artifacts.items():
             setattr(self, k, v)
 

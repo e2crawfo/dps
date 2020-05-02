@@ -2,6 +2,8 @@ try:
     import matplotlib
 except ImportError:
     pass
+import os
+os.environ['PYTHONSTARTUP'] = ''
 
 from .config import DEFAULT_CONFIG
 from .utils import ConfigStack
@@ -14,7 +16,7 @@ def reset_config():
 reset_config()
 
 
-def set_trace(context=10):
+def set_trace(context=11):
     """ We define our own trace function which first resets `stdout` and `stderr` to their default values.
         In the dps training loop we overwrite stdout and stderr so that they output to a files on disk (in addition
         to the console); however, doing so interferes with the interactive debuggers (messes with completion, command

@@ -81,9 +81,9 @@ class HTMLReport(object):
             with tags.td(halign="center", valign="top"):
                 with tags.p():
                     if height is not None:
-                        img_style="width:{}px; height:{}px".format(width, height)
+                        img_style = "width:{}px; height:{}px".format(width, height)
                     else:
-                        img_style="width:{}px;".format(width)
+                        img_style = "width:{}px;".format(width)
                     tags.img(
                         style=img_style,
                         src=r'data:image/png;base64,' + self._encode_image(im)

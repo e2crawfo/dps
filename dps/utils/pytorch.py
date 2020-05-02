@@ -1,14 +1,50 @@
 from collections import defaultdict
 import numpy as np
-from tabulate import tabulate
 import torch
 from torch import nn
 import torch.nn.functional as F
 from torch.nn.modules.normalization import LayerNorm
 import pprint
 import copy
+from tabulate import tabulate
 
 from dps.utils.base import RenderHook as _RenderHook, AttrDict, Config, map_structure, Param, Parameterized, pformat
+from dps.utils.base import describe_tensor as _describe_tensor, describe_structure as _describe_structure
+
+
+def compute_ssim(x, y):
+    C1 = 0.01 ** 2
+    C2 = 0.03 ** 2
+
+    x = F.pad(x, (1,)*4)
+    y = F.pad(y, (1,)*4)
+
+    avg_pool2d = lambda t: F.avg_pool2d(t, 3, 1)
+
+    mu_x = avg_pool2d(x)
+    mu_y = avg_pool2d(y)
+
+    sigma_x = avg_pool2d(x ** 2) - mu_x ** 2
+    sigma_y = avg_pool2d(y ** 2) - mu_y ** 2
+    sigma_xy = avg_pool2d(x * y) - mu_x * mu_y
+
+    SSIM_n = (2 * mu_x * mu_y + C1) * (2 * sigma_xy + C2)
+    SSIM_d = (mu_x ** 2 + mu_y ** 2 + C1) * (sigma_x + sigma_y + C2)
+
+    return torch.clamp((1 - SSIM_n / SSIM_d) / 2, 0, 1)
+
+
+def describe_tensor(tensor):
+    tensor = to_np(tensor)
+    _describe_tensor(tensor)
+
+
+def describe_structure(structure):
+    structure = map_structure(
+        lambda t: to_np(t) if isinstance(t, (torch.Tensor, np.ndarray)) else t,
+        structure, is_leaf=lambda t: not isinstance(t, dict)
+    )
+    _describe_structure(structure)
 
 
 def repeat_along_axis(a, dim, n_repeats):
@@ -110,8 +146,13 @@ def reshape_and_apply(func, *signals, n_batch_dims, restore_shape=True, **func_k
         return outputs[0]
 
 
-def to_np(cuda_tensor):
-    return cuda_tensor.detach().cpu().numpy()
+def to_np(tensor):
+    if isinstance(tensor, np.ndarray):
+        return tensor
+    elif isinstance(tensor, torch.Tensor):
+        return tensor.detach().cpu().numpy()
+    else:
+        return map_structure(to_np, tensor, is_leaf=lambda t: isinstance(t, (np.ndarray, torch.Tensor)))
 
 
 def walk_variable_scopes(model, max_depth=None):
@@ -178,13 +219,15 @@ def walk_variable_scopes(model, max_depth=None):
 
 
 class RenderHook(_RenderHook):
-    N = 4
+    N = None
 
-    def process_data(self, data, N=None):
-        if N is None:
-            N = self.N
+    def __init__(self, n_render=None, **kwargs):
+        super().__init__(n_render=n_render, **kwargs)
+
+    @staticmethod
+    def process_data(data, n_render):
         return map_structure(
-            lambda t: t[:N] if isinstance(t, torch.Tensor) else t,
+            lambda t: t[:n_render] if isinstance(t, torch.Tensor) else t,
             data, is_leaf=lambda t: not isinstance(t, (dict, list, tuple, set)))
 
     def get_tensors(self, updater, train_mode=False, train_data=False, data_iterator=None):
@@ -199,7 +242,6 @@ class RenderHook(_RenderHook):
             else:
                 data_iterator = updater.data_manager.do_val()
 
-        n_render = self.N
         step = updater._n_experiences
 
         n_collected = 0
@@ -225,14 +267,14 @@ class RenderHook(_RenderHook):
                 _data.append(data)
 
                 n_collected += recorded_tensors['batch_size']
-                if n_collected >= n_render:
+                if self.n_render is None or n_collected >= self.n_render:
                     break
 
         _tensors = map_structure(
-            lambda *t: np.concatenate(t, axis=0)[:n_render],
+            lambda *t: np.concatenate(t, axis=0)[:self.n_render],
             *_tensors, is_leaf=lambda rec: not isinstance(rec, dict))
         _data = map_structure(
-            lambda *t: np.concatenate(t, axis=0)[:n_render],
+            lambda *t: np.concatenate(t, axis=0)[:self.n_render],
             *_data, is_leaf=lambda rec: not isinstance(rec, dict))
 
         return _tensors, _data
@@ -279,6 +321,8 @@ class ParameterizedModule(torch.nn.Module, Parameterized):
         for name, module in self.named_modules():
             sv = getattr(module, 'current_scheduled_values', {})
             for k, v in sv.items():
+                if not name:
+                    name = "root"
                 scheduled_values[name + '.' + k] = v
         return scheduled_values
 
@@ -1080,10 +1124,7 @@ class UNET(ParameterizedModule):
 
 
 class SpatialAttentionLayer(ParameterizedModule):
-    """ Now there are no keys and queries.
-
-    For the input we are given data and an array of locations. For the output we are just given
-    an array of locations.
+    """ For the input we are given data and an array of locations. For the output we are just given an array of locations.
 
     Kind of interesting: this can be viewed as a differentiable way of converting a sparse matrix representation
     of an image to a dense representation of an image, assuming the output locations are the locations of image pixels.
@@ -1099,8 +1140,7 @@ class SpatialAttentionLayer(ParameterizedModule):
     n_hidden = Param()
 
     process_queries = Param()
-
-    is_built = False
+    layer_norm = Param()
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -1115,19 +1155,23 @@ class SpatialAttentionLayer(ParameterizedModule):
 
         self.final_func = self.build_mlp(self.n_hidden, self.n_hidden)
 
-        self.layer_norm_1 = torch.nn.LayerNorm(self.n_hidden)
-        self.layer_norm_2 = torch.nn.LayerNorm(self.n_hidden)
+        if self.layer_norm:
+            self.layer_norm_1 = torch.nn.LayerNorm(self.n_hidden)
+            self.layer_norm_2 = torch.nn.LayerNorm(self.n_hidden)
 
-    def _forward(self, reference_locs, reference_features, query_locs, query_features):
+    def _forward(self, reference_locs, reference_features, query_locs, query_features, reference_mask=None):
         """
         reference_locs: (B, loc_dim, n_ref)
         reference_features: (B, n_hidden, n_ref)
         query_locs: (B, loc_dim, n_query)
         query_features: (B, n_hidden, n_query) or None
 
+        reference_mask: (B, n_ref) (optional)
+
         Returns
         -------
-        output (B, n_hidden, n_query)
+        output: (B, n_hidden, n_query)
+        attention_weights: (B, n_ref, n_query)
 
         """
         reference_locs = reference_locs.permute(0, 2, 1)
@@ -1165,8 +1209,15 @@ class SpatialAttentionLayer(ParameterizedModule):
         # --- for each query, get a set of attention weights over the references, based on spatial proximity ---
 
         attention_weights = torch.exp(-0.5 * ((adjusted_locs / self.kernel_std)**2).sum(dim=3))
-        attention_weights = (
-            attention_weights / (2 * np.pi) ** (self.loc_dim / 2) / self.kernel_std**self.loc_dim)  # (B, n_query, n_ref)
+
+        # TODO: Uncomment this to have the attention weights be normalized over space.
+        # attention_weights = (
+        #     attention_weights / (2 * np.pi) ** (self.loc_dim / 2) / self.kernel_std**self.loc_dim
+        # )  # (B, n_query, n_ref)
+
+        if reference_mask is not None:
+            # Assign 0 attention weight to references that have a 0 in reference_mask
+            attention_weights = attention_weights * reference_mask[:, None, :].float()
 
         # --- apply attention weights ---
 
@@ -1177,13 +1228,17 @@ class SpatialAttentionLayer(ParameterizedModule):
         if self.process_queries:
             result += processed_queries
 
-        result = self.layer_norm_1(result)
+        if self.layer_norm:
+            result = self.layer_norm_1(result)
 
         final_result = reshape_and_apply(self.final_func, result, n_batch_dims=2)
 
-        result = self.layer_norm_2(result + final_result)
+        if self.layer_norm:
+            result = self.layer_norm_2(result + final_result)
+        else:
+            result = result + final_result
 
-        return result.permute(0, 2, 1)
+        return result.permute(0, 2, 1), attention_weights.permute(0, 2, 1)
 
 
 def normal_kl(mean, std, prior_mean, prior_std):
@@ -1284,7 +1339,12 @@ def build_cam2world(yaw_pitch_roll, t, do_correction=False):
 
 def torch_mean_sum(x, n_mean=1):
     """ Average over batch dim, sum over all other dims. """
-    return x.sum(dim=tuple(range(n_mean, x.ndim))).mean()
+    sum_dims = tuple(range(n_mean, x.ndim))
+
+    if sum_dims:
+        x = x.sum(sum_dims)
+
+    return x.mean()
 
 
 def transformation_matrix_to_pose(T, angle_format):

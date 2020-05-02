@@ -29,7 +29,7 @@ class PyTorchTrainingLoopData(TrainingLoopData):
         if mode not in self.writers:
             self.writers[mode] = SummaryWriter(path)
 
-        for k, v in record.items():
+        for k, v in AttrDict(record).flatten().items():
             self.writers[mode].add_scalar("all/"+k, float(v), n_global_experiences)
 
 
@@ -110,7 +110,7 @@ def grad_norm(parameters, norm_type=2):
         return max(p.grad.data.abs().max() for p in parameters)
 
     total_norm = 0
-    for p in parameters:
+    for i, p in enumerate(parameters):
         param_norm = p.grad.data.norm(norm_type)
         total_norm += param_norm.item() ** norm_type
     total_norm = total_norm ** (1. / norm_type)
@@ -178,14 +178,12 @@ class PyTorchUpdater(Parameterized):
         self.model.update_global_step(self._n_updates)
         tensors, recorded_tensors, losses = self.model(data, self._n_updates)
 
-        recorded_tensors = map_structure(
-            lambda t: t.mean() if isinstance(t, torch.Tensor) else t,
-            recorded_tensors, is_leaf=lambda rec: not isinstance(rec, dict))
-
         # --- loss ---
 
+        losses = AttrDict(losses)
+
         loss = 0.0
-        for name, tensor in losses.items():
+        for name, tensor in losses.flatten().items():
             loss += tensor
             recorded_tensors['loss_' + name] = tensor
         recorded_tensors['loss'] = loss
@@ -197,14 +195,13 @@ class PyTorchUpdater(Parameterized):
         with timed_block('loss backward', print_time):
             loss.backward()
 
-        parameters = self.model.parameters()
-
+        parameters = list(self.model.parameters())
         pure_grad_norm = grad_norm(parameters)
 
         if self.max_grad_norm is not None and self.max_grad_norm > 0.0:
             torch.nn.utils.clip_grad_norm_(parameters, self.max_grad_norm)
 
-        clipped_grad_norm = grad_norm(self.model.parameters())
+        clipped_grad_norm = grad_norm(parameters)
 
         with timed_block('optimizer step', print_time):
             self.optimizer.step()
@@ -227,6 +224,10 @@ class PyTorchUpdater(Parameterized):
 
         scheduled_values = self.model.get_scheduled_values()
         recorded_tensors.update(scheduled_values)
+
+        recorded_tensors = map_structure(
+            lambda t: t.mean() if isinstance(t, torch.Tensor) else t,
+            recorded_tensors, is_leaf=lambda rec: not isinstance(rec, dict))
 
         return recorded_tensors
 
@@ -255,15 +256,16 @@ class PyTorchUpdater(Parameterized):
 
             with torch.no_grad():
                 tensors, recorded_tensors, losses = self.model.evaluate(data, self._n_updates)
+                losses = AttrDict(losses)
 
                 loss = 0.0
-                for name, tensor in losses.items():
+                for name, tensor in losses.flatten().items():
                     loss += tensor
                     recorded_tensors['loss_' + name] = tensor
                 recorded_tensors['loss'] = loss
 
                 recorded_tensors = map_structure(
-                    lambda t: to_np(t.mean()) if isinstance(t, torch.Tensor) else t,
+                    lambda t: to_np(t.mean()) if isinstance(t, (torch.Tensor, np.ndarray)) else t,
                     recorded_tensors, is_leaf=lambda rec: not isinstance(rec, dict))
 
             batch_size = recorded_tensors['batch_size']
