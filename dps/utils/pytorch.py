@@ -221,8 +221,8 @@ def walk_variable_scopes(model, max_depth=None):
 class RenderHook(_RenderHook):
     N = None
 
-    def __init__(self, n_render=None, **kwargs):
-        super().__init__(n_render=n_render, **kwargs)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
     @staticmethod
     def process_data(data, n_render):
@@ -248,6 +248,9 @@ class RenderHook(_RenderHook):
         _tensors = []
         _data = []
 
+        from dps import cfg
+        n_render = cfg.get('n_render', None)
+
         with torch.no_grad():
             while True:
                 data = AttrDict(next(data_iterator))
@@ -267,14 +270,14 @@ class RenderHook(_RenderHook):
                 _data.append(data)
 
                 n_collected += recorded_tensors['batch_size']
-                if self.n_render is None or n_collected >= self.n_render:
+                if n_render is None or n_collected >= n_render:
                     break
 
         _tensors = map_structure(
-            lambda *t: np.concatenate(t, axis=0)[:self.n_render],
+            lambda *t: np.concatenate(t, axis=0)[:n_render],
             *_tensors, is_leaf=lambda rec: not isinstance(rec, dict))
         _data = map_structure(
-            lambda *t: np.concatenate(t, axis=0)[:self.n_render],
+            lambda *t: np.concatenate(t, axis=0)[:n_render],
             *_data, is_leaf=lambda rec: not isinstance(rec, dict))
 
         return _tensors, _data
