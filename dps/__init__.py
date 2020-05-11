@@ -18,9 +18,9 @@ reset_config()
 
 def set_trace(context=11):
     """ We define our own trace function which first resets `stdout` and `stderr` to their default values.
-        In the dps training loop we overwrite stdout and stderr so that they output to a files on disk (in addition
+        In the dps training loop we overwrite stdout and stderr so that they output to files on disk (in addition
         to the console); however, doing so interferes with the interactive debuggers (messes with completion, command
-        history, navigation, etc).
+        history, navigation, etc). Temporarily resetting them to defaults fixes that.
 
     """
     import sys

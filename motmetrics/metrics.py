@@ -178,7 +178,6 @@ class MetricsHost:
         df : pandas.DataFrame
             A datafrom containing the metrics in columns and names in rows.
         """
-
         assert names is None or len(names) == len(dfs)
 
         if names is None:

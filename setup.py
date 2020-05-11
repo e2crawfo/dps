@@ -1,5 +1,4 @@
 from setuptools import setup, find_packages
-
 setup(
     name='dps',
     author="Eric Crawford",

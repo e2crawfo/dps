@@ -536,7 +536,7 @@ class TrainingLoop:
                                             test_record.update(d)
 
                             self.data.record_values_for_stage(
-                                **{'_test_' + k: v for k, v in test_record.items()})
+                                **{'test_' + k: v for k, v in test_record.items()})
 
                             if cfg.render_final and cfg.render_hook is not None:
                                 _print("Rendering...")
@@ -695,13 +695,28 @@ class TrainingLoop:
                 total_eval_time += eval_duration
                 time_per_eval = total_eval_time / n_eval
 
+                val_record = Config(val_record)
+
                 data_to_store.append(("val", val_record))
 
-                if self.stopping_criteria_name not in val_record:
-                    _print("Stopping criteria {} not in record returned "
-                           "by updater, using 0.0.".format(self.stopping_criteria_name))
+                if self.stopping_criteria_name in val_record:
+                    stopping_criteria = val_record[self.stopping_criteria_name]
+                else:
+                    stopping_criteria_names = [
+                        k for k in val_record.flatten().keys() if k.startswith(self.stopping_criteria_name)]
 
-                stopping_criteria = val_record.get(self.stopping_criteria_name, 0.0)
+                    if len(stopping_criteria_names) == 0:
+                        _print("Stopping criteria {} not in record returned "
+                               "by updater, using 0.0.".format(self.stopping_criteria_name))
+                        stopping_criteria = 0.0
+
+                    elif len(stopping_criteria_names) > 1:
+                        _print("stopping_criteria_name `{}` picks out multiple values: {}, using "
+                               "0.0".format(self.stopping_criteria_name, stopping_criteria_names))
+                        stopping_criteria = 0.0
+                    else:
+                        stopping_criteria = val_record[stopping_criteria_names[0]]
+
                 new_best, stop = early_stop.check(stopping_criteria, local_step, val_record)
 
                 if new_best:
@@ -712,8 +727,7 @@ class TrainingLoop:
                                updater.n_experiences, self.n_global_experiences,
                                self.stopping_criteria_name, stopping_criteria))
 
-                    best_path = self.data.path_for(
-                        'weights/best_stage_{}'.format(stage_idx))
+                    best_path = self.data.path_for('weights/best_stage_{}'.format(stage_idx))
                     best_path = cfg.get('save_path', best_path)
 
                     weight_start = time.time()
@@ -731,14 +745,16 @@ class TrainingLoop:
                     reason = "Early stopping triggered"
                     break
 
-                if self.maximize_sc:
-                    threshold_reached = stopping_criteria >= cfg.threshold
-                else:
-                    threshold_reached = stopping_criteria <= cfg.threshold
+                threshold = cfg.get('threshold', None)
+                if threshold is not None:
+                    if self.maximize_sc:
+                        threshold_reached = stopping_criteria >= threshold
+                    else:
+                        threshold_reached = stopping_criteria <= threshold
 
-                if threshold_reached:
-                    reason = "Stopping criteria threshold reached"
-                    break
+                    if threshold_reached:
+                        reason = "Stopping criteria threshold reached"
+                        break
 
             # --------------- Perform an update -------------------
 
@@ -782,6 +798,7 @@ class TrainingLoop:
 
             records = defaultdict(dict)
             for mode, r in data_to_store:
+                r = Config(r).flatten()
                 records[mode].update(r)
 
             self.data.store_step_data_and_summaries(
@@ -1127,6 +1144,8 @@ class TrainingLoopData(FrozenTrainingLoopData):
         for record in self.history:
             stage_idx = record['stage_idx']
             print("\n" + "-" * 20 + " Stage {} ".format(stage_idx) + "-" * 20)
+
+            record = Config(record).flatten()
 
             for k, v in sorted(record.items()):
                 if isinstance(v, dict):
