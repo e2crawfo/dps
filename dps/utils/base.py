@@ -758,6 +758,7 @@ def nvidia_smi(robust=True):
 
 _nvidia_smi_processes_header = "|  GPU       PID   Type   Process name                             Usage      |"
 _nvidia_smi_table_end = "+-----------------------------------------------------------------------------+"
+_nvidia_smi_no_processes_found = "|  No running processes found                                                 |"
 
 
 def _nvidia_smi_parse_processes(s):
@@ -778,8 +779,11 @@ def _nvidia_smi_parse_processes(s):
 
     processes = []
 
-    for line in lines[header_idx+2:table_end_idx]:
+    first_line = lines[header_idx+2]
+    if first_line == _nvidia_smi_parse_processes:
+        return []
 
+    for line in lines[header_idx+2:table_end_idx]:
         tokens = line.split()
         gpu_idx = int(tokens[1])
         pid = int(tokens[2])
