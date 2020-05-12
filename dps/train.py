@@ -159,7 +159,7 @@ class TrainingLoop:
         load_path = cfg.load_path
         _print("\nMaybe loading weights, load_path={} ...".format(load_path))
 
-        if load_path is not None:
+        if load_path:
             if isinstance(load_path, str) or isinstance(load_path, int):
                 load_path = {"": load_path}
 
@@ -205,7 +205,7 @@ class TrainingLoop:
             return _items
 
         else:
-            _print("`load_path` is None, using a fresh set of weights.")
+            _print("`load_path` is null, using a fresh set of weights.")
             return []
 
     def run(self, start_time):

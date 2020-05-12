@@ -146,8 +146,9 @@ class PyTorchUpdater(Parameterized):
         print("Built model:")
         print(repr(self.model))
 
-        print("\nMoving model to device...")
-        self.model.to(get_pytorch_device())
+        device = get_pytorch_device()
+        print(f"\nMoving model to device '{device}'...")
+        self.model.to(device)
 
         print("Building optimizer...")
 
