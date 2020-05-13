@@ -408,7 +408,7 @@ def create_maze(shape):
     dirs = [(0, 1), (0, -1), (1, 0), (-1, 0)]
 
     # start the maze from a random cell
-    stack = [(np.random.randint(0, mx), np.random.randint(0, my))]
+    stack = [(np.random.randint(0, my), np.random.randint(0, mx))]
 
     while len(stack) > 0:
         (cy, cx) = stack[-1]
