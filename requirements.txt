@@ -1,18 +1,11 @@
 -e git+https://github.com/e2crawfo/clify.git@persona#egg=clify
 dill==0.2.6
-future
-gym==0.9.5
 iso8601
 imageio
 matplotlib
 numpy>=1.7
 pandas
-opencv-python
 psutil>=5.6.6
-pytest
-pytest-env
 python-dateutil==2.6.1  # To satisfy botocore 1.10.1
 scikit-image
-scikit-learn
 tabulate
-tensorflow_datasets

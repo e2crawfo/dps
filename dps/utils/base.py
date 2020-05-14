@@ -28,7 +28,6 @@ from matplotlib import animation
 import matplotlib.patches as patches
 import imageio
 from skimage.transform import resize
-from future.utils import raise_with_traceback
 import pprint
 from scipy.spatial.transform import Rotation
 import pandas as pd
@@ -2729,7 +2728,7 @@ def execute_command(
         if p is not None:
             p.terminate()
             p.kill()
-        raise_with_traceback(e)
+        raise e
 
 
 def ssh_execute(command, host, ssh_options=None, **kwargs):

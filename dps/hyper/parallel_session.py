@@ -2,7 +2,6 @@ from __future__ import print_function
 import os
 import datetime
 import subprocess
-from future.utils import raise_with_traceback
 import numpy as np
 import time
 import shutil
@@ -287,7 +286,7 @@ class ParallelSession(object):
             print("Ranking hosts by suitability...")
             candidate_hosts = {}
             for host in host_pool:
-                if host is not ':':
+                if host != ':':
                     print("\n" + "~" * 40)
                     print("Testing connection to host {}...".format(host))
                     failed, _, _ = self.ssh_execute("echo Connected to \$HOSTNAME", host, robust=True)
@@ -471,7 +470,7 @@ class ParallelSession(object):
             if p is not None:
                 p.terminate()
                 p.kill()
-            raise_with_traceback(e)
+            raise e
 
     def ssh_execute(self, command, host, **kwargs):
         if host == ":":
@@ -726,6 +725,21 @@ class ParallelSession(object):
         for host in self.dirty_hosts:
             print("Cleaning host {}...".format(host))
             self.ssh_execute(command, host, robust=True)
+
+
+install_venv_and_run = """
+
+deactivate
+module load python/3.6
+virtualenv --no-download $SLURM_TMPDIR/env
+source $SLURM_TMPDIR/env/bin/activate
+pip install --no-index --upgrade pip
+
+pip install --no-index -r {requirements}
+python {python_entry_point}
+
+"""
+
 
 
 def submit_job(

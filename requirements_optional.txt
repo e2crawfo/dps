@@ -1,0 +1,7 @@
+future
+gym
+opencv-python
+pytest
+pytest-env
+scikit-learn
+tensorflow_datasets
