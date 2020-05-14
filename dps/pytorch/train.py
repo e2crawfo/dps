@@ -304,6 +304,33 @@ class PyTorchUpdater(Parameterized):
         self.model.load_state_dict(state, strict=False)
 
 
+class DummyUpdater(PyTorchUpdater):
+    """ For when you just want to build datasets. Much faster than most normal updaters. """
+
+    @property
+    def n_experiences(self):
+        return 0
+
+    @property
+    def n_updates(self):
+        return 0
+
+    def build_graph(self):
+        pass
+
+    def update(self, batch_size):
+        return dict()
+
+    def evaluate(self, batch_size, mode):
+        return dict()
+
+    def save(self, session, filename):
+        return ''
+
+    def restore(self, path):
+        pass
+
+
 class PyTorchDataManager(Parameterized):
     shuffle_buffer_size = Param()
     prefetch_buffer_size_in_batches = Param()
