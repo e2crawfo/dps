@@ -1340,10 +1340,14 @@ class ExperimentDirectory(object):
         os.makedirs(full_path, exist_ok=exist_ok)
         return full_path
 
-    def record_environment(self, config=None, dill_recurse=False, git_diff=True):
-        with open(self.path_for('context/git_summary.txt'), 'w') as f:
-            git_summary = summarize_git_repos(diff=git_diff)
-            f.write(git_summary)
+    def record_environment(self, config=None, dill_recurse=False, git_mode='all'):
+
+        assert git_mode in ['all', 'fast', 'none']
+        if git_mode != 'none':
+            with open(self.path_for('context/git_summary.txt'), 'w') as f:
+                do_git_diff = git_mode == 'all'
+                git_summary = summarize_git_repos(diff=do_git_diff)
+                f.write(git_summary)
 
         uname_path = self.path_for("context/uname.txt")
         subprocess.run("uname -a > {}".format(uname_path), shell=True)

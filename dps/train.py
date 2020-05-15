@@ -1004,7 +1004,8 @@ class TrainingLoopData(FrozenTrainingLoopData):
     def setup(self):
         # Record training session environment for later diagnostic purposes
         frozen_config = cfg.freeze()
-        self.record_environment(config=frozen_config, dill_recurse=True)
+        git_mode = cfg.get('git_record_mode', 'all')
+        self.record_environment(config=frozen_config, dill_recurse=True, git_mode=git_mode)
         self.curriculum = []
 
         self.make_directory('weights')

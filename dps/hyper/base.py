@@ -439,6 +439,7 @@ class _RunTrainingLoop(object):
             start_tensorboard=False,
             show_plots=False,
             update_latest=False,
+            git_record_mode='none',
         )
 
         with config:
@@ -518,7 +519,7 @@ def build_search(
         new_configs = sample_configs(distributions, n_repeats, n_param_settings)
 
         with open(exp_dir.path_for("sampled_configs.txt"), "w") as f:
-            f.write("\n".join("idx={}: {}".format(config["idx"], pformat(config)) for config in new_configs))
+            f.write("\n".join("idx={}: {}".format(c["idx"], pformat(c)) for c in new_configs))
 
         print("{} configs were sampled for parameter search.".format(len(new_configs)))
 
@@ -605,11 +606,7 @@ def build_and_submit(
             return training_loop()
     else:
         config.name = category
-
-        config = config.copy(
-            start_tensorboard=False,
-            show_plots=False,
-        )
+        config = config.copy()
 
         if readme == "_vim_":
             readme = edit_text(
