@@ -1,5 +1,4 @@
 import gym
-import cv2
 import numpy as np
 import os
 import tensorflow as tf
@@ -497,6 +496,7 @@ class AtariVideoDataset(ImageDataset):
         return self._features
 
     def _get_annotations(self, video):
+        import cv2
 
         # --- get objects for each frame ---
 

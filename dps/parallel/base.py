@@ -377,7 +377,7 @@ class Job(ReadOnlyJob):
         return self.run(pattern, indices, False, True, True, 0, 1, "", True)
 
     def run(self, pattern, indices, force, output_to_files, verbose,
-            idx_in_node, ppn, gpu_set, ignore_gpu):
+            idx_in_node, tasks_per_node, gpu_set, ignore_gpu):
         """ Run selected operators in the job.
 
         Only ops that meet constraints imposed by both `pattern` and `indices` will be executed.
@@ -412,7 +412,7 @@ class Job(ReadOnlyJob):
             try:
                 indices = [indices[idx_in_job]]
             except IndexError:
-                print("Process with index {} was not provided with an argument, exiting.".format(idx_in_job))
+                print("Task with index {} was not provided with an argument, exiting.".format(idx_in_job))
                 sys.exit(0)
             print("My idx in the job is {}, the idx of the task I'm running is {}.".format(idx_in_job, indices[0]))
             print("My value of CUDA_VISIBLE_DEVICES is {}.".format(os.environ.get('CUDA_VISIBLE_DEVICES', None)))
@@ -429,15 +429,15 @@ class Job(ReadOnlyJob):
         if ignore_gpu:
             env = dict(CUDA_VISIBLE_DEVICES="-1")
         elif idx_in_node != -1 and gpu_set:
-            # `ppn` and `idx_in_node` are only used when using gpus.
+            # `tasks_per_node` and `idx_in_node` are only used when using gpus.
             # Manually choose GPU to use based on our index in the node, the number of GPUs available on the node,
-            # and the number of processors running on the node.
-            assert ppn > 0
+            # and the number of tasks running on the node.
+            assert tasks_per_node > 0
             gpus = [int(i) for i in gpu_set.split(',')]
             n_gpus = len(gpus)
-            assert ppn >= n_gpus
-            procs_per_gpu = int(np.ceil(ppn / n_gpus))
-            gpu_idx = idx_in_node // procs_per_gpu
+            assert tasks_per_node >= n_gpus
+            tasks_per_gpu = int(np.ceil(tasks_per_node / n_gpus))
+            gpu_idx = idx_in_node // tasks_per_gpu
             env = dict(CUDA_VISIBLE_DEVICES=str(gpus[gpu_idx]))
         else:
             env = {}

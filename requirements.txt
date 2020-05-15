@@ -1,7 +1,11 @@
 -e git+https://github.com/e2crawfo/clify.git@persona#egg=clify
-dill==0.2.6
+dill
+flake8
+gym
 iso8601
 imageio
+ipdb
+ipython
 matplotlib
 numpy>=1.7
 pandas

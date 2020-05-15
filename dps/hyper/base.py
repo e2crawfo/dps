@@ -543,12 +543,12 @@ def build_search(
 
         print("Zipped {} as {}.".format(exp_dir.path, path))
 
-        return path
+        return path, len(new_configs)
 
 
 def build_and_submit(
         category, exp_name, config, distributions, n_param_settings=0, n_repeats=1,
-        do_local_test=False, kind="local", readme="", **run_kwargs):
+        do_local_test=False, kind="local", readme="", tasks_per_gpu=1, **run_kwargs):
     """ Build a job and submit it. Meant to be called from within a script.
 
     Parameters
@@ -578,7 +578,7 @@ def build_and_submit(
         One of pbs, slurm, slurm-local, parallel, local. Specifies which method
         should be used to run the jobs in parallel.
     readme: str
-        A string outlining the purpose/context for the created search.
+        A string outlining the purpose/context for the created experiment.
     **run_kwargs:
         Additional arguments that are ultimately passed to `ParallelSession` in
         order to run the job.
@@ -617,14 +617,15 @@ def build_and_submit(
 
         scratch = os.path.join(cfg.parallel_experiments_build_dir, category)
 
-        archive_path = build_search(
+        archive_path, n_tasks = build_search(
             scratch, exp_name, distributions, config,
             add_date=1, _zip=True, do_local_test=do_local_test,
             n_param_settings=n_param_settings, n_repeats=n_repeats, readme=readme)
 
-        run_kwargs.update(
-            archive_path=archive_path, category=category, exp_name=exp_name,
-            kind=kind, parallel_exe=cfg.parallel_exe)
+        run_kwargs.update(archive_path=archive_path, category=category, exp_name=exp_name, kind=kind)
+
+        resources = compute_required_resources(n_tasks, tasks_per_gpu)
+        run_kwargs.update(resources)
 
         parallel_session = submit_job(**run_kwargs)
 
@@ -635,10 +636,38 @@ def sanitize(s):
     return str(s).replace('_', '-')
 
 
+def compute_required_resources(n_tasks, tasks_per_gpu):
+    cpus_per_gpu = 10
+    mem_per_gpu = 47000
+    gpus_per_node = 4
+
+    n_gpus = int(np.ceil(n_tasks / tasks_per_gpu))
+
+    n_nodes = int(np.ceil(n_gpus / gpus_per_node))
+    result = dict(
+        n_nodes=n_nodes,
+        cpus_per_task=cpus_per_gpu // tasks_per_gpu,
+        mem_per_cpu=mem_per_gpu // cpus_per_gpu,
+    )
+
+    if n_nodes > 1:
+        result.update(
+            tasks_per_node=gpus_per_node * tasks_per_gpu,
+            gpu_set=",".join(str(i) for i in range(gpus_per_node))
+        )
+    else:
+        result.update(
+            tasks_per_node=n_tasks,
+            gpu_set=",".join(str(i) for i in range(n_gpus))
+        )
+
+    return result
+
+
 def run_experiment(
         name, base_config, readme, distributions=None, durations=None,
         name_variables=None, alg_configs=None, env_configs=None, late_config=None,
-        cl_mode='lax'):
+        cl_mode='lax', run_kwargs_base=None):
 
     name = sanitize(name)
     durations = durations or {}
@@ -686,15 +715,17 @@ def run_experiment(
     else:
         run_kwargs = Config(
             kind="slurm",
-            pmem=5000,
             ignore_gpu=False,
         )
 
-        duration_args = durations[args.duration]
+        if run_kwargs_base is not None:
+            run_kwargs.update(run_kwargs_base)
 
-        if 'config' in duration_args:
-            config.update(duration_args['config'])
-            del duration_args['config']
+        run_kwargs.update(durations[args.duration])
+
+        if 'config' in run_kwargs:
+            config.update(run_kwargs['config'])
+            del run_kwargs['config']
 
         if cl_mode is not None:
             if cl_mode == 'strict':
@@ -704,11 +735,9 @@ def run_experiment(
             else:
                 raise Exception("Unknown value for cl_mode: {}".format(cl_mode))
 
-        if 'distributions' in duration_args:
-            distributions = duration_args['distributions']
-            del duration_args['distributions']
-
-        run_kwargs.update(durations[args.duration])
+        if 'distributions' in run_kwargs:
+            distributions = run_kwargs['distributions']
+            del run_kwargs['distributions']
 
         if name_variables is not None:
             name_variables_str = "_".join(

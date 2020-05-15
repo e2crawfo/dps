@@ -372,12 +372,14 @@ class Dataset(Parameterized):
 
         params = self.param_values()
         param_hash = get_param_hash(params)
+
+        self.directory = os.path.join(cache_dir, str(param_hash) + '.dataset')
+
         print(self.__class__.__name__)
         print("Params:")
         print(pformat(params))
         print("Param hash: {}".format(param_hash))
-
-        self.directory = os.path.join(cache_dir, str(param_hash) + '.dataset')
+        print("Dataset dir: {}".format(self.directory))
 
         self.filename = os.path.join(self.directory, str(param_hash) + '.data')
         cfg_filename = os.path.join(self.directory, str(param_hash) + '.config')

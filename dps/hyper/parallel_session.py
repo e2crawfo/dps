@@ -9,7 +9,6 @@ from collections import defaultdict
 import sys
 import dill
 from zipfile import ZipFile
-from contextlib import ExitStack
 import json
 
 from dps import cfg
@@ -41,7 +40,7 @@ class ParallelSession(object):
         written. Must be writeable by the master process.
     local_scratch_prefix: str
         Path to scratch directory that is local to each remote host.
-    ppn: int
+    tasks_per_node: int
         Number of processors per node.
     wall_time: str
         String specifying the maximum wall-time allotted to running the selected ops.
@@ -56,14 +55,8 @@ class ParallelSession(object):
         Whether to add current date/time to the name of the directory where results are stored.
     dry_run: bool
         If True, control script will be generated but not executed/submitted.
-    parallel_exe: str
-        Path to the `gnu-parallel` executable to use.
     host_pool: list of str
         A list of names of hosts to use to execute the job.
-    load_avg_threshold: float
-        If a host exhibits a load average greater than this, it will not be used.
-    max_hosts: int
-        Maximum number of hosts to use.
     env_vars: dict (str -> str)
         Dictionary mapping environment variable names to values. These will be accessible
         by the submit script, and will also be sent to the worker nodes.
@@ -75,8 +68,6 @@ class ParallelSession(object):
         Comma-separated list of indices of gpus to use.
     copy_venv: bool
         If True, copy the virtualenv from the launching environment and use it to run the simulation.
-    python_startup: bool
-        If True, source script located at "$HOME/python_startup.sh" before running step command.
     step_time_limit: str
         String specifying time limit for each step. If not supplied, a time limit is inferred
         automatically based on wall_time and number of steps (giving each step an equal amount
@@ -90,12 +81,12 @@ class ParallelSession(object):
 
     """
     def __init__(
-            self, name, input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/', ppn=12, cpp=1,
-            pmem=None, wall_time="1hour", cleanup_time="1min", slack_time="1min", add_date=True, dry_run=0,
-            parallel_exe=None, kind="parallel", host_pool=None, load_avg_threshold=8., min_hosts=None,
-            max_hosts=1, env_vars=None, output_to_files=True, n_retries=0, gpu_set="", copy_venv="",
-            python_startup=False, step_time_limit=None, ignore_gpu=False, ssh_options=None, loud_output=True,
-            rsync_verbosity=0, copy_locally=True):
+            self, name, input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/',
+            n_nodes=1, tasks_per_node=12, cpus_per_task=1, mem_per_cpu="", gpu_set="",
+            wall_time="1hour", cleanup_time="1min", slack_time="1min",
+            add_date=True, dry_run=0, kind="slurm", env_vars=None, output_to_files=True, n_retries=0,
+            copy_venv="", step_time_limit=None, ignore_gpu=False, ssh_options=None,
+            loud_output=True, rsync_verbosity=0, copy_locally=True):
 
         args = locals().copy()
         del args['self']
@@ -106,9 +97,6 @@ class ParallelSession(object):
         launch_venv = os.getenv('VIRTUAL_ENV')
         if launch_venv:
             launch_venv = os.path.split(launch_venv)[1]
-
-        if not parallel_exe:
-            parallel_exe = "$HOME/.local/bin/parallel"
 
         if ssh_options is None:
             ssh_options = (
@@ -121,8 +109,7 @@ class ParallelSession(object):
         if kind == "pbs":
             local_scratch_prefix = "\\$RAMDISK"
 
-        assert kind in "parallel pbs slurm slurm-local".split()
-        hpc = kind != "parallel"
+        assert kind in "slurm slurm-local".split()
 
         # Create directory to run the job from - should be on scratch.
         scratch = os.path.abspath(os.path.expandvars(scratch))
@@ -174,32 +161,8 @@ class ParallelSession(object):
 
         dirty_hosts = set()
 
-        if hpc:
-            host_pool = []
-            n_nodes = max_hosts
-            n_procs = n_nodes * ppn
-            n_steps = int(np.ceil(n_jobs_to_run / n_procs))
-        else:
-            self.__dict__.update(locals())
-
-            host_pool = host_pool or DEFAULT_HOST_POOL
-            if isinstance(host_pool, str):
-                host_pool = host_pool.split()
-
-            # Get an estimate of the number of hosts we'll have available.
-            with cd(job_path):
-                hosts, n_procs = self.recruit_hosts(
-                    hpc, min_hosts, max_hosts, host_pool,
-                    ppn, max_procs=np.inf)
-            n_nodes = len(hosts)
-
-            if n_jobs_to_run < n_procs:
-                n_steps = 1
-                n_nodes = int(np.ceil(n_jobs_to_run / ppn))
-                n_procs = n_nodes * ppn
-                hosts = hosts[:n_nodes]
-            else:
-                n_steps = int(np.ceil(n_jobs_to_run / n_procs))
+        n_tasks_per_step = n_nodes * tasks_per_node
+        n_steps = int(np.ceil(n_jobs_to_run / n_tasks_per_step))
 
         node_file = " --sshloginfile nodefile.txt "
 
@@ -220,7 +183,7 @@ class ParallelSession(object):
     def print_time_limits(self):
         print("\n" + "~" * 40)
         print("We have {wall_time_seconds} seconds to complete {n_jobs_to_run} "
-              "sub-jobs (grouped into {n_steps} steps) using {n_procs} processors.".format(**self.__dict__))
+              "sub-jobs (grouped into {n_steps} steps) using {n_tasks_per_step} tasks.".format(**self.__dict__))
         print("Each step, we are allowing {slack_time} as slack and "
               "{cleanup_time} for cleanup.".format(**self.__dict__))
         print("Total time per step is {total_seconds_per_step} seconds.".format(**self.__dict__))
@@ -281,52 +244,17 @@ class ParallelSession(object):
                     with open(job_dir.path_for(filename), 'w') as f:
                         f.write(text)
 
-    def recruit_hosts(self, hpc, min_hosts, max_hosts, host_pool, ppn, max_procs):
-        if not hpc and getattr(self, 'candidate_hosts', None) is None:
-            print("Ranking hosts by suitability...")
-            candidate_hosts = {}
-            for host in host_pool:
-                if host != ':':
-                    print("\n" + "~" * 40)
-                    print("Testing connection to host {}...".format(host))
-                    failed, _, _ = self.ssh_execute("echo Connected to \$HOSTNAME", host, robust=True)
-                    if failed:
-                        print("Could not connect.")
-                        continue
-
-                load_avg, _, _ = self.get_load_avg(host)
-                print("1 minute load average: {}".format(load_avg))
-
-                if load_avg < self.load_avg_threshold:
-                    candidate_hosts[host] = load_avg
-                else:
-                    print("`load_avg` above threshold of {}, discarding host.".format(self.load_avg_threshold))
-
-            self.candidate_hosts = candidate_hosts
-
+    def recruit_hosts(self, host_pool, tasks_per_node, max_tasks):
         hosts = []
 
-        if hpc:
-            candidate_hosts = host_pool
-        else:
-            candidate_hosts = sorted(self.candidate_hosts, key=self.candidate_hosts.__getitem__)
-
-        for host in candidate_hosts:
+        for host in host_pool:
             n_hosts_recruited = len(hosts)
-            if n_hosts_recruited >= max_hosts:
-                break
 
-            if n_hosts_recruited * ppn >= max_procs:
+            if n_hosts_recruited * tasks_per_node >= max_tasks:
                 break
 
             print("\n" + ("~" * 40))
             print("Recruiting host {}...".format(host))
-
-            if not hpc:
-                load_avg, _, _ = self.get_load_avg(host)
-                print("Previous 1 minute load average: {}".format(self.candidate_hosts[host]))
-                print("Recalculated 1 minute load average: {}".format(load_avg))
-                self.candidate_hosts[host] = load_avg
 
             print("Preparing host...")
             try:
@@ -368,21 +296,15 @@ class ParallelSession(object):
                 print("Preparation of host failed.")
                 print("Command output:\n{}".format(e.output))
 
-        if min_hosts is not None and len(hosts) < min_hosts:
-            raise Exception(
-                "Found only {} usable hosts, but minimum "
-                "required hosts is {}.".format(len(hosts), min_hosts))
+        n_tasks_per_step = tasks_per_node * len(hosts)
 
-        n_procs = ppn * len(hosts)
-
-        print("\nProceeding with {} usable hosts, translates into {} procs total "
-              "(max_procs: {}, max_hosts: {}).".format(
-                  len(hosts), n_procs, max_procs, max_hosts))
+        print("\nProceeding with {} usable hosts, "
+              "translates into {} tasks per step total.".format(len(hosts), n_tasks_per_step))
 
         with open('nodefile.txt', 'w') as f:
             f.write('\n'.join(hosts))
 
-        return hosts, n_procs
+        return hosts, n_tasks_per_step
 
     def execute_command(
             self, command, frmt=True, shell=True, max_seconds=None, robust=False, output=None):
@@ -491,45 +413,24 @@ class ParallelSession(object):
 
         indices = ' '.join(str(i) for i in indices_for_step)
 
-        if "slurm" in self.kind:
-            parallel_command = (
-                "cd {local_scratch} && "
-                "dps-hyper run {archive_root} {pattern} {indices} --max-time {python_seconds_per_step} "
-                "--local-experiments-dir {local_scratch} --backup-dir {_backup_dir} --env-name experiments "
-                "--gpu-set={gpu_set} --ppn={ppn} {_ignore_gpu} {_copy_locally} {output_to_files}"
-            )
+        parallel_command = (
+            "cd {local_scratch} && "
+            "dps-hyper run {archive_root} {pattern} {indices} --max-time {python_seconds_per_step} "
+            "--local-experiments-dir {local_scratch} --backup-dir {_backup_dir} --env-name experiments "
+            "--gpu-set={gpu_set} --tasks-per-node={tasks_per_node} {_ignore_gpu} {_copy_locally} {output_to_files}"
+        )
 
-            bind = "--accel-bind=g" if self.gpu_set else ""
-            mem = "--mem-per-cpu={}mb".format(self.pmem) if self.pmem else ""
+        bind = "--accel-bind=g" if self.gpu_set else ""
+        mem = "--mem-per-cpu={}".format(self.mem_per_cpu) if self.mem_per_cpu else ""
 
-            command = ('timeout --signal=INT {parallel_seconds_per_step} srun --cpus-per-task {cpp} --ntasks {n_tasks} '
-                       '{bind} {mem} --no-kill --quit-on-interrupt sh -c "{parallel_command}"'.format(
-                           parallel_seconds_per_step=self.parallel_seconds_per_step,
-                           cpp=self.cpp,
-                           n_tasks=len(indices_for_step),
-                           bind=bind,
-                           mem=mem,
-                           parallel_command=parallel_command))
-        else:
-            workon = "workon {launch_venv} && " if (self.copy_venv and self.launch_venv) else ""
-            python_startup = "source \$HOME/python_startup.sh && " if self.python_startup else ""
-            parallel_command = (
-                python_startup +
-                workon +
-                "cd {local_scratch} && "
-                "dps-hyper run {archive_root} {pattern} {{}} --max-time {python_seconds_per_step} "
-                "--local-experiments-dir {local_scratch} -backup-dir {_backup_dir} --env-name experiments "
-                "--idx-in-node={{%}} --gpu-set={gpu_set} --ppn={ppn} {_ignore_gpu} {_copy_locally} {output_to_files}"
-            )
-
-            command = (
-                '{parallel_exe} --timeout {parallel_seconds_per_step} --no-notice -j{ppn} \\\n'
-                '    --joblog {job_path}/job_log.txt {node_file} \\\n'
-                '    {env_vars} -v \\\n'
-                # '    --env PATH --env LD_LIBRARY_PATH {env_vars} -v \\\n'
-                '    "' + parallel_command + '" \\\n'
-                '    ::: {indices}'
-            )
+        command = ('timeout --signal=INT {parallel_seconds_per_step} srun --cpus-per-task {cpus_per_task} '
+                   '--ntasks {n_tasks} {bind} {mem} --no-kill --quit-on-interrupt sh -c "{parallel_command}"'.format(
+                       parallel_seconds_per_step=self.parallel_seconds_per_step,
+                       cpus_per_task=self.cpus_per_task,
+                       n_tasks=len(indices_for_step),
+                       bind=bind,
+                       mem=mem,
+                       parallel_command=parallel_command))
 
         command = command.format(
             indices=indices, _ignore_gpu=_ignore_gpu,
@@ -608,56 +509,47 @@ class ParallelSession(object):
         return value
 
     def run(self):
-        with ExitStack() as stack:
-            if not self.hpc:
-                stack.enter_context(redirect_stream('stdout', self.job_dir.path_for('stdout'), tee=True))
-                stack.enter_context(redirect_stream('stderr', self.job_dir.path_for('stderr'), tee=True))
-
-            self._run()
-
-    def _run(self):
         if self.dry_run:
             print("Dry run, so not running.")
             return
 
-        if "slurm" in self.kind:
-            # Have to jump through a hoop to get the proper node-local storage on cedar/graham.
-            self.local_scratch_prefix = self.get_slurm_var("SLURM_TMPDIR")
-            self.local_scratch = os.path.join(
-                self.local_scratch_prefix,
-                os.path.basename(self.job_path))
+        # Have to jump through a hoop to get the proper node-local storage on cedar/graham.
+        self.local_scratch_prefix = self.get_slurm_var("SLURM_TMPDIR")
+        self.local_scratch = os.path.join(
+            self.local_scratch_prefix,
+            os.path.basename(self.job_path))
 
-            # Compute new time limits based on the actual time remaining (protect against e.g. job starting late)
+        # Compute new time limits based on the actual time remaining (protect against e.g. job starting late)
 
-            print("Time limits before adjustment:")
-            self.print_time_limits()
+        print("Time limits before adjustment:")
+        self.print_time_limits()
 
-            job_id = os.getenv("SLURM_JOBID")
-            command = 'squeue -h -j {} -o "%L"'.format(job_id)
-            returncode, stdout, stderr = self.execute_command(command, frmt=False, robust=False)
-            days = 0
-            if "-" in stdout:
-                days, time = stdout.split("-")
-                days = int(days)
-            else:
-                time = stdout
+        job_id = os.getenv("SLURM_JOBID")
+        command = 'squeue -h -j {} -o "%L"'.format(job_id)
+        returncode, stdout, stderr = self.execute_command(command, frmt=False, robust=False)
+        days = 0
+        if "-" in stdout:
+            days, time = stdout.split("-")
+            days = int(days)
+        else:
+            time = stdout
 
-            time = time.split(":")
+        time = time.split(":")
 
-            hours = int(time[-3]) if len(time) > 2 else 0
-            minutes = int(time[-2]) if len(time) > 1 else 0
-            seconds = int(time[-1])
+        hours = int(time[-3]) if len(time) > 2 else 0
+        minutes = int(time[-2]) if len(time) > 1 else 0
+        seconds = int(time[-1])
 
-            wall_time_delta = datetime.timedelta(days=days, hours=hours, minutes=minutes, seconds=seconds)
-            wall_time_seconds = int(wall_time_delta.total_seconds())
+        wall_time_delta = datetime.timedelta(days=days, hours=hours, minutes=minutes, seconds=seconds)
+        wall_time_seconds = int(wall_time_delta.total_seconds())
 
-            print("Actual remaining walltime: {}".format(wall_time_delta))
-            print("Time limits after adjustment:")
+        print("Actual remaining walltime: {}".format(wall_time_delta))
+        print("Time limits after adjustment:")
 
-            (self.wall_time_seconds, self.total_seconds_per_step,
-             self.parallel_seconds_per_step, self.python_seconds_per_step) = \
-                self.compute_time_limits(
-                    wall_time_seconds, self.cleanup_time, self.slack_time, self.step_time_limit, self.n_steps)
+        (self.wall_time_seconds, self.total_seconds_per_step,
+         self.parallel_seconds_per_step, self.python_seconds_per_step) = \
+            self.compute_time_limits(
+                wall_time_seconds, self.cleanup_time, self.slack_time, self.step_time_limit, self.n_steps)
 
         self.print_time_limits()
 
@@ -679,23 +571,14 @@ class ParallelSession(object):
                 print("\nStarting step {} at: ".format(i) + "=" * 90)
                 print("{} ({} since start of job)".format(step_start, step_start - job_start))
 
-                if not self.host_pool:
-                    if self.kind == "pbs":
-                        with open(os.path.expandvars("$PBS_NODEFILE"), 'r') as f:
-                            self.host_pool = list(set([s.strip() for s in iter(f.readline, '')]))
-                            print(self.host_pool)
-                    elif "slurm" in self.kind:
-                        p = subprocess.run(
-                            'scontrol show hostnames $SLURM_JOB_NODELIST', stdout=subprocess.PIPE, shell=True)
-                        self.host_pool = list(set([host.strip() for host in p.stdout.decode().split('\n') if host]))
-                    else:
-                        raise Exception("NotImplemented")
+                p = subprocess.run(
+                    'scontrol show hostnames $SLURM_JOB_NODELIST', stdout=subprocess.PIPE, shell=True)
+                host_pool = list(set([host.strip() for host in p.stdout.decode().split('\n') if host]))
 
-                self.hosts, self.n_procs = self.recruit_hosts(
-                    self.hpc, self.min_hosts, self.max_hosts, self.host_pool,
-                    self.ppn, max_procs=len(subjobs_remaining))
+                self.hosts, n_tasks_for_step = self.recruit_hosts(
+                    host_pool, self.tasks_per_node, max_tasks=len(subjobs_remaining))
 
-                indices_for_step = subjobs_remaining[:self.n_procs]
+                indices_for_step = subjobs_remaining[:n_tasks_for_step]
                 self._step(i, indices_for_step)
                 self._checkpoint(i)
 
@@ -727,33 +610,16 @@ class ParallelSession(object):
             self.ssh_execute(command, host, robust=True)
 
 
-install_venv_and_run = """
-
-deactivate
-module load python/3.6
-virtualenv --no-download $SLURM_TMPDIR/env
-source $SLURM_TMPDIR/env/bin/activate
-pip install --no-index --upgrade pip
-
-pip install --no-index -r {requirements}
-python {python_entry_point}
-
-"""
-
-
-
 def submit_job(
-        archive_path, category, exp_name, wall_time="1year", ppn=1, cpp=1, pmem=0,
-        queue="", kind="local", gpu_set="", project="rpp-bengioy", **run_kwargs):
+        archive_path, category, exp_name, wall_time="1year", tasks_per_node=1, cpus_per_task=1, mem_per_cpu=0,
+        queue="", kind="local", gpu_set="", project="rrg-bengioy-ad_gpu", installation_script_path=None,
+        **run_kwargs):
 
-    assert kind in "pbs slurm slurm-local parallel".split()
-
-    if "slurm" in kind and not pmem:
-        raise Exception("Must supply a value for pmem (per-process-memory in mb) when using SLURM")
+    assert kind in "slurm slurm-local".split()
 
     run_kwargs.update(
-        wall_time=wall_time, ppn=ppn, cpp=cpp, kind=kind,
-        gpu_set=gpu_set, pmem=pmem)
+        wall_time=wall_time, tasks_per_node=tasks_per_node, cpus_per_task=cpus_per_task,
+        kind=kind, gpu_set=gpu_set, mem_per_cpu=mem_per_cpu)
 
     run_kwargs['env_vars'] = dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1')
     run_kwargs['dry_run'] = False
@@ -768,9 +634,23 @@ def submit_job(
     with open(os.path.join(job_path, "session.pkl"), 'wb') as f:
         dill.dump(session, f, protocol=dill.HIGHEST_PROTOCOL, recurse=True)
 
-    if kind in "parallel slurm-local".split():
+    if kind == "slurm-local":
         session.run()
         return session
+
+    if not installation_script_path:
+        raise Exception()
+
+    installation_script_path = os.path.realpath(installation_script_path)
+
+    entry_script = """#!/bin/bash
+srun {installation_script_path}
+source $SLURM_TMPDIR/env/bin/activate
+cd {job_path}
+python run.py
+""".format(installation_script_path=installation_script_path, job_path=job_path)
+    with open(os.path.join(job_path, "run.sh"), 'w') as f:
+        f.write(entry_script)
 
     python_script = """#!{}
 import datetime
@@ -788,49 +668,28 @@ print(str((end - start).total_seconds()) + " seconds elapsed between start and f
     with open(os.path.join(job_path, "run.py"), 'w') as f:
         f.write(python_script)
 
-    if kind == "pbs":
-        resources = "nodes={}:ppn={},walltime={}".format(session.n_nodes, session.ppn, session.wall_time_seconds)
-        if pmem:
-            resources = "{},pmem={}mb".format(resources, pmem)
+    wall_time_minutes = int(np.ceil(session.wall_time_seconds / 60))
+    resources = "--nodes={} --ntasks-per-node={} --cpus-per-task={} --time={}".format(
+        session.n_nodes, session.tasks_per_node, cpus_per_task, wall_time_minutes)
 
-        email = "eric.crawford@mail.mcgill.ca"
-        if queue:
-            queue = "-q " + queue
-        command = (
-            "qsub -N {exp_name} -d {job_path} -w {job_path} -m abe -M {email} "
-            "-A {project} {queue} -V -l {resources} "
-            "-j oe output.txt run.py".format(
-                exp_name=exp_name, job_path=job_path, email=email, project=project,
-                queue=queue, resources=resources
-            )
+    if mem_per_cpu:
+        resources = "{} --mem-per-cpu={}".format(resources, mem_per_cpu)
+
+    if gpu_set:
+        n_gpus = len([int(i) for i in gpu_set.split(',')])
+        resources = "{} --gres=gpu:{}".format(resources, n_gpus)
+
+    email = "eric.crawford@mail.mcgill.ca"
+    if queue:
+        queue = "-p " + queue
+    command = (
+        "sbatch --job-name {exp_name} -D {job_path} --mail-type=ALL --mail-user=wiricon@gmail.com "
+        "-A {project} {queue} --export=ALL {resources} "
+        "-o stdout -e stderr run.sh".format(
+            exp_name=exp_name, job_path=job_path, email=email, project=project,
+            queue=queue, resources=resources
         )
-
-    elif kind == "slurm":
-        wall_time_minutes = int(np.ceil(session.wall_time_seconds / 60))
-        resources = "--nodes={} --ntasks-per-node={} --cpus-per-task={} --time={}".format(
-            session.n_nodes, session.ppn, cpp, wall_time_minutes)
-
-        if pmem:
-            resources = "{} --mem-per-cpu={}mb".format(resources, pmem)
-
-        if gpu_set:
-            n_gpus = len([int(i) for i in gpu_set.split(',')])
-            resources = "{} --gres=gpu:{}".format(resources, n_gpus)
-
-        email = "eric.crawford@mail.mcgill.ca"
-        if queue:
-            queue = "-p " + queue
-        command = (
-            "sbatch --job-name {exp_name} -D {job_path} --mail-type=ALL --mail-user=wiricon@gmail.com "
-            "-A {project} {queue} --export=ALL {resources} "
-            "-o stdout -e stderr run.py".format(
-                exp_name=exp_name, job_path=job_path, email=email, project=project,
-                queue=queue, resources=resources
-            )
-        )
-
-    else:
-        raise Exception()
+    )
 
     print("\n" + "~" * 40)
     print(command)

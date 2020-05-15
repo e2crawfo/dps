@@ -1,7 +1,7 @@
 import argparse
 
 from dps.parallel import Job, ReadOnlyJob
-from dps.utils import pdb_postmortem
+from dps.utils import ipdb_postmortem
 
 
 def run_command(path, **kwargs):
@@ -53,7 +53,7 @@ def parallel_cl(desc, additional_cmds=None):
     run_parser.add_argument('pattern', type=str)
     run_parser.add_argument('indices', nargs='*', type=int)
     run_parser.add_argument('--idx-in-node', type=int, default=-1)
-    run_parser.add_argument('--ppn', type=int, default=-1)
+    run_parser.add_argument('--tasks-per-node', type=int, default=-1)
     run_parser.add_argument('--gpu-set', type=str, default="")
     run_parser.add_argument('--ignore-gpu', action="store_true")
     run_parser.add_argument(
@@ -100,7 +100,7 @@ def parallel_cl(desc, additional_cmds=None):
     print(vars(args))
 
     if pdb:
-        with pdb_postmortem():
+        with ipdb_postmortem():
             func(**vars(args))
     else:
         func(**vars(args))

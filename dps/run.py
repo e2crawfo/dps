@@ -4,7 +4,7 @@ import pkgutil
 from dps import cfg
 from dps.config import DEFAULT_CONFIG
 from dps.train import training_loop
-from dps.utils import pdb_postmortem
+from dps.utils import ipdb_postmortem
 from dps.rl import algorithms as alg_pkg
 import dps.env.basic as env_pkg_basic
 
@@ -105,7 +105,7 @@ def run():
         alg = None
 
     if args.pdb:
-        with pdb_postmortem():
+        with ipdb_postmortem():
             _run(env, alg)
     else:
         _run(env, alg)

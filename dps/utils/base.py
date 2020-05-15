@@ -1810,11 +1810,11 @@ class launch_pdb_on_exception:
             sys.stdout = sys.__stdout__
             sys.stderr = sys.__stderr__
 
-            ipdb_post_mortem(tb, self.context)
+            ipdb_postmortem(tb, self.context)
             return True
 
 
-def ipdb_post_mortem(tb=None, context=10):
+def ipdb_postmortem(tb=None, context=10):
     from ipdb.__main__ import _init_pdb, wrap_sys_excepthook
 
     wrap_sys_excepthook()
@@ -2544,14 +2544,6 @@ def load_system_config(key=None):
             per_process_gpu_memory_fraction=0,
             gpu_allow_growth=True,
             scratch_dir="/tmp",
-            parallel_exe="$HOME/.local/bin/parallel",
-            slurm_preamble='''
-                export OMP_NUM_THREADS=1
-                module purge
-                module load python/3.6.3
-                module load scipy-stack
-                source "$VIRTUALENVWRAPPER_BIN"/virtualenvwrapper.sh
-                workon her_curriculum''',
             ssh_hosts=[],
             ssh_options=(
                 "-oPasswordAuthentication=no "
