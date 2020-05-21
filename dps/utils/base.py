@@ -37,9 +37,11 @@ import clify
 import dps
 
 
+# colors from the Dark2 colorscheme on colorbrewer
 green = np.array([27, 158, 119]) / 255.
 orange = np.array([217, 95, 2]) / 255.
 blue = np.array([117, 112, 179]) / 255.
+pink = np.array([231, 41, 138]) / 255.
 
 
 def describe_tensor(tensor):
@@ -890,19 +892,18 @@ def zip_root(zipfile):
 
 
 def get_param_hash(d, name_params=None):
+    # d = AttrDict(d)
+
     if not name_params:
         name_params = d.keys()
+        # name_params = d.flatten().keys()
 
     param_str = []
     for name in sorted(name_params):
-        value = d[name]
-
-        if callable(value):
-            value = inspect.getsource(value)
-
-        param_str.append("{}={}".format(name, value))
+        param_str.append("{}={}".format(name, d[name]))
 
     param_str = "_".join(param_str)
+    # param_str = ", ".join(param_str)
     param_hash = hashlib.sha1(param_str.encode()).hexdigest()
     return param_hash
 

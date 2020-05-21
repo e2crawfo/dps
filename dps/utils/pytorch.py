@@ -61,7 +61,14 @@ def repeat_along_axis(a, dim, n_repeats):
     repeats[dim+1] = n_repeats
     new_shape = list(a.shape)
     new_shape[dim] *= n_repeats
-    return a.unsqueeze(dim+1).repeat(repeats).reshape(new_shape)
+
+    if isinstance(a, torch.Tensor):
+        return a.unsqueeze(dim+1).repeat(repeats).reshape(new_shape)
+    else:
+        a = np.expand_dims(a, dim+1)
+        a = np.tile(a, repeats)
+        a = np.reshape(a, new_shape)
+        return a
 
 
 def reshape_and_apply(func, *signals, n_batch_dims, restore_shape=True, **func_kwargs):
@@ -218,6 +225,30 @@ def walk_variable_scopes(model, max_depth=None):
     print(tabulate(table, headers="firstrow", tablefmt="fancy_grid"))
 
 
+def pad_and_concatenate(tensors, axis=0):
+    """ Pad all arrays so that they have the same shape for all axiss other than the concatentation axis,
+        and then concatenate. Assumes tensors is a list of numpy arrays.
+    """
+    shapes = np.array([t.shape for t in tensors])
+    min_shapes = shapes.min(axis=0)
+    max_shapes = shapes.max(axis=0)
+    min_shapes[axis] = 0
+    max_shapes[axis] = 0
+
+    if (min_shapes == max_shapes).all():
+        return np.concatenate(tensors, axis=axis)
+
+    _tensors = []
+    for t in tensors:
+        padding = max_shapes - np.array(t.shape)
+        padding[axis] = 0
+        padding = [(0, i) for i in padding]
+        t = np.pad(t, padding)
+        _tensors.append(t)
+
+    return np.concatenate(_tensors, axis=axis)
+
+
 class RenderHook(_RenderHook):
     N = None
 
@@ -274,10 +305,10 @@ class RenderHook(_RenderHook):
                     break
 
         _tensors = map_structure(
-            lambda *t: np.concatenate(t, axis=0)[:n_render],
+            lambda *t: pad_and_concatenate(t, axis=0)[:n_render],
             *_tensors, is_leaf=lambda rec: not isinstance(rec, dict))
         _data = map_structure(
-            lambda *t: np.concatenate(t, axis=0)[:n_render],
+            lambda *t: pad_and_concatenate(t, axis=0)[:n_render],
             *_data, is_leaf=lambda rec: not isinstance(rec, dict))
 
         return _tensors, _data
@@ -1142,25 +1173,17 @@ class SpatialAttentionLayer(ParameterizedModule):
     loc_dim = Param()
     n_hidden = Param()
 
-    process_queries = Param()
     layer_norm = Param()
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        if self.process_queries:
-            self.query_func = self.build_mlp(self.query_dim, self.n_hidden)
-
-        n_in = self.ref_dim + self.loc_dim
-        if self.process_queries:
-            n_in += self.n_hidden
-        self.relation_func = self.build_mlp(n_in, self.n_hidden)
-
-        self.final_func = self.build_mlp(self.n_hidden, self.n_hidden)
+        self.query_func = self.build_mlp(self.query_dim, self.n_hidden)
+        self.reference_func = self.build_mlp(self.ref_dim, self.n_hidden)
+        self.final_func = self.build_mlp(2*self.n_hidden, self.n_hidden)
 
         if self.layer_norm:
-            self.layer_norm_1 = torch.nn.LayerNorm(self.n_hidden)
-            self.layer_norm_2 = torch.nn.LayerNorm(self.n_hidden)
+            self.layer_norm_0 = torch.nn.LayerNorm(self.n_hidden)
 
     def _forward(self, reference_locs, reference_features, query_locs, query_features, reference_mask=None):
         """
@@ -1180,38 +1203,21 @@ class SpatialAttentionLayer(ParameterizedModule):
         reference_locs = reference_locs.permute(0, 2, 1)
         reference_features = reference_features.permute(0, 2, 1)
         query_locs = query_locs.permute(0, 2, 1)
+        query_features = query_features.permute(0, 2, 1)
 
-        if query_features is not None:
-            query_features = query_features.permute(0, 2, 1)
-
-        assert (query_features is not None) == self.process_queries
-
-        n_query = query_locs.shape[-2]
         b, n_ref, _ = reference_features.shape
 
-        # --- process queries, if we have them ---
+        # --- process queries ---
 
-        if self.process_queries:
-            processed_queries = reshape_and_apply(
-                self.query_func, query_features, n_batch_dims=2)  # (B, n_query, n_hidden)
-        else:
-            processed_queries = None
-
-        # --- process all query-reference pairs, taking relative position into account ---
-
-        adjusted_locs = reference_locs[:, None, :, :] - query_locs[:, :, None, :]  # (B, n_query, n_ref, loc_dim)
-        adjusted_features = reference_features[:, None].repeat(1, n_query, 1, 1)  # (B, n_query, n_ref, ref_dim)
-        relation_input = torch.cat([adjusted_features, adjusted_locs], axis=3)
-
-        if self.process_queries:
-            _processed_queries = processed_queries[:, :, None].repeat(1, 1, n_ref, 1)  # (b, n_query, n_ref, n_hidden)
-            relation_input = torch.cat([relation_input, _processed_queries], dim=3)
-
-        V = reshape_and_apply(self.relation_func, relation_input, n_batch_dims=3)  # (B, n_query, n_ref, n_hidden)
+        processed_queries = reshape_and_apply(
+            self.query_func, query_features, n_batch_dims=2)  # (B, n_query, n_hidden)
+        processed_refs = reshape_and_apply(
+            self.reference_func, reference_features, n_batch_dims=2)  # (B, n_ref, n_hidden)
 
         # --- for each query, get a set of attention weights over the references, based on spatial proximity ---
 
-        attention_weights = torch.exp(-0.5 * ((adjusted_locs / self.kernel_std)**2).sum(dim=3))
+        adjusted_locs = reference_locs[:, None, :, :] - query_locs[:, :, None, :]  # (B, n_query, n_ref, loc_dim)
+        attention = torch.exp(-0.5 * ((adjusted_locs / self.kernel_std)**2).sum(dim=3))
 
         # TODO: Uncomment this to have the attention weights be normalized over space.
         # attention_weights = (
@@ -1219,29 +1225,176 @@ class SpatialAttentionLayer(ParameterizedModule):
         # )  # (B, n_query, n_ref)
 
         if reference_mask is not None:
-            # Assign 0 attention weight to references that have a 0 in reference_mask
-            attention_weights = attention_weights * reference_mask[:, None, :].float()
+            # A per-reference-object gate on the attention values.
+            attention = attention * reference_mask[:, None, :].float()
 
         # --- apply attention weights ---
 
-        result = (V * attention_weights[..., None]).sum(dim=2)  # (B, n_query, n_hidden)
+        attended_refs = (processed_refs[:, None, :, :] * attention[..., None]).sum(dim=2)
 
         # --- finish up ---
 
-        if self.process_queries:
-            result += processed_queries
+        final_inp = torch.cat([processed_queries, attended_refs], dim=2)
+
+        final_result = reshape_and_apply(self.final_func, final_inp, n_batch_dims=2)
+
+        if self.layer_norm:
+            final_result = self.layer_norm_0(final_result)
+
+        return final_result.permute(0, 2, 1), attention.permute(0, 2, 1)
+
+
+class TransformerLayer(ParameterizedModule):
+    build_mlp = Param()
+    inp_dim = Param()
+    n_hidden = Param()
+    layer_norm = Param()
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        self.inp_func = self.build_mlp(self.inp_dim, self.n_hidden)
+
+        self.query_matrix = torch.nn.Linear(self.n_hidden, self.n_hidden, bias=False)
+        self.key_matrix = torch.nn.Linear(self.n_hidden, self.n_hidden, bias=False)
+        self.value_matrix = torch.nn.Linear(self.n_hidden, self.n_hidden, bias=False)
+
+        self.final_func = self.build_mlp(self.n_hidden, self.n_hidden)
+
+        if self.layer_norm:
+            self.layer_norm_1 = torch.nn.LayerNorm(self.n_hidden)
+            self.layer_norm_2 = torch.nn.LayerNorm(self.n_hidden)
+
+    def _forward(self, inp, attention_mask=None):
+        """
+        inp: (B, loc_dim, n_objects)
+
+        attention_mask: (B, n_objects) (optional)
+
+        Returns
+        -------
+        output: (B, n_hidden, n_query)
+        attention_weights: (B, n_ref, n_query)
+
+        """
+        b, _, n_objects = inp.shape
+        inp = inp.permute(0, 2, 1)
+
+        # --- process queries, if we have them ---
+
+        processed_inp = reshape_and_apply(self.inp_func, inp, n_batch_dims=2)  # (B, n_objects, n_hidden)
+
+        queries = reshape_and_apply(self.query_matrix, processed_inp, n_batch_dims=2)
+        keys = reshape_and_apply(self.key_matrix, processed_inp, n_batch_dims=2)
+
+        scores = torch.matmul(queries, keys.permute(0, 2, 1)) / np.sqrt(self.n_hidden)
+
+        if attention_mask is not None:
+            # We want to apply the mask after the exponential, but before the summation, which this will do.
+            log_attention_mask = torch.log(torch.clamp(attention_mask[:, None, :], min=1e-6))
+            scores += log_attention_mask
+
+        attention = torch.softmax(scores, dim=2)
+
+        values = reshape_and_apply(self.value_matrix, processed_inp, n_batch_dims=2)
+        weighted_values = (values[:, :, None, :] * attention[..., None]).sum(dim=2)
+
+        result = processed_inp + weighted_values
+
+        # --- finish up ---
 
         if self.layer_norm:
             result = self.layer_norm_1(result)
 
         final_result = reshape_and_apply(self.final_func, result, n_batch_dims=2)
 
-        if self.layer_norm:
-            result = self.layer_norm_2(result + final_result)
-        else:
-            result = result + final_result
+        result = result + final_result
 
-        return result.permute(0, 2, 1), attention_weights.permute(0, 2, 1)
+        if self.layer_norm:
+            result = self.layer_norm_2(result)
+
+        return result.permute(0, 2, 1), attention.permute(0, 2, 1)
+
+
+class GraphLayer(ParameterizedModule):
+    build_mlp = Param()
+    inp_dim = Param()
+    n_hidden = Param()
+    layer_norm = Param()
+    do_attention = Param()
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        self.inp_func = self.build_mlp(self.inp_dim, self.n_hidden)
+
+        relation_n_in = 2 * self.n_hidden
+
+        relation_n_out = self.n_hidden
+        if self.do_attention:
+            relation_n_out += 1
+        self.relation_func = self.build_mlp(relation_n_in, relation_n_out)
+
+        self.final_func = self.build_mlp(self.n_hidden, self.n_hidden)
+
+        if self.layer_norm:
+            self.layer_norm_1 = torch.nn.LayerNorm(self.n_hidden)
+            self.layer_norm_2 = torch.nn.LayerNorm(self.n_hidden)
+
+    def _forward(self, inp, reference_mask=None):
+        """
+        inp: (B, loc_dim, n_objects)
+
+        reference_mask: (B, n_ref) (optional)
+
+        Returns
+        -------
+        output: (B, n_hidden, n_query)
+        attention_weights: (B, n_ref, n_query)
+
+        """
+        b, _, n_objects = inp.shape
+        inp = inp.permute(0, 2, 1)
+
+        # --- process queries, if we have them ---
+
+        processed_inp = reshape_and_apply(self.inp_func, inp, n_batch_dims=2)  # (B, n_objects, n_hidden)
+
+        # --- process all query-reference pairs, taking relative position into account ---
+
+        inp1 = processed_inp[:, :, None, :].repeat(1, 1, n_objects, 1)
+        inp2 = processed_inp[:, None, :, :].repeat(1, n_objects, 1, 1)
+        relation_input = torch.cat([inp1, inp2], dim=3)
+
+        V = reshape_and_apply(self.relation_func, relation_input, n_batch_dims=3)  # (B, n_objects, n_objects, n_hidden)
+
+        if self.do_attention:
+            attention_logits = V[:, :, :, 0:1]
+            attention = torch.softmax(attention_logits, dim=2)
+
+            if reference_mask is not None:
+                # Assign 0 attention weight to references that have a 0 in reference_mask
+                attention = attention * reference_mask[:, None, :].float()
+
+            relation_output = (attention * V[:, :, :, 1:]).sum(dim=2)
+        else:
+            relation_output = V.mean(dim=2)
+
+        result = processed_inp + relation_output
+
+        # --- finish up ---
+
+        if self.layer_norm:
+            result = self.layer_norm_1(result)
+
+        final_result = reshape_and_apply(self.final_func, result, n_batch_dims=2)
+
+        result = result + final_result
+
+        if self.layer_norm:
+            result = self.layer_norm_2(result)
+
+        return result.permute(0, 2, 1), attention[..., 0].permute(0, 2, 1)
 
 
 def normal_kl(mean, std, prior_mean, prior_std):
