@@ -418,6 +418,9 @@ class Dataset(Parameterized):
                 self._writer = tf.python_io.TFRecordWriter(self.filename)
                 try:
                     with NumpySeed(self.seed):
+                        self.start_time = time.time()
+                        self.n_examples_written = 0
+
                         artifacts = self._make()
 
                         if artifacts is None:
@@ -494,6 +497,12 @@ class Dataset(Parameterized):
             write_features.update(f.get_write_features(kwargs[f.name]))
         example = tf.train.Example(features=tf.train.Features(feature=write_features))
         self._writer.write(example.SerializeToString())
+
+        self.n_examples += 1
+        if self.n_examples % 100 == 0:
+            seconds_elapsed = time.time() - self.start_time
+            print(f"{seconds_elapsed} seconds elapsed in dataset creation, "
+                  f"{seconds_elapsed/self.n_examples} seconds/sample.")
 
     def parse_example_batch(self, example_proto):
         features = {}

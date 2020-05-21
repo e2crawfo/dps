@@ -2641,8 +2641,7 @@ def test_map_structure():
     assert result["b"] is None
 
 
-def execute_command(
-        command, shell=True, max_seconds=None, robust=False, output=None):
+def execute_command(command, shell=True, max_seconds=None, robust=False, output=None):
     """ Uses `subprocess` to execute `command`. Has a few added bells and whistles.
 
     if command returns non-zero exit status:
