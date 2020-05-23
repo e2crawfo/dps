@@ -19,7 +19,7 @@ import clify
 import dps
 from dps import cfg
 from dps.config import DEFAULT_CONFIG
-from dps.utils import gen_seed, Config, ExperimentStore, edit_text, NumpySeed
+from dps.utils import gen_seed, Config, ExperimentStore, edit_text, NumpySeed, AttrDict
 from dps.train import training_loop
 from dps.parallel import Job, ReadOnlyJob
 from dps.train import FrozenTrainingLoopData
@@ -115,13 +115,16 @@ class HyperSearch(object):
                 for stage in exp_data.history:
                     record = stage.copy()
 
+                    stage_config = record['stage_config'].copy()
+                    sc.append(stage_config)
+                    del record['stage_config']
+
+                    record = AttrDict(record).flatten()
+
                     if 'best_path' in record:
                         del record['best_path']
                     if 'final_path' in record:
                         del record['final_path']
-
-                    sc.append(record['stage_config'])
-                    del record['stage_config']
 
                     # Fix and filter keys
                     _record = {}
@@ -263,8 +266,7 @@ class HyperSearch(object):
                 _column_order = [c for c in column_order if c in b.keys()]
                 b = b[_column_order]
                 with_stats = pd.merge(
-                    b.transpose(), b.describe().transpose(),
-                    left_index=True, right_index=True, how='outer')
+                    b.transpose(), b.describe().transpose(), left_index=True, right_index=True, how='outer')
 
                 profile_rows = [k for k in with_stats.index if 'time' in k or 'duration' in k or 'memory' in k]
                 other_rows = [k for k in with_stats.index if k not in profile_rows]
@@ -696,6 +698,12 @@ def run_experiment(
     alg_name = sanitize(config.get("alg_name", ""))
 
     if args.duration == "local":
+        local = durations.get("local", {})
+        local_config = local.get("config", None)
+
+        if local_config is not None:
+            config.update(local_config)
+
         if cl_mode is not None:
             if cl_mode == 'strict':
                 config.update_from_command_line(strict=True)

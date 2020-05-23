@@ -252,8 +252,7 @@ class TrainingLoop:
             cfg.seed = gen_seed()
 
         # Create a directory to store the results of the training run.
-        exp_store_name = 'env={}'.format(cfg.env_name)
-        self.experiment_store = ExperimentStore(os.path.join(cfg.local_experiments_dir, exp_store_name))
+        self.experiment_store = ExperimentStore(os.path.join(cfg.local_experiments_dir, cfg.env_name))
 
         filename_keys = cfg.get('filename_keys', [])
         if isinstance(filename_keys, str):

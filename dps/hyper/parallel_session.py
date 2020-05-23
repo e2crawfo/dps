@@ -306,8 +306,7 @@ class ParallelSession(object):
 
         return hosts, n_tasks_per_step
 
-    def execute_command(
-            self, command, frmt=True, shell=True, max_seconds=None, robust=False, output=None):
+    def execute_command(self, command, frmt=True, shell=True, max_seconds=None, robust=False, output=None):
         """ Uses `subprocess` to execute `command`. Has a few added bells and whistles.
 
         if command returns non-zero exit status:
@@ -644,9 +643,17 @@ def submit_job(
     installation_script_path = os.path.realpath(installation_script_path)
 
     entry_script = """#!/bin/bash
-srun {installation_script_path}
-source $SLURM_TMPDIR/env/bin/activate
+echo "Building venv..."
+echo "Command: "
+echo "srun -vvv --nodes=$SLURM_JOB_NUM_NODES --ntasks=$SLURM_JOB_NUM_NODES {installation_script_path}"
+srun -vvv --nodes="$SLURM_JOB_NUM_NODES" --ntasks=$SLURM_JOB_NUM_NODES {installation_script_path}
+
+echo "Sourcing venv..."
+source "$SLURM_TMPDIR/env/bin/activate"
+
 cd {job_path}
+
+echo "Dropping into python..."
 python run.py
 """.format(installation_script_path=installation_script_path, job_path=job_path)
     with open(os.path.join(job_path, "run.sh"), 'w') as f:

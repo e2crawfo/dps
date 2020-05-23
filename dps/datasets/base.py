@@ -498,11 +498,11 @@ class Dataset(Parameterized):
         example = tf.train.Example(features=tf.train.Features(feature=write_features))
         self._writer.write(example.SerializeToString())
 
-        self.n_examples += 1
-        if self.n_examples % 100 == 0:
+        self.n_examples_written += 1
+        if self.n_examples_written % 100 == 0:
             seconds_elapsed = time.time() - self.start_time
             print(f"{seconds_elapsed} seconds elapsed in dataset creation, "
-                  f"{seconds_elapsed/self.n_examples} seconds/sample.")
+                  f"{seconds_elapsed/self.n_examples_written} seconds/sample.")
 
     def parse_example_batch(self, example_proto):
         features = {}
