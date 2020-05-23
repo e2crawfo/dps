@@ -261,7 +261,10 @@ class RenderHook(_RenderHook):
             lambda t: t[:n_render] if isinstance(t, torch.Tensor) else t,
             data, is_leaf=lambda t: not isinstance(t, (dict, list, tuple, set)))
 
-    def get_tensors(self, updater, train_mode=False, train_data=False, data_iterator=None):
+    def get_tensors(
+            self, updater, train_mode=False, train_data=False, data_iterator=None,
+            run_model=None, run_model_kwargs=None):
+
         if train_mode:
             updater.model.train()
         else:
@@ -282,10 +285,16 @@ class RenderHook(_RenderHook):
         from dps import cfg
         n_render = cfg.get('n_render', None)
 
+        if run_model is None:
+            run_model = updater.model
+
+        if run_model_kwargs is None:
+            run_model_kwargs = {}
+
         with torch.no_grad():
             while True:
                 data = AttrDict(next(data_iterator))
-                tensors, recorded_tensors, losses = updater.model(data, step)
+                tensors, recorded_tensors, losses = run_model(data, step, **run_model_kwargs)
 
                 tensors = Config(tensors)
                 tensors = map_structure(
@@ -1170,7 +1179,6 @@ class SpatialAttentionLayer(ParameterizedModule):
 
     query_dim = Param()
     ref_dim = Param()
-    loc_dim = Param()
     n_hidden = Param()
 
     layer_norm = Param()
@@ -1235,6 +1243,80 @@ class SpatialAttentionLayer(ParameterizedModule):
         # --- finish up ---
 
         final_inp = torch.cat([processed_queries, attended_refs], dim=2)
+
+        final_result = reshape_and_apply(self.final_func, final_inp, n_batch_dims=2)
+
+        if self.layer_norm:
+            final_result = self.layer_norm_0(final_result)
+
+        return final_result.permute(0, 2, 1), attention.permute(0, 2, 1)
+
+
+class SpatialSelfAttentionLayer(ParameterizedModule):
+    """ Like the SpatialAttentionLayer, but self-attention (i.e. only one set of objects). """
+    kernel_std = Param()
+    build_mlp = Param()
+
+    inp_dim = Param()
+    n_hidden = Param()
+
+    layer_norm = Param()
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        self.inp_func = self.build_mlp(self.inp_dim, self.n_hidden)
+        self.final_func = self.build_mlp(2*self.n_hidden, self.n_hidden)
+
+        if self.layer_norm:
+            self.layer_norm_0 = torch.nn.LayerNorm(self.n_hidden)
+
+    def _forward(self, locs, features, reference_mask=None):
+        """
+        locs: (B, loc_dim, n_objects)
+        features: (B, n_hidden, n_objects) or None
+
+        reference_mask: (B, n_ref) (optional)
+
+        Returns
+        -------
+        output: (B, n_hidden, n_objects)
+        attention_weights: (B, n_ref, n_objects)
+
+        """
+        locs = locs.permute(0, 2, 1)
+        features = features.permute(0, 2, 1)
+
+        b, n_objects, _ = features.shape
+
+        # --- process queries ---
+
+        processed_inp = reshape_and_apply(self.inp_func, features, n_batch_dims=2)  # (B, n_objects, n_hidden)
+
+        # --- for each object, get a set of attention weights over the references, based on spatial proximity ---
+
+        adjusted_locs = locs[:, None, :, :] - locs[:, :, None, :]  # (B, n_objects, n_objects, loc_dim)
+        attention = torch.exp(-0.5 * ((adjusted_locs / self.kernel_std)**2).sum(dim=3))
+        attention = torch.where(torch.isnan(attention), torch.zeros_like(attention), attention)
+
+        # TODO: Uncomment this to have the attention weights be normalized over space.
+        # attention_weights = (
+        #     attention_weights / (2 * np.pi) ** (self.loc_dim / 2) / self.kernel_std**self.loc_dim
+        # )  # (B, n_query, n_ref)
+
+        if reference_mask is not None:
+            # A per-object gate on the attention values.
+            attention = attention * reference_mask[:, None, :].float()
+
+        attention[:, range(n_objects), range(n_objects)] = 0.
+
+        # --- apply attention weights ---
+
+        attended = (processed_inp[:, None, :, :] * attention[..., None]).sum(dim=2)
+
+        # --- finish up ---
+
+        final_inp = torch.cat([processed_inp, attended], dim=2)
 
         final_result = reshape_and_apply(self.final_func, final_inp, n_batch_dims=2)
 
