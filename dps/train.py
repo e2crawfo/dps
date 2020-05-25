@@ -893,7 +893,7 @@ class TrainingLoop:
                 _print("src: {}".format(self.exp_dir.path))
                 _print("dest: {}".format(cfg.backup_dir))
 
-                command = "rsync -avz --timeout=300 {src} {dest}".format(
+                command = "rsync -avzu --timeout=300 {src} {dest}".format(
                     src=self.exp_dir.path, dest=cfg.backup_dir,
                 )
                 execute_command(command, output="loud", robust=True)
