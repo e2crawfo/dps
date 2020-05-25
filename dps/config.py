@@ -30,6 +30,7 @@ DEFAULT_CONFIG = Config(
     backup_step=5000,
 
     patience=np.inf,
+    max_n_fallbacks=0,
 
     render_step=np.inf,
     display_step=100,

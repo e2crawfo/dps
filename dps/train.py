@@ -18,7 +18,7 @@ import warnings
 from dps import cfg
 from dps.utils import (
     gen_seed, time_limit, Alarm, memory_usage, gpu_memory_usage, ExperimentStore,
-    ExperimentDirectory, nvidia_smi, memory_limit, Config, redirect_stream, pretty_func,
+    ExperimentDirectory, nvidia_smi, memory_limit, Config, redirect_stream, pretty_func, NanException,
     NumpySeed, restart_tensorboard, launch_pdb_on_exception, execute_command, flush_print as _print,
 )
 from dps.mpi_train import MPI_MasterContext
@@ -612,6 +612,8 @@ class TrainingLoop:
         else:
             local_step = 0
 
+        n_fallbacks = 0
+
         while True:
 
             # --- check whether to keep training ---
@@ -648,150 +650,181 @@ class TrainingLoop:
 
             data_to_store = []
 
-            # --------------- Run hooks -------------------
+            try:
 
-            hooks_start = time.time()
+                # --------------- Run hooks -------------------
 
-            for hook in cfg.hooks:
-                if hook.call_per_timestep:
-                    run_hook = local_step == 0 and hook.initial
-                    run_hook |= local_step > 0 and local_step % hook.n == 0
+                hooks_start = time.time()
 
-                    if run_hook:
-                        hook_record = hook.step(self, updater, local_step)
+                for hook in cfg.hooks:
+                    if hook.call_per_timestep:
+                        run_hook = local_step == 0 and hook.initial
+                        run_hook |= local_step > 0 and local_step % hook.n == 0
 
-                        if hook_record:
-                            data_to_store.extend(dict(hook_record).items())
+                        if run_hook:
+                            hook_record = hook.step(self, updater, local_step)
 
-            hooks_duration = time.time() - hooks_start
+                            if hook_record:
+                                data_to_store.extend(dict(hook_record).items())
 
-            if render and cfg.render_hook is not None:
-                _print("Rendering...")
+                hooks_duration = time.time() - hooks_start
 
-                start = time.time()
-                if cfg.robust:
-                    try:
-                        cfg.render_hook(updater)
-                    except Exception:
-                        pass
-                else:
-                    cfg.render_hook(updater)
-
-                _print("Done rendering, took {} seconds.".format(time.time() - start))
-
-            # --------------- Possibly evaluate -------------------
-
-            if evaluate:
-                _print("Evaluating...")
-                eval_start_time = time.time()
-                val_record = updater.evaluate(cfg.batch_size, mode="val")
-                eval_duration = time.time() - eval_start_time
-                _print("Done evaluating, took {} seconds.".format(eval_duration))
-
-                val_record["duration"] = eval_duration
-
-                n_eval += 1
-                total_eval_time += eval_duration
-                time_per_eval = total_eval_time / n_eval
-
-                val_record = Config(val_record)
-
-                data_to_store.append(("val", val_record))
-
-                if self.stopping_criteria_name in val_record:
-                    stopping_criteria = val_record[self.stopping_criteria_name]
-                else:
-                    stopping_criteria_names = [
-                        k for k in val_record.flatten().keys() if k.startswith(self.stopping_criteria_name)]
-
-                    if len(stopping_criteria_names) == 0:
-                        _print("Stopping criteria {} not in record returned "
-                               "by updater, using 0.0.".format(self.stopping_criteria_name))
-                        stopping_criteria = 0.0
-
-                    elif len(stopping_criteria_names) > 1:
-                        _print("stopping_criteria_name `{}` picks out multiple values: {}, using "
-                               "0.0".format(self.stopping_criteria_name, stopping_criteria_names))
-                        stopping_criteria = 0.0
-                    else:
-                        stopping_criteria = val_record[stopping_criteria_names[0]]
-
-                new_best, stop = early_stop.check(stopping_criteria, local_step, val_record)
-
-                if new_best:
-                    _print("Storing new best on step (l={}, g={}), "
-                           "constituting (l={}, g={}) experiences, "
-                           "with stopping criteria ({}) of {}.".format(
-                               local_step, global_step,
-                               updater.n_experiences, self.n_global_experiences,
-                               self.stopping_criteria_name, stopping_criteria))
-
-                    best_path = self.data.path_for('weights/best_stage_{}'.format(stage_idx))
-                    best_path = cfg.get('save_path', best_path)
-
-                    weight_start = time.time()
-                    best_path = updater.save(best_path)
-
-                    _print("Done saving weights, took {} seconds".format(time.time() - weight_start))
-
-                    self.data.record_values_for_stage(
-                        best_path=best_path, best_global_step=global_step)
-                    self.data.record_values_for_stage(
-                        **{'best_' + k: v for k, v in early_stop.best.items()})
-
-                if stop:
-                    _print("Early stopping triggered.")
-                    reason = "Early stopping triggered"
-                    break
-
-                threshold = cfg.get('threshold', None)
-                if threshold is not None:
-                    if self.maximize_sc:
-                        threshold_reached = stopping_criteria >= threshold
-                    else:
-                        threshold_reached = stopping_criteria <= threshold
-
-                    if threshold_reached:
-                        reason = "Stopping criteria threshold reached"
-                        break
-
-            # --------------- Perform an update -------------------
-
-            if cfg.do_train:
-                if local_step % 100 == 0:
-                    _print("Running update step {}...".format(local_step))
-
-                update_start_time = time.time()
-
-                _old_n_experiences = updater.n_experiences
-
-                update_record = updater.update(cfg.batch_size)
-
-                update_duration = time.time() - update_start_time
-                update_record["duration"] = update_duration
-
-                if local_step % 100 == 0:
-                    _print("Done update step, took {} seconds.".format(update_duration))
+                if render and cfg.render_hook is not None:
+                    _print("Rendering...")
 
                     start = time.time()
-                    update_record["memory_physical_mb"] = memory_usage(physical=True)
-                    update_record["memory_virtual_mb"] = memory_usage(physical=False)
-                    update_record["memory_gpu_mb"] = gpu_memory_usage()
-                    _print("Memory check duration: {}".format(time.time() - start))
+                    if cfg.robust:
+                        try:
+                            cfg.render_hook(updater)
+                        except Exception:
+                            pass
+                    else:
+                        cfg.render_hook(updater)
+
+                    _print("Done rendering, took {} seconds.".format(time.time() - start))
+
+                # --------------- Possibly evaluate -------------------
 
                 if evaluate:
-                    # Only store train data as often as we evaluate, otherwise it's just too much data
-                    data_to_store.append(('train', update_record))
+                    _print("Evaluating...")
+                    eval_start_time = time.time()
+                    val_record = updater.evaluate(cfg.batch_size, mode="val")
+                    eval_duration = time.time() - eval_start_time
+                    _print("Done evaluating, took {} seconds.".format(eval_duration))
 
-                n_experiences_delta = updater.n_experiences - _old_n_experiences
-                self.n_global_experiences += n_experiences_delta
+                    val_record["duration"] = eval_duration
 
-                total_train_time += update_duration
-                time_per_example = total_train_time / updater.n_experiences
-                time_per_update = total_train_time / (local_step + 1)
+                    n_eval += 1
+                    total_eval_time += eval_duration
+                    time_per_eval = total_eval_time / n_eval
 
-                total_hooks_time += hooks_duration
-                time_per_hook = total_hooks_time / (local_step + 1)
+                    val_record = Config(val_record)
+
+                    data_to_store.append(("val", val_record))
+
+                    if self.stopping_criteria_name in val_record:
+                        stopping_criteria = val_record[self.stopping_criteria_name]
+                    else:
+                        stopping_criteria_names = [
+                            k for k in val_record.flatten().keys() if k.startswith(self.stopping_criteria_name)]
+
+                        if len(stopping_criteria_names) == 0:
+                            _print("Stopping criteria {} not in record returned "
+                                   "by updater, using 0.0.".format(self.stopping_criteria_name))
+                            stopping_criteria = 0.0
+
+                        elif len(stopping_criteria_names) > 1:
+                            _print("stopping_criteria_name `{}` picks out multiple values: {}, using "
+                                   "0.0".format(self.stopping_criteria_name, stopping_criteria_names))
+                            stopping_criteria = 0.0
+                        else:
+                            stopping_criteria = val_record[stopping_criteria_names[0]]
+
+                    new_best, stop = early_stop.check(stopping_criteria, local_step, val_record)
+
+                    if new_best:
+                        _print("Storing new best on step (l={}, g={}), "
+                               "constituting (l={}, g={}) experiences, "
+                               "with stopping criteria ({}) of {}.".format(
+                                   local_step, global_step,
+                                   updater.n_experiences, self.n_global_experiences,
+                                   self.stopping_criteria_name, stopping_criteria))
+
+                        best_path = self.data.path_for('weights/best_stage_{}'.format(stage_idx))
+                        best_path = cfg.get('save_path', best_path)
+
+                        weight_start = time.time()
+                        best_path = updater.save(best_path)
+
+                        _print("Done saving weights, took {} seconds".format(time.time() - weight_start))
+
+                        self.data.record_values_for_stage(
+                            best_path=best_path, best_global_step=global_step)
+                        self.data.record_values_for_stage(
+                            **{'best_' + k: v for k, v in early_stop.best.items()})
+
+                    if stop:
+                        _print("Early stopping triggered.")
+                        reason = "Early stopping triggered"
+                        break
+
+                    threshold = cfg.get('threshold', None)
+                    if threshold is not None:
+                        if self.maximize_sc:
+                            threshold_reached = stopping_criteria >= threshold
+                        else:
+                            threshold_reached = stopping_criteria <= threshold
+
+                        if threshold_reached:
+                            reason = "Stopping criteria threshold reached"
+                            break
+
+                # --------------- Perform an update -------------------
+
+                if cfg.do_train:
+                    if local_step % 100 == 0:
+                        _print("Running update step {}...".format(local_step))
+
+                    update_start_time = time.time()
+
+                    _old_n_experiences = updater.n_experiences
+
+                    update_record = updater.update(cfg.batch_size)
+
+                    update_duration = time.time() - update_start_time
+                    update_record["duration"] = update_duration
+
+                    if local_step % 100 == 0:
+                        _print("Done update step, took {} seconds.".format(update_duration))
+
+                        start = time.time()
+                        update_record["memory_physical_mb"] = memory_usage(physical=True)
+                        update_record["memory_virtual_mb"] = memory_usage(physical=False)
+                        update_record["memory_gpu_mb"] = gpu_memory_usage()
+                        _print("Memory check duration: {}".format(time.time() - start))
+
+                    if evaluate:
+                        # Only store train data as often as we evaluate, otherwise it's just too much data
+                        data_to_store.append(('train', update_record))
+
+                    n_experiences_delta = updater.n_experiences - _old_n_experiences
+                    self.n_global_experiences += n_experiences_delta
+
+                    total_train_time += update_duration
+                    time_per_example = total_train_time / updater.n_experiences
+                    time_per_update = total_train_time / (local_step + 1)
+
+                    total_hooks_time += hooks_duration
+                    time_per_hook = total_hooks_time / (local_step + 1)
+
+            except NanException as e:
+                traceback.print_exc()
+
+                n_fallbacks += 1
+
+                if not cfg.max_n_fallbacks or n_fallbacks > cfg.max_n_fallbacks:
+                    _print(f"Fell back too many times ({n_fallbacks} times).")
+                    raise e
+
+                weight_dir = self.data.path_for('weights')
+                weight_files = [f for f in os.listdir(weight_dir) if f.startswith(f'checkpoint_stage_{stage_idx}')]
+                if not weight_files:
+                    _print("Tried to fall back, but no checkpoint weights were found.")
+                    raise e
+                weight_file = sorted(weight_files)[-1]
+                weight_path = os.path.join(weight_dir, weight_file)
+
+                _print(f"Falling back to checkpoint weights: {weight_path}")
+
+                updater.restore(weight_path)
+
+                local_step += 1
+                self.global_step += 1
+
+                if hasattr(updater, '_n_updates'):
+                    updater._n_updates += 1
+
+                continue
 
             # --------------- Store data -------------------
 
