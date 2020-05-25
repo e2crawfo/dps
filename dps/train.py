@@ -18,7 +18,7 @@ import warnings
 from dps import cfg
 from dps.utils import (
     gen_seed, time_limit, Alarm, memory_usage, gpu_memory_usage, ExperimentStore,
-    ExperimentDirectory, nvidia_smi, memory_limit, Config, redirect_stream, pretty_func, NanException,
+    ExperimentDirectory, nvidia_smi, memory_limit, Config, redirect_stream, pretty_func,
     NumpySeed, restart_tensorboard, launch_pdb_on_exception, execute_command, flush_print as _print,
 )
 from dps.mpi_train import MPI_MasterContext
@@ -797,12 +797,15 @@ class TrainingLoop:
                     total_hooks_time += hooks_duration
                     time_per_hook = total_hooks_time / (local_step + 1)
 
-            except NanException as e:
+            except Exception as e:
+                if not cfg.max_n_fallbacks:
+                    raise e
+
                 traceback.print_exc()
 
                 n_fallbacks += 1
 
-                if not cfg.max_n_fallbacks or n_fallbacks > cfg.max_n_fallbacks:
+                if n_fallbacks > cfg.max_n_fallbacks:
                     _print(f"Fell back too many times ({n_fallbacks} times).")
                     raise e
 

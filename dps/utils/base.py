@@ -37,10 +37,6 @@ import clify
 import dps
 
 
-class NanException(Exception):
-    pass
-
-
 # colors from the Dark2 colorscheme on colorbrewer
 green = np.array([27, 158, 119]) / 255.
 orange = np.array([217, 95, 2]) / 255.

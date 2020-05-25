@@ -172,12 +172,16 @@ class PyTorchUpdater(Parameterized):
         self.train_iterator = data_manager.do_train()
 
     def update(self, batch_size):
+        print_time = self._n_updates % 100 == 0
+
         self.model.train()
 
         data = AttrDict(next(self.train_iterator))
 
         self.model.update_global_step(self._n_updates)
-        tensors, recorded_tensors, losses = self.model(data, self._n_updates)
+
+        with timed_block('forward', print_time):
+            tensors, recorded_tensors, losses = self.model(data, self._n_updates)
 
         # --- loss ---
 
@@ -189,7 +193,6 @@ class PyTorchUpdater(Parameterized):
             recorded_tensors['loss_' + name] = tensor
         recorded_tensors['loss'] = loss
 
-        print_time = self._n_updates % 100 == 0
         with timed_block('zero_grad', print_time):
             self.optimizer.zero_grad()
 
