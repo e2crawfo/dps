@@ -128,16 +128,12 @@ class PyTorchUpdater(Parameterized):
         self.env = env
         self.mpi_context = mpi_context
         self._n_experiences = 0
-        self._n_updates = 0
+        self.step = 0
         self._saver = None
 
     @property
     def n_experiences(self):
         return self._n_experiences
-
-    @property
-    def n_updates(self):
-        return self._n_updates
 
     def build_graph(self):
         print("Building model...")
@@ -171,17 +167,18 @@ class PyTorchUpdater(Parameterized):
         data_manager.build_graph()
         self.train_iterator = data_manager.do_train()
 
-    def update(self, batch_size):
-        print_time = self._n_updates % 100 == 0
+    def update(self, batch_size, step):
+        self.step = step
+        print_time = step % 100 == 0
 
         self.model.train()
 
         data = AttrDict(next(self.train_iterator))
 
-        self.model.update_global_step(self._n_updates)
+        self.model.update_global_step(step)
 
         with timed_block('forward', print_time):
-            tensors, recorded_tensors, losses = self.model(data, self._n_updates)
+            tensors, recorded_tensors, losses = self.model(data, step)
 
         # --- loss ---
 
@@ -219,7 +216,6 @@ class PyTorchUpdater(Parameterized):
             recorded_tensors.update(update_result)
 
         self._n_experiences += batch_size
-        self._n_updates += 1
 
         recorded_tensors.update(
             grad_norm_pure=pure_grad_norm,
@@ -238,7 +234,7 @@ class PyTorchUpdater(Parameterized):
     def _update(self, batch_size):
         pass
 
-    def evaluate(self, batch_size, mode="val"):
+    def evaluate(self, batch_size, step, mode="val"):
         assert mode in "val test".split()
 
         self.model.eval()
@@ -259,7 +255,7 @@ class PyTorchUpdater(Parameterized):
             data = AttrDict(data)
 
             with torch.no_grad():
-                tensors, recorded_tensors, losses = self.model.evaluate(data, self._n_updates)
+                tensors, recorded_tensors, losses = self.model.evaluate(data, step)
                 losses = AttrDict(losses)
 
                 loss = 0.0
@@ -314,14 +310,10 @@ class DummyUpdater(PyTorchUpdater):
     def n_experiences(self):
         return 0
 
-    @property
-    def n_updates(self):
-        return 0
-
     def build_graph(self):
         pass
 
-    def update(self, batch_size):
+    def update(self, batch_size, step):
         return dict()
 
     def evaluate(self, batch_size, mode):

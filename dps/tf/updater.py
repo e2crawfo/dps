@@ -20,16 +20,12 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
         self.env = env
         self.mpi_context = mpi_context
         self._n_experiences = 0
-        self._n_updates = 0
+        self.step = 0
         self._saver = None
 
     @property
     def n_experiences(self):
         return self._n_experiences
-
-    @property
-    def n_updates(self):
-        return self._n_updates
 
     def build_graph(self):
         # with tf.name_scope(self.scope or self.__class__.__name__) as scope:
@@ -51,13 +47,13 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
     def _build_graph(self):
         raise Exception("NotImplemented")
 
-    def update(self, batch_size):
+    def update(self, batch_size, step):
+        self.step = step
         update_result = self._update(batch_size)
 
         sess = tf.get_default_session()
         sess.run(self.inc_global_step_op)
         self._n_experiences += batch_size
-        self._n_updates += 1
 
         return update_result
 
@@ -65,7 +61,7 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
     def _update(self, batch_size):
         raise Exception("NotImplemented")
 
-    def evaluate(self, batch_size, mode="val"):
+    def evaluate(self, batch_size, step, mode="val"):
         assert mode in "val test".split()
         return self._evaluate(batch_size, mode)
 

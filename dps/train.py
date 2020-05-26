@@ -518,7 +518,7 @@ class TrainingLoop:
                             updater.restore(best_path)
 
                             try:
-                                test_record = updater.evaluate(cfg.batch_size, mode="test")
+                                test_record = updater.evaluate(cfg.batch_size, self.local_step, mode="test")
                             except Exception:
                                 _print("Encountered error file running final tests: ")
                                 traceback.print_exc()
@@ -557,7 +557,7 @@ class TrainingLoop:
                     for hook in cfg.hooks:
                         hook.end_stage(self, updater, self.stage_idx)
 
-                    self.data.end_stage(updater.n_updates)
+                    self.data.end_stage(self.local_step)
 
                     _print()
                     self.timestamp("Done stage {}".format(self.stage_idx))
@@ -608,13 +608,15 @@ class TrainingLoop:
 
         n_eval = 0
         if cfg.initial_step is not None and cfg.initial_step > 0:
-            local_step = cfg.initial_step
+            self.local_step = cfg.initial_step
         else:
-            local_step = 0
+            self.local_step = 0
 
         n_fallbacks = 0
 
         while True:
+            local_step = self.local_step
+            global_step = self.global_step
 
             # --- check whether to keep training ---
 
@@ -627,8 +629,6 @@ class TrainingLoop:
                 break
 
             # --- check which steps to run ---
-
-            global_step = self.global_step
 
             render_step = cfg.eval_step if cfg.render_step <= 0 else cfg.render_step
             display_step = cfg.eval_step if cfg.display_step <= 0 else cfg.display_step
@@ -688,7 +688,7 @@ class TrainingLoop:
                 if evaluate:
                     _print("Evaluating...")
                     eval_start_time = time.time()
-                    val_record = updater.evaluate(cfg.batch_size, mode="val")
+                    val_record = updater.evaluate(cfg.batch_size, local_step, mode="val")
                     eval_duration = time.time() - eval_start_time
                     _print("Done evaluating, took {} seconds.".format(eval_duration))
 
@@ -769,7 +769,7 @@ class TrainingLoop:
 
                     _old_n_experiences = updater.n_experiences
 
-                    update_record = updater.update(cfg.batch_size)
+                    update_record = updater.update(cfg.batch_size, local_step)
 
                     update_duration = time.time() - update_start_time
                     update_record["duration"] = update_duration
@@ -821,15 +821,15 @@ class TrainingLoop:
 
                 updater.restore(weight_path)
 
-                local_step += 1
+                self.local_step += 1
                 self.global_step += 1
-
-                if hasattr(updater, '_n_updates'):
-                    updater._n_updates += 1
 
                 continue
 
             # --------------- Store data -------------------
+
+            local_step = self.local_step
+            global_step = self.global_step
 
             records = defaultdict(dict)
             for mode, r in data_to_store:
@@ -928,7 +928,7 @@ class FrozenTrainingLoopData(ExperimentDirectory):
         return self.path_for('summaries/' + mode, is_dir=True)
 
     def get_data_path(self, mode, stage_idx, local_step):
-        local_path = 'data/{}/stage{}/localstep={}.csv'.format(mode, stage_idx, local_step)
+        local_path = f'data/{mode}/stage{stage_idx}/localstep={local_step}.csv'
         return self.path_for(local_path)
 
     def step_data(self, mode, stage_slice=None):
@@ -1253,96 +1253,3 @@ class Hook:
 
     def _print(self, s):
         print("{}: {}".format(self.__class__.__name__, s))
-
-
-class ScheduleHook(Hook):
-    def __init__(self, attr_name, query_name, initial_value=0.0, tolerance=0.05, base_configs=None):
-        self.attr_name = attr_name
-        self.query_name = query_name
-        self.initial_value = initial_value
-
-        if tolerance is None:
-            tolerance = np.inf
-        self.tolerance = tolerance
-
-        if isinstance(base_configs, dict):
-            base_configs = [base_configs]
-        self.base_configs = base_configs or [{}]
-
-        self.n_fragments_added = 0
-
-        super(ScheduleHook, self).__init__()
-
-    def _attrs(self):
-        return "attr_name query_name initial_value tolerance base_configs".split()
-
-    def _attr_value_for_fragment(self):
-        raise Exception("NotImplemented")
-
-    def start_stage(self, training_loop, updater, stage_idx):
-        if stage_idx == 0:
-            self.final_orig_stage = len(training_loop.curriculum) - 1
-
-    def end_stage(self, training_loop, updater, stage_idx):
-
-        if stage_idx >= self.final_orig_stage:
-            attr_value = self._attr_value_for_fragment(self.n_fragments_added)
-            new_stages = [{self.attr_name: attr_value, **bc} for bc in self.base_configs]
-
-            if stage_idx == self.final_orig_stage:
-                self.original_performance = training_loop.data.history[-1][self.query_name]
-                self._print("End of original stages, adding 1st curriculum fragment:\n{}".format(new_stages))
-                for i, ns in enumerate(new_stages):
-                    training_loop.edit_remaining_stage(i, ns)
-                self.n_fragments_added = 1
-
-            elif not training_loop.curriculum_remaining:
-                # Check whether performance achieved on most recent stage was near that of the first stage.
-                current_stage_performance = training_loop.data.history[-1][self.query_name]
-                threshold = (1 + self.tolerance) * self.original_performance
-
-                self._print("End of {}-th curriculum fragment.".format(self.n_fragments_added))
-                self._print("Original <{}>: {}".format(self.query_name, self.original_performance))
-                self._print("<{}> for fragment {}: {}".format(
-                    self.query_name, self.n_fragments_added, current_stage_performance))
-                self._print("<{}> threshold: {}".format(self.query_name, threshold))
-
-                if current_stage_performance <= threshold:
-                    self.n_fragments_added += 1
-                    self._print("Threshold reached, adding {}-th "
-                                "curriculum fragment:\n{}".format(self.n_fragments_added, new_stages))
-
-                    for i, ns in enumerate(new_stages):
-                        training_loop.edit_remaining_stage(i, ns)
-
-                else:
-                    self._print("Threshold not reached, ending training run")
-            else:
-                self._print("In the middle of the {}-th curriculum fragment.".format(self.n_fragments_added))
-        else:
-            self._print("Still running initial stages.")
-
-
-class GeometricScheduleHook(ScheduleHook):
-    def __init__(self, *args, multiplier=2.0, **kwargs):
-        super(GeometricScheduleHook, self).__init__(*args, **kwargs)
-        self.multiplier = multiplier
-
-    def _attrs(self):
-        return super(GeometricScheduleHook, self)._attrs() + ["multiplier"]
-
-    def _attr_value_for_fragment(self, fragment_idx):
-        return self.initial_value * (self.multiplier ** fragment_idx)
-
-
-class PolynomialScheduleHook(ScheduleHook):
-    def __init__(self, *args, scale=10.0, power=1.0, **kwargs):
-        super(PolynomialScheduleHook, self).__init__(*args, **kwargs)
-        self.scale = scale
-        self.power = power
-
-    def _attrs(self):
-        return super(PolynomialScheduleHook, self)._attrs() + ["scale", "power"]
-
-    def _attr_value_for_fragment(self, fragment_idx):
-        return self.initial_value + self.scale * (fragment_idx ** self.power)

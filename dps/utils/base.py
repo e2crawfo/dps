@@ -204,8 +204,7 @@ class RenderHook:
             ax.imshow(frame, vmin=vmin, vmax=vmax, **kwargs)
 
     def path_for(self, name, updater, ext="pdf"):
-        local_step = (
-            np.inf if dps.cfg.overwrite_plots else "{:0>10}".format(updater.n_updates))
+        local_step = np.inf if dps.cfg.overwrite_plots else "{:0>10}".format(updater.step)
 
         if ext is None:
             basename = 'stage={:0>4}_local_step={}'.format(updater.stage_idx, local_step)
