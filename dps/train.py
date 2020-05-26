@@ -243,7 +243,7 @@ class TrainingLoop:
 
         if cfg.start_from:
             initial_stage, initial_step = cfg.start_from.split(',')
-            cfg.initial_stage = int(initial_stage)
+            cfg.initial_stage = initial_stage = int(initial_stage)
             initial_step = int(initial_step)
             if initial_step != 0:
                 self.curriculum[initial_stage]['initial_step'] = initial_step
@@ -828,9 +828,6 @@ class TrainingLoop:
 
             # --------------- Store data -------------------
 
-            local_step = self.local_step
-            global_step = self.global_step
-
             records = defaultdict(dict)
             for mode, r in data_to_store:
                 r = Config(r).flatten()
@@ -898,7 +895,7 @@ class TrainingLoop:
                 )
                 execute_command(command, output="loud", robust=True)
 
-            local_step += 1
+            self.local_step += 1
             self.global_step += 1
 
             # If `do_train` is False, we do no training and evaluate
