@@ -453,6 +453,7 @@ class TrainingLoop:
                 except KeyboardInterrupt:
                     finalize = False
                     reason = "User interrupt"
+                    raise
 
                 except NotImplementedError as e:
                     # There is a bug in pdb_postmortem that prevents instances of `NotImplementedError`
@@ -618,7 +619,8 @@ class TrainingLoop:
         time_per_example = 0.0
         time_per_update = 0.0
 
-        n_eval = 0
+        n_updates = 0
+        n_evals = 0
         if cfg.initial_step is not None and cfg.initial_step > 0:
             self.local_step = cfg.initial_step
         else:
@@ -706,9 +708,9 @@ class TrainingLoop:
 
                     val_record["duration"] = eval_duration
 
-                    n_eval += 1
+                    n_evals += 1
                     total_eval_time += eval_duration
-                    time_per_eval = total_eval_time / n_eval
+                    time_per_eval = total_eval_time / n_evals
 
                     val_record = Config(val_record)
 
@@ -788,6 +790,7 @@ class TrainingLoop:
 
                     if local_step % 100 == 0:
                         _print("Done update step, took {} seconds.".format(update_duration))
+                        _print("Average time per update: {} seconds".format(time_per_update))
 
                         start = time.time()
                         update_record["memory_physical_mb"] = memory_usage(physical=True)
@@ -799,15 +802,17 @@ class TrainingLoop:
                         # Only store train data as often as we evaluate, otherwise it's just too much data
                         data_to_store.append(('train', update_record))
 
+                    n_updates += 1
+
                     n_experiences_delta = updater.n_experiences - _old_n_experiences
                     self.n_global_experiences += n_experiences_delta
 
                     total_train_time += update_duration
                     time_per_example = total_train_time / updater.n_experiences
-                    time_per_update = total_train_time / (local_step + 1)
+                    time_per_update = total_train_time / n_updates
 
                     total_hooks_time += hooks_duration
-                    time_per_hook = total_hooks_time / (local_step + 1)
+                    time_per_hook = total_hooks_time / n_updates
 
             except Exception as e:
                 if not cfg.max_n_fallbacks:
