@@ -74,6 +74,7 @@ DEFAULT_CONFIG = Config(
     copy_dataset_to="",
     warning_mode='once',
     start_tensorboard=0,
+    in_parallel_session=False,
 )
 
 DEFAULT_CONFIG.update(load_system_config())

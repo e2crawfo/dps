@@ -645,8 +645,8 @@ def submit_job(
     entry_script = """#!/bin/bash
 echo "Building venv..."
 echo "Command: "
-echo "srun -vvv --nodes=$SLURM_JOB_NUM_NODES --ntasks=$SLURM_JOB_NUM_NODES {installation_script_path}"
-srun -vvv --nodes="$SLURM_JOB_NUM_NODES" --ntasks=$SLURM_JOB_NUM_NODES {installation_script_path}
+echo "srun -v --nodes=$SLURM_JOB_NUM_NODES --ntasks=$SLURM_JOB_NUM_NODES {installation_script_path}"
+srun -v --nodes="$SLURM_JOB_NUM_NODES" --ntasks=$SLURM_JOB_NUM_NODES {installation_script_path}
 
 echo "Sourcing venv..."
 source "$SLURM_TMPDIR/env/bin/activate"

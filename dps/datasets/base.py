@@ -485,7 +485,13 @@ class Dataset(Parameterized):
             self.visualize(16)
 
         if cfg.copy_dataset_to:
-            dest = os.path.join(cfg.copy_dataset_to, "{}.{}".format(os.getpid(), os.path.basename(self.filename)))
+            basename = os.path.basename(self.filename)
+
+            if cfg.get('in_parallel_session', False):
+                dest = os.path.join(cfg.copy_dataset_to, "{}.{}".format(os.getpid(), basename))
+            else:
+                dest = os.path.join(cfg.copy_dataset_to, basename)
+
             print("Copying dataset to {}...".format(dest))
             start = time.time()
             shutil.copy(self.filename, dest)

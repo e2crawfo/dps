@@ -595,8 +595,10 @@ class TrainingLoop:
         self.stopping_criteria_name = stopping_criteria[0]
         if "max" in stopping_criteria[1]:
             self.maximize_sc = True
+            stopping_criteria_value = -np.inf
         elif "min" in stopping_criteria[1]:
             self.maximize_sc = False
+            stopping_criteria_value = np.inf
         else:
             raise Exception("Ambiguous stopping criteria specification: {}".format(stopping_criteria[1]))
 
@@ -713,7 +715,7 @@ class TrainingLoop:
                     data_to_store.append(("val", val_record))
 
                     if self.stopping_criteria_name in val_record:
-                        stopping_criteria = val_record[self.stopping_criteria_name]
+                        stopping_criteria_value = val_record[self.stopping_criteria_name]
                     else:
                         stopping_criteria_names = [
                             k for k in val_record.flatten().keys() if k.startswith(self.stopping_criteria_name)]
@@ -721,16 +723,16 @@ class TrainingLoop:
                         if len(stopping_criteria_names) == 0:
                             _print("Stopping criteria {} not in record returned "
                                    "by updater, using 0.0.".format(self.stopping_criteria_name))
-                            stopping_criteria = 0.0
+                            stopping_criteria_value = 0.0
 
                         elif len(stopping_criteria_names) > 1:
                             _print("stopping_criteria_name `{}` picks out multiple values: {}, using "
                                    "0.0".format(self.stopping_criteria_name, stopping_criteria_names))
-                            stopping_criteria = 0.0
+                            stopping_criteria_value = 0.0
                         else:
-                            stopping_criteria = val_record[stopping_criteria_names[0]]
+                            stopping_criteria_value = val_record[stopping_criteria_names[0]]
 
-                    new_best, stop = early_stop.check(stopping_criteria, local_step, val_record)
+                    new_best, stop = early_stop.check(stopping_criteria_value, local_step, val_record)
 
                     if new_best:
                         _print("Storing new best on step (l={}, g={}), "
@@ -738,7 +740,7 @@ class TrainingLoop:
                                "with stopping criteria ({}) of {}.".format(
                                    local_step, global_step,
                                    updater.n_experiences, self.n_global_experiences,
-                                   self.stopping_criteria_name, stopping_criteria))
+                                   self.stopping_criteria_name, stopping_criteria_value))
 
                         best_path = self.data.path_for('weights/best_stage_{}'.format(stage_idx))
                         best_path = cfg.get('save_path', best_path)
@@ -761,9 +763,9 @@ class TrainingLoop:
                     threshold = cfg.get('threshold', None)
                     if threshold is not None:
                         if self.maximize_sc:
-                            threshold_reached = stopping_criteria >= threshold
+                            threshold_reached = stopping_criteria_value >= threshold
                         else:
-                            threshold_reached = stopping_criteria <= threshold
+                            threshold_reached = stopping_criteria_value <= threshold
 
                         if threshold_reached:
                             reason = "Stopping criteria threshold reached"
@@ -881,7 +883,7 @@ class TrainingLoop:
                        "with stopping criteria ({}) of {}.".format(
                            local_step, global_step,
                            updater.n_experiences, self.n_global_experiences,
-                           self.stopping_criteria_name, stopping_criteria))
+                           self.stopping_criteria_name, stopping_criteria_value))
 
                 if cfg.overwrite_weights:
                     weight_path = self.data.path_for(

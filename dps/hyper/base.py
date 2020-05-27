@@ -410,7 +410,7 @@ def sample_configs(distributions, n_repeats, n_samples=None):
     return configs
 
 
-class _RunTrainingLoop(object):
+class _RunTrainingLoop:
     """ Entry point for each process. """
 
     def __init__(self, base_config):
@@ -442,6 +442,7 @@ class _RunTrainingLoop(object):
             show_plots=False,
             update_latest=False,
             git_record_mode='none',
+            in_parallel_session=True,
         )
 
         with config:
