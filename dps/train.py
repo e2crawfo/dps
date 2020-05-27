@@ -135,6 +135,7 @@ class TrainingLoop:
     def timestamp(self, message):
         if message:
             message = message + " "
+
         _print("{}({}, {:.2f}s elapsed, {:.2f}s remaining)".format(
             message,
             datetime.datetime.now(),
@@ -447,124 +448,133 @@ class TrainingLoop:
 
                     threshold_reached, reason = self._run_stage(self.stage_idx, updater)
 
+                    finalize = True
+
                 except KeyboardInterrupt:
+                    finalize = False
                     reason = "User interrupt"
 
                 except NotImplementedError as e:
                     # There is a bug in pdb_postmortem that prevents instances of `NotImplementedError`
                     # from being handled properly, so replace it with an instance of `Exception`.
                     if cfg.robust:
+                        finalize = True
                         traceback.print_exc()
                         reason = "Exception occurred ({})".format(repr(e))
                     else:
+                        finalize = False
                         raise Exception("NotImplemented") from e
 
                 except Exception as e:
                     reason = "Exception occurred ({})".format(repr(e))
                     if cfg.robust:
+                        finalize = True
                         traceback.print_exc()
                     else:
+                        finalize = False
                         raise
 
                 except Alarm:
+                    finalize = True
                     reason = "Time limit exceeded"
                     raise
 
                 finally:
-                    phys_memory_after = memory_usage(physical=True)
-                    gpu_memory_after = gpu_memory_usage()
+                    if finalize:
+                        phys_memory_after = memory_usage(physical=True)
+                        gpu_memory_after = gpu_memory_usage()
 
-                    self.data.record_values_for_stage(
-                        stage_duration=time.time()-start,
-                        phys_memory_before_mb=phys_memory_before,
-                        phys_memory_delta_mb=phys_memory_after - phys_memory_before,
-                        gpu_memory_before_mb=gpu_memory_before,
-                        gpu_memory_delta_mb=gpu_memory_after - gpu_memory_before
-                    )
+                        self.data.record_values_for_stage(
+                            stage_duration=time.time()-start,
+                            phys_memory_before_mb=phys_memory_before,
+                            phys_memory_delta_mb=phys_memory_after - phys_memory_before,
+                            gpu_memory_before_mb=gpu_memory_before,
+                            gpu_memory_delta_mb=gpu_memory_after - gpu_memory_before
+                        )
 
-                    self.data.record_values_for_stage(reason=reason)
+                        self.data.record_values_for_stage(reason=reason)
 
-                    _print("\n" + "-" * 10 + " Optimization complete " + "-" * 10)
-                    _print("\nReason: {}.\n".format(reason))
+                        _print("\n" + "-" * 10 + " Optimization complete " + "-" * 10)
+                        _print("\nReason: {}.\n".format(reason))
 
-                    _print("Storing final weights...")
-                    weight_start = time.time()
-                    final_path = self.data.path_for('weights/final_stage_{}'.format(self.stage_idx))
-                    final_path = cfg.get('save_path', final_path)
-                    final_path = updater.save(final_path)
-                    _print("Done saving weights, took {} seconds".format(time.time() - weight_start))
+                        _print("Storing final weights...")
+                        weight_start = time.time()
+                        final_path = self.data.path_for('weights/final_stage_{}'.format(self.stage_idx))
+                        final_path = cfg.get('save_path', final_path)
+                        final_path = updater.save(final_path)
+                        _print("Done saving weights, took {} seconds".format(time.time() - weight_start))
 
-                    self.data.record_values_for_stage(final_path=final_path)
+                        self.data.record_values_for_stage(final_path=final_path)
 
-                    # --------------- Maybe test and render with best hypothesis -------------------
+                        # --------------- Maybe test and render with best hypothesis -------------------
 
-                    do_final_testing = (
-                        "Exception occurred" not in reason
-                        and reason != "Time limit exceeded"
-                        and 'best_path' in self.data.current_stage_record)
+                        do_final_testing = (
+                            "Exception occurred" not in reason
+                            and reason != "Time limit exceeded"
+                            and 'best_path' in self.data.current_stage_record)
 
-                    if do_final_testing:
-                        try:
-                            _print("\n" + "-" * 10 + " Final testing/rendering " + "-" * 10)
-
-                            _print("Best hypothesis for this stage was found on "
-                                   "step (l: {best_local_step}, g: {best_global_step}) "
-                                   "with stopping criteria ({sc_name}) of {best_stopping_criteria}.".format(
-                                       sc_name=self.stopping_criteria_name, **self.data.current_stage_record))
-
-                            best_path = self.data.current_stage_record['best_path']
-                            _print("Loading best hypothesis for this stage "
-                                   "from file {}...".format(best_path))
-                            updater.restore(best_path)
-
+                        if do_final_testing:
                             try:
-                                test_record = updater.evaluate(cfg.batch_size, self.local_step, mode="test")
-                            except Exception:
-                                _print("Encountered error file running final tests: ")
+                                _print("\n" + "-" * 10 + " Final testing/rendering " + "-" * 10)
+
+                                _print("Best hypothesis for this stage was found on "
+                                       "step (l: {best_local_step}, g: {best_global_step}) "
+                                       "with stopping criteria ({sc_name}) of {best_stopping_criteria}.".format(
+                                           sc_name=self.stopping_criteria_name, **self.data.current_stage_record))
+
+                                best_path = self.data.current_stage_record['best_path']
+                                _print("Loading best hypothesis for this stage "
+                                       "from file {}...".format(best_path))
+                                updater.restore(best_path)
+
+                                try:
+                                    test_record = updater.evaluate(cfg.batch_size, self.local_step, mode="test")
+                                except Exception:
+                                    _print("Encountered error file running final tests: ")
+                                    traceback.print_exc()
+
+                                    test_record = {}
+
+                                for hook in cfg.hooks:
+                                    if hook.final:
+                                        hook_record = hook.final_step(self, updater)
+
+                                        if hook_record:
+                                            assert len(hook_record) == 1
+                                            for k, d in dict(hook_record).items():
+                                                test_record.update(d)
+
+                                self.data.record_values_for_stage(
+                                    **{'test_' + k: v for k, v in test_record.items()})
+
+                                if cfg.render_final and cfg.render_hook is not None:
+                                    _print("Rendering...")
+                                    cfg.render_hook(updater)
+                                    _print("Done rendering.")
+
+                                self.data.summarize()
+
+                            except BaseException:
+                                _print("Exception occurred while performing final testing/rendering: ")
                                 traceback.print_exc()
 
-                                test_record = {}
+                        else:
+                            _print("\n" + "-" * 10 + " Skipping final testing/rendering " + "-" * 10)
 
-                            for hook in cfg.hooks:
-                                if hook.final:
-                                    hook_record = hook.final_step(self, updater)
+                        # --------------- Finish up the stage -------------------
 
-                                    if hook_record:
-                                        assert len(hook_record) == 1
-                                        for k, d in dict(hook_record).items():
-                                            test_record.update(d)
+                        _print("\n" + "-" * 10 + " Running end-of-stage hooks " + "-" * 10 + "\n")
+                        for hook in cfg.hooks:
+                            hook.end_stage(self, updater, self.stage_idx)
 
-                            self.data.record_values_for_stage(
-                                **{'test_' + k: v for k, v in test_record.items()})
+                        self.data.end_stage(self.local_step)
 
-                            if cfg.render_final and cfg.render_hook is not None:
-                                _print("Rendering...")
-                                cfg.render_hook(updater)
-                                _print("Done rendering.")
+                        _print()
+                        self.timestamp("Done stage {}".format(self.stage_idx))
+                        _print("=" * 50)
 
-                            self.data.summarize()
-
-                        except BaseException:
-                            _print("Exception occurred while performing final testing/rendering: ")
-                            traceback.print_exc()
-
-                    else:
-                        _print("\n" + "-" * 10 + " Skipping final testing/rendering " + "-" * 10)
-
-                    # --------------- Finish up the stage -------------------
-
-                    _print("\n" + "-" * 10 + " Running end-of-stage hooks " + "-" * 10 + "\n")
-                    for hook in cfg.hooks:
-                        hook.end_stage(self, updater, self.stage_idx)
-
-                    self.data.end_stage(self.local_step)
-
-                    _print()
-                    self.timestamp("Done stage {}".format(self.stage_idx))
-                    _print("=" * 50)
-
-                    self.stage_idx += 1
-                    self.curriculum_complete.append(stage_config)
+                        self.stage_idx += 1
+                        self.curriculum_complete.append(stage_config)
 
                 if not (threshold_reached or cfg.power_through):
                     _print("Failed to reach stopping criteria threshold on stage {} "

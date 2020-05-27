@@ -14,7 +14,7 @@ import pprint
 
 from dps import cfg
 from dps.utils import (
-    Param, Parameterized, get_param_hash, NumpySeed, animate,
+    Param, Parameterized, get_param_hash, NumpySeed, animate, gen_seed,
     resize_image, atleast_nd, pformat, map_structure, HashableDist
 )
 from dps.datasets.load import load_emnist, load_backgrounds, background_names, hard_background_names
@@ -417,7 +417,14 @@ class Dataset(Parameterized):
             else:
                 self._writer = tf.python_io.TFRecordWriter(self.filename)
                 try:
-                    with NumpySeed(self.seed):
+                    if self.seed is None or self.seed < 0:
+                        seed = gen_seed()
+                        print(f"Generating dataset from seed {seed} (randomly chosen).")
+                    else:
+                        seed = self.seed
+                        print(f"Generating dataset from seed {seed} (specified).")
+
+                    with NumpySeed(seed):
                         self.start_time = time.time()
                         self.n_examples_written = 0
 
@@ -462,7 +469,10 @@ class Dataset(Parameterized):
 
             target_key_set = set(self._artifact_names)
             actual_key_set = set(artifacts.keys())
-            assert target_key_set == actual_key_set, "{} vs {}".format(target_key_set, actual_key_set)
+
+            if target_key_set != actual_key_set:
+                print(f"Warning: while loading dataset, actual key set for artifacts does not match target key set: "
+                      f"actual-target {actual_key_set-target_key_set}, target-actual {target_key_set-actual_key_set}")
 
         for k, v in artifacts.items():
             setattr(self, k, v)
