@@ -438,6 +438,7 @@ class TrainingLoop:
 
                 threshold_reached = False
                 reason = None
+                ran_ok = False
 
                 try:
                     # --------------- Run stage -------------------
@@ -448,10 +449,9 @@ class TrainingLoop:
 
                     threshold_reached, reason = self._run_stage(self.stage_idx, updater)
 
-                    finalize = True
+                    ran_ok = True
 
                 except KeyboardInterrupt:
-                    finalize = False
                     reason = "User interrupt"
                     raise
 
@@ -459,29 +459,25 @@ class TrainingLoop:
                     # There is a bug in pdb_postmortem that prevents instances of `NotImplementedError`
                     # from being handled properly, so replace it with an instance of `Exception`.
                     if cfg.robust:
-                        finalize = True
                         traceback.print_exc()
                         reason = "Exception occurred ({})".format(repr(e))
                     else:
-                        finalize = False
                         raise Exception("NotImplemented") from e
 
                 except Exception as e:
                     reason = "Exception occurred ({})".format(repr(e))
                     if cfg.robust:
-                        finalize = True
                         traceback.print_exc()
                     else:
-                        finalize = False
                         raise
 
                 except Alarm:
-                    finalize = True
                     reason = "Time limit exceeded"
                     raise
 
                 finally:
-                    if finalize:
+
+                    try:
                         phys_memory_after = memory_usage(physical=True)
                         gpu_memory_after = gpu_memory_usage()
 
@@ -576,6 +572,15 @@ class TrainingLoop:
 
                         self.stage_idx += 1
                         self.curriculum_complete.append(stage_config)
+
+                    except Exception:
+                        # If there is already an exception, we want to post-portem as the original exception,
+                        # not the one caused by finalization.
+                        if ran_ok:
+                            raise
+                        else:
+                            _print("Ignoring exception triggered while finalizing:")
+                            traceback.print_exc()
 
                 if not (threshold_reached or cfg.power_through):
                     _print("Failed to reach stopping criteria threshold on stage {} "
