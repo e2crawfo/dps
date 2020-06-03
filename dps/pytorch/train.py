@@ -9,7 +9,7 @@ from dps import cfg
 from dps.datasets.base import Dataset
 from dps.train import TrainingLoop, TrainingLoopData
 from dps.utils import AttrDict, Parameterized, Param, flush_print as _print, gen_seed, map_structure, timed_block
-from dps.utils.pytorch import walk_variable_scopes, to_np
+from dps.utils.pytorch import walk_variable_scopes, to_np, describe_structure
 
 
 pytorch_device = None
@@ -70,38 +70,91 @@ class PyTorchTrainingLoop(TrainingLoop):
     def framework_load_weights(self):
         """
         Adapted from the tensorflow version, roughly treats a pytorch module as equivalant
-        to a tensorflow variable scope. Currently, similar to the tensorflow version, this
-        assumes that that all loaded modules lie on the same path in the on disk file as
-        they do in the current module.
+        to a tensorflow variable scope.
+
+        Most general form a dictionary entry is: {"<dest_module_path>": "<source_module_path>:<file_path>"}
+        Maps tensors located at module path `source_module_path` in file `file_path` to module path `dest_module_path`
+        in the current model.
 
         """
-        for module_path, path in self.get_load_paths():
-            _print("Loading submodule \"{}\" from {}.".format(module_path, path))
+        for dest_module_path, path in self.get_load_paths():
+            _print("Loading submodule \"{}\" from {}.".format(dest_module_path, path))
+
+            if ":" in path:
+                source_module_path, source_path = path.split(':')
+            else:
+                source_path = path
+                source_module_path = dest_module_path
 
             start = time.time()
 
             device = get_pytorch_device()
 
-            loaded_state_dict = torch.load(path, map_location=device)['model']
+            loaded_state_dict = torch.load(source_path, map_location=device)['model']
 
-            if module_path:
-                module_path_with_sep = module_path + '.'
+            if source_module_path:
+                source_module_path_with_sep = source_module_path + '.'
+
                 loaded_state_dict = type(loaded_state_dict)(
-                    {k: v for k, v in loaded_state_dict.items() if k.startswith(module_path_with_sep)}
+                    {k: v for k, v in loaded_state_dict.items() if k.startswith(source_module_path_with_sep)}
                 )
 
                 assert loaded_state_dict, (
-                    "File contains no tensors with prefix {} (file: {})".format(module_path_with_sep, path)
+                    f"File contains no tensors with prefix `{source_module_path_with_sep}` (file: {source_path})"
                 )
+
+            if dest_module_path != source_module_path:
+                # Rename variables from the loaded state dict by replacing `source_module_path` with `dest_module_path`.
+
+                _source_module_path = source_module_path + '.' if source_module_path else source_module_path
+                _dest_module_path = dest_module_path + '.' if dest_module_path else dest_module_path
+
+                loaded_state_dict = {
+                    k.replace(_source_module_path, _dest_module_path, 1): v
+                    for k, v in loaded_state_dict.items()
+                }
 
             module = self.updater.model
 
             state_dict = module.state_dict()
+
+            intersection = set(state_dict.keys()) & set(loaded_state_dict.keys())
+
+            if not intersection:
+                raise Exception(
+                    f"Loading variables with spec ({dest_module_path}, {path}) "
+                    f"would have no effect (no variables found)."
+                )
+            loaded_state_dict = {k: loaded_state_dict[k] for k in intersection}
+            _print("Loading variables:")
+            describe_structure(loaded_state_dict)
+
             state_dict.update(loaded_state_dict)
 
-            module.load_state_dict(state_dict, strict=False)
+            module.load_state_dict(state_dict, strict=True)
 
-            _print("Done loading weights for module {}, took {} seconds.".format(module_path, time.time() - start))
+            _print("Done loading weights for module {}, took {} seconds.".format(dest_module_path, time.time() - start))
+
+    def get_load_paths(self):
+
+        load_path = cfg.load_path
+        _print("\nMaybe loading weights, load_path={} ...".format(load_path))
+
+        if load_path:
+            if isinstance(load_path, str) or isinstance(load_path, int):
+                load_path = {"": load_path}
+
+            load_path = dict(load_path)
+
+            # Sort in increasing order, so that it if one variable scope lies within another scope,
+            # the outer scope gets loaded before the inner scope, rather than having the outer scope
+            # wipe out the inner scope.
+            items = sorted(load_path.items())
+            return items
+
+        else:
+            _print("`load_path` is null, using a fresh set of weights.")
+            return []
 
 
 def grad_norm(parameters, norm_type=2):
@@ -169,7 +222,6 @@ class PyTorchUpdater(Parameterized):
         self.train_iterator = data_manager.do_train()
 
     def update(self, batch_size, step):
-        self.step = step
         print_time = step % 100 == 0
 
         self.model.train()
