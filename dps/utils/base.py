@@ -37,7 +37,7 @@ import clify
 import dps
 
 
-# colors from the Dark2 colorscheme on colorbrewer
+# colors from the Dark2 colorscheme from colorbrewer
 green = np.array([27, 158, 119]) / 255.
 orange = np.array([217, 95, 2]) / 255.
 blue = np.array([117, 112, 179]) / 255.
@@ -49,7 +49,10 @@ def describe_tensor(tensor):
     print(df.describe()[0])
 
 
-def describe_structure(tensors):
+def describe_structure(tensors, floatfmt=None):
+    if floatfmt is None:
+        floatfmt = ".3g"
+
     print()
     tensors = AttrDict(tensors).flatten()
 
@@ -64,7 +67,7 @@ def describe_structure(tensors):
         record = dict(key=k, shape=tuple(t.shape), **desc, n_nan=n_nan, n_inf=n_inf)
         table.append(record)
 
-    print(tabulate(table, headers="keys"))
+    print(tabulate(table, headers="keys", floatfmt=floatfmt))
     print()
 
 
@@ -606,10 +609,10 @@ def animate(
         for j in range(n_image_sets):
             axes[0, j].set_title(str(labels[j]))
 
-    for i in range(B):
-        for ax in axes[i]:
-            set_axis_off(ax)
+    for ax in axes.flatten():
+        set_axis_off(ax)
 
+    for i in range(B):
         for j in range(n_image_sets):
             ax = axes[i, j]
 
@@ -2601,6 +2604,17 @@ def restart_tensorboard(logdir, port=6006, reload_interval=120):
 
 
 def map_structure(func, *args, is_leaf):
+    """ Apply a function `func` to every element of a hierarchical data structure composed of
+        dicts, lists and tuples. Multiple data structures can also be passed in, in which case they must all have the
+        same structure (same keys for dicts, same lengths for lists and tuples). When multiple structures are passed in,
+        then objects at the same "location" in the different data structures will be passed into `func` together; hence
+        `func` must take number of arguments equal to len(args). Function `is_leaf` determines, whether a given input
+        counts as a leaf element, in which case recursive decent halts and `func` is applied to that element.
+        leaf-ness is checked only by looking at the values in the first data structure.
+
+        Returned value has the same structure as the passed-in data structures.
+
+    """
     if is_leaf(args[0]):
         return func(*args)
     else:

@@ -670,6 +670,7 @@ class TrainingLoop:
             data_to_store = []
 
             try:
+                updater.step = local_step
 
                 # --------------- Run hooks -------------------
 
@@ -790,8 +791,20 @@ class TrainingLoop:
 
                     update_record = updater.update(cfg.batch_size, local_step)
 
+                    n_updates += 1
+
                     update_duration = time.time() - update_start_time
                     update_record["duration"] = update_duration
+
+                    n_experiences_delta = updater.n_experiences - _old_n_experiences
+                    self.n_global_experiences += n_experiences_delta
+
+                    total_train_time += update_duration
+                    time_per_example = total_train_time / updater.n_experiences
+                    time_per_update = total_train_time / n_updates
+
+                    total_hooks_time += hooks_duration
+                    time_per_hook = total_hooks_time / n_updates
 
                     if local_step % 100 == 0:
                         _print("Done update step, took {} seconds.".format(update_duration))
@@ -806,18 +819,6 @@ class TrainingLoop:
                     if evaluate:
                         # Only store train data as often as we evaluate, otherwise it's just too much data
                         data_to_store.append(('train', update_record))
-
-                    n_updates += 1
-
-                    n_experiences_delta = updater.n_experiences - _old_n_experiences
-                    self.n_global_experiences += n_experiences_delta
-
-                    total_train_time += update_duration
-                    time_per_example = total_train_time / updater.n_experiences
-                    time_per_update = total_train_time / n_updates
-
-                    total_hooks_time += hooks_duration
-                    time_per_hook = total_hooks_time / n_updates
 
             except Exception as e:
                 if not cfg.max_n_fallbacks:

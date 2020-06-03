@@ -48,7 +48,6 @@ class Updater(with_metaclass(abc.ABCMeta, Parameterized)):
         raise Exception("NotImplemented")
 
     def update(self, batch_size, step):
-        self.step = step
         update_result = self._update(batch_size)
 
         sess = tf.get_default_session()

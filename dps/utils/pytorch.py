@@ -39,12 +39,12 @@ def describe_tensor(tensor):
     _describe_tensor(tensor)
 
 
-def describe_structure(structure):
+def describe_structure(structure, floatfmt=None):
     structure = map_structure(
         lambda t: to_np(t) if isinstance(t, (torch.Tensor, np.ndarray)) else t,
         structure, is_leaf=lambda t: not isinstance(t, dict)
     )
-    _describe_structure(structure)
+    _describe_structure(structure, floatfmt=floatfmt)
 
 
 def repeat_along_axis(a, dim, n_repeats):
@@ -226,7 +226,7 @@ def walk_variable_scopes(model, max_depth=None):
 
 
 def pad_and_concatenate(tensors, axis=0):
-    """ Pad all arrays so that they have the same shape for all axiss other than the concatentation axis,
+    """ Pad all arrays so that they have the same shape for all axes other than the concatentation axis,
         and then concatenate. Assumes tensors is a list of numpy arrays.
     """
     shapes = np.array([t.shape for t in tensors])
@@ -1166,6 +1166,11 @@ class UNET(ParameterizedModule):
         return padded
 
 
+def torch_exp(x, bounds=(-10., 10.)):
+    x = torch.clamp(x, min=bounds[0], max=bounds[1])
+    return torch.exp(x)
+
+
 class SpatialAttentionLayer(ParameterizedModule):
     """ For the input we are given data and an array of locations. For the output we are just given an array of locations.
 
@@ -1195,24 +1200,19 @@ class SpatialAttentionLayer(ParameterizedModule):
 
     def _forward(self, reference_locs, reference_features, query_locs, query_features, reference_mask=None):
         """
-        reference_locs: (B, loc_dim, n_ref)
-        reference_features: (B, n_hidden, n_ref)
-        query_locs: (B, loc_dim, n_query)
-        query_features: (B, n_hidden, n_query) or None
+        reference_locs: (B, n_ref, loc_dim)
+        reference_features: (B, n_ref, n_hidden)
+        query_locs: (B, n_query, loc_dim)
+        query_features: (B, n_query, n_hidden) or None
 
         reference_mask: (B, n_ref) (optional)
 
         Returns
         -------
-        output: (B, n_hidden, n_query)
-        attention_weights: (B, n_ref, n_query)
+        output: (B, n_query, n_hidden)
+        attention_weights: (B, n_query, n_ref)
 
         """
-        reference_locs = reference_locs.permute(0, 2, 1)
-        reference_features = reference_features.permute(0, 2, 1)
-        query_locs = query_locs.permute(0, 2, 1)
-        query_features = query_features.permute(0, 2, 1)
-
         b, n_ref, _ = reference_features.shape
 
         # --- process queries ---
@@ -1225,7 +1225,9 @@ class SpatialAttentionLayer(ParameterizedModule):
         # --- for each query, get a set of attention weights over the references, based on spatial proximity ---
 
         adjusted_locs = reference_locs[:, None, :, :] - query_locs[:, :, None, :]  # (B, n_query, n_ref, loc_dim)
-        attention = torch.exp(-0.5 * ((adjusted_locs / self.kernel_std)**2).sum(dim=3))
+
+        attention = torch_exp(-0.5 * ((adjusted_locs / self.kernel_std)**2).sum(dim=3))
+        attention = torch.where(torch.isnan(attention), torch.zeros_like(attention), attention)
 
         # TODO: Uncomment this to have the attention weights be normalized over space.
         # attention_weights = (
@@ -1249,7 +1251,7 @@ class SpatialAttentionLayer(ParameterizedModule):
         if self.layer_norm:
             final_result = self.layer_norm_0(final_result)
 
-        return final_result.permute(0, 2, 1), attention.permute(0, 2, 1)
+        return final_result, attention
 
 
 class SpatialSelfAttentionLayer(ParameterizedModule):
@@ -1273,20 +1275,17 @@ class SpatialSelfAttentionLayer(ParameterizedModule):
 
     def _forward(self, locs, features, reference_mask=None):
         """
-        locs: (B, loc_dim, n_objects)
-        features: (B, n_hidden, n_objects) or None
+        locs: (B, n_objects, loc_dim)
+        features: (B, n_objects, n_hidden) or None
 
         reference_mask: (B, n_ref) (optional)
 
         Returns
         -------
-        output: (B, n_hidden, n_objects)
-        attention_weights: (B, n_ref, n_objects)
+        output: (B, n_objects, n_hidden)
+        attention_weights: (B, n_objects, n_ref)
 
         """
-        locs = locs.permute(0, 2, 1)
-        features = features.permute(0, 2, 1)
-
         b, n_objects, _ = features.shape
 
         # --- process queries ---
@@ -1296,7 +1295,7 @@ class SpatialSelfAttentionLayer(ParameterizedModule):
         # --- for each object, get a set of attention weights over the references, based on spatial proximity ---
 
         adjusted_locs = locs[:, None, :, :] - locs[:, :, None, :]  # (B, n_objects, n_objects, loc_dim)
-        attention = torch.exp(-0.5 * ((adjusted_locs / self.kernel_std)**2).sum(dim=3))
+        attention = torch_exp(-0.5 * ((adjusted_locs / self.kernel_std)**2).sum(dim=3))
         attention = torch.where(torch.isnan(attention), torch.zeros_like(attention), attention)
 
         # TODO: Uncomment this to have the attention weights be normalized over space.
@@ -1323,7 +1322,7 @@ class SpatialSelfAttentionLayer(ParameterizedModule):
         if self.layer_norm:
             final_result = self.layer_norm_0(final_result)
 
-        return final_result.permute(0, 2, 1), attention.permute(0, 2, 1)
+        return final_result, attention
 
 
 class TransformerLayer(ParameterizedModule):
@@ -1349,18 +1348,17 @@ class TransformerLayer(ParameterizedModule):
 
     def _forward(self, inp, attention_mask=None):
         """
-        inp: (B, loc_dim, n_objects)
+        inp: (B, n_objects, loc_dim, n_objects)
 
         attention_mask: (B, n_objects) (optional)
 
         Returns
         -------
-        output: (B, n_hidden, n_query)
-        attention_weights: (B, n_ref, n_query)
+        output: (B, n_objects, n_hidden)
+        attention_weights: (B, n_objects, n_objects)
 
         """
-        b, _, n_objects = inp.shape
-        inp = inp.permute(0, 2, 1)
+        b, n_objects, _ = inp.shape
 
         # --- process queries, if we have them ---
 
@@ -1395,7 +1393,7 @@ class TransformerLayer(ParameterizedModule):
         if self.layer_norm:
             result = self.layer_norm_2(result)
 
-        return result.permute(0, 2, 1), attention.permute(0, 2, 1)
+        return result, attention
 
 
 class GraphLayer(ParameterizedModule):
@@ -1425,18 +1423,17 @@ class GraphLayer(ParameterizedModule):
 
     def _forward(self, inp, reference_mask=None):
         """
-        inp: (B, loc_dim, n_objects)
+        inp: (B, n_objects, loc_dim)
 
         reference_mask: (B, n_ref) (optional)
 
         Returns
         -------
-        output: (B, n_hidden, n_query)
-        attention_weights: (B, n_ref, n_query)
+        output: (B, n_objects, n_hidden)
+        attention_weights: (B, n_objects, n_objects)
 
         """
-        b, _, n_objects = inp.shape
-        inp = inp.permute(0, 2, 1)
+        b, n_objects, _ = inp.shape
 
         # --- process queries, if we have them ---
 
@@ -1476,7 +1473,7 @@ class GraphLayer(ParameterizedModule):
         if self.layer_norm:
             result = self.layer_norm_2(result)
 
-        return result.permute(0, 2, 1), attention[..., 0].permute(0, 2, 1)
+        return result, attention[..., 0]
 
 
 def normal_kl(mean, std, prior_mean, prior_std):
@@ -1484,7 +1481,7 @@ def normal_kl(mean, std, prior_mean, prior_std):
     prior_var = prior_std**2
 
     return 0.5 * (
-        torch.log(prior_var) - torch.log(var)
+        torch.log(torch.clamp(prior_var, min=1e-6)) - torch.log(torch.clamp(var, min=1e-6))
         - 1.0 + var / prior_var
         + (mean - prior_mean)**2 / prior_var
     )
