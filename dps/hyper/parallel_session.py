@@ -40,8 +40,10 @@ class ParallelSession(object):
         written. Must be writeable by the master process.
     local_scratch_prefix: str
         Path to scratch directory that is local to each remote host.
-    tasks_per_node: int
-        Number of processors per node.
+    n_tasks: int
+        Number of tasks per step.
+    tasks_per_gpu: int
+        Number of tasks per gpu.
     wall_time: str
         String specifying the maximum wall-time allotted to running the selected ops.
     cleanup_time: str
@@ -51,10 +53,6 @@ class ParallelSession(object):
         String specifying the amount of slack time to allow per step. Corresponds to
         time allotted to each process to respond to the signal that the step's time is up.
         Affects the time limit that we pass to the python script.
-    add_date: bool
-        Whether to add current date/time to the name of the directory where results are stored.
-    dry_run: bool
-        If True, control script will be generated but not executed/submitted.
     host_pool: list of str
         A list of names of hosts to use to execute the job.
     env_vars: dict (str -> str)
@@ -64,16 +62,12 @@ class ParallelSession(object):
         If True, stderr and stdout of jobs is saved in files rather than being printed to screen.
     n_retries: int
         Number of retries per job.
-    gpu_set: str
-        Comma-separated list of indices of gpus to use.
     copy_venv: bool
         If True, copy the virtualenv from the launching environment and use it to run the simulation.
     step_time_limit: str
         String specifying time limit for each step. If not supplied, a time limit is inferred
         automatically based on wall_time and number of steps (giving each step an equal amount
         of time).
-    ignore_gpu: bool
-        If True, GPUs will be requested by as part of the job, but will not be used at run time.
     ssh_options: string
         String of options to pass to ssh.
     loud_output: bool
@@ -82,11 +76,10 @@ class ParallelSession(object):
     """
     def __init__(
             self, name, input_zip, pattern, scratch, local_scratch_prefix='/tmp/dps/hyper/',
-            n_nodes=1, tasks_per_node=12, cpus_per_task=1, mem_per_cpu="", gpu_set="",
-            wall_time="1hour", cleanup_time="1min", slack_time="1min",
-            add_date=True, dry_run=0, kind="slurm", env_vars=None, output_to_files=True, n_retries=0,
-            copy_venv="", step_time_limit=None, ignore_gpu=False, ssh_options=None,
-            loud_output=True, rsync_verbosity=0, copy_locally=True):
+            n_tasks=1, tasks_per_gpu=1, wall_time="1hour", cleanup_time="1min", slack_time="1min",
+            queue="", installation_script_path=None, env_vars=None, output_to_files=True, n_retries=0,
+            copy_venv="", step_time_limit=None, ssh_options=None, loud_output=True,
+            rsync_verbosity=0, copy_locally=True):
 
         args = locals().copy()
         del args['self']
@@ -106,17 +99,12 @@ class ParallelSession(object):
                 "-oServerAliveInterval=2"
             )
 
-        if kind == "pbs":
-            local_scratch_prefix = "\\$RAMDISK"
-
-        assert kind in "slurm slurm-local".split()
-
         # Create directory to run the job from - should be on scratch.
         scratch = os.path.abspath(os.path.expandvars(scratch))
 
         es = ExperimentStore(scratch, prefix="run")
 
-        job_dir = es.new_experiment(name, 0, add_date=add_date, force_fresh=1)
+        job_dir = es.new_experiment(name, 0, add_date=True, force_fresh=1)
         job_dir.record_environment()
 
         with open(job_dir.path_for('run_kwargs.json'), 'w') as f:
@@ -161,7 +149,9 @@ class ParallelSession(object):
 
         dirty_hosts = set()
 
-        n_tasks_per_step = n_nodes * tasks_per_node
+        self.compute_resources(n_tasks, tasks_per_gpu)
+
+        n_tasks_per_step = self.n_nodes * self.tasks_per_node
         n_steps = int(np.ceil(n_jobs_to_run / n_tasks_per_step))
 
         node_file = " --sshloginfile nodefile.txt "
@@ -172,6 +162,102 @@ class ParallelSession(object):
         self.__dict__.update(locals())
 
         self.print_time_limits()
+
+    def submit(self, kind):
+        with open(os.path.join(self.job_path, "session.pkl"), 'wb') as f:
+            dill.dump(self, f, protocol=dill.HIGHEST_PROTOCOL, recurse=True)
+
+        if kind == "slurm-local":
+            self.run()
+            return
+
+        if not self.installation_script_path:
+            raise Exception()
+
+        installation_script_path = os.path.realpath(self.installation_script_path)
+
+        entry_script = f"""#!/bin/bash
+echo "Building venv..."
+echo "Command: "
+echo "srun -v --nodes=$SLURM_JOB_NUM_NODES --ntasks=$SLURM_JOB_NUM_NODES {installation_script_path}"
+srun -v --nodes="$SLURM_JOB_NUM_NODES" --ntasks=$SLURM_JOB_NUM_NODES {installation_script_path}
+
+echo "Sourcing venv..."
+source "$SLURM_TMPDIR/env/bin/activate"
+
+cd {self.job_path}
+
+echo "Dropping into python..."
+python run.py
+"""
+        with open(os.path.join(self.job_path, "run.sh"), 'w') as f:
+            f.write(entry_script)
+
+        python_script = """#!{}
+import datetime
+start = datetime.datetime.now()
+print("Starting job at " + str(start))
+import dill
+with open("./session.pkl", "rb") as f:
+    session = dill.load(f)
+session.run()
+end = datetime.datetime.now()
+print("Finishing job at " + str(end))
+print(str((end - start).total_seconds()) + " seconds elapsed between start and finish.")
+
+""".format(sys.executable)
+        with open(os.path.join(self.job_path, "run.py"), 'w') as f:
+            f.write(python_script)
+
+        wall_time_minutes = int(np.ceil(self.wall_time_seconds / 60))
+
+        email = "eric.crawford@mail.mcgill.ca"
+
+        queue = ""
+        if self.queue:
+            queue = "-p " + queue
+
+        command = (
+            f"sbatch --job-name {self.name} -D {self.job_path} --mail-type=ALL --mail-user={email} "
+            f"-A {self.project} {queue} --export=ALL --time={wall_time_minutes} {self.resource_string} "
+            f"-o stdout -e stderr run.sh"
+        )
+
+        print("\n" + "~" * 40)
+        print(command)
+
+        with cd(self.job_path):
+            subprocess.run(command.split())
+
+    def compute_resources(self, n_tasks, tasks_per_gpu):
+        """ Compute requested SLURM resources using a GPU Equivalent framework.
+
+        https://docs.computecanada.ca/wiki/Allocations_and_resource_scheduling
+
+        """
+        cpus_per_gpu = 10
+        mem_per_gpu = 4700
+        gpus_per_node = 4
+
+        n_gpus_total = int(np.ceil(n_tasks / tasks_per_gpu))
+
+        n_nodes = int(np.ceil(n_gpus_total / gpus_per_node))
+        cpus_per_task = cpus_per_gpu // tasks_per_gpu
+        mem_per_cpu = mem_per_gpu // cpus_per_gpu
+
+        if n_nodes > 1:
+            tasks_per_node = gpus_per_node * tasks_per_gpu
+        else:
+            tasks_per_node = n_tasks
+
+        n_gpus = min(gpus_per_node, n_gpus_total)
+
+        self.resource_string = (
+            f"--nodes={n_nodes} --ntasks-per-node={tasks_per_node} --cpus-per-task={cpus_per_task} "
+            f"--mem-per-cpu={mem_per_cpu} --gres=gpu:{n_gpus}"
+        )
+        self.n_nodes = n_nodes
+        self.tasks_per_node = tasks_per_node
 
     def get_load_avg(self, host):
         return_code, stdout, stderr = self.ssh_execute("uptime", host, robust=True)
@@ -406,7 +492,6 @@ class ParallelSession(object):
             print("No jobs left to run on step {}.".format(i))
             return
 
-        _ignore_gpu = "--ignore-gpu" if self.ignore_gpu else ""
         _copy_locally = "--copy-dataset-to={}".format(self.local_scratch_prefix) if self.copy_locally else ""
         _backup_dir = self.job_dir.path_for('experiments')
 
@@ -416,11 +501,10 @@ class ParallelSession(object):
             "cd {local_scratch} && "
             "dps-hyper run {archive_root} {pattern} {indices} --max-time {python_seconds_per_step} "
             "--local-experiments-dir {local_scratch} --backup-dir {_backup_dir} --env-name experiments "
-            "--gpu-set={gpu_set} --tasks-per-node={tasks_per_node} {_ignore_gpu} {_copy_locally} {output_to_files}"
+            "--gpu-set={gpu_set} --tasks-per-node={tasks_per_node} {_copy_locally} {output_to_files}"
         )
 
-        bind = "--accel-bind=g" if self.gpu_set else ""
-        mem = "--mem-per-cpu={}".format(self.mem_per_cpu) if self.mem_per_cpu else ""
+        bind = "--accel-bind=g"
 
         command = ('timeout --signal=INT {parallel_seconds_per_step} srun --cpus-per-task {cpus_per_task} '
                    '--ntasks {n_tasks} {bind} {mem} --no-kill --quit-on-interrupt sh -c "{parallel_command}"'.format(
@@ -428,13 +512,10 @@ class ParallelSession(object):
                        cpus_per_task=self.cpus_per_task,
                        n_tasks=len(indices_for_step),
                        bind=bind,
-                       mem=mem,
                        parallel_command=parallel_command))
 
         command = command.format(
-            indices=indices, _ignore_gpu=_ignore_gpu,
-            _copy_locally=_copy_locally, _backup_dir=_backup_dir,
-            **self.__dict__)
+            indices=indices, _copy_locally=_copy_locally, _backup_dir=_backup_dir, **self.__dict__)
 
         self.execute_command(
             command, frmt=False, robust=True,
@@ -508,10 +589,6 @@ class ParallelSession(object):
         return value
 
     def run(self):
-        if self.dry_run:
-            print("Dry run, so not running.")
-            return
-
         # Have to jump through a hoop to get the proper node-local storage on cedar/graham.
         self.local_scratch_prefix = self.get_slurm_var("SLURM_TMPDIR")
         self.local_scratch = os.path.join(
@@ -609,98 +686,12 @@ class ParallelSession(object):
             self.ssh_execute(command, host, robust=True)
 
 
-def submit_job(
-        archive_path, category, exp_name, wall_time="1year", tasks_per_node=1, cpus_per_task=1, mem_per_cpu=0,
-        queue="", kind="local", gpu_set="", project="rrg-bengioy-ad_gpu", installation_script_path=None,
-        **run_kwargs):
-
-    assert kind in "slurm slurm-local".split()
-
-    run_kwargs.update(
-        wall_time=wall_time, tasks_per_node=tasks_per_node, cpus_per_task=cpus_per_task,
-        kind=kind, gpu_set=gpu_set, mem_per_cpu=mem_per_cpu)
-
+def submit_job(archive_path, category, exp_name, kind, **run_kwargs):
     run_kwargs['env_vars'] = dict(TF_CPP_MIN_LOG_LEVEL=3, CUDA_VISIBLE_DEVICES='-1')
-    run_kwargs['dry_run'] = False
 
     scratch = os.path.join(cfg.parallel_experiments_run_dir, category)
 
     session = ParallelSession(exp_name, archive_path, 'map', scratch=scratch, **run_kwargs)
+    session.submit(kind)
 
-    job_path = session.job_path
-
-    # Not strictly required if kind == "parallel", but do it anyway for completeness.
-    with open(os.path.join(job_path, "session.pkl"), 'wb') as f:
-        dill.dump(session, f, protocol=dill.HIGHEST_PROTOCOL, recurse=True)
-
-    if kind == "slurm-local":
-        session.run()
-        return session
-
-    if not installation_script_path:
-        raise Exception()
-
-    installation_script_path = os.path.realpath(installation_script_path)
-
-    entry_script = """#!/bin/bash
-echo "Building venv..."
-echo "Command: "
-echo "srun -v --nodes=$SLURM_JOB_NUM_NODES --ntasks=$SLURM_JOB_NUM_NODES {installation_script_path}"
-srun -v --nodes="$SLURM_JOB_NUM_NODES" --ntasks=$SLURM_JOB_NUM_NODES {installation_script_path}
-
-echo "Sourcing venv..."
-source "$SLURM_TMPDIR/env/bin/activate"
-
-cd {job_path}
-
-echo "Dropping into python..."
-python run.py
-""".format(installation_script_path=installation_script_path, job_path=job_path)
-    with open(os.path.join(job_path, "run.sh"), 'w') as f:
-        f.write(entry_script)
-
-    python_script = """#!{}
-import datetime
-start = datetime.datetime.now()
-print("Starting job at " + str(start))
-import dill
-with open("./session.pkl", "rb") as f:
-    session = dill.load(f)
-session.run()
-end = datetime.datetime.now()
-print("Finishing job at " + str(end))
-print(str((end - start).total_seconds()) + " seconds elapsed between start and finish.")
-
-""".format(sys.executable)
-    with open(os.path.join(job_path, "run.py"), 'w') as f:
-        f.write(python_script)
-
-    wall_time_minutes = int(np.ceil(session.wall_time_seconds / 60))
-    resources = "--nodes={} --ntasks-per-node={} --cpus-per-task={} --time={}".format(
-        session.n_nodes, session.tasks_per_node, cpus_per_task, wall_time_minutes)
-
-    if mem_per_cpu:
-        resources = "{} --mem-per-cpu={}".format(resources, mem_per_cpu)
-
-    if gpu_set:
-        n_gpus = len([int(i) for i in gpu_set.split(',')])
-        resources = "{} --gres=gpu:{}".format(resources, n_gpus)
-
-    email = "eric.crawford@mail.mcgill.ca"
-    if queue:
-        queue = "-p " + queue
-    command = (
-        "sbatch --job-name {exp_name} -D {job_path} --mail-type=ALL --mail-user=wiricon@gmail.com "
-        "-A {project} {queue} --export=ALL {resources} "
-        "-o stdout -e stderr run.sh".format(
-            exp_name=exp_name, job_path=job_path, email=email, project=project,
-            queue=queue, resources=resources
-        )
-    )
-
-    print("\n" + "~" * 40)
-    print(command)
-
-    with cd(job_path):
-        subprocess.run(command.split())
     return session

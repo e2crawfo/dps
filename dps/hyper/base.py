@@ -7,23 +7,20 @@ from itertools import product
 from copy import deepcopy
 import os
 import sys
-import inspect
 from collections import namedtuple, defaultdict
 from tabulate import tabulate
 from pprint import pprint, pformat
 import traceback
 import argparse
 
-import clify
-
 import dps
 from dps import cfg
 from dps.config import DEFAULT_CONFIG
-from dps.utils import gen_seed, Config, ExperimentStore, edit_text, NumpySeed, AttrDict
+from dps.utils import gen_seed, Config, ExperimentStore, NumpySeed, AttrDict
 from dps.train import training_loop
 from dps.parallel import Job, ReadOnlyJob
 from dps.train import FrozenTrainingLoopData
-from dps.hyper.parallel_session import submit_job, ParallelSession
+from dps.hyper.parallel_session import submit_job
 
 
 class HyperSearch(object):
@@ -458,9 +455,7 @@ class _RunTrainingLoop:
         return result
 
 
-def build_search(
-        path, name, distributions, config, n_repeats, n_param_settings=None,
-        _zip=True, add_date=0, do_local_test=True, readme=""):
+def _build_search(path, name, distributions, config, n_repeats, n_param_settings=None, _zip=True, add_date=0):
     """ Create a job implementing a hyper-parameter search.
 
     Parameters
@@ -482,12 +477,6 @@ def build_search(
         Whether to zip the created search directory.
     add_date: bool
         Whether to add time to name of experiment directory.
-    do_local_test: bool
-        If True, run a short test using one of the sampled
-        configs on the local machine to catch any dumb errors
-        before starting the real experiment.
-    readme: str
-        String specifiying context/purpose of search.
 
     """
     if config.get('seed', None) is None:
@@ -508,10 +497,6 @@ def build_search(
                 name = "{}_{}".format(base_name, count)
                 count += 1
 
-        if readme:
-            with open(exp_dir.path_for('README.md'), 'w') as f:
-                f.write(readme)
-
         print(config)
         exp_dir.record_environment(config=config)
 
@@ -525,13 +510,6 @@ def build_search(
             f.write("\n".join("idx={}: {}".format(c["idx"], pformat(c)) for c in new_configs))
 
         print("{} configs were sampled for parameter search.".format(len(new_configs)))
-
-        if do_local_test:
-            print("\nStarting local test " + ("=" * 80))
-            test_config = new_configs[0].copy()
-            test_config.update(max_steps=1000, render_hook=None)
-            _RunTrainingLoop(config)(test_config)
-            print("Done local test " + ("=" * 80) + "\n")
 
         job.map(_RunTrainingLoop(config.copy()), new_configs)
 
@@ -550,9 +528,9 @@ def build_search(
         return path, len(new_configs)
 
 
-def build_and_submit(
+def _build_and_submit(
         category, exp_name, config, distributions, n_param_settings=0, n_repeats=1,
-        do_local_test=False, kind="local", readme="", tasks_per_gpu=1, **run_kwargs):
+        kind="local", **run_kwargs):
     """ Build a job and submit it. Meant to be called from within a script.
 
     Parameters
@@ -575,97 +553,44 @@ def build_and_submit(
     n_repeats: int
         Number of experiments to run (with different random seeds) for each
         generated configuration.
-    do_local_test: bool
-        If True, sample one of the generated configurations and use it to run a
-        short test locally, to ensure that the jobs will run properly.
     kind: str
         One of pbs, slurm, slurm-local, parallel, local. Specifies which method
         should be used to run the jobs in parallel.
-    readme: str
-        A string outlining the purpose/context for the created experiment.
     **run_kwargs:
         Additional arguments that are ultimately passed to `ParallelSession` in
         order to run the job.
 
     """
-    # Get run_kwargs from command line
-    sig = inspect.signature(ParallelSession.__init__)
-    default_run_kwargs = sig.bind_partial()
-    default_run_kwargs.apply_defaults()
-    cl_run_kwargs = clify.command_line(default_run_kwargs.arguments).parse()
-    run_kwargs.update(cl_run_kwargs)
-
     if config.seed is None or config.seed < 0:
         config.seed = gen_seed()
 
-    assert kind in "pbs slurm slurm-local parallel local".split()
+    assert kind in "slurm slurm-local".split()
     assert 'build_command' not in config
     config['build_command'] = ' '.join(sys.argv)
     print(config['build_command'])
 
-    if kind == "local":
-        with config:
-            from dps.train import training_loop
-            return training_loop()
-    else:
-        config.name = category
-        config = config.copy()
+    config.name = category
+    config = config.copy()
 
-        if readme == "_vim_":
-            readme = edit_text(
-                prefix="dps_readme_", editor="vim", initial_text="README.md: \n")
+    scratch = os.path.join(cfg.parallel_experiments_build_dir, category)
 
-        scratch = os.path.join(cfg.parallel_experiments_build_dir, category)
+    archive_path, n_tasks = _build_search(
+        scratch, exp_name, distributions, config, add_date=1, _zip=True,
+        n_param_settings=n_param_settings, n_repeats=n_repeats)
 
-        archive_path, n_tasks = build_search(
-            scratch, exp_name, distributions, config,
-            add_date=1, _zip=True, do_local_test=do_local_test,
-            n_param_settings=n_param_settings, n_repeats=n_repeats, readme=readme)
+    run_kwargs.update(archive_path=archive_path, category=category, exp_name=exp_name, kind=kind, n_tasks=n_tasks)
 
-        run_kwargs.update(archive_path=archive_path, category=category, exp_name=exp_name, kind=kind)
+    parallel_session = submit_job(**run_kwargs)
 
-        resources = compute_required_resources(n_tasks, tasks_per_gpu)
-        run_kwargs.update(resources)
-
-        parallel_session = submit_job(**run_kwargs)
-
-        return parallel_session
+    return parallel_session
 
 
 def sanitize(s):
     return str(s).replace('_', '-')
 
 
-def compute_required_resources(n_tasks, tasks_per_gpu):
-    cpus_per_gpu = 10
-    mem_per_gpu = 47000
-    gpus_per_node = 4
-
-    n_gpus = int(np.ceil(n_tasks / tasks_per_gpu))
-
-    n_nodes = int(np.ceil(n_gpus / gpus_per_node))
-    result = dict(
-        n_nodes=n_nodes,
-        cpus_per_task=cpus_per_gpu // tasks_per_gpu,
-        mem_per_cpu=mem_per_gpu // cpus_per_gpu,
-    )
-
-    if n_nodes > 1:
-        result.update(
-            tasks_per_node=gpus_per_node * tasks_per_gpu,
-            gpu_set=",".join(str(i) for i in range(gpus_per_node))
-        )
-    else:
-        result.update(
-            tasks_per_node=n_tasks,
-            gpu_set=",".join(str(i) for i in range(n_gpus))
-        )
-
-    return result
-
-
 def run_experiment(
-        name, base_config, readme, distributions=None, durations=None,
+        name, base_config, readme='', distributions=None, durations=None,
         name_variables=None, alg_configs=None, env_configs=None, late_config=None,
         cl_mode='lax', run_kwargs_base=None):
 
@@ -721,7 +646,6 @@ def run_experiment(
     else:
         run_kwargs = Config(
             kind="slurm",
-            ignore_gpu=False,
         )
 
         if run_kwargs_base is not None:
@@ -755,4 +679,4 @@ def run_experiment(
 
         exp_name = "env={}_alg={}_duration={}".format(env_name, alg_name, args.duration)
 
-        build_and_submit(name, exp_name, config, distributions=distributions, **run_kwargs)
+        _build_and_submit(name, exp_name, config, distributions=distributions, **run_kwargs)
