@@ -1185,6 +1185,7 @@ class SpatialAttentionLayer(ParameterizedModule):
     query_dim = Param()
     ref_dim = Param()
     n_hidden = Param()
+    n_output = Param()
 
     layer_norm = Param()
 
@@ -1193,10 +1194,14 @@ class SpatialAttentionLayer(ParameterizedModule):
 
         self.query_func = self.build_mlp(self.query_dim, self.n_hidden)
         self.reference_func = self.build_mlp(self.ref_dim, self.n_hidden)
-        self.final_func = self.build_mlp(2*self.n_hidden, self.n_hidden)
 
-        if self.layer_norm:
-            self.layer_norm_0 = torch.nn.LayerNorm(self.n_hidden)
+        if self.n_output is None:
+            self.final_func = self.build_mlp(2*self.n_hidden, self.n_hidden)
+            if self.layer_norm:
+                self.layer_norm_0 = torch.nn.LayerNorm(self.n_hidden)
+        else:
+            self.final_func = self.build_mlp(2*self.n_hidden, self.n_output)
+            self.layer_norm_0 = None
 
     def _forward(self, reference_locs, reference_features, query_locs, query_features, reference_mask=None):
         """
@@ -1248,7 +1253,7 @@ class SpatialAttentionLayer(ParameterizedModule):
 
         final_result = reshape_and_apply(self.final_func, final_inp, n_batch_dims=2)
 
-        if self.layer_norm:
+        if self.layer_norm_0 is not None:
             final_result = self.layer_norm_0(final_result)
 
         return final_result, attention
