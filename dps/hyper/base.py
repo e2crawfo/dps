@@ -18,8 +18,7 @@ import clify
 
 import dps
 from dps import cfg
-from dps.config import DEFAULT_CONFIG
-from dps.utils import gen_seed, Config, ExperimentStore, edit_text, NumpySeed, AttrDict
+from dps.utils import gen_seed, Config, ExperimentStore, edit_text, NumpySeed, AttrDict, get_default_config
 from dps.train import training_loop
 from dps.parallel import Job, ReadOnlyJob
 from dps.train import FrozenTrainingLoopData
@@ -434,7 +433,7 @@ class _RunTrainingLoop:
 
         dps.reset_config()
 
-        config = DEFAULT_CONFIG.copy()
+        config = get_default_config()
         config.update(self.base_config)
         config.update(new)
         config.update(
@@ -681,8 +680,7 @@ def run_experiment(
 
     args, _ = parser.parse_known_args()
 
-    config = DEFAULT_CONFIG.copy()
-
+    config = get_default_config()
     config.update(base_config)
 
     if env_configs is not None:

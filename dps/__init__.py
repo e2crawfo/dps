@@ -5,13 +5,43 @@ except ImportError:
 import os
 os.environ['PYTHONSTARTUP'] = ''
 
-from .config import DEFAULT_CONFIG
-from .utils import ConfigStack
+from .utils import ConfigStack, get_default_config, process_path
+
+
+def init(config=None):
+    """ Create directories requires by dps. """
+    if config is None:
+        config = cfg
+
+    make_dirs = config.get('make_dirs', True)
+
+    def fixup_dir(name):
+        attr_name = name + "_dir"
+        dir_name = getattr(config, attr_name, None)
+        if dir_name is None:
+            dir_name = os.path.join(config.scratch_dir, name)
+            dir_name = process_path(dir_name)
+            setattr(config, attr_name, dir_name)
+
+        if make_dirs:
+            try:
+                os.makedirs(dir_name, exist_ok=True)
+            except Exception:
+                print("Unable to create directory {}.".format(dir_name))
+                traceback.print_exc()
+
+    fixup_dir("data")
+    fixup_dir("local_experiments")
+    fixup_dir("parallel_experiments_build")
+    fixup_dir("parallel_experiments_run")
+
+    return config
+
 
 cfg = ConfigStack()
 
 def reset_config():
-    cfg.clear_stack(DEFAULT_CONFIG.copy())
+    cfg.clear_stack(get_default_config())
 
 reset_config()
 

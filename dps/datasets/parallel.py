@@ -23,8 +23,7 @@ class _BuildDataset(object):
         import datetime
         import dps
         from dps import cfg  # noqa
-        from dps.config import DEFAULT_CONFIG
-        from dps.utils import ExperimentStore
+        from dps.utils import ExperimentStore, get_default_config
         os.nice(10)
 
         print("Entered _BuildDataset at: ")
@@ -37,7 +36,9 @@ class _BuildDataset(object):
         params = self.params.copy()
         params.update(seed=seed, n_examples=n_examples)
 
-        with DEFAULT_CONFIG.copy():
+        default_config = get_default_config()
+
+        with default_config:
             cfg.update_from_command_line()
             print(cfg)
 

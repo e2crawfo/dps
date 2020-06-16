@@ -226,9 +226,6 @@ class ReinforcementLearningDataset(ImageDataset):
             indices += self.history_length
 
         for idx in indices:
-            if self._n_examples % 100 == 0:
-                print("Processing example {}".format(self._n_examples))
-
             _o, _a, _r, _next_o = None, None, None, None
             if self.store_o:
                 _o = list(o[idx-self.history_length:idx])
@@ -417,17 +414,7 @@ class StaticAtariDataset(ReinforcementLearningDataset):
         return self._obs_shape
 
     def _make(self):
-        directory = os.path.join(cfg.data_dir, "atari_data")
-        dirs = os.listdir(directory)
-        game_full_name = "{}NoFrameskip-v4".format(self.game)
-        starts_with = "atari_data_env={}.datetime=".format(game_full_name)
-        matching_dirs = [d for d in dirs if d.startswith(starts_with)]
-        if not matching_dirs:
-            pprint(sorted(dirs))
-            raise Exception("No data found for game {}".format(self.game))
-
-        directory = os.path.join(directory, sorted(matching_dirs)[-1])
-        directory = os.path.join(directory, ("after" if self.after_warp else "before") + "_warp_recording")
+        directory = find_atari_dir(self.atari_game, self.after_warp)
         scan_recorded_traces(directory, self._callback, self.max_episodes, self.episode_indices)
 
 
@@ -709,17 +696,7 @@ class AtariVideoDataset(ImageDataset):
                 return True
 
     def _make(self):
-        directory = os.path.join(cfg.data_dir, "atari_data")
-        dirs = os.listdir(directory)
-        game_full_name = "{}NoFrameskip-v4".format(self.atari_game)
-        starts_with = "atari_data_env={}.datetime=".format(game_full_name)
-        matching_dirs = [d for d in dirs if d.startswith(starts_with)]
-        if not matching_dirs:
-            pprint(sorted(dirs))
-            raise Exception("No data found for game {}".format(self.atari_game))
-
-        directory = os.path.join(directory, sorted(matching_dirs)[-1])
-        directory = os.path.join(directory, ("after" if self.after_warp else "before") + "_warp_recording")
+        directory = find_atari_dir(self.atari_game, self.after_warp)
         scan_recorded_traces(directory, self._per_ep_callback, self.max_episodes, self.episode_indices)
         print("Ended up with {} examples.".format(self._n_examples))
 
@@ -739,8 +716,11 @@ class AtariVideoDataset(ImageDataset):
         plt.close(fig)
 
 
-def count_episodes(atari_game, after_warp):
-    directory = os.path.join(cfg.data_dir, "atari_data")
+def find_atari_dir(atari_game, after_warp):
+    directory = cfg.get('atari_data_dir', None)
+    if not directory:
+        directory = os.path.join(cfg.data_dir, "atari_data")
+    print(f"Using `{directory}` as atari data dir.")
     dirs = os.listdir(directory)
     game_full_name = "{}NoFrameskip-v4".format(atari_game)
     starts_with = "atari_data_env={}.datetime=".format(game_full_name)
@@ -750,6 +730,11 @@ def count_episodes(atari_game, after_warp):
         raise Exception("No data found for game {}".format(atari_game))
     directory = os.path.join(directory, sorted(matching_dirs)[-1])
     directory = os.path.join(directory, ("after" if after_warp else "before") + "_warp_recording")
+    return directory
+
+
+def count_episodes(atari_game, after_warp):
+    directory = find_atari_dir(atari_game, after_warp)
 
     n_eps = 0
 
@@ -762,10 +747,6 @@ def count_episodes(atari_game, after_warp):
 
 
 class AtariLongVideoVideoDataset(AtariVideoDataset):
-    """
-    I need...episode range, batch_size, n_batches I guess, but that should really come out of the episode length.
-    Maybe n_batches * n_frames is the maximum video length, cut it off after that.
-    """
     batch_size = Param()
     n_batches = Param()
     n_samples_per_episode = Param()

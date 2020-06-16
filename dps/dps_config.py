@@ -1,11 +1,10 @@
 import numpy as np
 
-from dps.utils import Config, load_system_config
-
-
-DEFAULT_CONFIG = Config(
+config = dict(
     env_name="default_env",
     exp_name="",
+    scratch_dir="./dps_scratch",
+    make_dirs=True,
 
     seed=-1,
 
@@ -32,19 +31,18 @@ DEFAULT_CONFIG = Config(
     patience=np.inf,
     max_n_fallbacks=0,
 
-    render_step=np.inf,
-    display_step=100,
-    eval_step=100,
+    render_step=5000,
+    display_step=5000,
+    eval_step=5000,
     checkpoint_step=5000,
     weight_step=5000,
     overwrite_weights=True,
     store_step_data=True,
+    copy_dataset_to="",
 
     n_train=10000,
     n_val=500,
     batch_size=16,
-    reward_window=0.499,
-    threshold=0.01,
 
     noise_schedule=None,
     max_grad_norm=None,
@@ -59,22 +57,40 @@ DEFAULT_CONFIG = Config(
     render_final=True,
 
     stopping_criteria="",
+    threshold=0.01,
 
     tee=True,  # If True, output of training run (stdout and stderr) is written to screen as
                # well as a file. If False, only written to the file.
 
-    intra_op_parallelism_threads=0,
-    inter_op_parallelism_threads=0,
+    use_gpu=False,
 
     readme="",
     hooks=[],
     overwrite_plots=True,
     n_procs=1,
     profile=False,
-    copy_dataset_to="",
     warning_mode='once',
-    start_tensorboard=0,
-    in_parallel_session=False,
-)
 
-DEFAULT_CONFIG.update(load_system_config())
+    start_tensorboard=True,
+    tbport=6006,
+    reload_interval=10,
+
+    show_plots=False,
+
+    in_parallel_session=False,
+
+    verbose=False,
+    ssh_hosts=[],
+    ssh_options=(
+        "-oPasswordAuthentication=no "
+        "-oStrictHostKeyChecking=no "
+        "-oConnectTimeout=5 "
+        "-oServerAliveInterval=2"
+    ),
+
+    # tf only
+    intra_op_parallelism_threads=0,
+    inter_op_parallelism_threads=0,
+    per_process_gpu_memory_fraction=0,
+    gpu_allow_growth=True,
+)

@@ -182,14 +182,14 @@ class RenderHook:
         return images / mx[..., None, None, None]
 
     @staticmethod
-    def remove_rects(ax):
-        for obj in ax.findobj(match=plt.Rectangle):
+    def remove_patches(ax):
+        for obj in ax.findobj(match=patches.Patch):
             try:
                 obj.remove()
             except NotImplementedError:
                 pass
 
-    def imshow(self, ax, frame, remove_rects=True, vmin=0.0, vmax=1.0, **kwargs):
+    def imshow(self, ax, frame, remove_patches=True, vmin=0.0, vmax=1.0, **kwargs):
         """ If ax already has an image, uses set_array on that image instead of doing imshow.
             Allows this function to work well with animations. """
 
@@ -201,8 +201,8 @@ class RenderHook:
 
         if ax.images:
             ax.images[0].set_array(frame)
-            if remove_rects:
-                self.remove_rects(ax)
+            if remove_patches:
+                self.remove_patches(ax)
         else:
             ax.imshow(frame, vmin=vmin, vmax=vmax, **kwargs)
 
@@ -2341,7 +2341,7 @@ class AttrDict(Config):
 
 class ClearConfig(Config):
     def __init__(self, _d=None, **kwargs):
-        config = load_system_config()
+        config = get_default_config()
         if _d:
             config.update(_d)
         config.update(kwargs)
@@ -2512,79 +2512,48 @@ class ConfigFn:
         return str(self)
 
 
-def update_scratch_dir(config, new_scratch_dir):
-    def fixup_dir(name):
-        attr_name = name + "_dir"
-        dir_name = os.path.join(new_scratch_dir, name)
-        dir_name = process_path(dir_name)
-        setattr(config, attr_name, dir_name)
-        os.makedirs(dir_name, exist_ok=True)
-
-    fixup_dir("data")
-    fixup_dir("model")
-    fixup_dir("local_experiments")
-    fixup_dir("parallel_experiments_build")
-    fixup_dir("parallel_experiments_run")
+DEFAULT_CONFIG = None
 
 
-def load_system_config(key=None):
-    """ Looks for a file called `$HOME/.config/dps_config.py` and load
-        it as a module. Should define a single variable called `config` containing
-        a dict storing system default config values.
+def get_default_config():
+    """ Look for a file called `dps_config.py` in the following locations:
+            1. dps.__path__[0]
+            2. $HOME/.config
+            3. Current working directory.
+
+        All files that are found are loaded. Configs later in the list are loaded after, and on top of, earlier ones
+        (so for config values that are specified by multiple files, the values from "later" files replace earlier ones).
+
+        Each file that is found is loaded as a module, and should define a variable called `config` containing a
+        dict storing the config values.
+
+        This function returns a copy of that loaded config (a *copy*, so it cannot be modified in a useful way).
 
     """
-    home = os.getenv("HOME")
-    config_loc = os.path.join(home, ".config/dps_config.py")
+    global DEFAULT_CONFIG
+    if DEFAULT_CONFIG is None:
 
-    if os.path.exists(config_loc):
-        config_module_spec = importlib.util.spec_from_file_location("dps_config", config_loc)
-        config_module = config_module_spec.loader.load_module()
-        config = Config(**config_module.config)
-    else:
-        config = Config(
-            start_tensorboard=True,
-            tbport=6006,
-            reload_interval=10,
-            show_plots=False,
-            verbose=False,
-            use_gpu=False,
-            per_process_gpu_memory_fraction=0,
-            gpu_allow_growth=True,
-            scratch_dir="/tmp",
-            ssh_hosts=[],
-            ssh_options=(
-                "-oPasswordAuthentication=no "
-                "-oStrictHostKeyChecking=no "
-                "-oConnectTimeout=5 "
-                "-oServerAliveInterval=2"
-            ),
-            make_dirs=True,
-        )
+        config = Config()
 
-    make_dirs = config.get('make_dirs', True)
+        config_dirs = [
+            dps.__path__[0],
+            os.path.join(os.getenv('HOME'), '.config'),
+            '.'
+        ]
+        for d in config_dirs:
+            config_loc = os.path.join(d, 'dps_config.py')
 
-    def fixup_dir(name):
-        attr_name = name + "_dir"
-        dir_name = getattr(config, attr_name, None)
-        if dir_name is None:
-            dir_name = os.path.join(config.scratch_dir, name)
-            dir_name = process_path(dir_name)
-            setattr(config, attr_name, dir_name)
+            if not os.path.exists(config_loc):
+                continue
 
-        if make_dirs:
-            try:
-                os.makedirs(dir_name, exist_ok=True)
-            except Exception:
-                print("Unable to create directory {}.".format(dir_name))
-                traceback.print_exc()
+            # print(f"Loading default config values from path {os.path.realpath(config_loc)}.")
+            config_module_spec = importlib.util.spec_from_file_location("dps_config", config_loc)
+            config_module = config_module_spec.loader.load_module()
+            config.update(config_module.config)
 
-    fixup_dir("data")
-    fixup_dir("model")
-    fixup_dir("local_experiments")
-    fixup_dir("parallel_experiments_build")
-    fixup_dir("parallel_experiments_run")
+        DEFAULT_CONFIG = config
 
-    return config
+    return DEFAULT_CONFIG.copy()
 
 
 def restart_tensorboard(logdir, port=6006, reload_interval=120):

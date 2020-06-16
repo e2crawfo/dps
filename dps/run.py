@@ -2,9 +2,8 @@ import argparse
 import pkgutil
 
 from dps import cfg
-from dps.config import DEFAULT_CONFIG
 from dps.train import training_loop
-from dps.utils import ipdb_postmortem
+from dps.utils import ipdb_postmortem, get_default_config
 from dps.rl import algorithms as alg_pkg
 import dps.env.basic as env_pkg_basic
 
@@ -114,7 +113,7 @@ def run():
 def _run(env_str, alg_str, _config=None, **kwargs):
     env_config, alg_config = parse_env_alg(env_str, alg_str)
 
-    config = DEFAULT_CONFIG.copy()
+    config = get_default_config()
     config.update(alg_config)
     config.update(env_config)
 

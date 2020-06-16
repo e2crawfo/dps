@@ -333,7 +333,8 @@ class Dataset(Parameterized):
     If `data_dir` is in kwargs, then look for (and save) the cache file inside `data_dir`.
     Otherwise, looks inside cfg.data_dir/cached_datasets/self.__class__.__name__.
 
-    If `no_make` is in kwargs and is True, than raise an exception if dataset not found in cache.
+    If `no_make` is in kwargs and is True, than raise an exception if dataset not found in cache, i.e. we refuse to
+    create the dataset.
 
     If `run_kwargs` is in kwargs, the corresponding value should be a dictionary of arguments which
     will be used to run the dataset creation in parallel.
@@ -515,10 +516,12 @@ class Dataset(Parameterized):
         self._writer.write(example.SerializeToString())
 
         self.n_examples_written += 1
-        if self.n_examples_written % 100 == 0:
+        if self.n_examples_written % 1000 == 0:
+            print(f"n_examples_written: {self.n_examples_written}")
             seconds_elapsed = time.time() - self.start_time
-            print(f"{seconds_elapsed} seconds elapsed in dataset creation, "
-                  f"{seconds_elapsed/self.n_examples_written} seconds/sample.")
+            print(f"{self.n_examples_written} examples written. "
+                  f"{seconds_elapsed:.2} seconds elapsed in dataset creation. "
+                  f"{seconds_elapsed/self.n_examples_written:.2} seconds/example.")
 
     def parse_example_batch(self, example_proto):
         features = {}
@@ -793,6 +796,14 @@ class ImageDataset(Dataset):
         return new_images, new_annotations, new_backgrounds, offsets
 
     def _random_postprocess(self, video, annotations, background=None):
+        """ Take an input video, and possibly accompanying annotations, and extract random crops from it (creating
+            multiple cropped examples for each input video). Adjust annotations to respect the crops, deleting annotations
+            that fall outside of the crop region, and truncated annotations that fall partly outside the cropped region.
+
+            Size of random crops specified by self.tile_shape, number of crops per input videos specified by
+            self.n_samples_per_image.
+
+        """
         *_, height, width, _ = video.shape
 
         if self.n_frames == 0:

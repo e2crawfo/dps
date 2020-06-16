@@ -15,7 +15,7 @@ import subprocess
 from tabulate import tabulate
 import warnings
 
-from dps import cfg
+from dps import cfg, init
 from dps.utils import (
     gen_seed, time_limit, Alarm, memory_usage, gpu_memory_usage, ExperimentStore,
     ExperimentDirectory, nvidia_smi, memory_limit, Config, redirect_stream, pretty_func,
@@ -25,6 +25,8 @@ from dps.mpi_train import MPI_MasterContext
 
 
 def training_loop(exp_name='', start_time=None):
+    init()
+
     framework = cfg.get('framework', 'tensorflow')
 
     if framework == 'tensorflow':

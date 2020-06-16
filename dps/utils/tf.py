@@ -866,9 +866,8 @@ class ConvNet(ScopedFunction):
 class GridConvNet(ConvNet):
     layer_info = None
 
-    def __init__(self, layers, n_grid_dims=2, scope=None, **kwargs):
+    def __init__(self, layers, scope=None, **kwargs):
         self.layers = layers
-        self.n_grid_dims = n_grid_dims
         self.volumes = []
         super(ConvNet, self).__init__(scope)
 
@@ -950,7 +949,7 @@ class GridConvNet(ConvNet):
         padding = (
             [[0, 0]]
             + list(zip(pre_padding, post_padding))
-            + [[0, 0]] * (len(inp.shape) - 1 - self.n_grid_dims)
+            + [[0, 0]] * (len(inp.shape) - 3)
         )
 
         volume = tf.pad(inp, padding, mode="CONSTANT")
