@@ -459,6 +459,7 @@ class ConvNet(ParameterizedModule):
     layer_specs = Param()
     preserve_shape = Param(False)
     batch_norm = Param(False)
+    conv_batch_norm_affine = Param(True)
 
     def __init__(self, input_shape, output_size=None, **kwargs):
         super().__init__(**kwargs)
@@ -475,8 +476,11 @@ class ConvNet(ParameterizedModule):
         self.batch_norms = torch.nn.ModuleDict()
 
         print("Spatial shape: {}".format(spatial_shape))
-        prev_n_filters = input_n_filters
+        prev_n_output_filters = input_n_filters
         prev_n_units = None
+
+        self.n_film_params = 0
+        self.film_n_units = []
 
         for i, layer_spec in enumerate(self.layer_specs):
             kind = layer_spec.get('kind', 'conv')
@@ -484,23 +488,34 @@ class ConvNet(ParameterizedModule):
             is_last = i == len(self.layer_specs)-1
 
             if kind == 'conv':
-                n_filters = layer_spec['n_filters']
+                n_output_filters = layer_spec['n_filters']
                 kernel_size = layer_spec['kernel_size']
                 stride = layer_spec.get('stride', 1)
 
                 if is_last and output_size is not None:
-                    n_filters = output_size
-                elif n_filters is None:
-                    n_filters = prev_n_filters
+                    n_output_filters = output_size
+                elif n_output_filters is None:
+                    n_output_filters = prev_n_output_filters
 
-                layer = torch.nn.Conv2d(prev_n_filters, n_filters, kernel_size, stride=stride)
+                n_input_filters = prev_n_output_filters
+
+                if layer_spec.get('coord_conv', False):
+                    n_input_filters += 2
+
+                layer = torch.nn.Conv2d(n_input_filters, n_output_filters, kernel_size, stride=stride)
                 self.module_list.append(layer)
 
                 if not is_last and layer_spec.get('batch_norm', self.batch_norm):
-                    bn = torch.nn.BatchNorm2d(n_filters)
+                    bn = torch.nn.BatchNorm2d(n_output_filters, affine=self.conv_batch_norm_affine)
                     self.batch_norms[str(i)] = bn
 
-                prev_n_filters = n_filters
+                do_film = layer_spec.get('film', False)
+
+                if do_film:
+                    self.n_film_params += 2 * n_output_filters
+                    self.film_n_units.extend([n_output_filters, n_output_filters])
+
+                prev_n_output_filters = n_output_filters
 
                 if spatial_shape is not None:
                     if self.preserve_shape and stride == 1:
@@ -510,7 +525,7 @@ class ConvNet(ParameterizedModule):
 
             elif kind == 'fc':
                 if spatial_shape is not None:
-                    prev_n_units = prev_n_filters * spatial_shape[0] * spatial_shape[1]
+                    prev_n_units = n_output_filters * spatial_shape[0] * spatial_shape[1]
                 else:
                     assert prev_n_units is not None
                 spatial_shape = None
@@ -524,7 +539,7 @@ class ConvNet(ParameterizedModule):
                 self.module_list.append(layer)
 
                 if not is_last and layer_spec.get('batch_norm', self.batch_norm):
-                    bn = torch.nn.BatchNorm1d(n_units)
+                    bn = torch.nn.BatchNorm1d(n_units, affine=True)
                     self.batch_norms[str(i)] = bn
 
                 prev_n_units = n_units

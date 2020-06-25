@@ -57,7 +57,7 @@ def describe_structure(tensors, floatfmt=None):
     tensors = AttrDict(tensors).flatten()
 
     table = []
-    for k, t in tensors.items():
+    for k, t in sorted(tensors.items()):
         flat_t = t.flatten()
         n_nan = np.isnan(flat_t).sum()
         n_inf = np.isinf(flat_t).sum()
