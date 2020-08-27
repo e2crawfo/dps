@@ -12,7 +12,7 @@ import dill
 import itertools
 import pprint
 
-from dps import cfg
+from dps import cfg, init
 from dps.utils import (
     Param, Parameterized, get_param_hash, NumpySeed, animate, gen_seed,
     resize_image, atleast_nd, pformat, map_structure, HashableDist
@@ -363,6 +363,8 @@ class Dataset(Parameterized):
 
         # Get cache directory to use. First check cfg.cache_dir and kwargs['data_dir'], in that order.
         # Fallback to cfg.data_dir / "cached_datasets" / self.__class__.__name__
+
+        init()
 
         cache_dir = getattr(cfg, 'cache_dir', None)
         if cache_dir is None:

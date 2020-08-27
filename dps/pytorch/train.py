@@ -77,6 +77,8 @@ class PyTorchTrainingLoop(TrainingLoop):
         in the current model.
 
         """
+        omit_modules = cfg.get('omit_modules_from_loading', [])
+
         for dest_module_path, path in self.get_load_paths():
             _print("Loading submodule \"{}\" from {}.".format(dest_module_path, path))
 
@@ -126,6 +128,21 @@ class PyTorchTrainingLoop(TrainingLoop):
                     f"would have no effect (no variables found)."
                 )
             loaded_state_dict = {k: loaded_state_dict[k] for k in intersection}
+
+            if omit_modules:
+                omitted_variables = {
+                    k: v for k, v in loaded_state_dict.items()
+                    if any(k.startswith(o) for o in omit_modules)
+                }
+
+                print("Omitting the following variables from loading:")
+                describe_structure(omitted_variables)
+
+                loaded_state_dict = {
+                    k: v for k, v in loaded_state_dict.items()
+                    if k not in omitted_variables
+                }
+
             _print("Loading variables:")
             describe_structure(loaded_state_dict)
 
@@ -230,24 +247,27 @@ class PyTorchUpdater(Parameterized):
 
         self.model.update_global_step(step)
 
-        with timed_block('forward', print_time):
-            tensors, recorded_tensors, losses = self.model(data, step)
+        detect_grad_anomalies = cfg.get('detect_grad_anomalies', False)
+        with torch.autograd.set_detect_anomaly(detect_grad_anomalies):
 
-        # --- loss ---
+            with timed_block('forward', print_time):
+                tensors, recorded_tensors, losses = self.model(data, step)
 
-        losses = AttrDict(losses)
+            # --- loss ---
 
-        loss = 0.0
-        for name, tensor in losses.flatten().items():
-            loss += tensor
-            recorded_tensors['loss_' + name] = tensor
-        recorded_tensors['loss'] = loss
+            losses = AttrDict(losses)
 
-        with timed_block('zero_grad', print_time):
-            self.optimizer.zero_grad()
+            loss = 0.0
+            for name, tensor in losses.flatten().items():
+                loss += tensor
+                recorded_tensors['loss_' + name] = tensor
+            recorded_tensors['loss'] = loss
 
-        with timed_block('loss backward', print_time):
-            loss.backward()
+            with timed_block('zero_grad', print_time):
+                self.optimizer.zero_grad()
+
+            with timed_block('loss backward', print_time):
+                loss.backward()
 
         parameters = list(self.model.parameters())
         pure_grad_norm = grad_norm(parameters)

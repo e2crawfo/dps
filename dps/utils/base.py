@@ -58,6 +58,10 @@ def describe_structure(tensors, floatfmt=None):
 
     table = []
     for k, t in sorted(tensors.items()):
+        if t is None:
+            table.append(dict(key=k))
+            continue
+
         flat_t = t.flatten()
         n_nan = np.isnan(flat_t).sum()
         n_inf = np.isinf(flat_t).sum()
@@ -691,7 +695,7 @@ def add_dotted_rect(ax, top, left, height, width, c1, c2, **kwargs):
     add_rect(ax, top, left, height, width, c2, ls=':', **kwargs)
 
 
-def square_subplots(N, block_shape=None, fig_unit_size=1, **kwargs):
+def square_subplots(N, block_shape=None, fig_unit_size=1, axes_off=False, **kwargs):
     w = int(np.ceil(np.sqrt(N)))
     h = int(np.ceil(N / w))
 
@@ -720,6 +724,10 @@ def square_subplots(N, block_shape=None, fig_unit_size=1, **kwargs):
             _w * block_shape[1]: (_w+1) * block_shape[1]
         ].flatten()
     axes = np.array(_axes)
+
+    if axes_off:
+        for ax in axes.flatten():
+            set_axis_off(ax)
 
     return fig, axes
 
@@ -1946,16 +1954,31 @@ def timed_func(func):
     return f
 
 
+_timer_stats = {}
+
+
 @contextmanager
-def timed_block(name=None, flag=True):
+def timed_block(name=None, flag=True, record_stats=False):
     if name is None:
         frame = inspect.stack()[1]
         name = "{}:{}".format(frame.filename, frame.lineno)
     start_time = time.time()
     yield
+    duration = time.time() - start_time
+
+    if record_stats:
+        if name not in _timer_stats:
+            _timer_stats[name] = RunningStats()
+
+        _timer_stats[name].add(duration)
 
     if flag:
-        print("Call to block <{}> took {} seconds.".format(name, time.time() - start_time))
+        print(f"Call to block <{name}> took {duration} seconds.")
+
+        if record_stats:
+            mean, var, mn, mx = _timer_stats[name].get_stats()
+            std = np.sqrt(var)
+            print(f"Duration stats - mean={mean}, std={std}, mn={mn}, mx={mx}")
 
 
 # From py.test
@@ -2150,14 +2173,17 @@ class Config(dict):
         x.update({'a:b': 0, 'a': {'b': 1}})
 
         Recursion is stopped once we reached a non-dict value, or a dict that has at least one non-string key.
-
-        x = Config()
-        x.update({'a:b': {0: 1}})
-        print(x)
+        TODO: example.
 
         One pitfall to be aware of: overwriting of nested dicts basically doesn't happen.
 
         x = Config(a=dict(b=1))
+
+        >> Config{
+                "a": {
+                    "b": 1
+                }
+            }
         x['a'] = dict(c=2)
         print(x)
         >>  Config{
@@ -2168,6 +2194,21 @@ class Config(dict):
             }
 
         The two dicts assigned to x['a'] are combined, rather than one overwriting the other.
+
+        However, there is one case where overwriting happens:
+
+        x = Config({'a:b': 1})
+        x["a:b:c"] = 2
+        print(x)
+        >>  Config{
+                "a": {
+                    "b": {
+                        "c": 2
+                    }
+                }
+            }
+
+        The value 1, stored at "a:b" was deleted.
 
     """
     _sep = ":"
@@ -2204,6 +2245,12 @@ class Config(dict):
             return super().__getitem__(key).__getitem__(rest)
         else:
             return super().__getitem__(key)
+
+    def get(self, k, default=None):
+        try:
+            return self[k]
+        except KeyError:
+            return default
 
     def _set_item_dict(self, d):
         """ This will never be involved in recursive calls, because _flatten_nested_dict should remove
@@ -2589,8 +2636,18 @@ def map_structure(func, *args, is_leaf):
     else:
         if isinstance(args[0], dict):
             arg_keys = [a.keys() for a in args]
-            assert all(keys == arg_keys[0] for keys in arg_keys), (
-                "Arguments do not have same structure: {}.".format(arg_keys))
+
+            left = set(arg_keys[0])
+            for right in arg_keys[1:]:
+                right = set(right)
+                if left != right:
+                    missing_from_left = right - left
+                    missing_from_right = left - right
+
+                    raise Exception(
+                        f"Structures do not have same format.\nmissing_from_left: {missing_from_left}. "
+                        f"\nmissing_from_right: {missing_from_right}."
+                    )
 
             new_dict = {
                 k: map_structure(func, *[a[k] for a in args], is_leaf=is_leaf)
@@ -2730,6 +2787,8 @@ class RunningStats:
 
     def add(self, data):
         """ First dimension is batch dimension, all the rest are different dimensions of the input. """
+        data = np.atleast_2d(data)
+
         for d in data:
             self.update(d)
 

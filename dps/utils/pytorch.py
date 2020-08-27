@@ -1,9 +1,10 @@
-from collections import defaultdict
-import numpy as np
 import torch
 from torch import nn
 import torch.nn.functional as F
 from torch.nn.modules.normalization import LayerNorm
+
+import numpy as np
+from collections import defaultdict
 import pprint
 import copy
 from tabulate import tabulate
@@ -313,12 +314,14 @@ class RenderHook(_RenderHook):
                 if n_render is None or n_collected >= n_render:
                     break
 
-        _tensors = map_structure(
-            lambda *t: pad_and_concatenate(t, axis=0)[:n_render],
-            *_tensors, is_leaf=lambda rec: not isinstance(rec, dict))
-        _data = map_structure(
-            lambda *t: pad_and_concatenate(t, axis=0)[:n_render],
-            *_data, is_leaf=lambda rec: not isinstance(rec, dict))
+        def postprocess(*t):
+            t = pad_and_concatenate(t, axis=0)
+            if t.shape[0] == n_collected:
+                t = t[:n_render]
+            return t
+
+        _tensors = map_structure(postprocess, *_tensors, is_leaf=lambda rec: not isinstance(rec, dict))
+        _data = map_structure(postprocess, *_data, is_leaf=lambda rec: not isinstance(rec, dict))
 
         return _tensors, _data
 
@@ -345,9 +348,20 @@ class ParameterizedModule(torch.nn.Module, Parameterized):
             "\nBuilding pytorch module {} with args:\n{}".format(
                 self.__class__.__name__, pformat(self._params_at_creation_time)))
 
+        # self.register_forward_hook(forward_annotate_hook)
+        # self.register_forward_hook(backward_annotate_hook)
+
     def set_requires_grad(self, requires_grad):
+
         for param in self.parameters():
             param.requires_grad_(requires_grad)
+
+            if not requires_grad:
+                # Get rid of param.grad tensor that may have been created in previous backward calls.
+                # The only way to get optimizers to truly ignore a parameter (which is what we want
+                # to do here if requires_grad is False) is to set param.grad = None.
+                # Note that all params start their life with param.grad = None.
+                param.grad = None
 
     def update_global_step(self, step):
         ParameterizedModule.step = step
@@ -401,6 +415,7 @@ class CellWrapper(ParameterizedModule):
         in a single tensor. """
     cell_class = Param()
     cell_kwargs = Param(None)
+    train_initial_state = Param(False)
 
     def __init__(self, input_size, hidden_size, *args, **kwargs):
         super().__init__(**kwargs)
@@ -423,13 +438,31 @@ class CellWrapper(ParameterizedModule):
 
         state_shape = dummy_state.shape[1:]
 
-        self._initial_state = torch.nn.Parameter(torch.zeros(state_shape), requires_grad=False)
-        # self._initial_state = torch.nn.Parameter(torch.zeros(state_shape), requires_grad=True)
+        self._initial_state = torch.nn.Parameter(torch.zeros(state_shape), requires_grad=self.train_initial_state)
 
         self.init_weights()
 
-    def initial_state(self, b):
-        return repeat_along_axis(self._initial_state.clone()[None, ...], dim=0, n_repeats=b)
+    def initial_state(self, batch_shape, dim=-1):
+        if isinstance(batch_shape, int):
+            batch_shape = (batch_shape,)
+
+        batch_size = np.prod(batch_shape)
+
+        state_shape = self._initial_state.shape
+
+        n_batch_dims = len(batch_shape)
+        n_state_dims = len(state_shape)
+
+        state = self._initial_state.clone()[None, ...]
+        state = state.repeat(batch_size, *(1,)*(state.ndim-1))
+        state = state.reshape(*batch_shape, *state_shape)
+
+        if dim != -1:
+            state = state.permute(
+                *range(dim), *range(n_batch_dims, n_batch_dims+n_state_dims), *range(dim, n_batch_dims)
+            )
+
+        return state
 
     def forward(self, inp, hidden=None):
         if hidden is None:
@@ -557,8 +590,8 @@ class ConvNet(ParameterizedModule):
             kind = layer_spec.get('kind', 'conv')
 
             if kind == 'fc':
-                b = x.shape[0]
-                x = x.view(b, -1)
+                b, *rest = x.shape
+                x = x.reshape(b, np.prod(rest))
 
             if kind == 'conv':
                 stride = layer_spec.get('stride', 1)
@@ -603,6 +636,170 @@ class ConvNet(ParameterizedModule):
         w = (h_w[1] - (kernel_size[1] - 1) - 1) // stride[1] + 1
 
         return (h, w)
+
+
+class ConvNet3D(ParameterizedModule):
+    layer_specs = Param()
+    preserve_shape = Param(False)
+    batch_norm = Param(False)
+    conv_batch_norm_affine = Param(True)
+
+    def __init__(self, input_shape, output_size=None, **kwargs):
+        super().__init__(**kwargs)
+
+        try:
+            input_shape = tuple(input_shape)
+            input_n_filters, *spatial_shape = input_shape
+            assert len(spatial_shape) == 3
+        except Exception:
+            input_n_filters = input_shape
+            spatial_shape = None
+
+        self.module_list = torch.nn.ModuleList()
+        self.batch_norms = torch.nn.ModuleDict()
+
+        print("Spatial shape: {}".format(spatial_shape))
+        prev_n_output_filters = input_n_filters
+        prev_n_units = None
+
+        self.n_film_params = 0
+        self.film_n_units = []
+
+        for i, layer_spec in enumerate(self.layer_specs):
+            kind = layer_spec.get('kind', 'conv')
+
+            is_last = i == len(self.layer_specs)-1
+
+            if kind == 'conv':
+                n_output_filters = layer_spec['n_filters']
+                kernel_size = layer_spec['kernel_size']
+                stride = layer_spec.get('stride', 1)
+
+                if is_last and output_size is not None:
+                    n_output_filters = output_size
+                elif n_output_filters is None:
+                    n_output_filters = prev_n_output_filters
+
+                n_input_filters = prev_n_output_filters
+
+                if layer_spec.get('coord_conv', False):
+                    n_input_filters += 2
+
+                layer = torch.nn.Conv3d(n_input_filters, n_output_filters, kernel_size, stride=stride)
+                self.module_list.append(layer)
+
+                if not is_last and layer_spec.get('batch_norm', self.batch_norm):
+                    bn = torch.nn.BatchNorm3d(n_output_filters, affine=self.conv_batch_norm_affine)
+                    self.batch_norms[str(i)] = bn
+
+                do_film = layer_spec.get('film', False)
+
+                if do_film:
+                    self.n_film_params += 2 * n_output_filters
+                    self.film_n_units.extend([n_output_filters, n_output_filters])
+
+                prev_n_output_filters = n_output_filters
+
+                if spatial_shape is not None:
+                    if self.preserve_shape and stride == 1:
+                        pass
+                    else:
+                        spatial_shape = self.conv_output_shape(spatial_shape, kernel_size, stride)
+
+            elif kind == 'fc':
+                if spatial_shape is not None:
+                    prev_n_units = n_output_filters * spatial_shape[0] * spatial_shape[1]
+                else:
+                    assert prev_n_units is not None
+                spatial_shape = None
+
+                n_units = layer_spec['n_units']
+
+                if is_last and output_size is not None:
+                    n_units = output_size
+
+                layer = torch.nn.Linear(prev_n_units, n_units)
+                self.module_list.append(layer)
+
+                if not is_last and layer_spec.get('batch_norm', self.batch_norm):
+                    bn = torch.nn.BatchNorm1d(n_units, affine=True)
+                    self.batch_norms[str(i)] = bn
+
+                prev_n_units = n_units
+            else:
+                raise Exception("Unknown layer kind: {}".format(kind))
+
+            print(self.module_list[-1])
+            if spatial_shape is not None:
+                print("Spatial shape after applying layer: {}".format(spatial_shape))
+
+    def forward(self, x):
+        for i, (layer, layer_spec) in enumerate(zip(self.module_list, self.layer_specs)):
+            is_last = i == len(self.module_list) - 1
+
+            kind = layer_spec.get('kind', 'conv')
+
+            if kind == 'fc':
+                b, *rest = x.shape
+                x = x.reshape(b, np.prod(rest))
+
+            if kind == 'conv':
+                stride = layer_spec.get('stride', 1)
+
+                if self.preserve_shape and stride == 1:
+                    kernel_size = layer_spec['kernel_size']
+
+                    try:
+                        k0, k1, k2 = kernel_size
+                    except Exception:
+                        k0 = k1 = k2 = kernel_size
+
+                    pre_pad_0 = int(np.floor((k0-1) / 2))
+                    post_pad_0 = int(np.ceil((k0-1) / 2))
+                    pre_pad_1 = int(np.floor((k1-1) / 2))
+                    post_pad_1 = int(np.ceil((k1-1) / 2))
+                    pre_pad_2 = int(np.floor((k2-1) / 2))
+                    post_pad_2 = int(np.ceil((k2-1) / 2))
+
+                    x = torch.nn.functional.pad(
+                        x, (pre_pad_2, post_pad_2, pre_pad_1, post_pad_1, pre_pad_0, post_pad_0,)
+                    )
+
+            x = layer(x)
+
+            bn_key = str(i)
+            if bn_key in self.batch_norms:
+                x = self.batch_norms[bn_key](x)
+
+            if not is_last:
+                nl_key = layer_spec.get('nl', 'relu')
+                x = nonlinearities[nl_key](x)
+
+        return x
+
+    @staticmethod
+    def conv_output_shape(h_w, kernel_size=1, stride=1):
+        """ Utility function for computing output shapes of convolutions. """
+
+        try:
+            h_w = tuple(h_w)
+            assert len(h_w) == 3
+        except Exception:
+            h_w = (h_w, h_w, h_w)
+
+        if type(kernel_size) is not tuple:
+            kernel_size = (kernel_size, kernel_size)
+
+        if type(stride) is not tuple:
+            stride = (stride, stride)
+
+        print(h_w, kernel_size, stride)
+
+        b = (h_w[0] - (kernel_size[0] - 1) - 1) // stride[0] + 1
+        h = (h_w[1] - (kernel_size[1] - 1) - 1) // stride[1] + 1
+        w = (h_w[2] - (kernel_size[2] - 1) - 1) // stride[2] + 1
+
+        return (b, h, w)
 
 
 class GridConvNet(ConvNet):
@@ -911,9 +1108,18 @@ activations = dict(
     tanh=F.tanh,
     elu=F.elu,
     linear=lambda x: x,
+    sin=lambda x: torch.sin(30 * x),
 )
 activations[None] = lambda x: x
 nonlinearities = activations
+
+
+class Sine(nn.Module):
+    def __init(self):
+        super().__init__()
+
+    def forward(self, inp):
+        return torch.sin(30 * inp)
 
 
 activation_module_classes = dict(
@@ -922,6 +1128,7 @@ activation_module_classes = dict(
     tanh=torch.nn.Tanh,
     elu=torch.nn.ELU,
     linear=torch.nn.Identity,
+    sin=Sine,
 )
 activation_module_classes[None] = torch.nn.Identity
 
@@ -930,11 +1137,28 @@ def activation_module(s):
     return activation_module_classes[s]()
 
 
+def sin_initializer_first(m):
+    n_inputs = m.weight.shape[-1]
+    m.weight.uniform_(-1 / n_inputs, 1 / n_inputs)
+
+
+def sin_initializer(m):
+    n_inputs = m.weight.shape[-1]
+    m.weight.uniform_(-np.sqrt(6 / n_inputs) / 30, np.sqrt(6 / n_inputs) / 30)
+
+
+initializers = dict(
+    # relu=(relu_initializer, relu_initializer, relu_initializer),
+    sin=(sin_initializer_first, sin_initializer, None),
+)
+
+
 class MLP(ParameterizedModule):
     n_hidden_units = Param()
     nl = Param('relu')
     batch_norm = Param(False)
     layer_norm = Param(False)
+    initialization = Param(None)
 
     def __init__(self, n_inputs, n_outputs, **kwargs):
         super().__init__(**kwargs)
@@ -972,9 +1196,32 @@ class MLP(ParameterizedModule):
 
         self.module_list.append(torch.nn.Linear(prev_n_units, n_outputs))
 
+        with torch.no_grad():
+            if self.initialization == 'kaiming_normal':
+                for m in self.module_list:
+                    nn.init.kaiming_normal_(m.weight, a=0.0, nonlinearity=self.nl, mode='fan_in')
+
+            elif self.initialization is None:
+                if self.nl in initializers:
+                    first_layer_init, other_init, last_layer_init = initializers[self.nl]
+                    if first_layer_init is None:
+                        first_layer_init = other_init
+                    if last_layer_init is None:
+                        last_layer_init = other_init
+
+                    for i, m in enumerate(self.module_list):
+                        if i == 0:
+                            first_layer_init(m)
+                        elif i == len(self.module_list)-1:
+                            last_layer_init(m)
+                        else:
+                            other_init(m)
+            else:
+                raise Exception(f"Unknown weight init scheme {self.initialization}")
+
     def forward(self, x, flatten=False):
-        b = x.shape[0]
-        x = x.reshape(b, -1)
+        b, *rest = x.shape
+        x = x.reshape(b, np.prod(rest))
 
         for i, layer in enumerate(self.module_list):
             x = layer(x)
@@ -1397,7 +1644,11 @@ class TransformerLayer(ParameterizedModule):
         attention = torch.softmax(scores, dim=2)
 
         values = reshape_and_apply(self.value_matrix, processed_inp, n_batch_dims=2)
-        weighted_values = (values[:, :, None, :] * attention[..., None]).sum(dim=2)
+
+        weighted_values = (values[:, None, :, :] * attention[..., None]).sum(dim=2)
+
+        # This was what I had previously, and I'm pretty sure it's wrong.
+        # weighted_values = (values[:, :, None, :] * attention[..., None]).sum(dim=2)
 
         result = processed_inp + weighted_values
 
@@ -1867,3 +2118,79 @@ def angle_axis_to_rotation_matrix(angle_axis):
     rotation_matrix[..., :3, :3] = \
         mask_pos * rotation_matrix_normal + mask_neg * rotation_matrix_taylor
     return rotation_matrix  # Nx4x4
+
+
+def _iter_graph(root, callback):
+    queue = [root]
+    seen = set()
+    while queue:
+        fn = queue.pop()
+        if fn in seen:
+            continue
+        seen.add(fn)
+        for next_fn, _ in fn.next_functions:
+            if next_fn is not None:
+                queue.append(next_fn)
+        callback(fn)
+
+
+def register_grad_tracing_hooks(var):
+    from graphviz import Digraph
+    fn_dict = {}
+
+    def hook_cb(fn):
+        def register_grad(grad_input, grad_output):
+            fn_dict[fn] = grad_input
+        fn.register_hook(register_grad)
+
+    _iter_graph(var.grad_fn, hook_cb)
+
+    def is_nan_grad(grad_output):
+        if grad_output is None:
+            return False
+        grad_output = grad_output.data
+        return torch.isnan(grad_output).any()
+
+    def is_big_grad(grad_output):
+        if grad_output is None:
+            return False
+        grad_output = grad_output.data
+        return grad_output.gt(1e6).any()
+
+    def make_dot():
+        node_attr = dict(style='filled',
+                         shape='box',
+                         align='left',
+                         fontsize='12',
+                         ranksep='0.1',
+                         height='0.2')
+        dot = Digraph(node_attr=node_attr, graph_attr=dict(size="12,12"))
+
+        def size_to_str(size):
+            return '('+(', ').join(map(str, size))+')'
+
+        def build_graph(fn):
+            if hasattr(fn, 'variable'):  # if GradAccumulator
+                u = fn.variable
+                node_name = 'Variable\n ' + size_to_str(u.size())
+                dot.node(str(id(u)), node_name, fillcolor='lightblue')
+            else:
+                gis = fn_dict.get(fn)
+                if gis is None:
+                    fillcolor = 'blue'
+                elif any(is_nan_grad(gi) for gi in gis):
+                    fillcolor = 'red'
+                elif any(is_big_grad(gi) for gi in gis):
+                    fillcolor = 'orange'
+                else:
+                    fillcolor = 'white'
+                dot.node(str(id(fn)), str(type(fn).__name__), fillcolor=fillcolor)
+            for next_fn, _ in fn.next_functions:
+                if next_fn is not None:
+                    next_id = id(getattr(next_fn, 'variable', next_fn))
+                    dot.edge(str(next_id), str(id(fn)))
+        _iter_graph(var.grad_fn, build_graph)
+
+        return dot
+
+    return make_dot

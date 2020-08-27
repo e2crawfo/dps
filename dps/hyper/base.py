@@ -16,8 +16,7 @@ import argparse
 
 import clify
 
-import dps
-from dps import cfg
+from dps import cfg, init
 from dps.utils import gen_seed, Config, ExperimentStore, edit_text, NumpySeed, AttrDict, get_default_config
 from dps.train import training_loop
 from dps.parallel import Job, ReadOnlyJob
@@ -431,8 +430,6 @@ class _RunTrainingLoop:
 
         exp_name = '_'.join("{}={}".format(k, new[k]) for k in 'idx repeat'.split())
 
-        dps.reset_config()
-
         config = get_default_config()
         config.update(self.base_config)
         config.update(new)
@@ -752,5 +749,7 @@ def run_experiment(
         config.env_name = env_name
 
         exp_name = "env={}_alg={}_duration={}".format(env_name, alg_name, args.duration)
+
+        init()
 
         build_and_submit(name, exp_name, config, distributions=distributions, **run_kwargs)
