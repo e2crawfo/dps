@@ -438,7 +438,7 @@ class Dataset(Parameterized):
 
                         target_key_set = set(self._artifact_names)
                         actual_key_set = set(artifacts.keys())
-                        assert target_key_set == actual_key_set, "{} vs {}".format(target_key_set, actual_key_set)
+                        assert target_key_set == actual_key_set, f"{target_key_set} vs {actual_key_set}"
 
                     self._writer.close()
                     print("Done creating dataset.")
@@ -480,7 +480,7 @@ class Dataset(Parameterized):
         for k, v in artifacts.items():
             setattr(self, k, v)
 
-        print("Took {} seconds.".format(time.time() - start))
+        print(f"Took {time.time() - start} seconds.")
         print("Features for dataset: ")
         print(pformat(self.features))
 
@@ -495,10 +495,14 @@ class Dataset(Parameterized):
             else:
                 dest = os.path.join(cfg.copy_dataset_to, basename)
 
-            print("Copying dataset to {}...".format(dest))
-            start = time.time()
-            shutil.copy(self.filename, dest)
-            print("Done copy, took {} seconds.".format(time.time() - start))
+            if os.path.exists(dest):
+                print(f"Skipping local copy of dataset, dataset already exists at destination {dest}.")
+            else:
+                print(f"Copying dataset to {dest}...")
+                start = time.time()
+                shutil.copy(self.filename, dest)
+                print(f"Done copy, took {time.time() - start} seconds.")
+
             self.filename = dest
 
         print()
