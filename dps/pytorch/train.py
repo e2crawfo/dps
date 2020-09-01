@@ -4,12 +4,15 @@ import tensorflow as tf
 import numpy as np
 import time
 from torch._six import inf
+from collections import defaultdict
 
 from dps import cfg
 from dps.datasets.base import Dataset
 from dps.train import TrainingLoop, TrainingLoopData
-from dps.utils import AttrDict, Parameterized, Param, flush_print as _print, gen_seed, map_structure, timed_block
-from dps.utils.pytorch import walk_variable_scopes, to_np, describe_structure
+from dps.utils import (
+    AttrDict, Parameterized, Param, flush_print as _print, gen_seed, map_structure, timed_block, RunningStats
+)
+from dps.utils.pytorch import walk_variable_scopes, to_np, describe_structure, GradNormRecorder
 
 
 pytorch_device = None
@@ -193,6 +196,7 @@ class PyTorchUpdater(Parameterized):
     lr_schedule = Param()
     build_optimizer = Param()
     max_grad_norm = Param()
+    print_grad_norm_step = Param(0)
 
     def __init__(self, env, scope=None, mpi_context=None, **kwargs):
         self.scope = scope
@@ -238,6 +242,11 @@ class PyTorchUpdater(Parameterized):
         data_manager.build_graph()
         self.train_iterator = data_manager.do_train()
 
+        if self.print_grad_norm_step > 0:
+            self.grad_norm_recorder = GradNormRecorder(self.model)
+        else:
+            self.grad_norm_recorder = None
+
     def update(self, batch_size, step):
         print_time = step % 100 == 0
 
@@ -268,6 +277,12 @@ class PyTorchUpdater(Parameterized):
 
             with timed_block('loss backward', print_time):
                 loss.backward()
+
+        if self.grad_norm_recorder is not None:
+            self.grad_norm_recorder.update()
+
+            if step % self.print_grad_norm_step == 0:
+                self.grad_norm_recorder.display()
 
         parameters = list(self.model.parameters())
         pure_grad_norm = grad_norm(parameters)
@@ -545,3 +560,130 @@ class DataIterator:
         )
 
         return result
+
+
+class PyTorchDummyDataManager(Parameterized):
+    """ A dummy DataManager which only loads a single batch, when it is created, and yields that same batch every
+        timestep. Using this data manager in place of the real one can be used to determine the runtime taken up by
+        loading data and putting it on the GPU (this dummy data manager doesn't do loading every timestep ,so the
+        difference in runtime per timestep between using this DataManager vs the real one is the amount of time used
+        to load the data each timestep).
+
+    """
+    batch_size = Param()
+
+    def __init__(self, train=None, val=None, test=None, datasets=None, **kwargs):
+        self.datasets = {}
+        self.datasets.update(train=train, val=val, test=test)
+        self.datasets.update(datasets)
+
+        assert (
+            self.datasets['train'] is not None
+            or self.datasets['val'] is not None
+            or self.datasets['test'] is not None), (
+                'Must provide at least one dataset with name "train", "val", or "test".')
+
+        self.iterators = {}
+        self.train_initialized = False
+
+        self.graph = tf.Graph()
+
+        # Don't use GPU at all for this. There's no point in using the GPU here,
+        # as the data is going to come back through the CPU anyway.
+        session_config = tf.ConfigProto()
+        session_config.device_count['GPU'] = 0
+        session_config.gpu_options.per_process_gpu_memory_fraction = 0.0
+        self.sess = tf.Session(graph=self.graph, config=session_config)
+
+    def build_graph(self):
+        tf_dsets = []
+
+        with self.graph.as_default(), self.graph.device("/cpu:0"):
+            train_dataset = self.datasets.get('train', None)
+            if train_dataset is not None:
+                train_dset, __ = self.build_iterator('train', 'train', self.batch_size, True, 0)
+                tf_dsets.append(train_dset)
+
+            val_dataset = self.datasets.get('val', None)
+            if val_dataset is not None:
+                val_dset, _ = self.build_iterator('val', 'val', self.batch_size, False, 0)
+                tf_dsets.append(val_dset)
+
+            test_dataset = self.datasets.get('test', None)
+            if test_dataset is not None:
+                test_dset, _ = self.build_iterator('test', 'test', self.batch_size, False, 0)
+                tf_dsets.append(test_dset)
+
+        self.graph.finalize()
+
+    def build_iterator(self, name, base_dataset_name, batch_size, repeat, shuffle_buffer_size):
+        base_dataset = self.datasets[base_dataset_name]
+
+        if batch_size is None:
+            batch_size = self.batch_size
+
+        if isinstance(base_dataset, tf.data.Dataset):
+            dset = base_dataset
+        elif isinstance(base_dataset, Dataset):
+            dset = tf.data.TFRecordDataset(base_dataset.filename)
+        else:
+            raise Exception("Unknown dataset type: {}.".format(base_dataset))
+
+        dset = dset.batch(batch_size)
+        if hasattr(base_dataset, 'parse_example_batch'):
+            dset = dset.map(base_dataset.parse_example_batch)
+        tf_iterator = dset.make_initializable_iterator()
+        iterator = DummyDataIterator(self.sess, tf_iterator)
+        self.iterators[name] = iterator
+
+        return dset, iterator
+
+    def do_train(self):
+        return self.do('train')
+
+    def do_val(self):
+        return self.do('val')
+
+    def do_test(self):
+        return self.do('test')
+
+    def do(self, name):
+        """ Initialize iterator (unless it's the `train` iterator, which is handled slightly differently)
+            and return a feed_dict populated with the appropriate handle for the requested iterator. """
+
+        iterator = self.iterators[name]
+
+        if name == 'train':
+            if not self.train_initialized:
+                iterator.reset()
+                self.train_initialized = True
+        else:
+            iterator.reset()
+        return iterator
+
+
+class DummyDataIterator:
+    def __init__(self, sess, tf_iterator):
+        self.sess = sess
+        self.tf_iterator = tf_iterator
+        self.get_next_op = self.tf_iterator.get_next()
+        self.result = None
+
+    def reset(self):
+        self.sess.run(self.tf_iterator.initializer)
+        try:
+            result = self.sess.run(self.get_next_op)
+        except tf.errors.OutOfRangeError:
+            raise StopIteration("TensorFlow iterator raised tf.errors.OutOfRangeError.")
+
+        device = get_pytorch_device()
+        self.result = map_structure(
+            lambda v: torch.from_numpy(v).to(device) if isinstance(v, np.ndarray) else v,
+            result, is_leaf=lambda v: not isinstance(v, dict)
+        )
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return self.result

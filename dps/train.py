@@ -316,7 +316,7 @@ class TrainingLoop:
                 self.data.summarize()
 
                 self.timestamp(f"Done training run (name={self.exp_name})")
-                _print(f"Experiment lives at {self.exp_dir}")
+                _print(f"Experiment lives at {self.exp_dir.path}")
                 _print("=" * 80)
                 _print("\n\n")
 

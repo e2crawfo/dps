@@ -9,8 +9,10 @@ import pprint
 import copy
 from tabulate import tabulate
 
-from dps.utils.base import RenderHook as _RenderHook, AttrDict, Config, map_structure, Param, Parameterized, pformat
-from dps.utils.base import describe_tensor as _describe_tensor, describe_structure as _describe_structure
+from dps.utils.base import (
+    RenderHook as _RenderHook, AttrDict, Config, map_structure, Param, Parameterized, pformat, timed_block,
+    describe_tensor as _describe_tensor, describe_structure as _describe_structure, RunningStats
+)
 
 
 def compute_ssim(x, y):
@@ -226,6 +228,49 @@ def walk_variable_scopes(model, max_depth=None):
     print(tabulate(table, headers="firstrow", tablefmt="fancy_grid"))
 
 
+class GradNormRecorder:
+    def __init__(self, model):
+        self.model = model
+        self.norms = defaultdict(RunningStats)
+        self.norm_fractions = defaultdict(RunningStats)
+
+    def update(self):
+        named_parameters = list(self.model.named_parameters())
+        norms = dict()
+
+        total_norm = 0
+        for name, p in named_parameters:
+            if p.grad is None:
+                param_norm = 0.
+            else:
+                param_norm = p.grad.data.norm(2).item()
+            self.norms[name].update(param_norm)
+            norms[name] = param_norm
+            total_norm += param_norm ** 2
+
+        total_norm = total_norm ** 0.5
+
+        for name, norm in norms.items():
+            self.norm_fractions[name].update(norm / total_norm)
+
+    def display(self):
+        def _fmt(i):
+            return "{:,}".format(i)
+
+        table = [
+            'norm_mean norm_std norm_min norm_max '
+            'norm_frac_mean norm_frac_std norm_frac_min norm_frac_max'.split()
+        ]
+
+        for name in self.norms.keys():
+            stats = [*self.norms[name].get_stats(), *self.norm_fractions[name].get_stats()]
+            stats = [_fmt(s) for s in stats]
+            table.append([name, *stats])
+
+        print("Statistics on norms of gradients of pytorch variables:")
+        print(tabulate(table, headers="firstrow", tablefmt="fancy_grid"))
+
+
 def pad_and_concatenate(tensors, axis=0):
     """ Pad all arrays so that they have the same shape for all axes other than the concatentation axis,
         and then concatenate. Assumes tensors is a list of numpy arrays.
@@ -337,6 +382,9 @@ class ParameterizedModule(torch.nn.Module, Parameterized):
     _path = "root"
     step = 0
 
+    forward_runtime_step = Param(0)
+    forward_runtime_reset_step = Param(0)
+
     def __init__(self, **kwargs):
         torch.nn.Module.__init__(self)
         Parameterized.__init__(self, **kwargs)
@@ -347,9 +395,6 @@ class ParameterizedModule(torch.nn.Module, Parameterized):
         print(
             "\nBuilding pytorch module {} with args:\n{}".format(
                 self.__class__.__name__, pformat(self._params_at_creation_time)))
-
-        # self.register_forward_hook(forward_annotate_hook)
-        # self.register_forward_hook(backward_annotate_hook)
 
     def set_requires_grad(self, requires_grad):
 
@@ -384,12 +429,24 @@ class ParameterizedModule(torch.nn.Module, Parameterized):
         return scheduled_values
 
     def forward(self, *args, **kwargs):
+        step = ParameterizedModule.step
+
         for name, value in self.scheduled_values.items():
-            _value = value(ParameterizedModule.step)
+            _value = value(step)
             setattr(self, name, _value)
             self.current_scheduled_values[name] = _value
 
-        return self._forward(*args, **kwargs)
+        if self.forward_runtime_step > 0:
+            print_time = step % self.forward_runtime_step == 0
+            if self.forward_runtime_reset_step > 0:
+                reset_stats = step % self.forward_runtime_reset_step == 0
+            else:
+                reset_stats = False
+            name = self.__class__.__name__
+            with timed_block(name, print_time, record_stats=True, reset_stats=reset_stats):
+                return self._forward(*args, **kwargs)
+        else:
+            return self._forward(*args, **kwargs)
 
     def _forward(self, *args, **kwargs):
         raise Exception("NotImplementedError")

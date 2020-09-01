@@ -1958,7 +1958,7 @@ _timer_stats = {}
 
 
 @contextmanager
-def timed_block(name=None, flag=True, record_stats=False):
+def timed_block(name=None, flag=True, record_stats=False, reset_stats=False):
     if name is None:
         frame = inspect.stack()[1]
         name = "{}:{}".format(frame.filename, frame.lineno)
@@ -1967,7 +1967,7 @@ def timed_block(name=None, flag=True, record_stats=False):
     duration = time.time() - start_time
 
     if record_stats:
-        if name not in _timer_stats:
+        if name not in _timer_stats or reset_stats:
             _timer_stats[name] = RunningStats()
 
         _timer_stats[name].add(duration)
