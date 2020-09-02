@@ -45,9 +45,10 @@ class PyTorchTrainingLoop(TrainingLoop):
         _print("Setting pytorch seed to generated seed: {}\n".format(torch_seed))
         torch.manual_seed(torch_seed)
 
-        torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.enabled = True
-        torch.backends.cudnn.deterministic = True
+
+        torch.backends.cudnn.benchmark = cfg.pytorch_cudnn_benchmark
+        torch.backends.cudnn.deterministic = cfg.pytorch_cudnn_deterministic
 
         if cfg.use_gpu:
             _print("Using GPU.")
