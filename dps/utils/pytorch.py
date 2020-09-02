@@ -1277,8 +1277,7 @@ class MLP(ParameterizedModule):
                 raise Exception(f"Unknown weight init scheme {self.initialization}")
 
     def forward(self, x, flatten=False):
-        b, *rest = x.shape
-        x = x.reshape(b, np.prod(rest))
+        x = x.reshape(x.shape[0], -1)
 
         for i, layer in enumerate(self.module_list):
             x = layer(x)

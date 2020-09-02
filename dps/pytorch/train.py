@@ -273,7 +273,10 @@ class PyTorchUpdater(Parameterized):
             recorded_tensors['loss'] = loss
 
             with timed_block('zero_grad', print_time):
-                self.optimizer.zero_grad()
+                # Apparently this is faster, according to https://www.youtube.com/watch?v=9mS1fIYj1So, 10:37
+                for param in self.model.parameters():
+                    param.grad = None
+                # self.optimizer.zero_grad()
 
             with timed_block('loss backward', print_time):
                 loss.backward()

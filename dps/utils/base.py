@@ -68,7 +68,7 @@ def describe_structure(tensors, floatfmt=None):
 
         desc = pd.DataFrame(flat_t).describe()[0]
 
-        record = dict(key=k, shape=tuple(t.shape), **desc, n_nan=n_nan, n_inf=n_inf)
+        record = dict(key=k, shape=tuple(t.shape), dtype=t.dtype, **desc, n_nan=n_nan, n_inf=n_inf)
         table.append(record)
 
     print(tabulate(table, headers="keys", floatfmt=floatfmt))
