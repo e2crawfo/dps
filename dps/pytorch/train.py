@@ -1,5 +1,6 @@
 import torch
 from torch.utils.tensorboard import SummaryWriter
+import torch.autograd.profiler as profiler
 import tensorflow as tf
 import numpy as np
 import time
@@ -260,8 +261,15 @@ class PyTorchUpdater(Parameterized):
         detect_grad_anomalies = cfg.get('detect_grad_anomalies', False)
         with torch.autograd.set_detect_anomaly(detect_grad_anomalies):
 
-            with timed_block('forward', print_time):
-                tensors, recorded_tensors, losses = self.model(data, step)
+            profile_step = cfg.get('pytorch_profile_step', 0)
+
+            if profile_step > 0 and step % profile_step == 0:
+                with torch.autograd.profiler.profile(use_cuda=True) as prof:
+                    tensors, recorded_tensors, losses = self.model(data, step)
+                print(prof)
+            else:
+                with timed_block('forward', print_time):
+                    tensors, recorded_tensors, losses = self.model(data, step)
 
             # --- loss ---
 
@@ -282,19 +290,20 @@ class PyTorchUpdater(Parameterized):
             with timed_block('loss backward', print_time):
                 loss.backward()
 
-        if self.grad_norm_recorder is not None:
-            self.grad_norm_recorder.update()
+        with timed_block('process grad', print_time):
+            if self.grad_norm_recorder is not None:
+                self.grad_norm_recorder.update()
 
-            if step % self.print_grad_norm_step == 0:
-                self.grad_norm_recorder.display()
+                if step % self.print_grad_norm_step == 0:
+                    self.grad_norm_recorder.display()
 
-        parameters = list(self.model.parameters())
-        pure_grad_norm = grad_norm(parameters)
+            parameters = list(self.model.parameters())
+            pure_grad_norm = grad_norm(parameters)
 
-        if self.max_grad_norm is not None and self.max_grad_norm > 0.0:
-            torch.nn.utils.clip_grad_norm_(parameters, self.max_grad_norm)
+            if self.max_grad_norm is not None and self.max_grad_norm > 0.0:
+                torch.nn.utils.clip_grad_norm_(parameters, self.max_grad_norm)
 
-        clipped_grad_norm = grad_norm(parameters)
+            clipped_grad_norm = grad_norm(parameters)
 
         with timed_block('optimizer step', print_time):
             self.optimizer.step()
@@ -560,6 +569,7 @@ class DataIterator:
 
         result = map_structure(
             lambda v: torch.from_numpy(v).to(device) if isinstance(v, np.ndarray) else v,
+            # lambda v: torch.from_numpy(v).pin_memory().to(device, non_blocking=True) if isinstance(v, np.ndarray) else v,
             result, is_leaf=lambda v: not isinstance(v, dict)
         )
 
