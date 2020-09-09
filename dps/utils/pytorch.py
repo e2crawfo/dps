@@ -10,7 +10,7 @@ import copy
 from tabulate import tabulate
 
 from dps.utils.base import (
-    RenderHook as _RenderHook, AttrDict, Config, map_structure, Param, Parameterized, pformat, timed_block,
+    RenderHook as _RenderHook, AttrDict, map_structure, Param, Parameterized, pformat, timed_block,
     describe_tensor as _describe_tensor, describe_structure as _describe_structure, RunningStats
 )
 
@@ -321,6 +321,7 @@ class RenderHook(_RenderHook):
                 data_iterator = updater.train_iterator
             else:
                 data_iterator = updater.data_manager.do_val()
+        batch_size = data_iterator.batch_size
 
         step = updater._n_experiences
 
@@ -330,6 +331,7 @@ class RenderHook(_RenderHook):
 
         from dps import cfg
         n_render = cfg.get('n_render', None)
+        start_idx = cfg.get('render_start_idx', 0)
 
         if run_model is None:
             run_model = updater.model
@@ -338,16 +340,40 @@ class RenderHook(_RenderHook):
             run_model_kwargs = {}
 
         with torch.no_grad():
+            n_seen = 0
             while True:
                 data = AttrDict(next(data_iterator))
+
+                start = 0
+                end = batch_size
+
+                if start_idx >= n_seen + batch_size:
+                    start = end
+                elif start_idx <= n_seen:
+                    start = 0
+                elif n_seen < start_idx < n_seen + batch_size:
+                    start = start_idx - n_seen
+
+                n_seen += batch_size
+                n_collected += end - start
+
+                if end - start == 0:
+                    continue
+
+                if start > 0:
+                    data = map_structure(
+                        lambda t: t[start:] if t.shape[0] == batch_size else t, data,
+                        is_leaf=lambda rec: not isinstance(rec, dict)
+                    )
+
                 tensors, recorded_tensors, losses = run_model(data, step, **run_model_kwargs)
 
-                tensors = Config(tensors)
+                tensors = AttrDict(tensors)
                 tensors = map_structure(
                     lambda t: to_np(t) if isinstance(t, torch.Tensor) else t,
                     tensors, is_leaf=lambda rec: not isinstance(rec, dict))
 
-                data = Config(data)
+                data = AttrDict(data)
                 data = map_structure(
                     lambda t: to_np(t) if isinstance(t, torch.Tensor) else t,
                     data, is_leaf=lambda rec: not isinstance(rec, dict))
@@ -355,12 +381,12 @@ class RenderHook(_RenderHook):
                 _tensors.append(tensors)
                 _data.append(data)
 
-                n_collected += recorded_tensors['batch_size']
                 if n_render is None or n_collected >= n_render:
                     break
 
         def postprocess(*t):
             t = pad_and_concatenate(t, axis=0)
+            # A bit of a hacky way to look for tensors whose first dim is the batch dim.
             if t.shape[0] == n_collected:
                 t = t[:n_render]
             return t
