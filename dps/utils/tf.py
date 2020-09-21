@@ -189,7 +189,7 @@ def tf_inspect_cl():
         pprint.pprint(variables)
 
 
-RNNCell = tf.nn.rnn_cell.RNNCell
+RNNCell = tf.compat.v1.nn.rnn_cell.RNNCell
 
 
 def count_trainable_variables(variables=None, var_scope=None):

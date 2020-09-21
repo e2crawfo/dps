@@ -21,7 +21,6 @@ from dps.utils import (
     ExperimentDirectory, nvidia_smi, memory_limit, Config, redirect_stream, pretty_func,
     NumpySeed, restart_tensorboard, launch_pdb_on_exception, execute_command, flush_print as _print,
 )
-from dps.mpi_train import MPI_MasterContext
 
 
 def training_loop(exp_name='', start_time=None):
@@ -306,8 +305,6 @@ class TrainingLoop:
                 self.time_remaining, verbose=True,
                 timeout_callback=lambda limiter: _print("Training run exceeded its time limit."))
 
-            self.mpi_context = MPI_MasterContext(cfg.get('n_procs', 1), exp_dir)
-
             try:
                 with limiter:
                     self._run()
@@ -386,7 +383,7 @@ class TrainingLoop:
 
                 _print("\n" + "-" * 10 + " Stage set-up " + "-" * 10)
 
-                _print("\nNew config values for this stage are: \n{}\n".format(pformat(stage_config)))
+                _print("\nNew config values for this stage are: \n{}\n".format(stage_config))
                 stack.enter_context(stage_config)
 
                 stage_prepare_func = cfg.get("stage_prepare_func", None)
@@ -397,8 +394,6 @@ class TrainingLoop:
                 cpu_ram_limit_mb = cfg.get("cpu_ram_limit_mb", None)
                 if cpu_ram_limit_mb is not None:
                     stack.enter_context(memory_limit(cfg.cpu_ram_limit_mb))
-
-                self.mpi_context.start_stage()
 
                 self.framework_initialize_stage(stack)
 
@@ -416,10 +411,7 @@ class TrainingLoop:
                 _print("\nDone building env.\n")
                 _print("Building updater...\n")
 
-                if cfg.n_procs > 1:
-                    updater = cfg.get_updater(self.env, mpi_context=self.mpi_context)
-                else:
-                    updater = cfg.get_updater(self.env)
+                updater = cfg.get_updater(self.env)
                 self.updater = updater
 
                 updater.stage_idx = self.stage_idx
@@ -663,6 +655,9 @@ class TrainingLoop:
             render = local_step % render_step == 0 and (local_step > 0 or cfg.render_first)
             checkpoint = local_step % checkpoint_step == 0 and local_step > 0
             save_weights = local_step % weight_step == 0 and local_step > 0
+            save_weights_steps = cfg.get('save_weights_steps', [])
+            save_weights |= local_step in save_weights_steps
+            overwrite_weights = cfg.overwrite_weights and local_step not in save_weights_steps
             backup = local_step % backup_step == 0 and local_step > 0 and cfg.backup_dir
 
             if display or render or evaluate or local_step % 100 == 0:
@@ -899,7 +894,7 @@ class TrainingLoop:
                            updater.n_experiences, self.n_global_experiences,
                            self.stopping_criteria_name, stopping_criteria_value))
 
-                if cfg.overwrite_weights:
+                if overwrite_weights:
                     weight_path = self.data.path_for(
                         'weights/checkpoint_stage_{}'.format(stage_idx))
                 else:
@@ -908,8 +903,7 @@ class TrainingLoop:
 
                 weight_start = time.time()
                 weight_path = updater.save(weight_path)
-
-                _print("Done saving weights, took {} seconds".format(time.time() - weight_start))
+                _print(f"Saved weights to {weight_path}, took {time.time()-weight_start} seconds")
 
             if backup:
                 _print("Backing up experiment directory.")

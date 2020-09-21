@@ -1,19 +1,21 @@
 import torch
 from torch.utils.tensorboard import SummaryWriter
-import torch.autograd.profiler as profiler
 import tensorflow as tf
 import numpy as np
 import time
 from torch._six import inf
-from collections import defaultdict
+import matplotlib.pyplot as plt
+import os
+import shutil
+import traceback as tb
 
 from dps import cfg
 from dps.datasets.base import Dataset
 from dps.train import TrainingLoop, TrainingLoopData
 from dps.utils import (
-    AttrDict, Parameterized, Param, flush_print as _print, gen_seed, map_structure, timed_block, RunningStats
+    AttrDict, Parameterized, Param, flush_print as _print, gen_seed, map_structure, timed_block
 )
-from dps.utils.pytorch import walk_variable_scopes, to_np, describe_structure, GradNormRecorder
+from dps.utils.pytorch import walk_variable_scopes, to_np, describe_structure, GradNormRecorder, pad_and_concatenate
 
 
 pytorch_device = None
@@ -52,10 +54,20 @@ class PyTorchTrainingLoop(TrainingLoop):
         torch.backends.cudnn.deterministic = cfg.pytorch_cudnn_deterministic
 
         if cfg.use_gpu:
+            _print("Trying to use GPU...")
+            try:
+                device = torch.cuda.current_device()
+                use_gpu = True
+            except AssertionError:
+                tb.print_exc()
+                use_gpu = False
+        else:
+            use_gpu = False
+
+        if use_gpu:
             _print("Using GPU.")
 
             _print("Device count: {}".format(torch.cuda.device_count()))
-            device = torch.cuda.current_device()
             _print("Device idx: {}".format(device))
             _print("Device name: {}".format(torch.cuda.get_device_name(device)))
             _print("Device capability: {}".format(torch.cuda.get_device_capability(device)))
@@ -64,6 +76,8 @@ class PyTorchTrainingLoop(TrainingLoop):
         else:
             _print("Not using GPU.")
             set_pytorch_device('cpu')
+
+        torch.set_printoptions(profile='full')
 
     def framework_finalize_stage_initialization(self):
         self.framework_print_variables()
@@ -212,6 +226,30 @@ class PyTorchUpdater(Parameterized):
     def n_experiences(self):
         return self._n_experiences
 
+    def path_for(self, name, ext):
+        if ext is None:
+            basename = 'stage={:0>4}_local_step={}'.format(self.stage_idx, self.step)
+        else:
+            basename = 'stage={:0>4}_local_step={}.{}'.format(self.stage_idx, self.step, ext)
+        return self.exp_dir.path_for('plots', name, basename)
+
+    def savefig(self, name, fig, ext, is_dir=True):
+        if is_dir:
+            path = self.path_for(name, ext)
+            fig.savefig(path)
+            plt.close(fig)
+
+            shutil.copyfile(
+                path,
+                os.path.join(
+                    os.path.dirname(path),
+                    f'latest_stage{self.stage_idx:0>4}.{ext}')
+            )
+        else:
+            path = self.exp_dir.path_for('plots', f"{name}.{ext}")
+            fig.savefig(path)
+            plt.close(fig)
+
     def build_graph(self):
         print("Building model...")
         self.model = self.build_model(env=self.env)
@@ -262,7 +300,6 @@ class PyTorchUpdater(Parameterized):
         with torch.autograd.set_detect_anomaly(detect_grad_anomalies):
 
             profile_step = cfg.get('pytorch_profile_step', 0)
-
             if profile_step > 0 and step % profile_step == 0:
                 with torch.autograd.profiler.profile(use_cuda=True) as prof:
                     tensors, recorded_tensors, losses = self.model(data, step)
@@ -335,7 +372,12 @@ class PyTorchUpdater(Parameterized):
     def _update(self, batch_size):
         pass
 
-    def evaluate(self, batch_size, step, mode="val"):
+    def evaluate(self, _, step, mode="val"):
+        return self.model.evaluate(self, step, mode=mode)
+
+    def get_eval_tensors(self, step, mode="val"):
+        """ Run `self.model` on either val or test dataset, return data and tensors. """
+
         assert mode in "val test".split()
 
         self.model.eval()
@@ -346,17 +388,19 @@ class PyTorchUpdater(Parameterized):
         else:
             raise Exception("Unknown data mode: {}".format(mode))
 
+        _tensors = []
+        _data = []
+
         n_points = 0
         n_batches = 0
         record = None
 
-        start = time.time()
+        with torch.no_grad():
+            for data in data_iterator:
+                data = AttrDict(data)
 
-        for data in data_iterator:
-            data = AttrDict(data)
+                tensors, recorded_tensors, losses = self.model(data, step)
 
-            with torch.no_grad():
-                tensors, recorded_tensors, losses = self.model.evaluate(data, step)
                 losses = AttrDict(losses)
 
                 loss = 0.0
@@ -369,27 +413,42 @@ class PyTorchUpdater(Parameterized):
                     lambda t: to_np(t.mean()) if isinstance(t, (torch.Tensor, np.ndarray)) else t,
                     recorded_tensors, is_leaf=lambda rec: not isinstance(rec, dict))
 
-            batch_size = recorded_tensors['batch_size']
+                batch_size = recorded_tensors['batch_size']
 
-            if record is None:
-                record = recorded_tensors
-            else:
-                record = map_structure(
-                    lambda rec, rec_t: rec + batch_size * np.mean(rec_t), record, recorded_tensors,
-                    is_leaf=lambda rec: not isinstance(rec, dict))
+                n_points += batch_size
+                n_batches += 1
 
-            n_points += batch_size
-            n_batches += 1
+                if record is None:
+                    record = recorded_tensors
+                else:
+                    record = map_structure(
+                        lambda rec, rec_t: rec + batch_size * np.mean(rec_t), record, recorded_tensors,
+                        is_leaf=lambda rec: not isinstance(rec, dict))
+
+                data = AttrDict(data)
+                data = map_structure(
+                    lambda t: to_np(t) if isinstance(t, torch.Tensor) else t,
+                    data, is_leaf=lambda rec: not isinstance(rec, dict))
+
+                tensors = AttrDict(tensors)
+                tensors = map_structure(
+                    lambda t: to_np(t) if isinstance(t, torch.Tensor) else t,
+                    tensors, is_leaf=lambda rec: not isinstance(rec, dict))
+
+                _tensors.append(tensors)
+                _data.append(data)
+
+        def postprocess(*t):
+            return pad_and_concatenate(t, axis=0)
+
+        _tensors = map_structure(postprocess, *_tensors, is_leaf=lambda rec: not isinstance(rec, dict))
+        _data = map_structure(postprocess, *_data, is_leaf=lambda rec: not isinstance(rec, dict))
 
         record = map_structure(
             lambda rec: rec / n_points, record, is_leaf=lambda rec: not isinstance(rec, dict))
+        record = AttrDict(record)
 
-        record['eval_duration_per_item'] = (time.time() - start) / n_points
-        record['eval_duration_per_batch'] = (time.time() - start) / n_batches
-        print("Evaluation took {} seconds per item, {} seconds per batch.".format(
-            record['eval_duration_per_item'], record['eval_duration_per_batch']))
-
-        return record
+        return _data, _tensors, record
 
     def save(self, path):
         whole_dict = dict(model=self.model.state_dict())
@@ -519,6 +578,7 @@ class PyTorchDataManager(Parameterized):
 
         tf_iterator = dset.make_initializable_iterator()
         iterator = DataIterator(self.sess, tf_iterator)
+        iterator.batch_size = batch_size
         self.iterators[name] = iterator
 
         return dset, iterator
@@ -569,7 +629,6 @@ class DataIterator:
 
         result = map_structure(
             lambda v: torch.from_numpy(v).to(device) if isinstance(v, np.ndarray) else v,
-            # lambda v: torch.from_numpy(v).pin_memory().to(device, non_blocking=True) if isinstance(v, np.ndarray) else v,
             result, is_leaf=lambda v: not isinstance(v, dict)
         )
 

@@ -462,7 +462,7 @@ class ParameterizedModule(torch.nn.Module, Parameterized):
             setattr(self, name, _value)
             self.current_scheduled_values[name] = _value
 
-        if self.forward_runtime_step > 0:
+        if self.forward_runtime_step > 0 and self.training:
             print_time = step % self.forward_runtime_step == 0
             if self.forward_runtime_reset_step > 0:
                 reset_stats = step % self.forward_runtime_reset_step == 0
@@ -1303,7 +1303,8 @@ class MLP(ParameterizedModule):
                 raise Exception(f"Unknown weight init scheme {self.initialization}")
 
     def forward(self, x, flatten=False):
-        x = x.reshape(x.shape[0], -1)
+        # Can't use -1 as last dim, doesn't work when x has 0 elements.
+        x = x.reshape(x.shape[0], np.prod(x.shape[1:]))
 
         for i, layer in enumerate(self.module_list):
             x = layer(x)
