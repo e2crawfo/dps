@@ -26,12 +26,13 @@ import gc
 import matplotlib.pyplot as plt
 from matplotlib import animation
 import matplotlib.patches as patches
+import matplotlib as mpl
 import imageio
 from skimage.transform import resize
-import pprint
 from scipy.spatial.transform import Rotation
 import pandas as pd
 from tabulate import tabulate
+from IPython.lib.pretty import pretty, for_type
 
 import clify
 import dps
@@ -42,6 +43,21 @@ green = np.array([27, 158, 119]) / 255.
 orange = np.array([217, 95, 2]) / 255.
 blue = np.array([117, 112, 179]) / 255.
 pink = np.array([231, 41, 138]) / 255.
+
+
+def to_rgb(c):
+    return np.array(mpl.colors.to_rgb(c))
+
+
+def random_unit_vector(shape, axis=-1, dtype=np.float32):
+    try:
+        shape = (int(shape),)
+    except (TypeError, ValueError):
+        pass
+    x = np.random.randn(*shape).astype(dtype)
+    norm = np.linalg.norm(x, axis=axis, keepdims=True)
+    norm = np.clip(norm, np.finfo(dtype).eps, None)
+    return x / norm
 
 
 def describe_tensor(tensor):
@@ -1275,6 +1291,10 @@ def _checked_makedirs(directory, force_fresh):
 
 
 def pretty_func(f):
+    f_string = str(f)
+    if not f_string.startswith('<function '):
+        return f_string
+
     if hasattr(f, '__name__'):
         name = f.__name__
     elif hasattr(f, '__class__'):
@@ -1321,11 +1341,6 @@ class SourceJSONEncoder(json.JSONEncoder):
             return pretty_func(obj)
 
         return repr(obj)
-
-
-def pformat(v):
-    """  Tries to handle functions in a nicer way. """
-    return pprint.pformat(json.loads(json.dumps(v, cls=SourceJSONEncoder)), width=140)
 
 
 class ExperimentDirectory(object):
@@ -1674,10 +1689,71 @@ def numbers_to_digits(numbers, n_digits, base=10):
     return np.stack(digits, -1)
 
 
+def pformat(v):
+    return pretty(v)
+
+
+def _list_repr_pretty(lst, p, cycle):
+    if cycle:
+        p.text('[...]')
+    else:
+        with p.group(4, '['):
+            p.breakable('')
+            for idx, item in enumerate(lst):
+                if idx:
+                    p.text(',')
+                    p.breakable()
+                p.pretty(item)
+        p.breakable('')
+        p.text(']')
+
+
+for_type(list, _list_repr_pretty)
+
+
+def _ndarray_repr_pretty(a, p, cycle):
+    if cycle:
+        p.text(f'ndarray(..., shape={a.shape}, dtype={a.dtype})')
+    else:
+        with p.group(4, 'ndarray('):
+            p.breakable('')
+            x = str(a)
+            for idx, line in enumerate(x.split('\n')):
+                if idx:
+                    p.breakable()
+                p.text(line)
+            p.text(',')
+            p.breakable()
+            p.text(f'shape={a.shape}, dtype={a.dtype}')
+        p.breakable('')
+        p.text(')')
+
+
+for_type(np.ndarray, _ndarray_repr_pretty)
+
+
+def _named_dict_repr_pretty(name, d, p, cycle):
+    if cycle:
+        p.text(f'{name}(...)')
+    else:
+        with p.group(4, f'{name}({{'):
+            p.breakable('')
+            for idx, (k, v) in enumerate(sorted(d.items())):
+                if idx:
+                    p.text(',')
+                    p.breakable()
+
+                p.pretty(k)
+                p.text(': ')
+                p.pretty(v)
+        p.breakable('')
+        p.text('})')
+
+
 NotSupplied = object()
 
 
-class Param(object):
+class Param:
     def __init__(self, default=NotSupplied, aliases=None, help="", type=None):
         """ aliases are different ways to fill the value (i.e. from config or kwargs),
             but should not be used to access the value as a class attribute. """
@@ -1689,7 +1765,7 @@ class Param(object):
         self.type = type
 
 
-class Parameterized(object):
+class Parameterized:
     """ An object that can have `Param` class attributes. These class attributes will be
         turned into instance attributes at instance creation time. To set a value for the instance
         attributes, we perform the following checks (the first value that is found is used):
@@ -1718,14 +1794,24 @@ class Parameterized(object):
 
         return obj
 
+    def __getnewargs_ex__(self):
+        """ Required for pickling to work properly, ensures that when __new__ is called, the parameters are all present.
+
+        """
+        return ((), self.param_values())
+
     def __init__(self, *args, **kwargs):
         pass
 
     def __str__(self):
-        return "{}(\n{}\n)".format(self.__class__.__name__, pformat(self.param_values()))
+        return repr(self)
 
     def __repr__(self):
-        return str(self)
+        return pformat(self)
+
+    def _repr_pretty_(self, p, cycle):
+        d = self.param_values()
+        _named_dict_repr_pretty(self.__class__.__name__, d, p, cycle)
 
     @classmethod
     def _get_param_value(cls, name, param, kwargs):
@@ -1791,10 +1877,13 @@ class Parameterized(object):
                 pass
         return params
 
-    def param_values(self):
+    def param_values(self, original=False):
         if not self._resolved:
             raise Exception("Parameters have not yet been resolved.")
-        return {n: getattr(self, n) for n in self.param_names()}
+        if original:
+            return {k: self._params_at_creation_time[k] for k in self._params_at_creation_time}
+        else:
+            return {n: getattr(self, n) for n in self.param_names()}
 
     def __deepcopy__(self, memo):
         cls = self.__class__
@@ -2224,12 +2313,11 @@ class Config(dict):
         return repr(self)
 
     def __repr__(self):
-        try:
-            core = json.dumps(self, cls=SourceJSONEncoder, sort_keys=True, indent=4)
-        except TypeError:
-            core = json.dumps(self, cls=SourceJSONEncoder, indent=4)
+        return pformat(self)
 
-        return "{}{}\n".format(self.__class__.__name__, core)
+    def _repr_pretty_(self, p, cycle):
+        name = self.__class__.__name__
+        _named_dict_repr_pretty(name, self, p, cycle)
 
     def __contains__(self, key):
         try:
@@ -2290,13 +2378,13 @@ class Config(dict):
             try:
                 d = self[key]
 
-                if not isinstance(d, Config):
+                if not isinstance(d, self.__class__):
                     # This is where the destruction happens
-                    d = Config()
+                    d = self.__class__()
                     super().__setitem__(key, d)
 
             except KeyError:
-                d = Config()
+                d = self.__class__()
                 super().__setitem__(key, d)
 
             d[rest] = value
@@ -2312,7 +2400,7 @@ class Config(dict):
             return super().__delitem__(key)
 
     def __getattr__(self, key):
-        if key in Config._reserved_keys:
+        if key in self.__class__._reserved_keys:
             return super().__getattr__(key)
 
         try:
@@ -2321,7 +2409,7 @@ class Config(dict):
             raise AttributeError("Could not find attribute called `{}`.".format(key))
 
     def __setattr__(self, key, value):
-        if key in Config._reserved_keys:
+        if key in self.__class__._reserved_keys:
             super().__setattr__(key, value)
             return
 
@@ -2330,7 +2418,7 @@ class Config(dict):
     def _validate_key(self, key):
         msg = "Bad key for config: `{}`.".format(key)
         assert not key.startswith('_'), msg
-        assert key not in Config._reserved_keys, msg
+        assert key not in self.__class__._reserved_keys, msg
         assert self._sep not in key, msg
 
     def deepcopy(self, _d=None, **kwargs):
@@ -2377,6 +2465,11 @@ class Config(dict):
                 value = str(value)
             _config[key] = value
         return _config
+
+    def map(self, func, *others, is_leaf=None):
+        if is_leaf is None:
+            is_leaf = lambda l: not isinstance(l, dict)
+        return map_structure(func, self, *others, is_leaf=is_leaf)
 
 
 Config._reserved_keys = dir(Config)
