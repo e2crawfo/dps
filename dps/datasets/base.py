@@ -1,6 +1,8 @@
 import numpy as np
 import inspect
 import os
+from tensorflow.python.util import deprecation
+deprecation._PRINT_DEPRECATION_WARNINGS = False
 import tensorflow as tf
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -10,15 +12,17 @@ import abc
 from itertools import zip_longest
 import dill
 import itertools
-import pprint
+import multiprocessing
+import subprocess
+import sys
 
+from dps.datasets.parallel_worker import build_dataset
 from dps import cfg, init
 from dps.utils import (
     Param, Parameterized, get_param_hash, NumpySeed, animate, gen_seed,
-    resize_image, atleast_nd, pformat, map_structure, HashableDist
+    resize_image, atleast_nd, pformat, map_structure, HashableDist, Config
 )
 from dps.datasets.load import load_emnist, load_backgrounds, background_names, hard_background_names
-from dps.datasets.parallel import make_dataset_in_parallel
 
 
 class Environment:
@@ -336,9 +340,6 @@ class Dataset(Parameterized):
     If `no_make` is in kwargs and is True, than raise an exception if dataset not found in cache, i.e. we refuse to
     create the dataset.
 
-    If `run_kwargs` is in kwargs, the corresponding value should be a dictionary of arguments which
-    will be used to run the dataset creation in parallel.
-
     Subclasses can override `_artifact_names` as a list of strings. If they do so, then they their `make`
     function must return a dictionary whose set of keys is identical to `_artifact_names`. These are additional
     objects that will be saved and loaded, and will be attributes of the resulting dataset.
@@ -351,6 +352,7 @@ class Dataset(Parameterized):
     """
     n_examples = Param(None)
     seed = Param(None)
+    build_dataset_n_workers = Param(0)
 
     _features = None
     _no_cache = False
@@ -358,24 +360,24 @@ class Dataset(Parameterized):
     loaded = False
 
     def __init__(self, **kwargs):
-        start = time.time()
         print("Trying to find dataset in cache...")
-
-        # Get cache directory to use. First check cfg.cache_dir and kwargs['data_dir'], in that order.
-        # Fallback to cfg.data_dir / "cached_datasets" / self.__class__.__name__
 
         init()
 
+        # Get cache directory to use. First check cfg.cache_dir and kwargs['data_dir'], in that order.
+        # Fallback to cfg.data_dir / "cached_datasets" / self.__class__.__name__
         cache_dir = getattr(cfg, 'cache_dir', None)
         if cache_dir is None:
             cache_dir = kwargs.get(
                 "data_dir",
                 os.path.join(cfg.data_dir, "cached_datasets", self.__class__.__name__))
+
         os.makedirs(cache_dir, exist_ok=True)
 
         params = self.param_values()
         param_hash = get_param_hash(params)
 
+        self.param_hash = param_hash
         self.directory = os.path.join(cache_dir, str(param_hash) + '.dataset')
 
         print(self.__class__.__name__)
@@ -391,12 +393,16 @@ class Dataset(Parameterized):
         all_files = [self.filename, cfg_filename, artifact_filename]
         all_files_exist = all([os.path.exists(f) for f in all_files])
 
+        self.worker_idx = kwargs.get("worker_idx", "")
+
         no_cache = kwargs.get('_no_cache', False)
         no_cache = os.getenv("DPS_NO_CACHE") or self._no_cache or no_cache
         if no_cache:
-            print("Skipping dataset cache as DPS_NO_CACHE is set (value is {}).".format(no_cache))
+            print("Skipping dataset cache as DPS_NO_CACHE is set.")
 
         if no_cache or not all_files_exist:
+            print("Files for dataset not found, creating...")
+
             if kwargs.get("no_make", False):
                 raise Exception("`no_make` is True, but complete dataset was not found in cache.")
 
@@ -405,40 +411,41 @@ class Dataset(Parameterized):
                 shutil.rmtree(self.directory)
             except FileNotFoundError:
                 pass
-
             os.makedirs(self.directory, exist_ok=False)
 
-            print("Files for dataset not found, creating...")
-
-            run_kwargs = kwargs.get('run_kwargs', None)
-            if run_kwargs is not None:
-                if self._artifact_names:
-                    raise Exception("Artifacts not yet implemented for parallel dataset creation.")
-
-                # Create the dataset in parallel and write it to the cache.
-                make_dataset_in_parallel(run_kwargs, self.__class__, params)
+            if self.seed is None or self.seed < 0:
+                seed = gen_seed()
+                print(f"Generating dataset from seed {seed} (randomly chosen).")
             else:
-                self._writer = tf.python_io.TFRecordWriter(self.filename)
+                seed = self.seed
+                print(f"Generating dataset from seed {seed} (specified).")
+
+            self.start_time = time.time()
+
+            if self.build_dataset_n_workers > 0:
+                if self._artifact_names:
+                    assert hasattr(self, 'combine_artifacts')
+                assert self.n_examples is not None
+
                 try:
-                    if self.seed is None or self.seed < 0:
-                        seed = gen_seed()
-                        print(f"Generating dataset from seed {seed} (randomly chosen).")
-                    else:
-                        seed = self.seed
-                        print(f"Generating dataset from seed {seed} (specified).")
+                    # Create the dataset in parallel and write it to the cache.
+                    artifacts = self.make_dataset_in_parallel(seed)
+                    n_examples_written = self.n_examples
+                except BaseException:
+                    try:
+                        shutil.rmtree(self.directory)
+                    except FileNotFoundError:
+                        pass
+                    raise
+
+            else:
+                self._writer = tf.io.TFRecordWriter(self.filename)
+                try:
 
                     with NumpySeed(seed):
-                        self.start_time = time.time()
                         self.n_examples_written = 0
 
                         artifacts = self._make()
-
-                        if artifacts is None:
-                            artifacts = {}
-
-                        target_key_set = set(self._artifact_names)
-                        actual_key_set = set(artifacts.keys())
-                        assert target_key_set == actual_key_set, f"{target_key_set} vs {actual_key_set}"
 
                     self._writer.close()
                     print("Done creating dataset.")
@@ -452,12 +459,28 @@ class Dataset(Parameterized):
                         pass
 
                     raise
+                n_examples_written = self.n_examples_written
+
+            seconds_elapsed = time.time() - self.start_time
+
+            print("-" * 40, file=sys.stderr)
+            print(f"{self.worker_idx}: n_examples_written: {n_examples_written}", file=sys.stderr)
+            print(f"{self.worker_idx}: {seconds_elapsed:.2f} seconds elapsed in dataset creation.", file=sys.stderr)
+            print(f"{self.worker_idx}: {seconds_elapsed/n_examples_written:.2f} seconds/example.", file=sys.stderr)
 
             with open(cfg_filename, 'w') as f:
                 f.write(pformat(params))
 
+            if artifacts is None:
+                artifacts = {}
+
+            target_key_set = set(self._artifact_names)
+            actual_key_set = set(artifacts.keys())
+            assert target_key_set == actual_key_set, f"{target_key_set} vs {actual_key_set}"
+
             print("Saving artifacts...")
-            pprint.pprint(artifacts)
+            # pprint.pprint(artifacts)
+
             with open(artifact_filename, 'wb') as f:
                 dill.dump(artifacts, f, protocol=dill.HIGHEST_PROTOCOL)
 
@@ -480,7 +503,6 @@ class Dataset(Parameterized):
         for k, v in artifacts.items():
             setattr(self, k, v)
 
-        print(f"Took {time.time() - start} seconds.")
         print("Features for dataset: ")
         print(pformat(self.features))
 
@@ -522,12 +544,21 @@ class Dataset(Parameterized):
         self._writer.write(example.SerializeToString())
 
         self.n_examples_written += 1
-        if self.n_examples_written % 1000 == 0:
-            print(f"n_examples_written: {self.n_examples_written}")
+        print_freq = max(int(self.n_examples / 20), 1)
+        if self.n_examples_written % print_freq == 0:
             seconds_elapsed = time.time() - self.start_time
-            print(f"{self.n_examples_written} examples written. "
-                  f"{seconds_elapsed:.2} seconds elapsed in dataset creation. "
-                  f"{seconds_elapsed/self.n_examples_written:.2} seconds/example.")
+
+            print("-" * 40, file=sys.stderr)
+            progress = self.n_examples_written / self.n_examples
+            print(f"{self.worker_idx}: {self.n_examples_written} / {self.n_examples}, "
+                  f"{progress:.3f}%.", file=sys.stderr)
+            print(f"{self.worker_idx}: {seconds_elapsed:.2f} seconds elapsed in dataset creation.", file=sys.stderr)
+            print(f"{self.worker_idx}: {seconds_elapsed/self.n_examples_written:.2f} seconds/example.", file=sys.stderr)
+            seconds_per_examples = seconds_elapsed / self.n_examples_written
+            examples_remaining = self.n_examples - self.n_examples_written
+            seconds_remaining = examples_remaining * seconds_per_examples
+            print(f"{self.worker_idx}: Est. time remaining: {seconds_remaining:.2f}s.", file=sys.stderr)
+            print(f"{self.worker_idx}: Est. total time: {seconds_elapsed+seconds_remaining:.2f}s.", file=sys.stderr)
 
     def parse_example_batch(self, example_proto):
         features = {}
@@ -583,6 +614,74 @@ class Dataset(Parameterized):
             lambda *v: np.concatenate(v, axis=0)[:n],
             *sample,
             is_leaf=lambda v: isinstance(v, np.ndarray))
+
+    def make_dataset_in_parallel(self, seed):
+        """ Uses multiprocessing to create dataset in parallel. """
+
+        n_workers = self.build_dataset_n_workers
+        n_examples_per_worker = int(np.ceil(self.n_examples / n_workers))
+        n_examples_remaining = self.n_examples
+
+        with NumpySeed(seed):
+            inputs = []
+            idx = 0
+            while n_examples_remaining:
+                seed = gen_seed()
+                cur_n_examples = min(n_examples_remaining, n_examples_per_worker)
+                n_examples_remaining -= cur_n_examples
+
+                inputs.append((idx, seed, cur_n_examples))
+                idx += 1
+
+        assert sum(i[2] for i in inputs) == self.n_examples
+
+        scratch_dir = os.path.join(self.directory, 'parallel')
+        os.makedirs(scratch_dir, exist_ok=False)
+
+        params = Config(self.param_values())
+
+        print(f"Building dataset with {n_workers} workers, inputs for each worker:\n{inputs}.")
+
+        # Using the "spawn" start method is important, it is required to be able to properly set the
+        # "DISPLAY" environment variables in the workers.
+        ctx = multiprocessing.get_context('spawn')
+        verbose = cfg.get('build_dataset_verbose_workers', False)
+
+        with ctx.Pool(processes=n_workers) as pool:
+            results = [
+                pool.apply_async(build_dataset, (scratch_dir, self.__class__, params, inp, verbose))
+                for inp in inputs
+            ]
+
+            results = [r.get() for r in results]
+            sub_dataset_hashes = [r[0] for r in results]
+            n_examples_created = sum([r[1] for r in results])
+            assert n_examples_created == self.n_examples
+
+        data_paths = [
+            os.path.join(scratch_dir, f'{h}.dataset/{h}.data')
+            for h in sub_dataset_hashes]
+        command = ' '.join(["cat", *data_paths, ">", self.filename])
+        subprocess.run(command, shell=True, check=True)
+
+        # --- combine artifacts ---
+
+        all_artifacts = []
+        for h in sub_dataset_hashes:
+            artifact_path = os.path.join(scratch_dir, f'{h}.dataset/{h}.artifacts')
+            with open(artifact_path, 'rb') as f:
+                artifacts = dill.load(f)
+            all_artifacts.append(artifacts)
+
+        artifacts = self.combine_artifacts(all_artifacts)
+
+        # --- remove the shards now that we've combined them ---
+
+        for h in sub_dataset_hashes:
+            path = os.path.join(scratch_dir, f'{h}.dataset')
+            shutil.rmtree(path)
+
+        return artifacts
 
 
 class ImageClassificationDataset(Dataset):
@@ -732,8 +831,9 @@ class ImageDataset(Dataset):
             images, annotations, backgrounds, offsets = self._tile_postprocess(image, annotation, background, pad=True)
 
         elif self.postprocessing == "random":
-            images, annotations, backgrounds, offsets = self._random_postprocess(image, annotation, background=background)
-
+            images, annotations, backgrounds, offsets = (
+                self._random_postprocess(image, annotation, background=background)
+            )
         else:
             images, annotations, backgrounds, offsets = [image], [annotation], [background], [(0, 0)]
 
@@ -803,8 +903,9 @@ class ImageDataset(Dataset):
 
     def _random_postprocess(self, video, annotations, background=None):
         """ Take an input video, and possibly accompanying annotations, and extract random crops from it (creating
-            multiple cropped examples for each input video). Adjust annotations to respect the crops, deleting annotations
-            that fall outside of the crop region, and truncated annotations that fall partly outside the cropped region.
+            multiple cropped examples for each input video). Adjust annotations to respect the crops, deleting
+            annotations that fall outside of the crop region, and truncated annotations that fall partly outside the
+            cropped region.
 
             Size of random crops specified by self.tile_shape, number of crops per input videos specified by
             self.n_samples_per_image.
@@ -1681,7 +1782,7 @@ if __name__ == "__main__":
     from scipy.stats.distributions import truncexpon
     dset = VisualArithmeticDataset(
         n_examples=18, reductions="sum", largest_digit=28, patch_speed=2,
-        min_digits=9, max_digits=50, image_shape=(96, 96), tile_shape=(96, 96),# tile_shape=(48, 48),
+        min_digits=9, max_digits=50, image_shape=(96, 96), tile_shape=(96, 96),
         postprocessing="random", max_overlap=98, colours="white blue", n_frames=10,
         digits="0 1".split(), example_range=None, n_patch_examples=None, patch_shape=(14, 14),
         appearance_prob=1.0, disappearance_prob=0.0, patch_shape_dist=HashableDist(truncexpon, b=2, loc=0.25),
