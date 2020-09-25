@@ -512,18 +512,45 @@ class Dataset(Parameterized):
         if cfg.copy_dataset_to:
             basename = os.path.basename(self.filename)
 
+            wait_for_dataset = False
+            pid = os.getpid()
+            idx_in_node = -1
+
             if cfg.get('in_parallel_session', False):
-                dest = os.path.join(cfg.copy_dataset_to, "{}.{}".format(os.getpid(), basename))
+                if cfg.get('all_same_dataset', False):
+                    dest = os.path.join(cfg.copy_dataset_to, basename)
+                    idx_in_node = int(os.environ.get("SLURM_LOCALID"))
+                    wait_for_dataset = idx_in_node > 0
+                else:
+                    dest = os.path.join(cfg.copy_dataset_to, "{}.{}".format(pid, basename))
             else:
                 dest = os.path.join(cfg.copy_dataset_to, basename)
+
+            pinfo = (pid, idx_in_node)
 
             if os.path.exists(dest):
                 print(f"Skipping local copy of dataset, dataset already exists at destination {dest}.")
             else:
-                print(f"Copying dataset to {dest}...")
-                start = time.time()
-                shutil.copy(self.filename, dest)
-                print(f"Done copy, took {time.time() - start} seconds.")
+                copy_is_complete_file = f"{dest}.complete"
+
+                if wait_for_dataset:
+                    start = time.time()
+                    sleep_time = 5
+
+                    print(f"Process {pinfo} copying dataset to {dest}...")
+                    while not os.path.exists(copy_is_complete_file):
+                        print(f"Process {pinfo} sleeping for {sleep_time} seconds, "
+                              f"waiting for {copy_is_complete_file}.")
+                        time.sleep(5)
+                    print(f"Process {pinfo} found {copy_is_complete_file}, took {time.time() - start} seconds.")
+
+                else:
+                    print(f"Process {pinfo} copying dataset to {dest}...")
+                    start = time.time()
+                    shutil.copy(self.filename, dest)
+                    print(f"Process {pinfo} done copy, took {time.time() - start} seconds.")
+                    with open(copy_is_complete_file, 'w'):
+                        pass
 
             self.filename = dest
 

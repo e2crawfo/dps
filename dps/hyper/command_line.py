@@ -212,7 +212,7 @@ def _probe_hosts(**_):
     n_idle = 0
 
     for host in DEFAULT_HOST_POOL:
-        if host is not ':':
+        if host != ':':
             print("\n" + "*" * 80)
             print("Testing connection to host {}...".format(host))
             p = _ssh_execute("echo Connected to \$HOSTNAME", host)
