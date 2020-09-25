@@ -143,7 +143,7 @@ def build_transformation_matrix(kind, r, t=None, **rotation_kwargs):
     `kind` indicates how `r` is to be interpreted, and in particular specifies which `from_<blank>` function
     (exported by Rotation) to use. Must be one of: 'quat', 'rotvec', 'euler_<order>', 'matrix', 'dcm'.
     In the case of 'euler', the <order> portion should specify the axis order.
-    The last two are synonymous (from_dcm was renamed to from_matrix.
+    The last two are synonymous (from_dcm was renamed to from_matrix).
 
     r specifies a (batch of) rotation matrices, t is a (batch of) translation vectors.
 
@@ -783,17 +783,52 @@ def nvidia_smi(robust=True):
             raise
 
 
-_nvidia_smi_processes_header = "|  GPU       PID   Type   Process name                             Usage      |"
+# Different versions of nvidia-smi use different headers and require different functions for parsing processes.
 _nvidia_smi_table_end = "+-----------------------------------------------------------------------------+"
 _nvidia_smi_no_processes_found = "|  No running processes found                                                 |"
 
 
 def _nvidia_smi_parse_processes(s):
     lines = s.split('\n')
+
+    cuda_version = float(lines[2].split()[-2])
+    if cuda_version >= 11:
+        processes_header_line = "|        ID   ID                                                   Usage      |"
+
+        def parse_process_line(tokens):
+            """
+            Example line:
+            "|    0   N/A  N/A    240337      C   python                           1115MiB |"
+            """
+            gpu_idx = int(tokens[1])
+            pid = int(tokens[4])
+            type = tokens[5]
+            process_name = ' '.join(tokens[6:-2])  # To handle process names containg spaces
+            memory_usage = tokens[-2]
+            memory_usage_mb = int(memory_usage[:-3])
+
+            return (gpu_idx, pid, type, process_name, memory_usage_mb)
+    else:
+        processes_header_line = "|  GPU       PID   Type   Process name                             Usage      |"
+
+        def parse_process_line(tokens):
+            """
+            Example line:
+            "|    0      1234      C   python    72MiB |"
+            """
+            gpu_idx = int(tokens[1])
+            pid = int(tokens[2])
+            type = tokens[3]
+            process_name = ' '.join(tokens[4:-2])  # To handle process names containg spaces
+            memory_usage = tokens[-2]
+            memory_usage_mb = int(memory_usage[:-3])
+
+            return (gpu_idx, pid, type, process_name, memory_usage_mb)
+
     header_idx = None
     table_end_idx = None
     for i, line in enumerate(lines):
-        if line == _nvidia_smi_processes_header:
+        if line == processes_header_line:
             header_idx = i
         elif header_idx is not None and line == _nvidia_smi_table_end:
             table_end_idx = i
@@ -812,14 +847,8 @@ def _nvidia_smi_parse_processes(s):
 
     for line in lines[header_idx+2:table_end_idx]:
         tokens = line.split()
-        gpu_idx = int(tokens[1])
-        pid = int(tokens[2])
-        type = tokens[3]
-        process_name = ' '.join(tokens[4:-2])  # To handle process names containg spaces
-        memory_usage = tokens[-2]
-        memory_usage_mb = int(memory_usage[:-3])
-
-        processes.append((gpu_idx, pid, type, process_name, memory_usage_mb))
+        process_info = parse_process_line(tokens)
+        processes.append(process_info)
 
     return processes
 
