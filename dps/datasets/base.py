@@ -528,22 +528,22 @@ class Dataset(Parameterized):
 
             pinfo = (pid, idx_in_node)
 
-            if os.path.exists(dest):
-                print(f"Skipping local copy of dataset, dataset already exists at destination {dest}.")
+            copy_is_complete_file = f"{dest}.complete"
+
+            if wait_for_dataset:
+                start = time.time()
+                sleep_time = 5
+
+                print(f"Process {pinfo} waiting for dataset at {dest}...")
+                while not os.path.exists(copy_is_complete_file):
+                    print(f"Process {pinfo} sleeping for {sleep_time} seconds, "
+                          f"waiting for {copy_is_complete_file}.")
+                    time.sleep(5)
+                print(f"Process {pinfo} found {copy_is_complete_file}, took {time.time() - start} seconds.")
+
             else:
-                copy_is_complete_file = f"{dest}.complete"
-
-                if wait_for_dataset:
-                    start = time.time()
-                    sleep_time = 5
-
-                    print(f"Process {pinfo} copying dataset to {dest}...")
-                    while not os.path.exists(copy_is_complete_file):
-                        print(f"Process {pinfo} sleeping for {sleep_time} seconds, "
-                              f"waiting for {copy_is_complete_file}.")
-                        time.sleep(5)
-                    print(f"Process {pinfo} found {copy_is_complete_file}, took {time.time() - start} seconds.")
-
+                if os.path.exists(copy_is_complete_file):
+                    print(f"Skipping local copy of dataset, dataset already exists at destination {dest}.")
                 else:
                     print(f"Process {pinfo} copying dataset to {dest}...")
                     start = time.time()
