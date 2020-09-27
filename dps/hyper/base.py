@@ -620,7 +620,8 @@ def build_and_submit(
 
         run_kwargs.update(archive_path=archive_path, category=category, exp_name=exp_name, kind=kind)
 
-        resources = compute_required_resources(n_tasks, tasks_per_gpu)
+        gpu_kind = run_kwargs.get('gpu_kind', None)
+        resources = compute_required_resources(n_tasks, tasks_per_gpu, gpu_kind)
         run_kwargs.update(resources)
 
         parallel_session = submit_job(**run_kwargs)
@@ -632,10 +633,32 @@ def sanitize(s):
     return str(s).replace('_', '-')
 
 
-def compute_required_resources(n_tasks, tasks_per_gpu):
-    cpus_per_gpu = 10
-    mem_per_gpu = 47000
-    gpus_per_node = 4
+def compute_required_resources(n_tasks, tasks_per_gpu, gpu_kind):
+    host_name = os.uname().nodename
+    aliases = dict(
+        beluga='beluga blg'.split(),
+        cedar='cedar cdr'.split(),
+    )
+    for _host_name, aliases in aliases.items():
+        if any([host_name.startswith(a) for a in aliases]):
+            host_name = _host_name
+            break
+    else:
+        raise Exception(f"Unknown host: {host_name}")
+
+    specs = AttrDict(
+        beluga=dict(cpus_per_gpu=10, mem_per_gpu=47000, gpus_per_node=4),
+        cedar=dict(cpus_per_gpu=6, mem_per_gpu=128000//4, gpus_per_node=4),
+        cedar_p100=dict(cpus_per_gpu=6, mem_per_gpu=128000//4, gpus_per_node=4),
+        cedar_p100l=dict(cpus_per_gpu=6, mem_per_gpu=257000//4, gpus_per_node=4),
+        cedar_v100l=dict(cpus_per_gpu=8, mem_per_gpu=192000//4, gpus_per_node=4),
+    )
+    spec_key = host_name + ('' if gpu_kind is None else '_' + gpu_kind)
+    spec = specs[spec_key]
+
+    cpus_per_gpu = spec.cpus_per_gpu
+    mem_per_gpu = spec.mem_per_gpu
+    gpus_per_node = spec.gpus_per_node
 
     n_gpus = int(np.ceil(n_tasks / tasks_per_gpu))
 

@@ -612,7 +612,7 @@ class ParallelSession(object):
 def submit_job(
         archive_path, category, exp_name, wall_time="1year", tasks_per_node=1, cpus_per_task=1, mem_per_cpu=0,
         queue="", kind="local", gpu_set="", project="rrg-bengioy-ad_gpu", installation_script_path=None,
-        **run_kwargs):
+        gpu_kind=None, **run_kwargs):
 
     assert kind in "slurm slurm-local".split()
 
@@ -684,7 +684,12 @@ print(str((end - start).total_seconds()) + " seconds elapsed between start and f
 
     if gpu_set:
         n_gpus = len([int(i) for i in gpu_set.split(',')])
-        resources = "{} --gres=gpu:{}".format(resources, n_gpus)
+        if gpu_kind:
+            gpu_string = f"--gres=gpu:{gpu_kind}:{n_gpus}"
+        else:
+            gpu_string = f"--gres=gpu:{n_gpus}"
+
+        resources = resources + ' ' + gpu_string
 
     email = "eric.crawford@mail.mcgill.ca"
     if queue:
