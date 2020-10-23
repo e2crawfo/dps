@@ -22,8 +22,8 @@ from dps.utils import (
 DEFAULT_HOST_POOL = ['ecrawf6@cs-{}.cs.mcgill.ca'.format(i) for i in range(1, 33)]
 
 
-class ParallelSession(object):
-    """ Run a Job in parallel using gnu-parallel.
+class ParallelSession:
+    """ Run a Job in parallel using slurm.
 
     A directory for this job execution is created in `scratch`, and results are saved there.
 

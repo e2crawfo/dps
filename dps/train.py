@@ -337,7 +337,7 @@ class TrainingLoop:
         return frozen_data
 
     def _run(self):
-        _print(cfg.to_string())
+        _print(cfg)
 
         threshold_reached = True
         self.global_step = 0
@@ -384,6 +384,7 @@ class TrainingLoop:
                 _print("\n" + "-" * 10 + " Stage set-up " + "-" * 10)
 
                 _print("\nNew config values for this stage are: \n{}\n".format(stage_config))
+
                 stack.enter_context(stage_config)
 
                 stage_prepare_func = cfg.get("stage_prepare_func", None)
@@ -503,21 +504,25 @@ class TrainingLoop:
                         do_final_testing = (
                             "Exception occurred" not in reason
                             and reason != "Time limit exceeded"
-                            and 'best_path' in self.data.current_stage_record)
+                        )
 
                         if do_final_testing:
                             try:
                                 _print("\n" + "-" * 10 + " Final testing/rendering " + "-" * 10)
 
-                                _print("Best hypothesis for this stage was found on "
-                                       "step (l: {best_local_step}, g: {best_global_step}) "
-                                       "with stopping criteria ({sc_name}) of {best_stopping_criteria}.".format(
-                                           sc_name=self.stopping_criteria_name, **self.data.current_stage_record))
+                                if 'best_path' in self.data.current_stage_record:
+                                    best_path = self.data.current_stage_record['best_path']
 
-                                best_path = self.data.current_stage_record['best_path']
-                                _print("Loading best hypothesis for this stage "
-                                       "from file {}...".format(best_path))
-                                updater.restore(best_path)
+                                    _print("Best hypothesis for this stage was found on "
+                                           "step (l: {best_local_step}, g: {best_global_step}) "
+                                           "with stopping criteria ({sc_name}) of {best_stopping_criteria}.".format(
+                                               sc_name=self.stopping_criteria_name, **self.data.current_stage_record))
+
+                                    _print("Loading best hypothesis for this stage "
+                                           "from file {}...".format(best_path))
+                                    updater.restore(best_path)
+                                else:
+                                    _print("No `best_path` found, testing with final weights instead.")
 
                                 try:
                                     test_record = updater.evaluate(cfg.batch_size, self.local_step, mode="test")

@@ -5,7 +5,7 @@ except ImportError:
 import os
 os.environ['PYTHONSTARTUP'] = ''
 
-from .utils import ConfigStack, get_default_config, process_path
+from .utils import cfg, get_default_config, process_path
 
 
 def init(config=None):
@@ -36,14 +36,6 @@ def init(config=None):
     fixup_dir("parallel_experiments_run")
 
     return config
-
-
-cfg = ConfigStack()
-
-def reset_config():
-    cfg.clear_stack(get_default_config())
-
-reset_config()
 
 
 def set_trace(context=11):

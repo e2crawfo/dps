@@ -716,49 +716,35 @@ def run_experiment(
     env_name = sanitize(config.get('env_name', ''))
     alg_name = sanitize(config.get("alg_name", ""))
 
+    run_kwargs = Config(
+        kind="slurm",
+        ignore_gpu=False,
+    )
+    if run_kwargs_base is not None:
+        run_kwargs.update(run_kwargs_base)
+
     if args.duration == "local":
-        local = durations.get("local", {})
-        local_config = local.get("config", None)
-
-        if local_config is not None:
-            config.update(local_config)
-
-        if cl_mode is not None:
-            if cl_mode == 'strict':
-                config.update_from_command_line(strict=True)
-            elif cl_mode == 'lax':
-                config.update_from_command_line(strict=False)
-            else:
-                raise Exception("Unknown value for cl_mode: {}".format(cl_mode))
-
-        config.exp_name = "alg={}".format(alg_name)
-
-        with config:
-            return training_loop()
-
+        run_kwargs.update(durations.get('local', {}))
     else:
-        run_kwargs = Config(
-            kind="slurm",
-            ignore_gpu=False,
-        )
-
-        if run_kwargs_base is not None:
-            run_kwargs.update(run_kwargs_base)
-
         run_kwargs.update(durations[args.duration])
 
-        if 'config' in run_kwargs:
-            config.update(run_kwargs['config'])
-            del run_kwargs['config']
+    if 'config' in run_kwargs:
+        config.update(run_kwargs.config)
+        del run_kwargs['config']
 
-        if cl_mode is not None:
-            if cl_mode == 'strict':
-                config.update_from_command_line(strict=True)
-            elif cl_mode == 'lax':
-                config.update_from_command_line(strict=False)
-            else:
-                raise Exception("Unknown value for cl_mode: {}".format(cl_mode))
+    if cl_mode is not None:
+        if cl_mode == 'strict':
+            config.update_from_command_line(strict=True)
+        elif cl_mode == 'lax':
+            config.update_from_command_line(strict=False)
+        else:
+            raise Exception("Unknown value for cl_mode: {}".format(cl_mode))
 
+    if args.duration == "local":
+        config.exp_name = "alg={}".format(alg_name)
+        with config:
+            return training_loop()
+    else:
         if 'distributions' in run_kwargs:
             distributions = run_kwargs['distributions']
             del run_kwargs['distributions']

@@ -5,7 +5,6 @@ import time
 import re
 import os
 import traceback
-from collections.abc import MutableMapping
 import subprocess
 import copy
 import datetime
@@ -2407,13 +2406,13 @@ class Config(dict):
             try:
                 d = self[key]
 
-                if not isinstance(d, self.__class__):
+                if not isinstance(d, self.__class__._dict_class):
                     # This is where the destruction happens
-                    d = self.__class__()
+                    d = self.__class__._dict_class()
                     super().__setitem__(key, d)
 
             except KeyError:
-                d = self.__class__()
+                d = self.__class__._dict_class()
                 super().__setitem__(key, d)
 
             d[rest] = value
@@ -2462,7 +2461,7 @@ class Config(dict):
         A pseudo-deep copy; copies everything except the leaves (the leaves being the stored values).
 
         """
-        new = self.__class__(self.flatten())
+        new = self.__class__._dict_class(self.flatten())
         new.update(_d, **kwargs)
         return new
 
@@ -2479,11 +2478,10 @@ class Config(dict):
         self.update(cl_args)
 
     def __enter__(self):
-        ConfigStack._stack.append(self)
+        cfg._push_stack(self)
 
     def __exit__(self, exc_type, exc, exc_tb):
-        popped = ConfigStack._stack.pop()
-        assert popped == self, "Something is wrong with the config stack."
+        cfg._pop_stack()
         return False
 
     def freeze(self, remove_callable=False):
@@ -2501,6 +2499,7 @@ class Config(dict):
         return map_structure(func, self, *others, is_leaf=is_leaf)
 
 
+Config._dict_class = Config
 Config._reserved_keys = dir(Config)
 
 
@@ -2508,177 +2507,7 @@ class AttrDict(Config):
     pass
 
 
-class ClearConfig(Config):
-    def __init__(self, _d=None, **kwargs):
-        config = get_default_config()
-        if _d:
-            config.update(_d)
-        config.update(kwargs)
-        super().__init__(**config)
-
-
-class ConfigStack(dict):
-    _stack = []
-
-    @property
-    def config_sequence(self):
-        """ Get all configs up the the first occurence of an instance of ClearConfig """
-        stack = ConfigStack._stack[::-1]
-        for i, config in enumerate(stack):
-            if isinstance(config, ClearConfig):
-                return stack[:i+1]
-        return stack
-
-    def clear_stack(self, default=NotSupplied):
-        self._stack.clear()
-        if default is not None:
-            if default is NotSupplied:
-                self._stack.append(Config())
-            else:
-                self._stack.append(default)
-
-    def __str__(self):
-        return self.to_string(hidden=True)
-
-    def __repr__(self):
-        return str(self)
-
-    def to_string(self, hidden=False):
-        s = []
-
-        seen_keys = set()
-        reverse_stack = self._stack[::-1]
-        visible_keys = [set() for config in reverse_stack]
-
-        cleared = False
-        for vk, config in zip(visible_keys, reverse_stack):
-            if not cleared:
-                for key in config.keys():
-                    if key not in seen_keys:
-                        vk.add(key)
-                        seen_keys.add(key)
-
-            if isinstance(config, ClearConfig):
-                cleared = True
-
-        for i, (vk, config) in enumerate(zip(visible_keys[::-1], reverse_stack[::-1])):
-            visible_items = {k: v for k, v in config.items() if k in vk}
-
-            if hidden:
-                hidden_items = {k: v for k, v in config.items() if k not in vk}
-                _s = "# {}: <{} -\nVISIBLE:\n{}\nHIDDEN:\n{}\n>".format(
-                    i, config.__class__.__name__,
-                    pformat(visible_items), pformat(hidden_items))
-            else:
-                _s = "# {}: <{} -\n{}\n>".format(i, config.__class__.__name__, pformat(visible_items))
-
-            s.append(_s)
-
-        s = '\n'.join(s)
-        return "<{} -\n{}\n>".format(self.__class__.__name__, s)
-
-    def get(self, key, default=None):
-        try:
-            return self[key]
-        except KeyError:
-            return default
-
-    def __iter__(self):
-        return iter(self._keys())
-
-    def _keys(self):
-        keys = set()
-        for config in self.config_sequence:
-            keys |= config.keys()
-        return list(keys)
-
-    def keys(self):
-        return MutableMapping.keys(self)
-
-    def values(self):
-        return MutableMapping.values(self)
-
-    def items(self):
-        return MutableMapping.items(self)
-
-    def __contains__(self, key):
-        try:
-            self[key]
-        except KeyError:
-            return False
-        else:
-            return True
-
-    def __getitem__(self, key):
-        for config in self.config_sequence:
-            if key in config:
-                value = config[key]
-
-                if isinstance(value, ConfigFn):
-                    value = value()
-
-                return value
-
-        raise KeyError("Cannot find a value for key `{}`".format(key))
-
-    def __setitem__(self, key, value):
-        self._stack[-1][key] = value
-
-    def __getattr__(self, key):
-        try:
-            return self.__getitem__(key)
-        except KeyError:
-            raise AttributeError("No attribute named `{}`.".format(key))
-
-    def __setattr__(self, key, value):
-        setattr(self._stack[-1], key, value)
-
-    def update(self, *args, **kwargs):
-        self._stack[-1].update(*args, **kwargs)
-
-    def freeze(self, remove_callable=False):
-        flat = self.flatten()
-        _config = Config()
-
-        if remove_callable:
-            _config.update({k: pretty_func(v) if callable(v) else v for k, v in flat.items()})
-        else:
-            _config.update(flat)
-        return _config
-
-    def flatten(self):
-        _config = Config()
-        for config in self._stack:
-            _config.update(config)
-        return _config.flatten()
-
-    def update_from_command_line(self, strict=True):
-        flat = self.flatten()
-        cl_object = clify.wrap_object(flat, strict=strict)
-        cl_args = cl_object.parse()
-        self.update(cl_args)
-
-
-class ConfigFn:
-    """ If a ConfigStack is queried with a key, and the resulting value is an instance
-        if this class, then the instance will be called and the result will be returned
-        as the value.
-
-    """
-    def __init__(self, fn):
-        self.fn = fn
-
-    def __call__(self, *args, **kwargs):
-        return self.fn(*args, **kwargs)
-
-    def __str__(self):
-        fn_s = pretty_func(self.fn)
-        fn_s = '\n'.join(['    ' + l for l in fn_s.split('\n') if l])
-
-        return "ConfigFn(fn=\n    '''\n{}\n    '''\n)".format(fn_s)
-
-    def __repr__(self):
-        return str(self)
+AttrDict._dict_class = AttrDict
 
 
 DEFAULT_CONFIG = None
@@ -2723,6 +2552,82 @@ def get_default_config():
         DEFAULT_CONFIG = config
 
     return DEFAULT_CONFIG.copy()
+
+
+class ConfigStack(Config):
+    """
+    Changes made to the ConfigStack only last for the lifetime of the context in which those changes are made.
+    Such changes are also propagated to deeper contexts.
+
+    So we store all previous states of the Config, so that we can jump back to them when we pop out of the context.
+    The raw_configs are like the deltas, and the configs themselves are the states.
+
+    """
+    def __init__(self):
+        self._raw_config_stack = []
+        self._config_stack = []
+        self._push_stack(get_default_config())
+
+        super().__init__()
+
+    def _push_stack(self, raw_config):
+        raw_config = raw_config.copy()
+        self._raw_config_stack.append(raw_config)
+
+        # Before updating, save config as it currently is.
+        _copy = self.__class__._dict_class(self.flatten())
+        self._config_stack.append(_copy)
+
+        self.update(raw_config)
+
+    def _pop_stack(self):
+        assert self._config_stack
+        prev_config = self._config_stack.pop()
+
+        self.clear()
+        self.update(prev_config)
+
+    def __getitem__(self, key):
+        value = super().__getitem__(key)
+        if isinstance(value, ConfigFn):
+            value = value()
+        return value
+
+    def deepcopy(self, _d=None, **kwargs):
+        raise Exception("NotImplemented")
+
+    def copy(self, _d=None, **kwargs):
+        raise Exception("NotImplemented")
+
+
+ConfigStack._reserved_keys = sorted(set(
+    Config._reserved_keys + dir(ConfigStack) + ['_raw_config_stack', '_config_stack']
+))
+
+
+cfg = ConfigStack()
+
+
+class ConfigFn:
+    """ If a ConfigStack is queried with a key, and the resulting value is an instance
+        if this class, then the instance will be called and the result will be returned
+        as the value.
+
+    """
+    def __init__(self, fn):
+        self.fn = fn
+
+    def __call__(self, *args, **kwargs):
+        return self.fn(*args, **kwargs)
+
+    def __str__(self):
+        fn_s = pretty_func(self.fn)
+        fn_s = '\n'.join(['    ' + l for l in fn_s.split('\n') if l])
+
+        return "ConfigFn(fn=\n    '''\n{}\n    '''\n)".format(fn_s)
+
+    def __repr__(self):
+        return str(self)
 
 
 def restart_tensorboard(logdir, port=6006, reload_interval=120):
