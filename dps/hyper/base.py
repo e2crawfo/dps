@@ -17,7 +17,9 @@ import argparse
 import clify
 
 from dps import cfg, init
-from dps.utils import gen_seed, Config, ExperimentStore, edit_text, NumpySeed, AttrDict, get_default_config
+from dps.utils import (
+    gen_seed, Config, ExperimentStore, edit_text, NumpySeed, AttrDict, get_default_config, redirect_stream
+)
 from dps.train import training_loop
 from dps.parallel import Job, ReadOnlyJob
 from dps.train import FrozenTrainingLoopData
@@ -415,43 +417,52 @@ class _RunTrainingLoop:
         self.base_config = base_config
 
     def __call__(self, new):
-        start_time = time.time()
+        import os
+        stdout_path = f"./stdout_pid={os.getpid()}"
+        with redirect_stream('stdout', stdout_path, tee=True):
+            start_time = time.time()
 
-        print("Entered _RunTrainingLoop at: ")
-        print(datetime.datetime.now())
+            print("Entered _RunTrainingLoop at: ")
+            print(datetime.datetime.now())
 
-        os.nice(10)
+            os.nice(10)
 
-        print("Sampled values: ")
-        print(new)
+            print("Sampled values: ")
+            print(new)
 
-        print("Base config: ")
-        print(self.base_config)
+            print("Base config: ")
+            print(self.base_config)
 
-        exp_name = '_'.join("{}={}".format(k, new[k]) for k in 'idx repeat'.split())
+            exp_name = '_'.join("{}={}".format(k, new[k]) for k in 'idx repeat'.split())
 
-        config = get_default_config()
-        config.update(self.base_config)
-        config.update(new)
-        config.update(
-            start_tensorboard=False,
-            show_plots=False,
-            update_latest=False,
-            git_record_mode='none',
-            in_parallel_session=True,
-        )
+            config = get_default_config()
+            config.update(self.base_config)
+            config.update(new)
+            config.update(
+                start_tensorboard=False,
+                show_plots=False,
+                update_latest=False,
+                git_record_mode='none',
+                in_parallel_session=True,
 
-        with config:
-            # This is used for passing args 'local_experiments_dir', 'backup_dir', 'env_name', and 'max_time'
-            cfg.update_from_command_line(strict=False)
+                # Need these present so that they're are picked up when we get args from command line.
+                local_experiments_dir='',
+                backup_dir='',
+                env_name='',
+                max_time=0,
+            )
 
-            from dps.train import training_loop
-            result = training_loop(exp_name=exp_name, start_time=start_time)
+            with config:
+                # This is used for passing args 'local_experiments_dir', 'backup_dir', 'env_name', and 'max_time'
+                cfg.update_from_command_line(strict=False)
 
-        print("Leaving _RunTrainingLoop at: ")
-        print(datetime.datetime.now())
+                from dps.train import training_loop
+                result = training_loop(exp_name=exp_name, start_time=start_time)
 
-        return result
+            print("Leaving _RunTrainingLoop at: ")
+            print(datetime.datetime.now())
+
+            return result
 
 
 def build_search(

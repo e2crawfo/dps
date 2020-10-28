@@ -2590,7 +2590,7 @@ class ConfigStack(Config):
     def __getitem__(self, key):
         value = super().__getitem__(key)
         if isinstance(value, ConfigFn):
-            value = value()
+            value = value(self)
         return value
 
     def deepcopy(self, _d=None, **kwargs):
