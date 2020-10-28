@@ -259,7 +259,7 @@ class TrainingLoop:
         filename_keys = cfg.get('filename_keys', [])
         if isinstance(filename_keys, str):
             filename_keys = filename_keys.split(',')
-        filename_data = {key: cfg[key] for key in filename_keys}
+        filename_data = {key: str(cfg[key]) for key in filename_keys if key}
 
         exp_dir = self.experiment_store.new_experiment(
             self.exp_name, cfg.seed, data=filename_data,

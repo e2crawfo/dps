@@ -748,7 +748,12 @@ def square_subplots(N, block_shape=None, fig_unit_size=1, axes_off=False, **kwar
 
 
 def grid_subplots(h, w, fig_unit_size, axes_off=False):
-    fig, axes = plt.subplots(h, w, figsize=(w * fig_unit_size, h * fig_unit_size))
+    try:
+        fig_unit_size = int(fig_unit_size)
+        unit_size_h = unit_size_w = fig_unit_size
+    except Exception:
+        unit_size_h, unit_size_w = fig_unit_size
+    fig, axes = plt.subplots(h, w, figsize=(w * unit_size_w, h * unit_size_h))
     axes = np.array(axes).reshape(h, w)  # to fix the inconsistent way axes is return if h==1 or w==1
 
     if axes_off:
