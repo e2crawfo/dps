@@ -527,7 +527,7 @@ class TrainingLoop:
                                 try:
                                     test_record = updater.evaluate(cfg.batch_size, self.local_step, mode="test")
                                 except Exception:
-                                    _print("Encountered error file running final tests: ")
+                                    _print("Encountered error running final tests: ")
                                     traceback.print_exc()
 
                                     test_record = {}

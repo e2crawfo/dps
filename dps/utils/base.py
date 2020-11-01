@@ -1223,10 +1223,16 @@ def make_symlink(target, name):
 
 class ExperimentStore(object):
     """ Stores a collection of experiments. Each new experiment is assigned a fresh sub-path. """
-    def __init__(self, path, prefix='exp', max_experiments=None, delete_old=False):
+    def __init__(self, path, prefix='exp', max_experiments=None, delete_old=False, include_store_name=True):
         self.path = os.path.abspath(str(path))
         assert prefix, "prefix cannot be empty"
         self.prefix = prefix
+
+        if include_store_name:
+            store_name = os.path.basename(path)
+            store_name = store_name.replace('_', '-')
+            self.prefix = f'{self.prefix}_{store_name}'
+
         self.max_experiments = max_experiments
         self.delete_old = delete_old
         os.makedirs(os.path.realpath(self.path), exist_ok=True)
@@ -1264,7 +1270,7 @@ class ExperimentStore(object):
         config_dict['seed'] = str(seed)
 
         filename = make_filename(
-            self.prefix + '_' + name, add_date=add_date, config_dict=config_dict)
+            f'{self.prefix}_{name}', add_date=add_date, config_dict=config_dict)
 
         if update_latest:
             make_symlink(filename, os.path.join(self.path, 'latest'))
