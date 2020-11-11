@@ -289,7 +289,7 @@ def pad_and_concatenate(tensors, axis=0):
         padding = max_shapes - np.array(t.shape)
         padding[axis] = 0
         padding = [(0, i) for i in padding]
-        t = np.pad(t, padding)
+        t = np.pad(t, padding, 'constant')
         _tensors.append(t)
 
     return np.concatenate(_tensors, axis=axis)
@@ -366,7 +366,7 @@ class RenderHook(_RenderHook):
                         is_leaf=lambda rec: not isinstance(rec, dict)
                     )
 
-                tensors, recorded_tensors, losses = run_model(data, step, **run_model_kwargs)
+                tensors, data, recorded_tensors, losses = run_model(data, step, **run_model_kwargs)
 
                 tensors = AttrDict(tensors)
                 tensors = map_structure(

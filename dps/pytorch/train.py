@@ -302,11 +302,11 @@ class PyTorchUpdater(Parameterized):
             profile_step = cfg.get('pytorch_profile_step', 0)
             if profile_step > 0 and step % profile_step == 0:
                 with torch.autograd.profiler.profile(use_cuda=True) as prof:
-                    tensors, recorded_tensors, losses = self.model(data, step)
+                    tensors, data, recorded_tensors, losses = self.model(data, step)
                 print(prof)
             else:
                 with timed_block('forward', print_time):
-                    tensors, recorded_tensors, losses = self.model(data, step)
+                    tensors, data, recorded_tensors, losses = self.model(data, step)
 
             # --- loss ---
 
@@ -399,7 +399,7 @@ class PyTorchUpdater(Parameterized):
             for data in data_iterator:
                 data = AttrDict(data)
 
-                tensors, recorded_tensors, losses = self.model(data, step)
+                tensors, data, recorded_tensors, losses = self.model(data, step)
 
                 losses = AttrDict(losses)
 
