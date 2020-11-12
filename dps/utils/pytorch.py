@@ -576,6 +576,7 @@ class ConvNet(ParameterizedModule):
     preserve_shape = Param(False)
     batch_norm = Param(False)
     conv_batch_norm_affine = Param(True)
+    conv_group_norm_affine = Param(True)
 
     def __init__(self, input_shape, output_size=None, **kwargs):
         super().__init__(**kwargs)
@@ -590,6 +591,7 @@ class ConvNet(ParameterizedModule):
 
         self.module_list = torch.nn.ModuleList()
         self.batch_norms = torch.nn.ModuleDict()
+        self.group_norms = torch.nn.ModuleDict()
 
         print("Spatial shape: {}".format(spatial_shape))
         prev_n_output_filters = input_n_filters
@@ -607,6 +609,7 @@ class ConvNet(ParameterizedModule):
                 n_output_filters = layer_spec['n_filters']
                 kernel_size = layer_spec['kernel_size']
                 stride = layer_spec.get('stride', 1)
+                n_groups = layer_spec.get('n_groups', None)
 
                 if is_last and output_size is not None:
                     n_output_filters = output_size
@@ -624,6 +627,10 @@ class ConvNet(ParameterizedModule):
                 if not is_last and layer_spec.get('batch_norm', self.batch_norm):
                     bn = torch.nn.BatchNorm2d(n_output_filters, affine=self.conv_batch_norm_affine)
                     self.batch_norms[str(i)] = bn
+
+                if not is_last and n_groups is not None:
+                    gn = torch.nn.GroupNorm(n_groups, n_output_filters, affine=self.conv_group_norm_affine)
+                    self.group_norms[str(i)] = gn
 
                 do_film = layer_spec.get('film', False)
 
@@ -690,6 +697,10 @@ class ConvNet(ParameterizedModule):
             bn_key = str(i)
             if bn_key in self.batch_norms:
                 x = self.batch_norms[bn_key](x)
+
+            gn_key = str(i)
+            if gn_key in self.group_norms:
+                x = self.group_norms[gn_key](x)
 
             if not is_last:
                 nl_key = layer_spec.get('nl', 'relu')
