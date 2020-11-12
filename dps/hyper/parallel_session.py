@@ -612,7 +612,7 @@ class ParallelSession:
 def submit_job(
         archive_path, category, exp_name, wall_time="1year", tasks_per_node=1, cpus_per_task=1, mem_per_cpu=0,
         queue="", kind="local", gpu_set="", project="rrg-bengioy-ad_gpu", installation_script_path=None,
-        gpu_kind=None, **run_kwargs):
+        gpu_kind=None, exclude_nodes='', **run_kwargs):
 
     assert kind in "slurm slurm-local".split()
 
@@ -691,16 +691,17 @@ print(str((end - start).total_seconds()) + " seconds elapsed between start and f
 
         resources = resources + ' ' + gpu_string
 
+    if exclude_nodes:
+        exclude_nodes = f'--exclude={exclude_nodes}'
+    else:
+        exclude_nodes = ''
+
     email = "eric.crawford@mail.mcgill.ca"
     if queue:
         queue = "-p " + queue
     command = (
-        "sbatch --job-name {exp_name} -D {job_path} --mail-type=ALL --mail-user=wiricon@gmail.com "
-        "-A {project} {queue} --export=ALL {resources} "
-        "-o stdout -e stderr run.sh".format(
-            exp_name=exp_name, job_path=job_path, email=email, project=project,
-            queue=queue, resources=resources
-        )
+        f"sbatch --job-name {exp_name} -D {job_path} --mail-type=ALL --mail-user={email} "
+        f"-A {project} {queue} --export=ALL {resources} {exclude_nodes} -o stdout -e stderr run.sh"
     )
 
     print("\n" + "~" * 40)
