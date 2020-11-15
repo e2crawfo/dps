@@ -504,6 +504,7 @@ class TrainingLoop:
                         do_final_testing = (
                             "Exception occurred" not in reason
                             and reason != "Time limit exceeded"
+                            and cfg.get('do_final_testing', True)
                         )
 
                         if do_final_testing:
