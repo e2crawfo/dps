@@ -83,6 +83,9 @@ class PyTorchTrainingLoop(TrainingLoop):
         self.framework_print_variables()
         self.framework_load_weights()
 
+        if cfg.initial_step is not None and cfg.initial_step > 0:
+            self.updater.model.update_global_step(cfg.initial_step)
+
     def framework_print_variables(self):
         walk_variable_scopes(self.updater.model, max_depth=cfg.variable_scope_depth)
 
