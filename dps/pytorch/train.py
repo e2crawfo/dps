@@ -378,10 +378,20 @@ class PyTorchUpdater(Parameterized):
     def evaluate(self, _, step, mode="val"):
         return self.model.evaluate(self, step, mode=mode)
 
-    def get_eval_tensors(self, step, mode="val"):
+    def get_eval_tensors(self, step, mode="val", data_exclude=None, tensors_exclude=None):
         """ Run `self.model` on either val or test dataset, return data and tensors. """
 
         assert mode in "val test".split()
+
+        if tensors_exclude is None:
+            tensors_exclude = []
+        if isinstance(tensors_exclude, str):
+            tensors_exclude = tensors_exclude.split()
+
+        if data_exclude is None:
+            data_exclude = []
+        if isinstance(data_exclude, str):
+            data_exclude = data_exclude.split()
 
         self.model.eval()
         if mode == 'val':
@@ -429,11 +439,21 @@ class PyTorchUpdater(Parameterized):
                         is_leaf=lambda rec: not isinstance(rec, dict))
 
                 data = AttrDict(data)
+                for de in data_exclude:
+                    try:
+                        del data[de]
+                    except (KeyError, AttributeError):
+                        pass
                 data = map_structure(
                     lambda t: to_np(t) if isinstance(t, torch.Tensor) else t,
                     data, is_leaf=lambda rec: not isinstance(rec, dict))
 
                 tensors = AttrDict(tensors)
+                for te in tensors_exclude:
+                    try:
+                        del tensors[te]
+                    except (KeyError, AttributeError):
+                        pass
                 tensors = map_structure(
                     lambda t: to_np(t) if isinstance(t, torch.Tensor) else t,
                     tensors, is_leaf=lambda rec: not isinstance(rec, dict))
