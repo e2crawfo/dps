@@ -1,4 +1,4 @@
--e git+https://github.com/e2crawfo/clify.git@persona#egg=clify
+-e git+https://github.com/e2crawfo/clify.git@master#egg=clify
 dill
 flake8
 gym
