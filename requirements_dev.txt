@@ -7,7 +7,7 @@ imageio==2.2.0
 matplotlib==2.1.0
 numpy==1.13.3
 pandas==0.21.0
-opencv-python==4.0.0.21
+opencv-python==4.2.0.32
 psutil==5.7.0
 pytest==3.3.0
 pytest-env==0.6.2
